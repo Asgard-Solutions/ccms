@@ -11,8 +11,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from core.audit import audit_success
+from core import cache, cache_keys
 from core.crypto import decrypt_fields, encrypt_fields
-from core.db import get_db
+from core.db import get_db_read, get_db_write, read_after_write_db
 from core.deps import get_current_user, require_role
 from core.event_bus import publish
 from services.scheduling.models import (
@@ -39,7 +40,7 @@ def _to_iso(dt: datetime) -> str:
 async def _hydrate(apps: list[dict]) -> list[dict]:
     if not apps:
         return apps
-    db = get_db()
+    db = get_db_read()
     provider_ids = list({a["provider_id"] for a in apps})
     patient_ids = list({a["patient_id"] for a in apps})
     providers = {
@@ -64,7 +65,7 @@ async def _hydrate(apps: list[dict]) -> list[dict]:
 async def _check_conflict(
     provider_id: str, start_iso: str, end_iso: str, exclude_id: str | None = None,
 ) -> None:
-    db = get_db()
+    db = get_db_write()  # conflict checks must read latest committed state
     q: dict = {
         "provider_id": provider_id,
         "status": "scheduled",
@@ -87,7 +88,7 @@ async def create_appointment(
     request: Request,
     actor: dict = Depends(require_role(*STAFF_ROLES)),
 ):
-    db = get_db()
+    db = get_db_write()
     if payload.end_time <= payload.start_time:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "end_time must be after start_time")
 
@@ -123,6 +124,8 @@ async def create_appointment(
         "updated_at": now,
     }
     await db.appointments.insert_one(encrypt_fields(doc, ENCRYPTED))
+    await cache.invalidate_prefix(cache_keys.PREFIX_APPOINTMENTS)
+    await cache.invalidate_prefix(cache_keys.PREFIX_DASHBOARD)
 
     await publish("appointment.booked", {"appointment": doc, "actor_id": actor["id"]})
     await audit_success(
@@ -146,7 +149,7 @@ async def list_appointments(
     from_date: str | None = Query(default=None, alias="from"),
     to_date: str | None = Query(default=None, alias="to"),
 ):
-    db = get_db()
+    db = get_db_read()
     q: dict = {}
 
     if user["role"] == "patient":
@@ -174,17 +177,32 @@ async def list_appointments(
             range_q["$lte"] = to_date
         q["start_time"] = range_q
 
-    cursor = db.appointments.find(q, {"_id": 0}).sort("start_time", 1)
-    apps = [decrypt_fields(a, ENCRYPTED) async for a in cursor]
-    hydrated = await _hydrate(apps)
-    return hydrated
+    async def _fetch():
+        cursor = db.appointments.find(q, {"_id": 0}).sort("start_time", 1)
+        apps = [decrypt_fields(a, ENCRYPTED) async for a in cursor]
+        return await _hydrate(apps)
+
+    cache_key = cache_keys.appointments_query(
+        user["role"],
+        {
+            "provider_id": provider_id,
+            "patient_id": patient_id,
+            "status": appt_status,
+            "from": from_date,
+            "to": to_date,
+            # Doctors auto-scope to themselves; bake that into the cache key.
+            "doctor_self": user["id"] if (user["role"] == "doctor" and not provider_id and not patient_id) else None,
+            "patient_self": user["id"] if user["role"] == "patient" else None,
+        },
+    )
+    return await cache.get_or_set(cache_key, 30, _fetch)
 
 
 @router.get("/{appointment_id}", response_model=AppointmentPublic)
 async def get_appointment(
     appointment_id: str, request: Request, user: dict = Depends(get_current_user)
 ):
-    db = get_db()
+    db = get_db_read()
     a = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
     if not a:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
@@ -206,7 +224,7 @@ async def update_appointment(
     request: Request,
     actor: dict = Depends(require_role(*STAFF_ROLES)),
 ):
-    db = get_db()
+    db = get_db_write()
     current = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
     if not current:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
@@ -238,8 +256,12 @@ async def update_appointment(
     await db.appointments.update_one(
         {"id": appointment_id}, {"$set": encrypt_fields(updates, ENCRYPTED)}
     )
-    updated = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+    updated = await read_after_write_db().appointments.find_one(
+        {"id": appointment_id}, {"_id": 0}
+    )
     updated_dec = decrypt_fields(updated, ENCRYPTED)
+    await cache.invalidate_prefix(cache_keys.PREFIX_APPOINTMENTS)
+    await cache.invalidate_prefix(cache_keys.PREFIX_DASHBOARD)
 
     await publish(
         "appointment.updated",
@@ -258,7 +280,7 @@ async def update_appointment(
 async def cancel_appointment(
     appointment_id: str, request: Request, user: dict = Depends(get_current_user)
 ):
-    db = get_db()
+    db = get_db_write()
     a = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
     if not a:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
@@ -279,8 +301,12 @@ async def cancel_appointment(
         {"id": appointment_id},
         {"$set": {"status": "cancelled", "updated_at": _now_iso()}},
     )
-    updated = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+    updated = await read_after_write_db().appointments.find_one(
+        {"id": appointment_id}, {"_id": 0}
+    )
     updated_dec = decrypt_fields(updated, ENCRYPTED)
+    await cache.invalidate_prefix(cache_keys.PREFIX_APPOINTMENTS)
+    await cache.invalidate_prefix(cache_keys.PREFIX_DASHBOARD)
 
     await publish("appointment.cancelled", {"appointment": updated_dec, "actor_id": user["id"]})
     await audit_success(

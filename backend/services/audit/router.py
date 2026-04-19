@@ -25,7 +25,7 @@ Future relational schema:
 from fastapi import APIRouter, Depends, Query, Request
 
 from core.audit import audit_success
-from core.db import get_db
+from core.db import get_db_read
 from core.deps import require_role
 
 router = APIRouter(prefix="/audit-logs", tags=["audit"])
@@ -43,7 +43,7 @@ async def list_audit_logs(
     phi_accessed: bool | None = None,
     limit: int = Query(default=100, ge=1, le=500),
 ):
-    db = get_db()
+    db = get_db_read()
     q: dict = {}
     if actor_id:
         q["actor_id"] = actor_id

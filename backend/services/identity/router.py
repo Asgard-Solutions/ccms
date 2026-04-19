@@ -14,8 +14,10 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
 from core.audit import audit_failure, audit_success, log_audit
-from core.db import get_db
+from core import cache, cache_keys
+from core.db import get_db, get_db_read, get_db_write, read_after_write_db
 from core.deps import get_current_user, require_role
+from core import rate_limit
 from core.mfa import (
     MFA_REQUIRED_ROLES,
     create_mfa_ticket,
@@ -168,7 +170,18 @@ async def _lockout_check(db, identifier: str) -> None:
 
 @router.post("/login", response_model=LoginResult)
 async def login(payload: UserLogin, request: Request, response: Response):
-    db = get_db()
+    # Outer rate-limit: 30 attempts per IP per minute. Per-email lockout in Mongo
+    # remains the durable, audited brute-force control beneath this.
+    ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or (
+        request.client.host if request.client else "unknown"
+    )
+    if not await rate_limit.is_allowed(f"login:{ip}", limit=30, window_seconds=60):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many requests from this address. Please slow down.",
+        )
+
+    db = get_db_write()
     email = payload.email.lower().strip()
     identifier = email
     now = datetime.now(timezone.utc)
@@ -583,6 +596,7 @@ async def disable_user(
     )
     if result.matched_count == 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    await cache.invalidate_prefix(cache_keys.PREFIX_PROVIDERS)
     await audit_success(
         admin, "user.disabled", request, entity_type="user", entity_id=user_id,
     )
@@ -602,6 +616,7 @@ async def enable_user(
     )
     if result.matched_count == 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    await cache.invalidate_prefix(cache_keys.PREFIX_PROVIDERS)
     await audit_success(
         admin, "user.enabled", request, entity_type="user", entity_id=user_id,
     )
@@ -610,9 +625,15 @@ async def enable_user(
 
 @router.get("/providers", response_model=list[UserPublic])
 async def list_providers(_user: dict = Depends(get_current_user)):
-    db = get_db()
-    cursor = db.users.find(
-        {"role": "doctor", "status": {"$ne": "disabled"}},
-        {"_id": 0, "password_hash": 0, "password_history": 0},
-    ).sort("name", 1)
-    return [_to_public(u) async for u in cursor]
+    """Cached for 5 min. Provider list rarely changes; invalidated on user
+    create / disable / enable. No PHI exposure (provider names + roles only)."""
+
+    async def _fetch():
+        db = get_db_read()
+        cursor = db.users.find(
+            {"role": "doctor", "status": {"$ne": "disabled"}},
+            {"_id": 0, "password_hash": 0, "password_history": 0},
+        ).sort("name", 1)
+        return [_to_public(u) async for u in cursor]
+
+    return await cache.get_or_set(cache_keys.PROVIDERS, 300, _fetch)

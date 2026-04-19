@@ -8,7 +8,7 @@ always audited.
 from fastapi import APIRouter, Depends, Query, Request
 
 from core.audit import audit_emergency, audit_success
-from core.db import get_db
+from core.db import get_db_read
 from core.deps import require_role
 from core.masking import mask_notification
 from services.communication.models import NotificationPublic
@@ -26,7 +26,7 @@ async def list_notifications(
     limit: int = Query(default=200, ge=1, le=500),
     actor: dict = Depends(require_role("admin", "staff")),
 ):
-    db = get_db()
+    db = get_db_read()
     q: dict = {}
     if event_type:
         q["event_type"] = event_type

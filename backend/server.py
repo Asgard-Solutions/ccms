@@ -14,12 +14,14 @@ from fastapi import APIRouter, FastAPI  # noqa: E402
 from starlette.middleware.cors import CORSMiddleware  # noqa: E402
 
 from core.db import close_client, create_indexes  # noqa: E402
+from core.redis_client import close as close_redis, ping as redis_ping  # noqa: E402
 from services.audit.router import router as audit_router  # noqa: E402
 from services.communication.router import router as communication_router  # noqa: E402
 from services.communication.subscribers import register as register_comm_subscribers  # noqa: E402
 from services.identity.router import router as identity_router  # noqa: E402
 from services.identity.seed import seed as seed_identity  # noqa: E402
 from services.patient.router import router as patient_router  # noqa: E402
+from services.perf.router import router as perf_router  # noqa: E402
 from services.scheduling.router import router as scheduling_router  # noqa: E402
 
 
@@ -49,6 +51,7 @@ api_router.include_router(patient_router)
 api_router.include_router(scheduling_router)
 api_router.include_router(communication_router)
 api_router.include_router(audit_router)
+api_router.include_router(perf_router)
 
 app.include_router(api_router)
 
@@ -77,9 +80,13 @@ async def on_startup():
     await create_indexes()
     register_comm_subscribers()
     await seed_identity()
-    logger.info("CCMS startup complete (HIPAA-hardened).")
+    redis_alive = await redis_ping()
+    logger.info(
+        "CCMS startup complete (HIPAA-hardened, redis_alive=%s).", redis_alive
+    )
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    await close_redis()
     await close_client()

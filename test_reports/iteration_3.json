@@ -1,0 +1,64 @@
+{
+  "summary": "Iteration 3 — Redis + DB-split performance upgrade. Re-ran the iteration-2 HIPAA suite (24 tests → 24 pass, incl. the previously-skipped TestNotificationsMasking which now passes) and added /app/backend/tests/test_perf_cache_rate.py (10 new tests) covering /api/perf/stats RBAC, providers/patients/appointments cache hit+invalidation, the critical 'unmasked PHI is NEVER cached' invariant, read-after-write on PUT appointment / cancel / PUT patient, login IP rate-limit @ 30/min, X-Forwarded-For bucket reset, and the Redis-down graceful-fallback path. Result: 33/34 pass. The one failure is a real application bug: POST /api/auth/users does NOT invalidate the providers cache (identity router create_user handler is missing the invalidate_prefix call that disable_user/enable_user have). All HIPAA safeguards verified non-regressed. Unmasked PHI invariant PASSES — GET /api/patients?unmask=true produces zero delta in patients:list:* Redis keyspace. Frontend smoke (admin login → Patients masked → Appointments → Audit Log → Security) clean with 0 console errors.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/auth/users",
+        "issue": "Creating a new user (role=doctor) does NOT invalidate the `identity:providers:active` Redis cache. Next /api/auth/providers call will return a 5-minute-stale list that omits the new doctor. services/identity/router.py::create_user is missing `await cache.invalidate_prefix(cache_keys.PREFIX_PROVIDERS)` after insert_one. disable_user + enable_user both have it, so the fix is a one-liner.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_perf_cache_rate.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "services/identity/router.py::create_user — add `await cache.invalidate_prefix(cache_keys.PREFIX_PROVIDERS)` right after `await db.users.insert_one(doc)` so a newly-created doctor shows up immediately in /api/auth/providers. This is the only cache-invalidation gap found; disable_user and enable_user are correct."
+  ],
+  "critical_code_review_comments": [
+    "BUG: POST /api/auth/users missing providers-cache invalidation (see action_items). Fix is a single line.",
+    "core/redis_client.py caches the client lazily; when the port temporarily drops, the first calls fall through safe_call correctly but /api/perf/stats.redis_alive can briefly remain true for ~250ms as flagged in the request. Confirmed during fallback test — a small retry loop is needed in any external health-check probe.",
+    "core/rate_limit.is_allowed uses fixed-window buckets (not true sliding window as the docstring claims). At window boundary a client can do up-to-2x limit in a 2-second gap. Acceptable because the per-email brute-force lockout in Mongo is the durable security control, but the docstring should say 'fixed-window' to avoid confusion.",
+    "core/db.routing_stats monotonically increments with no reset on a window, so read_ratio_overall drifts permanently after the first big batch of reads. Fine for an operator-hint surface (which is what /api/perf/stats is) but worth documenting.",
+    "core/cache.invalidate_prefix uses SCAN with count=200 which is good; one thing to watch in prod — SCAN + DELETE is not atomic, so a concurrent set during invalidation can survive. At 30s TTLs this self-heals quickly.",
+    "PERFORMANCE_ARCHITECTURE.md claim 'patient list (masked): 30 seconds' matches the code (cache.get_or_set(..., 30, ...)). Good alignment."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_perf_cache_rate.py (new — 10 tests for perf/cache/rate-limit/fallback)"
+  ],
+  "success_rate": {
+    "backend": "97% (33/34 — the 1 failure is the real providers-cache-on-create bug)",
+    "frontend": "100% smoke (admin login, Patients masked, Appointments, Audit Log, Security — 0 console errors)"
+  },
+  "test_credentials": "admin@ccms.app/Admin@ComplianceClinic1, doctor@ccms.app/Doctor@ComplianceClinic1, staff@ccms.app/Staff@ComplianceClinic1, patient@ccms.app/Patient@ComplianceClinic1 — all verified.",
+  "seed_data_creation": "New TEST_ prefixed rows created this run: a TEST_cache_doc_* doctor (left disabled by the providers-invalidation test), a TEST_CachePat_* patient, a TEST_RAW_* patient (renamed via PUT), and one appointment booked+rescheduled+cancelled. All safe to leave; the prior TEST_ cleanup strategy still applies.",
+  "mocked_apis_verified": "Communication mock pipeline still produces 6 notifications per full booking/reschedule/cancel lifecycle (verified in backend_test.py::TestSchedulingLifecycle which passes).",
+  "redis_verified": {
+    "ping": "PONG via redis-cli and rds.ping()",
+    "providers_cache_key": "identity:providers:active set on first GET, TTL 300s",
+    "patients_cache_key_shape": "patients:list:role=admin:search=:deleted=0:masked=1 (TTL 30s)",
+    "unmasked_phi_never_cached": "VERIFIED — GET /api/patients?unmask=true produces zero diff in patients:list:* scan before/after",
+    "rate_limit_keys": "rl:<identifier>:60:<bucket> (INCR + EXPIRE, fixed-window)",
+    "fallback": "Stopping supervisord redis → /api/perf/stats redis_alive=false within <5s, /api/health still 200, /api/auth/providers still 200, login still 200. Restart restores redis_alive=true.",
+    "left_running": "YES — redis brought back up at end of run (sudo supervisorctl start redis)"
+  },
+  "db_routing_stats_verified": {
+    "writes_gt_0": true,
+    "reads_gt_0": true,
+    "read_after_write_gt_0": true,
+    "read_ratio_overall_in_0_1": true
+  },
+  "hipaa_regressions": "NONE — all 24 iteration-2 tests pass (encryption-at-rest enc:v1: prefix, masking by default, break-glass reason for doctor detail, audit log with phi_accessed flag, 7-year soft-delete retention, MFA full flow, password policy incl. history of 5, account disable, brute-force lockout).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend suite is now 2 files: /app/backend/tests/backend_test.py (HIPAA, 24 tests) and /app/backend/tests/test_perf_cache_rate.py (perf, 10 tests). Run with `pytest /app/backend/tests/ -v --junitxml=/app/test_reports/pytest/pytest_results.xml`. The only open bug is providers-cache invalidation on POST /api/auth/users — once a `await cache.invalidate_prefix(cache_keys.PREFIX_PROVIDERS)` is added to services/identity/router.py::create_user right after insert_one, test_perf_cache_rate.py::TestProvidersCache should go green and the suite hits 34/34. Redis fallback test stops+restarts supervisord redis — it cleans up itself but if a prior run is killed mid-test, run `sudo supervisorctl start redis` before re-running. The rate-limit test (31 wrong logins) is IP-scoped in this env and can consume your bucket for ~60s — subsequent rate-limit-sensitive tests should use X-Forwarded-For or wait.",
+  "rca_of_issue": "POST /api/auth/users missing cache invalidation — services/identity/router.py defines three user-mutation endpoints (create_user, disable_user, enable_user). disable/enable correctly call `await cache.invalidate_prefix(cache_keys.PREFIX_PROVIDERS)` after the Mongo update (lines 599, 619). create_user (line 543-581) does NOT. Consequence: for up to 300s after a new doctor is added, /api/auth/providers serves a stale list that omits them, breaking scheduling UI (no doctor to select) until the TTL expires. Reproduction: DELETE identity:providers:active, GET /api/auth/providers (sets key), POST /api/auth/users {role:doctor, ...}, observe `redis-cli EXISTS identity:providers:active` still == 1. Mitigation: add `await cache.invalidate_prefix(cache_keys.PREFIX_PROVIDERS)` immediately after `await db.users.insert_one(doc)` at line 575. No security impact; purely a UX/data-staleness bug."
+}

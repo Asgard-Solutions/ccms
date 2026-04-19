@@ -18,8 +18,9 @@ from datetime import datetime, timezone, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from core.audit import audit_emergency, audit_success, log_audit
+from core import cache, cache_keys
 from core.crypto import decrypt_fields, encrypt_fields
-from core.db import get_db
+from core.db import get_db, get_db_read, get_db_write, read_after_write_db
 from core.deps import get_current_user, require_role
 from core.masking import mask_patient
 from core.reauth import require_reauth
@@ -77,7 +78,7 @@ async def list_patients(
     unmask: bool = False,
     user: dict = Depends(get_current_user),
 ):
-    db = get_db()
+    db = get_db_read()
     q: dict = {}
 
     if user["role"] == "patient":
@@ -95,9 +96,18 @@ async def list_patients(
         ]
 
     unmasked = bool(unmask) and user["role"] == "admin"
-    cursor = db.patients.find(q, {"_id": 0}).sort("created_at", -1)
-    docs = [p async for p in cursor]
-    shaped = [_shape(p, unmasked=unmasked) for p in docs]
+
+    async def _fetch():
+        cursor = db.patients.find(q, {"_id": 0}).sort("created_at", -1)
+        docs = [p async for p in cursor]
+        return [_shape(p, unmasked=unmasked) for p in docs]
+
+    if unmasked or search:
+        # Never cache unmasked PHI; skip cache for ad-hoc searches too.
+        shaped = await _fetch()
+    else:
+        key = cache_keys.patients_list(user["role"], search, include_deleted, masked=True)
+        shaped = await cache.get_or_set(key, 30, _fetch)
 
     await audit_success(
         user,
@@ -117,10 +127,8 @@ async def create_patient(
     request: Request,
     actor: dict = Depends(require_role(*STAFF_ROLES)),
 ):
-    db = get_db()
+    db = get_db_write()
     now = _now()
-
-    # Auto-link to a user with the same email (if any) — prevents orphans.
     user_id = None
     if payload.email:
         existing_user = await db.users.find_one(
@@ -139,6 +147,8 @@ async def create_patient(
     }
     stored = encrypt_fields(doc, PATIENT_ENCRYPTED)
     await db.patients.insert_one(stored)
+    await cache.invalidate_prefix(cache_keys.PREFIX_PATIENTS)
+    await cache.invalidate_prefix(cache_keys.PREFIX_DASHBOARD)
     await audit_success(
         actor, "patient.created", request,
         entity_type="patient", entity_id=doc["id"],
@@ -157,7 +167,7 @@ async def get_patient(
     reason: str | None = Query(default=None),
     user: dict = Depends(get_current_user),
 ):
-    db = get_db()
+    db = get_db_read()
     p = await db.patients.find_one({"id": patient_id}, {"_id": 0})
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
@@ -207,7 +217,7 @@ async def update_patient(
     request: Request,
     actor: dict = Depends(require_role(*STAFF_ROLES)),
 ):
-    db = get_db()
+    db = get_db_write()
     updates = {k: v for k, v in payload.model_dump().items() if v is not None}
     if not updates:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No fields to update")
@@ -218,7 +228,11 @@ async def update_patient(
     if result.matched_count == 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
 
-    p = await db.patients.find_one({"id": patient_id}, {"_id": 0})
+    # Read-after-write consistency for the response, then invalidate caches.
+    p = await read_after_write_db().patients.find_one({"id": patient_id}, {"_id": 0})
+    await cache.invalidate_prefix(cache_keys.PREFIX_PATIENTS)
+    await cache.invalidate_prefix(cache_keys.PREFIX_PATIENT)
+    await cache.invalidate_prefix(cache_keys.PREFIX_APPOINTMENTS)
     await audit_success(
         actor, "patient.updated", request,
         entity_type="patient", entity_id=patient_id,
@@ -239,7 +253,7 @@ async def delete_patient(
     enforced_reason = _enforce_reason(reason, required=True)
     require_reauth(request, admin)
 
-    db = get_db()
+    db = get_db_write()
     p = await db.patients.find_one({"id": patient_id}, {"_id": 0, "id": 1, "status": 1})
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
@@ -278,7 +292,7 @@ async def export_patient(
     request: Request,
     user: dict = Depends(get_current_user),
 ):
-    db = get_db()
+    db = get_db_read()
     p = await db.patients.find_one({"id": patient_id}, {"_id": 0})
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
@@ -317,7 +331,7 @@ async def export_patient(
 async def _hydrate_recorded_by(records: list[dict]) -> list[dict]:
     if not records:
         return records
-    db = get_db()
+    db = get_db_read()
     user_ids = list({r["recorded_by"] for r in records if r.get("recorded_by")})
     users = {
         u["id"]: u["name"]
@@ -334,7 +348,7 @@ async def list_records(
     request: Request,
     user: dict = Depends(get_current_user),
 ):
-    db = get_db()
+    db = get_db_read()
     patient = await db.patients.find_one({"id": patient_id}, {"_id": 0, "user_id": 1})
     if not patient:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
@@ -369,7 +383,7 @@ async def add_record(
 ):
     require_reauth(request, user)
 
-    db = get_db()
+    db = get_db_write()
     patient = await db.patients.find_one({"id": patient_id}, {"_id": 0, "id": 1})
     if not patient:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
@@ -382,6 +396,7 @@ async def add_record(
         "recorded_at": _now(),
     }
     await db.medical_records.insert_one(encrypt_fields(doc, RECORD_ENCRYPTED))
+    await cache.invalidate_prefix(cache_keys.PREFIX_PATIENT)
     await audit_success(
         user, "medical_record.created", request,
         entity_type="medical_record", entity_id=doc["id"],
