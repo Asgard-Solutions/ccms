@@ -31,6 +31,16 @@ dist/
 dist
 
 # Environment files (comprehensive coverage)
+# Never commit secrets — JWT secrets, DB URLs, encryption keys, API keys, etc.
+.env
+.env.*
+**/.env
+**/.env.*
+# But DO allow committing template/example files
+!.env.example
+!.env.sample
+!**/.env.example
+!**/.env.sample
 
 *token.json*
 *credentials.json*
