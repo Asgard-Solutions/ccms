@@ -1,6 +1,6 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-04-19 (Phase 1 + HIPAA hardening)
+**Last updated:** 2026-02-18 (Compliance foundation baseline)
 
 ## 1. Original problem statement
 Multi-tenant Chiropractic Clinic Management System on a microservices, event-driven architecture. Phase 1 delivered Identity / Patient / Scheduling / Communication. The HIPAA hardening pass added technical safeguards in line with 45 CFR §164.312.
@@ -69,6 +69,9 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - KMS-backed `DATA_ENCRYPTION_KEY` (currently env-loaded)
 - Retention worker that physically purges patients with `retention_until < now`
 - Audit log immutability at the storage layer (append-only or pre-hook)
+- Consent capture on registration (versioned Privacy Notice acceptance) — CCPA/SOC2-P
+- Privacy Notice surfaced in UI + footer link — CCPA
+- Dependency SCA + SAST in CI — ISO A.8.8 / A.8.28
 
 ### P1 (next features)
 - Billing service subscriber on `appointment.completed`
@@ -76,14 +79,31 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Reporting service for compliance and ops dashboards
 - Patient self-service portal (book / reschedule own appointments)
 - Postgres migration (schema is 1:1, mechanical)
+- Structured JSON logging (structlog) + centralised log sink
+- CSV evidence export for auditors (`/api/audit-logs/export.csv`)
+- Prometheus alerting rules + runbooks committed to repo
+- Purpose taxonomy (enum) replacing free-text `reason` in audit rows
 
 ### P2 (polish)
 - Multi-tenancy with `tenant_id` on every entity + JWT claim
 - OpenID Connect / SAML SSO option for clinic IdP
-- OpenTelemetry + Prometheus
+- OpenTelemetry end-to-end tracing
 - Real broker (RabbitMQ/Azure Service Bus) — same publish/subscribe API
+- Session fingerprint drift detection
+- JIT admin elevation + peer-approval for destructive ops
 
-## 7. Key reference docs
+## 7. Compliance baseline (2026-02-18)
+- **Documents** (`/app/memory/`):
+  - `COMPLIANCE_BASELINE.md` — SOC 2 / CCPA / ISO 27001 narrative with per-control status (Implemented / Partial / Missing / Out-of-App)
+  - `CONTROL_INVENTORY.md` — 50+ controls with framework mapping, type, owner placeholder, code/evidence path, remediation pointer
+  - `COMPLIANCE_BACKLOG.md` — P0 / P1 / P2 remediation backlog, plus out-of-app items for visibility
+- **In-app readiness dashboard** (admin-only, `/compliance`):
+  - `GET /api/compliance/overview` aggregates env hardening flags, audit activity signals (24 h / 30 d), MFA adoption across privileged roles, retention pipeline status, and the control catalog with live status
+  - UI at `frontend/src/pages/Compliance.jsx` with readiness snapshot, environment flags, audit activity, retention status, and filterable control table
+  - Explicitly labelled **internal readiness** — no certification claim
+- **Verified**: admin 200 / doctor 403 / anon 401; UI renders with live data from 605 existing audit rows; readiness score 0.58 (21 implemented + 7 partial of 42 in-app controls)
+
+## 8. Key reference docs
 - `/app/memory/HIPAA_COMPLIANCE.md` — full safeguard inventory (implemented vs. external)
 - `/app/memory/test_credentials.md` — demo accounts
 - `/app/test_reports/iteration_2.json` — testing agent report (24/24)

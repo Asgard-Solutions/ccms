@@ -1,0 +1,142 @@
+<analysis>**original_problem_statement**: 
+Design and implement a cloud-native, multi-tenant Chiropractic Clinic Management System (CCMS). The system must be scalable, modular, and production-ready with a microservices, event-driven architecture supporting clinical operations, patient engagement, and financial workflows.
+**Tech Stack Constraints**: Supported stack (React + FastAPI + MongoDB) but strictly architected as **PostgreSQL-ready** (UUIDs for PKs, relational normalisation, no embedded documents).
+**Core Requirements**: 
+- Microservices boundary separation (Identity, Patient, Scheduling, Billing, Communication).
+- Event-driven workflow (internal event bus for MVP).
+- API Gateway pattern.
+- Multi-tenant capable design.
+- JWT-based custom auth with RBAC (Admin, Doctor, Staff, Patient).
+- 100% HIPAA compliant (technical safeguards: PHI masking, audit logs, MFA, reauth).
+- Performance optimized (Redis caching, Primary write/Secondary read CQRS-lite DB pattern).
+
+**User's preferred language**: English. (INSTRUCT: Next agent must respond in English).
+
+**what currently exists?** 
+A robust, HIPAA-compliant, performance-optimized MVP of the CCMS. The backend acts as an API gateway for logical microservices (Identity, Patient, Scheduling, Communication, Audit, Perf, Metrics) using FastAPI, MongoDB, and Redis. It utilizes an in-memory event bus for decoupled workflows (e.g., booking triggers notifications). The frontend is a React application styled with Shadcn UI in a clean medical theme (sage/stone), featuring role-based dashboards, appointment calendars, patient management, PHI masking toggles, MFA setup, and audit logs. The system uses a read/write split database pattern and caches read-heavy operations in Redis.
+
+**Last working item**:
+- **Last item agent was working**: Adding a  invalidation hook for doctor role updates (via new PATCH endpoint), caching masked notifications, verifying replica set read-preferences (), and wiring  into a Prometheus  endpoint.
+- **Status**: USER VERIFICATION PENDING
+- **Agent Testing Done**: Y
+- **Which testing method agent to use?**: NA (Testing subagent was successfully run; 20 new tests + 34 regression tests all passed).
+- **User Testing Done**: N
+
+**All Pending/In progress Issue list**:
+No active issues. The testing agent confirmed 0 open regressions and 0 bugs in the latest iteration. 
+
+**In progress Task List**:
+None.
+
+**Upcoming and Future Tasks**:
+*Upcoming Tasks*:
+- Task 1: **Billing Service Implementation** (Invoices, payments, insurance claims). (P0)
+- Task 2: **Production Communication Integration** (Replace mock notifications with actual SMS/Email via ). (P1)
+- Task 3: **Patient Portal Enhancements** (Self-service appointment booking). (P1)
+
+*Future Tasks*:
+- Task 4: **Reporting Service** (Read-heavy analytics and reporting). (P2)
+- Task 5: **PostgreSQL Migration** (Executing the planned migration from MongoDB to PostgreSQL using the prepared relational schema). (P2)
+
+**Completed work in this session**:
+- Scaffolded backend API Gateway + microservices () (DONE)
+- Built React frontend with RBAC, cookie-based JWT auth, and Shadcn UI components (DONE)
+- Implemented in-memory event bus () (DONE)
+- HIPAA Compliance Hardening: PHI Masking, MFA via PyOTP, Session Reauth, Break-glass flows, and robust Audit Logging (, ) (DONE)
+- Fixed  to prevent tracking  files (DONE)
+- Performance Upgrade: Redis integration for caching and rate limiting (, ) (DONE)
+- Read/Write DB routing logic mapping writes to Primary and reads to SecondaryPreferred () (DONE)
+- Prometheus metrics endpoint at  () (DONE)
+
+**Earlier issues found/mentioned but not fixed**:
+None. All identified issues (e.g., email validation, rate-limit bucketing by IP vs email, provider cache staleness) were resolved and verified by the testing agent.
+
+**Known issue recurrence from previous fork**:
+- Issue recurrence in previous fork: NA (First session).
+- Recurrence count: 0
+- Status: NA
+
+**Code Architecture**:
+
+
+**Key Technical Concepts**:
+- **Backend**: FastAPI, MongoDB (Motor), Redis, PyOTP (MFA), Prometheus Client. Microservice pattern routed via single FastAPI app. CQRS-lite with DB read/write split. Event-driven using in-memory pub-sub.
+- **Frontend**: React, Shadcn UI, TailwindCSS. Context-based Auth with  for HTTP-only cookies.
+- **Architecture Constraints**: Strictly relational data modeling (UUIDs, normalized FKs, no nested docs) to support zero-friction future PostgreSQL migration.
+
+**key DB schema**:
+- : 
+- : 
+- : 
+- : 
+- : 
+- : 
+
+**changes in tech stack**:
+- Added Redis for caching and rate limiting.
+- Added  for metrics.
+
+**All files of reference**:
+- : Central FastAPI app gateway, initializes DB, Redis, Event Bus, and mounts all service routers.
+- : Configures MongoDB client with  (Primary) and  (SecondaryPreferred).
+-  & : Redis caching wrappers and invalidation logic.
+- : Idempotent DB seeder for initial roles/users.
+- : Live credentials for testing subagent access.
+-  & : Vital architectural rulebooks.
+
+**Areas that need refactoring**:
+- None currently; code is modular and heavily linted.
+
+**key api endpoints**:
+- : Authenticates and sets HTTP-only JWT cookies.
+- : Validates session and returns current user details.
+- : Updates user role/status and invalidates provider cache.
+- : Prometheus metrics exporter.
+- : Fetches appointments (cached read).
+-  & : Patient views (PHI masked by default, respects ).
+- : Returns audit logs (Admin/Compliance role only).
+
+**Critical Info for New Agent**:
+1. **HIPAA Strictness**: All views returning PHI MUST use  by default. Real PHI access requires explicit  and drops a  record into .
+2. **Postgres-Ready Paradigm**: Never use MongoDB . All IDs are generated as string s. Never embed documents; use string IDs as foreign keys.
+3. **Database Read/Write Split**: All mutating operations must use . All query operations must use . If returning updated state directly after a write, use  to bypass replication lag.
+4. **Auth is Cookie-Based**: The frontend uses  via Axios to pass JWTs. Do not alter it to pass Bearer tokens in headers manually.
+5. **Cache Invalidation**: Any write to Users (Providers), Patients, or Appointments MUST invoke the corresponding invalidator in .
+
+**documents and test reports created in this job**:
+- 
+- 
+- 
+- 
+-  through 
+
+**Last 10 User Messages and any pending HUMAN messages**:
+- **User**: Add  invalidation hook when admin updates doctor's status/role. Cache masked . Switch to replica-set URI and verify read ratio. Add  to Prometheus  endpoint. (COMPLETED)
+- **User**: Implement performance and scalability upgrade (Redis caching, CQRS-lite Read/Write split). (COMPLETED)
+- **User**: Update the .gitignore to never send to GIT the .env files. (COMPLETED)
+- **User**: Proceed with do everything reasonable for HIPAA compliance (Masking, export, soft-delete, etc). (COMPLETED)
+- **User**: This application needs to be 100% HIPAA compliant and follow best practices for a doctor software. (COMPLETED - Triggers integration plan).
+- **User**: 1. Tech Stack Constraint: Build on React+FastAPI+MongoDB but designed PostgreSQL-ready. 2. Scope: MVP Identity, Patient, Scheduling, Event flow. 3. Auth: JWT Custom with RBAC. 4. Communication: Mocked. 5. Design: Clean medical. (COMPLETED)
+- **User**: Start the task now. (COMPLETED)
+
+**Project Health Check**:
+- **Broken**: None.
+- **Mocked**: Communication service endpoints (Email/SMS notifications just drop to the DB/logs for now).
+
+**3rd Party Integrations**:
+- None currently implemented requiring external API keys. Prometheus is local.
+
+**Testing status**:
+- Testing agent used after significant changes: YES
+- Troubleshoot agent used after agent stuck in loop: NO
+- Test files created: , 
+- Known regressions: None
+
+**Credentials to test flow**:
+Check  for live user credentials (seeded admin, doctor, staff, patient).
+
+**What agent forgot to execute**:
+Nothing was forgotten based on the latest prompt. The Prometheus endpoint, caching hooks, replica testing, and  updates were all verified.
+
+**Debugging checklist for current issue**:
+No active issues. If cache staleness occurs, ensure the write endpoint invokes  corresponding to the read endpoint's cache key.</analysis>

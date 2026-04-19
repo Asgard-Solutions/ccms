@@ -19,6 +19,7 @@ from core.db import close_client, create_indexes  # noqa: E402
 from core.redis_client import close as close_redis, ping as redis_ping  # noqa: E402
 from services.audit.router import router as audit_router  # noqa: E402
 from services.communication.router import router as communication_router  # noqa: E402
+from services.compliance.router import router as compliance_router  # noqa: E402
 from services.communication.subscribers import register as register_comm_subscribers  # noqa: E402
 from services.identity.router import router as identity_router  # noqa: E402
 from services.identity.seed import seed as seed_identity  # noqa: E402
@@ -53,6 +54,7 @@ api_router.include_router(patient_router)
 api_router.include_router(scheduling_router)
 api_router.include_router(communication_router)
 api_router.include_router(audit_router)
+api_router.include_router(compliance_router)
 api_router.include_router(perf_router)
 api_router.include_router(metrics_router)  # GET /api/metrics
 

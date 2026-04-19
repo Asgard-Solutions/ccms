@@ -13,6 +13,7 @@ import CalendarPage from "./pages/Calendar";
 import Notifications from "./pages/Notifications";
 import Security from "./pages/Security";
 import AuditLog from "./pages/AuditLog";
+import Compliance from "./pages/Compliance";
 import "./App.css";
 
 function Shell({ children, roles }) {
@@ -37,6 +38,7 @@ export default function App() {
           <Route path="/calendar" element={<Shell roles={["admin", "doctor", "staff"]}><CalendarPage /></Shell>} />
           <Route path="/notifications" element={<Shell roles={["admin", "staff"]}><Notifications /></Shell>} />
           <Route path="/audit-log" element={<Shell roles={["admin"]}><AuditLog /></Shell>} />
+          <Route path="/compliance" element={<Shell roles={["admin"]}><Compliance /></Shell>} />
           <Route path="/security" element={<Shell><Security /></Shell>} />
         </Routes>
       </BrowserRouter>

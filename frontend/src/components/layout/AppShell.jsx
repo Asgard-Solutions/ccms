@@ -11,6 +11,7 @@ import {
   Stethoscope,
   Shield,
   ShieldCheck,
+  ClipboardCheck,
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { Button } from "../ui/button";
@@ -39,6 +40,7 @@ const NAV_ITEMS = [
   { to: "/calendar", label: "Calendar", icon: Activity, roles: ["admin", "doctor", "staff"] },
   { to: "/notifications", label: "Notifications", icon: BellRing, roles: ["admin", "staff"] },
   { to: "/audit-log", label: "Audit log", icon: Shield, roles: ["admin"] },
+  { to: "/compliance", label: "Compliance", icon: ClipboardCheck, roles: ["admin"] },
   { to: "/security", label: "Security", icon: ShieldCheck, roles: ["admin", "doctor", "staff", "patient"] },
 ];
 
