@@ -1,12 +1,13 @@
 """
-Communication Service router — /api/notifications/* (HIPAA-hardened).
+Communication Service router — /api/notifications/* (HIPAA-hardened + cached).
 
-Admin + staff can view. By default notification rows are masked (to_address
-and body obscured); passing `unmask=true` returns the full content but is
-always audited.
+Default masked responses are cached for 15s in Redis. The unmask=true branch
+is NEVER cached and always reads live — both because it contains cleartext
+PHI, and because each unmask event must be individually audited.
 """
 from fastapi import APIRouter, Depends, Query, Request
 
+from core import cache, cache_keys
 from core.audit import audit_emergency, audit_success
 from core.db import get_db_read
 from core.deps import require_role
@@ -14,6 +15,8 @@ from core.masking import mask_notification
 from services.communication.models import NotificationPublic
 
 router = APIRouter(prefix="/notifications", tags=["communication"])
+
+CACHE_TTL_SECONDS = 15
 
 
 @router.get("")
@@ -26,31 +29,51 @@ async def list_notifications(
     limit: int = Query(default=200, ge=1, le=500),
     actor: dict = Depends(require_role("admin", "staff")),
 ):
-    db = get_db_read()
-    q: dict = {}
-    if event_type:
-        q["event_type"] = event_type
-    if patient_id:
-        q["patient_id"] = patient_id
-    cursor = db.notifications.find(q, {"_id": 0}).sort("created_at", -1).limit(limit)
-    rows = [n async for n in cursor]
+    unmask_permitted = unmask and actor["role"] == "admin"
 
-    if unmask and actor["role"] == "admin":
-        shaped = rows
+    async def _fetch_masked() -> list[dict]:
+        db = get_db_read()
+        q: dict = {}
+        if event_type:
+            q["event_type"] = event_type
+        if patient_id:
+            q["patient_id"] = patient_id
+        cursor = db.notifications.find(q, {"_id": 0}).sort("created_at", -1).limit(limit)
+        rows = [n async for n in cursor]
+        return [mask_notification(n) for n in rows]
+
+    if unmask_permitted:
+        # Always hit the DB live — the cleartext must never sit in cache.
+        db = get_db_read()
+        q: dict = {}
+        if event_type:
+            q["event_type"] = event_type
+        if patient_id:
+            q["patient_id"] = patient_id
+        cursor = db.notifications.find(q, {"_id": 0}).sort("created_at", -1).limit(limit)
+        rows = [n async for n in cursor]
+        for row in rows:
+            row.setdefault("unmasked", True)
         await audit_emergency(
-            actor, action="notification.unmasked",
-            entity_type="notification", entity_id="list",
+            actor,
+            action="notification.unmasked",
+            entity_type="notification",
+            entity_id="list",
             reason=(reason or "admin review"),
             request=request,
             metadata={"count": len(rows)},
         )
-    else:
-        shaped = [mask_notification(n) for n in rows]
-        await audit_success(
-            actor, "notification.list_viewed", request,
-            metadata={"count": len(rows), "unmasked": False},
-        )
-    # Always include `unmasked` flag so the UI can show an indicator.
+        return rows
+
+    key = cache_keys.notifications_list(event_type, patient_id, limit)
+    shaped = await cache.get_or_set(key, CACHE_TTL_SECONDS, _fetch_masked)
     for row in shaped:
-        row.setdefault("unmasked", unmask and actor["role"] == "admin")
+        row.setdefault("unmasked", False)
+
+    await audit_success(
+        actor,
+        "notification.list_viewed",
+        request,
+        metadata={"count": len(shaped), "unmasked": False},
+    )
     return shaped

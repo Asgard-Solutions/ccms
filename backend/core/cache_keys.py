@@ -8,6 +8,7 @@ TTL strategy summary (see PERFORMANCE_ARCHITECTURE.md):
   - identity-static (provider list, user count): 5 minutes
   - schedule data (calendar, availability): 30 seconds
   - patient list/detail (masked): 30 seconds
+  - notifications list (masked only): 15 seconds
   - dashboard aggregates: 60 seconds
 
 Anything containing UNMASKED PHI is intentionally not cacheable.
@@ -41,9 +42,18 @@ def dashboard_aggregates(user_id: str) -> str:
     return f"dashboard:aggregates:user={user_id}"
 
 
+def notifications_list(event_type: str | None, patient_id: str | None, limit: int) -> str:
+    """Masked-only notifications list. We never cache the unmask=true branch."""
+    return (
+        f"notifications:list:event={event_type or 'all'}:"
+        f"patient={patient_id or 'all'}:limit={limit}:masked=1"
+    )
+
+
 # Prefixes for invalidation
 PREFIX_PATIENTS = "patients:"
 PREFIX_PATIENT = "patient:"
 PREFIX_APPOINTMENTS = "appts:"
 PREFIX_DASHBOARD = "dashboard:"
 PREFIX_PROVIDERS = "identity:providers"
+PREFIX_NOTIFICATIONS = "notifications:"

@@ -63,6 +63,13 @@ class UserLogin(BaseModel):
     password: str
 
 
+class UserPatch(BaseModel):
+    """Admin-only partial update for a user (role + status only)."""
+    model_config = ConfigDict(extra="forbid")
+    role: Role | None = None
+    status: UserStatus | None = None
+
+
 class PasswordChange(BaseModel):
     current_password: str
     new_password: str = Field(min_length=12, max_length=128)

@@ -54,6 +54,7 @@ from services.identity.models import (
     PasswordChange,
     ReauthRequest,
     UserLogin,
+    UserPatch,
     UserPublic,
     UserRegister,
 )
@@ -591,7 +592,7 @@ async def disable_user(
 ):
     if user_id == admin["id"]:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot disable yourself")
-    db = get_db()
+    db = get_db_write()
     result = await db.users.update_one(
         {"id": user_id},
         {"$set": {"status": "disabled", "updated_at": datetime.now(timezone.utc).isoformat()}},
@@ -605,13 +606,54 @@ async def disable_user(
     return {"message": "User disabled"}
 
 
+@router.patch("/users/{user_id}", response_model=UserPublic)
+async def update_user(
+    user_id: str,
+    payload: UserPatch,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Admin-only partial update for a user's role and/or status.
+
+    Any change to `role` or `status` invalidates the providers cache so that
+    a user entering or leaving the `doctor` role — or being disabled — is
+    reflected immediately on the scheduling page."""
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No fields to update")
+    if user_id == admin["id"] and "role" in updates and updates["role"] != "admin":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot demote yourself")
+    if user_id == admin["id"] and updates.get("status") == "disabled":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot disable yourself")
+
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    db = get_db_write()
+    result = await db.users.update_one({"id": user_id}, {"$set": updates})
+    if result.matched_count == 0:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+
+    # Any role or status change can affect the provider list — invalidate.
+    await cache.invalidate_prefix(cache_keys.PREFIX_PROVIDERS)
+
+    updated = await read_after_write_db().users.find_one({"id": user_id}, {"_id": 0})
+    await audit_success(
+        admin,
+        "user.updated",
+        request,
+        entity_type="user",
+        entity_id=user_id,
+        metadata={"fields": [k for k in updates if k != "updated_at"]},
+    )
+    return _to_public(updated)
+
+
 @router.post("/users/{user_id}/enable")
 async def enable_user(
     user_id: str,
     request: Request,
     admin: dict = Depends(require_role("admin")),
 ):
-    db = get_db()
+    db = get_db_write()
     result = await db.users.update_one(
         {"id": user_id},
         {"$set": {"status": "active", "updated_at": datetime.now(timezone.utc).isoformat()}},

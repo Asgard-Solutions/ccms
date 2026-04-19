@@ -19,6 +19,8 @@ import os
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 from pymongo import ReadPreference
 
+from core import metrics
+
 logger = logging.getLogger("ccms.db")
 
 _write_client: AsyncIOMotorClient | None = None
@@ -64,22 +66,29 @@ def get_read_client() -> AsyncIOMotorClient:
 
 def get_db_write() -> AsyncIOMotorDatabase:
     _routing_stats["writes"] += 1
+    try:
+        metrics.db_queries_total.labels(route="write").inc()
+    except Exception:
+        pass
     return get_write_client()[_name()]
 
 
 def get_db_read() -> AsyncIOMotorDatabase:
     _routing_stats["reads"] += 1
+    try:
+        metrics.db_queries_total.labels(route="read").inc()
+    except Exception:
+        pass
     return get_read_client()[_name()]
 
 
 def read_after_write_db() -> AsyncIOMotorDatabase:
-    """Strongly-consistent read; always routes to the primary write node.
-
-    Use this whenever a router needs to fetch the document it just wrote (so
-    the response cannot return stale data to the caller). Treat it as a
-    deliberate, scoped escape-hatch from the read/write split.
-    """
+    """Strongly-consistent read; always routes to the primary write node."""
     _routing_stats["read_after_write"] += 1
+    try:
+        metrics.db_queries_total.labels(route="read_after_write").inc()
+    except Exception:
+        pass
     return get_write_client()[_name()]
 
 

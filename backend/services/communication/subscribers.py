@@ -50,6 +50,9 @@ async def _insert(notifs: list[dict]) -> None:
     if not notifs:
         return
     await get_db().notifications.insert_many(notifs)
+    # New rows → masked-list cache is stale.
+    from core import cache, cache_keys
+    await cache.invalidate_prefix(cache_keys.PREFIX_NOTIFICATIONS)
 
 
 async def _make_pair(

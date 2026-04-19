@@ -1,0 +1,59 @@
+{
+  "summary": "Iteration 4 backend + frontend smoke complete. 20 new tests in /app/backend/tests/test_iteration4.py all PASS, and the 34 iteration-3 regression tests (backend_test.py + test_perf_cache_rate.py) also all PASS — total 54/54. Verified: (1) PATCH /api/auth/users/{id} admin-only role/status updates with providers-cache invalidation, audit row, 400 on empty body / self-demote / self-disable, 403 for non-admin, 404 for unknown user, 422 for extra fields. (2) /api/notifications masked branch writes a notifications:list:* Redis key on first call (cache MISS), second call is a HIT that increments ccms_cache_hits_total; a new booking invalidates the prefix via the subscriber; unmask=true returns live cleartext, writes a notification.unmasked audit row, and produces ZERO new notifications:* cache keys — the critical 'unmask never populates cache' invariant is upheld. (3) /api/perf/connection-info returns write{topology_type=Single, nodes=['localhost:27017'], read_preference='Primary()'} and read{... read_preference starts with 'SecondaryPreferred('} and same_client=false; non-admin 403. (4) /api/metrics is public, content-type 'text/plain; version=0.0.4', exposes all required metric names (ccms_cache_hits/misses/sets/invalidations/errors_total, ccms_db_queries_total with route labels write/read/read_after_write, ccms_redis_up, ccms_rate_limit_blocks_total, ccms_http_request_duration_seconds_bucket); traffic increases hits + read counters; histogram has positive buckets on /api/patients and path_prefix does NOT explode with dynamic UUIDs; ccms_redis_up flips 1→0 after `supervisorctl stop redis` and back to 1 after start. HIPAA regressions all green (encryption-at-rest enc:v1:, masking by default, break-glass reason, MFA flow, step-up reauth, 7-year soft-delete, 6 mock notifications per appointment lifecycle, /api/perf/stats unchanged, login rate-limit 429 on the 31st attempt). Frontend smoke: admin login → Dashboard / Patients / Appointments / Calendar / Notifications / Security / Audit Log — all pages render, zero console errors, masked PHI ([redacted]) displayed correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration4.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/backend/tests/test_perf_cache_rate.py",
+    "/app/test_reports/pytest/iteration4_results.xml",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/identity/router.py::update_user correctly invalidates PREFIX_PROVIDERS on any PATCH, but it ALSO invalidates on pure status='active'→'active' no-op (since the field is present in the payload). Not a bug, just a micro-waste — low priority.",
+    "services/perf/router.py::connection_info uses `client.read_preference` which returns the repr of the pymongo ReadPreference. The startswith('Primary') and 'Secondary' substring checks work but a future pymongo version could change that string. Consider exposing `mode` as a separate stable field if this contract is relied on by tests long-term.",
+    "services/communication/router.py: the unmask branch does NOT call `await cache.invalidate_prefix(PREFIX_NOTIFICATIONS)` — which is correct (unmask must be cacheless and preserve the masked cache) but worth an inline comment to prevent a future refactor from 'optimising' it.",
+    "core/metrics.py: ccms_redis_up is refreshed inside `render()` which makes the gauge consistent per-scrape but will briefly report 1 if Redis drops between two scrapes. Acceptable trade-off; already behaves correctly in the stop-redis test.",
+    "core/metrics.py Histogram labels `path_prefix` — good UUID-stripping observed in test_path_prefix_does_not_explode_with_ids. The strip logic correctly groups /api/patients/{uuid} under /api/patients.",
+    "Iteration-3 review items still applicable (docstring fix 'fixed-window', read_ratio drift over time) but they are non-blocking operator hints, not bugs."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration4.py (new — 20 tests for iteration 4 features)"
+  ],
+  "success_rate": {
+    "backend": "100% (54/54 — 20 iteration-4 + 34 regression)",
+    "frontend": "100% smoke (login + 6 tabs, 0 console errors)"
+  },
+  "test_credentials": "admin@ccms.app/Admin@ComplianceClinic1, doctor@ccms.app/Doctor@ComplianceClinic1, staff@ccms.app/Staff@ComplianceClinic1, patient@ccms.app/Patient@ComplianceClinic1 — all verified.",
+  "seed_data_creation": "Iteration 4 test run created TEST_it4_*@ccms.app user rows (mix of staff→doctor promotions, disabled/active flips) and a few far-future (2099-2150) appointments used to trigger notification subscribers. All prefixed TEST_it4_ for easy cleanup; safe to leave in place.",
+  "redis_verified": {
+    "ping": "PONG",
+    "providers_cache_invalidated_on_patch": "YES — identity:providers:active EXISTS==0 after PATCH role or status",
+    "notifications_cache_key_shape": "notifications:list:event=:patient=:limit=200 (TTL 15s)",
+    "unmask_never_cached": "VERIFIED — notifications:* keyspace delta == 0 after GET /api/notifications?unmask=true",
+    "subscriber_invalidation_on_booking": "VERIFIED — prior notifications:* keys cleared after POST /api/appointments",
+    "gauge_flip_on_stop": "VERIFIED — ccms_redis_up flipped 1→0 within 2s of `supervisorctl stop redis`, restored to 1 after start",
+    "left_running": "YES — redis brought back up at end of run"
+  },
+  "metrics_verified": {
+    "endpoint": "GET /api/metrics -> 200 text/plain; version=0.0.4",
+    "required_names_present": true,
+    "db_routing_labels": ["write", "read", "read_after_write"],
+    "traffic_increases_counters": "ccms_cache_hits_total and ccms_db_queries_total{route=read} both monotonic increase after /api/patients traffic",
+    "histogram_buckets": "ccms_http_request_duration_seconds_bucket{path_prefix=/api/patients,status_class=2xx,le=0.5} > 0",
+    "no_uuid_path_explosion": "VERIFIED — no dynamic-id path_prefix labels found"
+  },
+  "hipaa_regressions": "NONE — all 24 iteration-2 tests + 10 iteration-3 tests pass (encryption enc:v1:, masking, break-glass reason, MFA, step-up reauth, soft-delete, 6 notifications per lifecycle, perf/stats shape, login rate-limit 429 on 31st attempt).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend suite is now 3 files: /app/backend/tests/backend_test.py (HIPAA, 24), /app/backend/tests/test_perf_cache_rate.py (perf, 10), /app/backend/tests/test_iteration4.py (iter4, 20). Run everything with `REACT_APP_BACKEND_URL=https://chiro-cloud.preview.emergentagent.com pytest /app/backend/tests/ -v --junitxml=/app/test_reports/pytest/pytest_results.xml`. test_iteration4.py::TestMetrics::test_redis_up_gauge_flips_when_stopped temporarily stops supervisord redis (~3s) and restores it; if a prior run is killed mid-test, run `sudo supervisorctl start redis`. The booking helper in TestNotificationsCache uses randomised far-future timestamps (2099-2150) to avoid conflicts across runs. The rate-limit test remains IP-scoped, can consume login bucket ~60s — schedule rate-limit-sensitive tests last or use X-Forwarded-For.",
+  "rca_of_issue": "N/A — no bugs found in iteration 4. Previous iteration-3 bug (POST /api/auth/users missing providers-cache invalidation) is no longer reproducible — create_user now calls cache.invalidate_prefix(PREFIX_PROVIDERS). PATCH /api/auth/users/{id} also does it. Providers cache now invalidates correctly on all 4 user-mutation paths (create, patch, disable, enable)."
+}

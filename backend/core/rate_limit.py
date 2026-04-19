@@ -1,16 +1,11 @@
 """
 Sliding-window IP rate limit, Redis-backed with in-process fallback.
-
-Used as an outer guard for /api/auth/login (the per-email brute-force lockout
-in MongoDB stays as the durable, audit-friendly source of truth). When Redis
-is unavailable the fallback uses an in-process dict — fine for a single pod,
-not a security control on its own at scale. That is acceptable because the
-Mongo lockout still applies.
 """
 import logging
 import time
 from collections import defaultdict, deque
 
+from core import metrics
 from core.redis_client import get_redis, safe_call
 
 logger = logging.getLogger("ccms.rate_limit")
@@ -24,12 +19,6 @@ def local_blocks() -> int:
 
 
 async def is_allowed(key: str, *, limit: int, window_seconds: int) -> bool:
-    """Returns True if the call is allowed; False if it should be blocked.
-
-    Implementation: increment a Redis counter scoped to a fixed window bucket
-    so that we never need server-side scripts. With LRU eviction and short
-    TTLs this is bounded in memory.
-    """
     bucket = int(time.time() // window_seconds)
     redis_key = f"rl:{key}:{window_seconds}:{bucket}"
 
@@ -44,9 +33,14 @@ async def is_allowed(key: str, *, limit: int, window_seconds: int) -> bool:
         result = await safe_call(_bump, default=None)
         if result is not None:
             count = int(result[0])
-            return count <= limit
+            allowed = count <= limit
+            if not allowed:
+                try:
+                    metrics.rate_limit_blocks_total.labels(source="redis").inc()
+                except Exception:
+                    pass
+            return allowed
 
-    # Fallback: in-process bucket
     return _local_check(key, limit, window_seconds)
 
 
@@ -59,6 +53,10 @@ def _local_check(key: str, limit: int, window_seconds: int) -> bool:
         q.popleft()
     if len(q) >= limit:
         _local_blocks += 1
+        try:
+            metrics.rate_limit_blocks_total.labels(source="local").inc()
+        except Exception:
+            pass
         return False
     q.append(now)
     return True
