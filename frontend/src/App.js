@@ -11,6 +11,8 @@ import PatientDetail from "./pages/PatientDetail";
 import Appointments from "./pages/Appointments";
 import CalendarPage from "./pages/Calendar";
 import Notifications from "./pages/Notifications";
+import Security from "./pages/Security";
+import AuditLog from "./pages/AuditLog";
 import "./App.css";
 
 function Shell({ children, roles }) {
@@ -28,54 +30,14 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
-          <Route
-            path="/"
-            element={
-              <Shell>
-                <Dashboard />
-              </Shell>
-            }
-          />
-          <Route
-            path="/patients"
-            element={
-              <Shell>
-                <Patients />
-              </Shell>
-            }
-          />
-          <Route
-            path="/patients/:id"
-            element={
-              <Shell>
-                <PatientDetail />
-              </Shell>
-            }
-          />
-          <Route
-            path="/appointments"
-            element={
-              <Shell>
-                <Appointments />
-              </Shell>
-            }
-          />
-          <Route
-            path="/calendar"
-            element={
-              <Shell roles={["admin", "doctor", "staff"]}>
-                <CalendarPage />
-              </Shell>
-            }
-          />
-          <Route
-            path="/notifications"
-            element={
-              <Shell roles={["admin", "staff"]}>
-                <Notifications />
-              </Shell>
-            }
-          />
+          <Route path="/" element={<Shell><Dashboard /></Shell>} />
+          <Route path="/patients" element={<Shell><Patients /></Shell>} />
+          <Route path="/patients/:id" element={<Shell><PatientDetail /></Shell>} />
+          <Route path="/appointments" element={<Shell><Appointments /></Shell>} />
+          <Route path="/calendar" element={<Shell roles={["admin", "doctor", "staff"]}><CalendarPage /></Shell>} />
+          <Route path="/notifications" element={<Shell roles={["admin", "staff"]}><Notifications /></Shell>} />
+          <Route path="/audit-log" element={<Shell roles={["admin"]}><AuditLog /></Shell>} />
+          <Route path="/security" element={<Shell><Security /></Shell>} />
         </Routes>
       </BrowserRouter>
       <Toaster richColors position="top-right" />

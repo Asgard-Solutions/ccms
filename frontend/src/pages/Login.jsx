@@ -1,28 +1,24 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Stethoscope } from "lucide-react";
+import { Stethoscope, ShieldCheck } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 
-export default function Login() {
-  const { user, login, formatApiError } = useAuth();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const [email, setEmail] = useState("admin@ccms.app");
-  const [password, setPassword] = useState("Admin@123");
+function MfaStep() {
+  const { verifyMfa, formatApiError, logout } = useAuth();
+  const [code, setCode] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const navigate = useNavigate();
 
-  if (user) return <Navigate to={location.state?.from?.pathname || "/"} replace />;
-
-  async function onSubmit(e) {
+  async function submit(e) {
     e.preventDefault();
     setSubmitting(true);
     try {
-      await login(email.trim(), password);
-      toast.success("Welcome back");
+      await verifyMfa(code);
+      toast.success("Authentication complete");
       navigate("/");
     } catch (err) {
       toast.error(formatApiError(err));
@@ -30,6 +26,163 @@ export default function Login() {
       setSubmitting(false);
     }
   }
+
+  return (
+    <div className="max-w-md space-y-6">
+      <div className="flex items-center gap-2">
+        <span className="flex h-9 w-9 items-center justify-center rounded-sm bg-[#EDF2EE] text-[#526B58]">
+          <ShieldCheck className="h-5 w-5" />
+        </span>
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+            Second factor
+          </div>
+          <h2 className="font-['Outfit'] text-2xl font-medium">Enter your authenticator code</h2>
+        </div>
+      </div>
+      <form onSubmit={submit} className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="mfa">6-digit code (or backup code)</Label>
+          <Input
+            id="mfa"
+            data-testid="mfa-code-input"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            autoFocus
+            autoComplete="one-time-code"
+            inputMode="numeric"
+            required
+            className="h-11 rounded-sm border-stone-200 tracking-widest"
+          />
+        </div>
+        <Button
+          type="submit"
+          data-testid="mfa-submit-btn"
+          disabled={submitting || !code.trim()}
+          className="h-11 w-full rounded-sm bg-[#7B9A82] hover:bg-[#65826C]"
+        >
+          {submitting ? "Verifying…" : "Verify & continue"}
+        </Button>
+        <button
+          type="button"
+          onClick={logout}
+          className="w-full text-center text-xs text-[#5C6A61] hover:text-[#1F2924]"
+        >
+          Cancel and start over
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function LoginForm() {
+  const { login, formatApiError } = useAuth();
+  const [email, setEmail] = useState("admin@ccms.app");
+  const [password, setPassword] = useState("Admin@ComplianceClinic1");
+  const [submitting, setSubmitting] = useState(false);
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  async function onSubmit(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    try {
+      const res = await login(email.trim(), password);
+      if (res.mfa_required) {
+        toast.info("Two-factor authentication required");
+        return;
+      }
+      toast.success("Welcome back");
+      navigate(location.state?.from?.pathname || "/");
+    } catch (err) {
+      toast.error(formatApiError(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="max-w-md">
+      <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+        Sign in
+      </span>
+      <h1 className="mt-3 font-['Outfit'] text-4xl font-medium leading-none tracking-tight text-[#1F2924] sm:text-5xl">
+        Your clinic,
+        <br />
+        in one calm place.
+      </h1>
+      <p className="mt-6 text-base leading-relaxed text-[#5C6A61]">
+        Cookie-based JWT auth, TOTP MFA, and a full audit trail. PHI is masked
+        by default and encrypted at rest.
+      </p>
+
+      <form onSubmit={onSubmit} className="mt-10 space-y-5">
+        <div className="space-y-2">
+          <Label htmlFor="email" className="text-[#5C6A61]">Email</Label>
+          <Input
+            id="email"
+            data-testid="login-email-input"
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            className="h-11 rounded-sm border-stone-200"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="password" className="text-[#5C6A61]">Password</Label>
+          <Input
+            id="password"
+            data-testid="login-password-input"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            className="h-11 rounded-sm border-stone-200"
+          />
+        </div>
+
+        <Button
+          type="submit"
+          data-testid="login-submit-button"
+          disabled={submitting}
+          className="h-11 w-full rounded-sm bg-[#7B9A82] px-6 font-medium text-white transition-colors hover:bg-[#65826C] active:scale-[0.99]"
+        >
+          {submitting ? "Signing in…" : "Sign in"}
+        </Button>
+
+        <p className="text-center text-sm text-[#5C6A61]">
+          New patient?{" "}
+          <Link
+            to="/register"
+            data-testid="login-to-register-link"
+            className="font-medium text-[#526B58] underline-offset-4 hover:underline"
+          >
+            Create an account
+          </Link>
+        </p>
+      </form>
+
+      <div className="mt-10 rounded-sm border border-stone-200 bg-white p-4 text-xs text-[#5C6A61]">
+        <div className="mb-2 font-semibold uppercase tracking-[0.15em]">
+          Demo credentials
+        </div>
+        <div className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-1 font-mono">
+          <span className="font-sans">Admin</span><span>admin@ccms.app / Admin@ComplianceClinic1</span>
+          <span className="font-sans">Doctor</span><span>doctor@ccms.app / Doctor@ComplianceClinic1</span>
+          <span className="font-sans">Staff</span><span>staff@ccms.app / Staff@ComplianceClinic1</span>
+          <span className="font-sans">Patient</span><span>patient@ccms.app / Patient@ComplianceClinic1</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function Login() {
+  const { user, mfaContext } = useAuth();
+  if (user) return <Navigate to="/" replace />;
 
   return (
     <div
@@ -46,87 +199,10 @@ export default function Login() {
           </span>
         </Link>
 
-        <div className="max-w-md">
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
-            Sign in
-          </span>
-          <h1 className="mt-3 font-['Outfit'] text-4xl font-medium leading-none tracking-tight text-[#1F2924] sm:text-5xl">
-            Your clinic,
-            <br />
-            in one calm place.
-          </h1>
-          <p className="mt-6 text-base leading-relaxed text-[#5C6A61]">
-            Manage patients, scheduling, and provider communication through a
-            single event-driven workspace.
-          </p>
-
-          <form onSubmit={onSubmit} className="mt-10 space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="email" className="text-[#5C6A61]">Email</Label>
-              <Input
-                id="email"
-                data-testid="login-email-input"
-                type="email"
-                autoComplete="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="h-11 rounded-sm border-stone-200"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-[#5C6A61]">Password</Label>
-              <Input
-                id="password"
-                data-testid="login-password-input"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="h-11 rounded-sm border-stone-200"
-              />
-            </div>
-
-            <Button
-              type="submit"
-              data-testid="login-submit-button"
-              disabled={submitting}
-              className="h-11 w-full rounded-sm bg-[#7B9A82] px-6 font-medium text-white transition-colors hover:bg-[#65826C] active:scale-[0.99]"
-            >
-              {submitting ? "Signing in…" : "Sign in"}
-            </Button>
-
-            <p className="text-center text-sm text-[#5C6A61]">
-              New patient?{" "}
-              <Link
-                to="/register"
-                data-testid="login-to-register-link"
-                className="font-medium text-[#526B58] underline-offset-4 hover:underline"
-              >
-                Create an account
-              </Link>
-            </p>
-          </form>
-
-          <div className="mt-10 rounded-sm border border-stone-200 bg-white p-4 text-xs text-[#5C6A61]">
-            <div className="mb-2 font-semibold uppercase tracking-[0.15em]">
-              Demo credentials
-            </div>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-1">
-              <span>Admin</span><span className="font-mono">admin@ccms.app / Admin@123</span>
-              <span>Doctor</span><span className="font-mono">doctor@ccms.app / Doctor@123</span>
-              <span>Staff</span><span className="font-mono">staff@ccms.app / Staff@123</span>
-              <span>Patient</span><span className="font-mono">patient@ccms.app / Patient@123</span>
-            </div>
-          </div>
-        </div>
+        {mfaContext?.mfa_ticket ? <MfaStep /> : <LoginForm />}
       </div>
 
-      <div
-        className="relative hidden overflow-hidden border-l border-stone-200 lg:block"
-        aria-hidden="true"
-      >
+      <div className="relative hidden overflow-hidden border-l border-stone-200 lg:block" aria-hidden="true">
         <img
           src="https://images.pexels.com/photos/8459996/pexels-photo-8459996.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
           alt=""

@@ -1,16 +1,17 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { api, formatApiError } from "../api/client";
 
-/**
- * Auth states:
- *   undefined → checking session
- *   null      → not authenticated
- *   object    → authenticated user
- */
 const AuthContext = createContext(null);
+
+const IDLE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minute auto-logoff
+const IDLE_WARN_MS = IDLE_TIMEOUT_MS - 60_000;
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(undefined);
+  const [mfaContext, setMfaContext] = useState(null); // {mfa_ticket, password_rotation_due}
+  const [idleWarning, setIdleWarning] = useState(false);
+  const idleTimer = useRef(null);
+  const warnTimer = useRef(null);
 
   const fetchMe = useCallback(async () => {
     try {
@@ -27,18 +28,6 @@ export function AuthProvider({ children }) {
     fetchMe();
   }, [fetchMe]);
 
-  const login = useCallback(async (email, password) => {
-    const { data } = await api.post("/auth/login", { email, password });
-    setUser(data);
-    return data;
-  }, []);
-
-  const register = useCallback(async (payload) => {
-    const { data } = await api.post("/auth/register", payload);
-    setUser(data);
-    return data;
-  }, []);
-
   const logout = useCallback(async () => {
     try {
       await api.post("/auth/logout");
@@ -46,10 +35,86 @@ export function AuthProvider({ children }) {
       /* ignore */
     }
     setUser(null);
+    setMfaContext(null);
+  }, []);
+
+  /** Idle timeout — only active while authenticated. */
+  useEffect(() => {
+    if (!user) return undefined;
+
+    const reset = () => {
+      setIdleWarning(false);
+      if (warnTimer.current) clearTimeout(warnTimer.current);
+      if (idleTimer.current) clearTimeout(idleTimer.current);
+      warnTimer.current = setTimeout(() => setIdleWarning(true), IDLE_WARN_MS);
+      idleTimer.current = setTimeout(() => {
+        setIdleWarning(false);
+        logout();
+      }, IDLE_TIMEOUT_MS);
+    };
+    const events = ["mousedown", "keydown", "touchstart", "scroll"];
+    events.forEach((e) => window.addEventListener(e, reset, { passive: true }));
+    reset();
+    return () => {
+      events.forEach((e) => window.removeEventListener(e, reset));
+      if (warnTimer.current) clearTimeout(warnTimer.current);
+      if (idleTimer.current) clearTimeout(idleTimer.current);
+    };
+  }, [user, logout]);
+
+  const login = useCallback(async (email, password) => {
+    const { data } = await api.post("/auth/login", { email, password });
+    if (data?.mfa_required) {
+      setMfaContext({
+        mfa_ticket: data.mfa_ticket,
+        password_rotation_due: data.password_rotation_due,
+      });
+      return { mfa_required: true };
+    }
+    setUser(data.user);
+    setMfaContext(
+      data.password_rotation_due ? { password_rotation_due: true } : null
+    );
+    return { user: data.user };
+  }, []);
+
+  const verifyMfa = useCallback(async (code) => {
+    if (!mfaContext?.mfa_ticket) throw new Error("No pending MFA challenge");
+    const { data } = await api.post("/auth/mfa/challenge", {
+      mfa_ticket: mfaContext.mfa_ticket,
+      code,
+    });
+    setUser(data);
+    setMfaContext(null);
+    return data;
+  }, [mfaContext]);
+
+  const register = useCallback(async (payload) => {
+    const { data } = await api.post("/auth/register", payload);
+    setUser(data);
+    return data;
+  }, []);
+
+  const reauth = useCallback(async (password) => {
+    const { data } = await api.post("/auth/reauth", { password });
+    return data;
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, login, register, logout, refresh: fetchMe, formatApiError }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        mfaContext,
+        idleWarning,
+        login,
+        verifyMfa,
+        register,
+        logout,
+        reauth,
+        refresh: fetchMe,
+        formatApiError,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

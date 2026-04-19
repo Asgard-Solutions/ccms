@@ -1,26 +1,29 @@
 """
-Scheduling Service router — /api/appointments/*
-
-Publishes domain events to the in-process event bus so the Communication Service
-(or any future subscriber, e.g. Billing) can react independently.
+Scheduling Service router — /api/appointments/* (HIPAA-hardened).
+Adds:
+  - Audit entries for every create/update/cancel (PHI-touching metadata only)
+  - Encryption at rest of `notes`
+  - Excludes soft-deleted patients from new bookings
 """
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
+from core.audit import audit_success
+from core.crypto import decrypt_fields, encrypt_fields
 from core.db import get_db
 from core.deps import get_current_user, require_role
 from core.event_bus import publish
 from services.scheduling.models import (
     AppointmentCreate,
-    AppointmentUpdate,
     AppointmentPublic,
+    AppointmentUpdate,
 )
 
 router = APIRouter(prefix="/appointments", tags=["scheduling"])
-
 STAFF_ROLES = ("admin", "doctor", "staff")
+ENCRYPTED = ["notes"]
 
 
 def _now_iso() -> str:
@@ -59,14 +62,8 @@ async def _hydrate(apps: list[dict]) -> list[dict]:
 
 
 async def _check_conflict(
-    provider_id: str,
-    start_iso: str,
-    end_iso: str,
-    exclude_id: str | None = None,
+    provider_id: str, start_iso: str, end_iso: str, exclude_id: str | None = None,
 ) -> None:
-    """Raise 409 if the provider already has a scheduled appointment overlapping
-    [start, end).  Two intervals overlap iff a.start < b.end AND b.start < a.end.
-    """
     db = get_db()
     q: dict = {
         "provider_id": provider_id,
@@ -87,18 +84,22 @@ async def _check_conflict(
 @router.post("", response_model=AppointmentPublic, status_code=201)
 async def create_appointment(
     payload: AppointmentCreate,
+    request: Request,
     actor: dict = Depends(require_role(*STAFF_ROLES)),
 ):
     db = get_db()
     if payload.end_time <= payload.start_time:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "end_time must be after start_time")
 
-    # Validate patient + provider exist
-    patient = await db.patients.find_one({"id": payload.patient_id}, {"_id": 0, "id": 1})
+    patient = await db.patients.find_one(
+        {"id": payload.patient_id, "status": {"$ne": "deleted"}},
+        {"_id": 0, "id": 1},
+    )
     if not patient:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
     provider = await db.users.find_one(
-        {"id": payload.provider_id, "role": "doctor"}, {"_id": 0, "id": 1, "name": 1}
+        {"id": payload.provider_id, "role": "doctor", "status": {"$ne": "disabled"}},
+        {"_id": 0, "id": 1, "name": 1},
     )
     if not provider:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Provider not found")
@@ -121,18 +122,23 @@ async def create_appointment(
         "created_at": now,
         "updated_at": now,
     }
-    await db.appointments.insert_one(doc)
-    doc.pop("_id", None)
+    await db.appointments.insert_one(encrypt_fields(doc, ENCRYPTED))
 
-    # Fire event — Communication Service handler will create notification records.
     await publish("appointment.booked", {"appointment": doc, "actor_id": actor["id"]})
+    await audit_success(
+        actor, "appointment.created", request,
+        entity_type="appointment", entity_id=doc["id"],
+        phi_accessed=True,
+        metadata={"patient_id": payload.patient_id, "provider_id": payload.provider_id},
+    )
 
-    (hydrated,) = await _hydrate([doc])
+    (hydrated,) = await _hydrate([dict(doc)])
     return hydrated
 
 
 @router.get("", response_model=list[AppointmentPublic])
 async def list_appointments(
+    request: Request,
     user: dict = Depends(get_current_user),
     provider_id: str | None = None,
     patient_id: str | None = None,
@@ -143,7 +149,6 @@ async def list_appointments(
     db = get_db()
     q: dict = {}
 
-    # Role-based row filtering
     if user["role"] == "patient":
         patient_record = await db.patients.find_one(
             {"user_id": user["id"]}, {"_id": 0, "id": 1}
@@ -152,7 +157,6 @@ async def list_appointments(
             return []
         q["patient_id"] = patient_record["id"]
     elif user["role"] == "doctor":
-        # doctors see their own appts by default, but can opt to see any
         if not provider_id and not patient_id:
             q["provider_id"] = user["id"]
 
@@ -171,12 +175,15 @@ async def list_appointments(
         q["start_time"] = range_q
 
     cursor = db.appointments.find(q, {"_id": 0}).sort("start_time", 1)
-    apps = [a async for a in cursor]
-    return await _hydrate(apps)
+    apps = [decrypt_fields(a, ENCRYPTED) async for a in cursor]
+    hydrated = await _hydrate(apps)
+    return hydrated
 
 
 @router.get("/{appointment_id}", response_model=AppointmentPublic)
-async def get_appointment(appointment_id: str, user: dict = Depends(get_current_user)):
+async def get_appointment(
+    appointment_id: str, request: Request, user: dict = Depends(get_current_user)
+):
     db = get_db()
     a = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
     if not a:
@@ -187,6 +194,7 @@ async def get_appointment(appointment_id: str, user: dict = Depends(get_current_
         )
         if not patient_record or patient_record["id"] != a["patient_id"]:
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
+    a = decrypt_fields(a, ENCRYPTED)
     (hydrated,) = await _hydrate([a])
     return hydrated
 
@@ -195,6 +203,7 @@ async def get_appointment(appointment_id: str, user: dict = Depends(get_current_
 async def update_appointment(
     appointment_id: str,
     payload: AppointmentUpdate,
+    request: Request,
     actor: dict = Depends(require_role(*STAFF_ROLES)),
 ):
     db = get_db()
@@ -226,29 +235,34 @@ async def update_appointment(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No fields to update")
     updates["updated_at"] = _now_iso()
 
-    await db.appointments.update_one({"id": appointment_id}, {"$set": updates})
+    await db.appointments.update_one(
+        {"id": appointment_id}, {"$set": encrypt_fields(updates, ENCRYPTED)}
+    )
     updated = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+    updated_dec = decrypt_fields(updated, ENCRYPTED)
 
     await publish(
         "appointment.updated",
-        {"appointment": updated, "previous": current, "actor_id": actor["id"]},
+        {"appointment": updated_dec, "previous": current, "actor_id": actor["id"]},
     )
-
-    (hydrated,) = await _hydrate([updated])
+    await audit_success(
+        actor, "appointment.updated", request,
+        entity_type="appointment", entity_id=appointment_id,
+        phi_accessed=True, metadata={"fields": list(updates.keys())},
+    )
+    (hydrated,) = await _hydrate([updated_dec])
     return hydrated
 
 
 @router.post("/{appointment_id}/cancel", response_model=AppointmentPublic)
 async def cancel_appointment(
-    appointment_id: str,
-    user: dict = Depends(get_current_user),
+    appointment_id: str, request: Request, user: dict = Depends(get_current_user)
 ):
     db = get_db()
     a = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
     if not a:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
 
-    # Patient owners may cancel their own; otherwise staff/doctor/admin only
     if user["role"] == "patient":
         patient_record = await db.patients.find_one(
             {"user_id": user["id"]}, {"_id": 0, "id": 1}
@@ -266,11 +280,12 @@ async def cancel_appointment(
         {"$set": {"status": "cancelled", "updated_at": _now_iso()}},
     )
     updated = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+    updated_dec = decrypt_fields(updated, ENCRYPTED)
 
-    await publish(
-        "appointment.cancelled",
-        {"appointment": updated, "actor_id": user["id"]},
+    await publish("appointment.cancelled", {"appointment": updated_dec, "actor_id": user["id"]})
+    await audit_success(
+        user, "appointment.cancelled", request,
+        entity_type="appointment", entity_id=appointment_id, phi_accessed=True,
     )
-
-    (hydrated,) = await _hydrate([updated])
+    (hydrated,) = await _hydrate([updated_dec])
     return hydrated

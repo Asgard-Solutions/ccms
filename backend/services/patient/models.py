@@ -1,47 +1,26 @@
 """
-Patient Service — Patient + MedicalRecord domain models.
+Patient Service — Patient + MedicalRecord domain models (HIPAA-hardened).
 
-Future relational schema:
-  patients (
-    id                 UUID PRIMARY KEY,
-    user_id            UUID REFERENCES users(id),         -- nullable
-    first_name         VARCHAR(100) NOT NULL,
-    last_name          VARCHAR(100) NOT NULL,
-    date_of_birth      DATE,
-    gender             VARCHAR(20),
-    phone              VARCHAR(32),
-    email              VARCHAR(255),
-    address            TEXT,
-    emergency_contact  VARCHAR(255),
-    notes              TEXT,
-    created_at         TIMESTAMPTZ NOT NULL,
-    updated_at         TIMESTAMPTZ NOT NULL
-  );
+Added to the Phase 1 schema:
+  patients + status VARCHAR(20) NOT NULL DEFAULT 'active'  -- active|deleted
+          + deleted_at    TIMESTAMPTZ
+          + deleted_by    UUID REFERENCES users(id)
+          + retention_until TIMESTAMPTZ      -- 7-year retention window
 
-  medical_records (
-    id            UUID PRIMARY KEY,
-    patient_id    UUID NOT NULL REFERENCES patients(id) ON DELETE CASCADE,
-    record_type   VARCHAR(40) NOT NULL,   -- assessment|treatment|note|diagnosis
-    title         VARCHAR(200) NOT NULL,
-    description   TEXT,
-    diagnosis     TEXT,
-    treatment     TEXT,
-    recorded_by   UUID NOT NULL REFERENCES users(id),
-    recorded_at   TIMESTAMPTZ NOT NULL
-  );
+Sensitive free-text columns are stored encrypted at rest via core.crypto.
 """
-from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
 Gender = Literal["male", "female", "non-binary", "other", "prefer-not-to-say"]
 RecordType = Literal["assessment", "treatment", "note", "diagnosis"]
+PatientStatus = Literal["active", "deleted"]
 
 
 class PatientCreate(BaseModel):
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(min_length=1, max_length=100)
-    date_of_birth: str | None = None  # ISO date string YYYY-MM-DD
+    date_of_birth: str | None = None
     gender: Gender | None = None
     phone: str | None = None
     email: EmailStr | None = None
@@ -68,6 +47,7 @@ class PatientPublic(BaseModel):
     user_id: str | None = None
     first_name: str
     last_name: str
+    display_name_masked: str | None = None
     date_of_birth: str | None = None
     gender: Gender | None = None
     phone: str | None = None
@@ -75,6 +55,10 @@ class PatientPublic(BaseModel):
     address: str | None = None
     emergency_contact: str | None = None
     notes: str | None = None
+    status: PatientStatus = "active"
+    deleted_at: str | None = None
+    retention_until: str | None = None
+    unmasked: bool = False
     created_at: str
     updated_at: str
 

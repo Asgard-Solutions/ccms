@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { Eye, EyeOff, Plus, Search, User2 } from "lucide-react";
+import { api, formatApiError } from "../api/client";
 import { toast } from "sonner";
-import { Plus, Search, User2 } from "lucide-react";
-import { api } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { formatDate } from "../utils/time";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
+import { Label } from "../components/ui/label";
 import { Skeleton } from "../components/ui/skeleton";
 import {
   Dialog,
@@ -16,20 +17,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../components/ui/dialog";
-import { Label } from "../components/ui/label";
 
 const STAFF_ROLES = ["admin", "doctor", "staff"];
 
 function PatientFormDialog({ open, onClose, onCreated }) {
   const [form, setForm] = useState({
-    first_name: "",
-    last_name: "",
-    email: "",
-    phone: "",
-    date_of_birth: "",
-    address: "",
-    emergency_contact: "",
-    notes: "",
+    first_name: "", last_name: "", email: "", phone: "",
+    date_of_birth: "", address: "", emergency_contact: "", notes: "",
   });
   const [submitting, setSubmitting] = useState(false);
   const update = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -46,17 +40,11 @@ function PatientFormDialog({ open, onClose, onCreated }) {
       onCreated(data);
       onClose();
       setForm({
-        first_name: "",
-        last_name: "",
-        email: "",
-        phone: "",
-        date_of_birth: "",
-        address: "",
-        emergency_contact: "",
-        notes: "",
+        first_name: "", last_name: "", email: "", phone: "",
+        date_of_birth: "", address: "", emergency_contact: "", notes: "",
       });
     } catch (err) {
-      toast.error(err.response?.data?.detail || "Failed to create patient");
+      toast.error(formatApiError(err));
     } finally {
       setSubmitting(false);
     }
@@ -68,103 +56,30 @@ function PatientFormDialog({ open, onClose, onCreated }) {
         <DialogHeader>
           <DialogTitle className="font-['Outfit']">New patient</DialogTitle>
           <DialogDescription>
-            Add intake details. You can refine them later from the patient profile.
+            All free-text PHI you enter is encrypted at rest.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit} className="grid grid-cols-2 gap-4">
-          <div className="space-y-1">
-            <Label htmlFor="fn">First name</Label>
-            <Input
-              id="fn"
-              data-testid="patient-first-name"
-              required
-              value={form.first_name}
-              onChange={update("first_name")}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="ln">Last name</Label>
-            <Input
-              id="ln"
-              data-testid="patient-last-name"
-              required
-              value={form.last_name}
-              onChange={update("last_name")}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="em">Email</Label>
-            <Input
-              id="em"
-              data-testid="patient-email"
-              type="email"
-              value={form.email}
-              onChange={update("email")}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="ph">Phone</Label>
-            <Input
-              id="ph"
-              data-testid="patient-phone"
-              value={form.phone}
-              onChange={update("phone")}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="dob">Date of birth</Label>
-            <Input
-              id="dob"
-              data-testid="patient-dob"
-              type="date"
-              value={form.date_of_birth}
-              onChange={update("date_of_birth")}
-            />
-          </div>
-          <div className="space-y-1">
-            <Label htmlFor="em-c">Emergency contact</Label>
-            <Input
-              id="em-c"
-              data-testid="patient-emergency"
-              value={form.emergency_contact}
-              onChange={update("emergency_contact")}
-            />
-          </div>
-          <div className="col-span-2 space-y-1">
-            <Label htmlFor="addr">Address</Label>
-            <Input
-              id="addr"
-              data-testid="patient-address"
-              value={form.address}
-              onChange={update("address")}
-            />
-          </div>
-          <div className="col-span-2 space-y-1">
-            <Label htmlFor="notes">Intake notes</Label>
-            <Input
-              id="notes"
-              data-testid="patient-notes"
-              value={form.notes}
-              onChange={update("notes")}
-            />
-          </div>
-
+          <div className="space-y-1"><Label htmlFor="fn">First name</Label>
+            <Input id="fn" data-testid="patient-first-name" required value={form.first_name} onChange={update("first_name")} /></div>
+          <div className="space-y-1"><Label htmlFor="ln">Last name</Label>
+            <Input id="ln" data-testid="patient-last-name" required value={form.last_name} onChange={update("last_name")} /></div>
+          <div className="space-y-1"><Label htmlFor="em">Email</Label>
+            <Input id="em" data-testid="patient-email" type="email" value={form.email} onChange={update("email")} /></div>
+          <div className="space-y-1"><Label htmlFor="ph">Phone</Label>
+            <Input id="ph" data-testid="patient-phone" value={form.phone} onChange={update("phone")} /></div>
+          <div className="space-y-1"><Label htmlFor="dob">Date of birth</Label>
+            <Input id="dob" data-testid="patient-dob" type="date" value={form.date_of_birth} onChange={update("date_of_birth")} /></div>
+          <div className="space-y-1"><Label htmlFor="em-c">Emergency contact</Label>
+            <Input id="em-c" data-testid="patient-emergency" value={form.emergency_contact} onChange={update("emergency_contact")} /></div>
+          <div className="col-span-2 space-y-1"><Label htmlFor="addr">Address</Label>
+            <Input id="addr" data-testid="patient-address" value={form.address} onChange={update("address")} /></div>
+          <div className="col-span-2 space-y-1"><Label htmlFor="notes">Intake notes</Label>
+            <Input id="notes" data-testid="patient-notes" value={form.notes} onChange={update("notes")} /></div>
           <DialogFooter className="col-span-2 mt-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onClose}
-              className="rounded-sm"
-              data-testid="patient-cancel-btn"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={submitting}
-              data-testid="patient-submit-btn"
-              className="rounded-sm bg-[#7B9A82] hover:bg-[#65826C]"
-            >
+            <Button type="button" variant="outline" onClick={onClose} className="rounded-sm" data-testid="patient-cancel-btn">Cancel</Button>
+            <Button type="submit" disabled={submitting} data-testid="patient-submit-btn"
+              className="rounded-sm bg-[#7B9A82] hover:bg-[#65826C]">
               {submitting ? "Saving…" : "Save patient"}
             </Button>
           </DialogFooter>
@@ -177,24 +92,28 @@ function PatientFormDialog({ open, onClose, onCreated }) {
 export default function Patients() {
   const { user } = useAuth();
   const canCreate = STAFF_ROLES.includes(user.role);
+  const canUnmask = user.role === "admin";
   const [patients, setPatients] = useState(null);
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
+  const [unmask, setUnmask] = useState(false);
+
+  async function load(u = unmask) {
+    setPatients(null);
+    try {
+      const { data } = await api.get("/patients", {
+        params: u ? { unmask: true } : {},
+      });
+      setPatients(data);
+    } catch {
+      setPatients([]);
+    }
+  }
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const { data } = await api.get("/patients");
-        if (!cancelled) setPatients(data);
-      } catch {
-        if (!cancelled) setPatients([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    load(unmask);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unmask]);
 
   const filtered = useMemo(() => {
     if (!patients) return null;
@@ -203,7 +122,7 @@ export default function Patients() {
     return patients.filter((p) =>
       [p.first_name, p.last_name, p.email, p.phone]
         .filter(Boolean)
-        .some((v) => v.toLowerCase().includes(q))
+        .some((v) => v.toString().toLowerCase().includes(q))
     );
   }, [patients, search]);
 
@@ -211,25 +130,34 @@ export default function Patients() {
     <div data-testid="patients-page" className="space-y-8 animate-in fade-in duration-300">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
-            Patient directory
-          </span>
-          <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight text-[#1F2924]">
-            Patients
-          </h1>
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">Patient directory</span>
+          <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight text-[#1F2924]">Patients</h1>
           <p className="mt-2 text-sm text-[#5C6A61]">
-            Every patient, their history, and their upcoming visits in one place.
+            PHI is masked by default. Administrators can unmask; every unmasked view is audited.
           </p>
         </div>
-        {canCreate && (
-          <Button
-            data-testid="patients-new-btn"
-            onClick={() => setOpen(true)}
-            className="h-11 rounded-sm bg-[#7B9A82] px-5 hover:bg-[#65826C]"
-          >
-            <Plus className="mr-2 h-4 w-4" /> New patient
-          </Button>
-        )}
+        <div className="flex items-center gap-3">
+          {canUnmask && (
+            <Button
+              variant="outline"
+              onClick={() => setUnmask((u) => !u)}
+              data-testid="patients-unmask-toggle"
+              className="rounded-sm"
+            >
+              {unmask ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
+              {unmask ? "Mask PHI" : "Unmask (audited)"}
+            </Button>
+          )}
+          {canCreate && (
+            <Button
+              data-testid="patients-new-btn"
+              onClick={() => setOpen(true)}
+              className="h-11 rounded-sm bg-[#7B9A82] px-5 hover:bg-[#65826C]"
+            >
+              <Plus className="mr-2 h-4 w-4" /> New patient
+            </Button>
+          )}
+        </div>
       </header>
 
       <div className="relative max-w-md">
@@ -238,16 +166,14 @@ export default function Patients() {
           data-testid="patients-search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by name, email, or phone…"
+          placeholder="Search by name…"
           className="h-11 rounded-sm border-stone-200 pl-9"
         />
       </div>
 
       {filtered === null ? (
         <div className="space-y-2">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-16 rounded-sm" />
-          ))}
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-sm" />)}
         </div>
       ) : filtered.length === 0 ? (
         <div className="rounded-sm border border-dashed border-stone-200 bg-white p-16 text-center">
@@ -280,10 +206,15 @@ export default function Patients() {
                 >
                   <td className="px-6 py-4">
                     <div className="font-medium text-[#1F2924]">
-                      {p.first_name} {p.last_name}
+                      {p.unmasked ? `${p.first_name} ${p.last_name}` : p.display_name_masked || "—"}
                     </div>
                     <div className="text-xs text-[#5C6A61]">
                       {p.gender || "—"}
+                      {p.status === "deleted" && (
+                        <span className="ml-2 rounded-sm bg-[#FBF1EE] px-1.5 py-0.5 text-[10px] font-semibold uppercase text-[#C76D54]">
+                          deleted
+                        </span>
+                      )}
                     </div>
                   </td>
                   <td className="px-6 py-4 text-sm text-[#5C6A61]">
@@ -291,23 +222,12 @@ export default function Patients() {
                     <div className="text-xs">{p.phone || "—"}</div>
                   </td>
                   <td className="px-6 py-4 text-sm text-[#5C6A61]">
-                    {p.date_of_birth ? formatDate(p.date_of_birth) : "—"}
+                    {p.date_of_birth ? (p.unmasked ? formatDate(p.date_of_birth) : p.date_of_birth) : "—"}
                   </td>
-                  <td className="px-6 py-4 text-sm text-[#5C6A61]">
-                    {formatDate(p.created_at)}
-                  </td>
+                  <td className="px-6 py-4 text-sm text-[#5C6A61]">{formatDate(p.created_at)}</td>
                   <td className="px-6 py-4 text-right">
-                    <Button
-                      variant="ghost"
-                      asChild
-                      className="text-[#526B58] hover:bg-[#EDF2EE]"
-                    >
-                      <Link
-                        to={`/patients/${p.id}`}
-                        data-testid={`patient-open-${p.id}`}
-                      >
-                        Open
-                      </Link>
+                    <Button variant="ghost" asChild className="text-[#526B58] hover:bg-[#EDF2EE]">
+                      <Link to={`/patients/${p.id}`} data-testid={`patient-open-${p.id}`}>Open</Link>
                     </Button>
                   </td>
                 </tr>

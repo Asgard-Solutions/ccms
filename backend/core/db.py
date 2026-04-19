@@ -1,11 +1,5 @@
 """
-Database access module.
-
-Designed to be PostgreSQL-migration-friendly:
-- Uses UUID strings as primary keys (stored in an `id` field, NOT ObjectId)
-- All _id MongoDB artefacts are excluded from responses
-- Collection names mirror future relational table names (snake_case, plural)
-- No embedded documents for entities that would be separate tables
+Database access module — HIPAA-hardened indexes.
 """
 import os
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
@@ -36,14 +30,15 @@ async def close_client() -> None:
 
 
 async def create_indexes() -> None:
-    """Create indexes that will map cleanly to future PostgreSQL constraints."""
     db = get_db()
     # Identity
     await db.users.create_index("email", unique=True)
     await db.users.create_index("role")
+    await db.users.create_index("status")
     # Patients
     await db.patients.create_index("email")
     await db.patients.create_index("user_id")
+    await db.patients.create_index("status")
     # Medical records
     await db.medical_records.create_index("patient_id")
     await db.medical_records.create_index([("patient_id", 1), ("recorded_at", -1)])
@@ -55,8 +50,11 @@ async def create_indexes() -> None:
     # Notifications
     await db.notifications.create_index("appointment_id")
     await db.notifications.create_index([("created_at", -1)])
-    # Audit logs
+    # Audit logs (HIPAA retention-critical — hot indexes for admin review)
     await db.audit_logs.create_index([("created_at", -1)])
+    await db.audit_logs.create_index("actor_id")
+    await db.audit_logs.create_index([("entity_type", 1), ("entity_id", 1)])
+    await db.audit_logs.create_index("phi_accessed")
     # Auth support
     await db.login_attempts.create_index("identifier")
     await db.password_reset_tokens.create_index(

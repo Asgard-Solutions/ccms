@@ -1,27 +1,59 @@
 """
-Identity Service router — /api/auth/*
+Identity Service router — /api/auth/* (HIPAA-hardened).
+
+Adds:
+  - Strong password policy + history + rotation warnings
+  - TOTP MFA with a short-lived mfa_ticket step
+  - Step-up re-authentication for sensitive actions
+  - Account disable (no hard delete)
+  - Full audit trail for every auth action
 """
 import uuid
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
+from core.audit import audit_failure, audit_success, log_audit
 from core.db import get_db
 from core.deps import get_current_user, require_role
+from core.mfa import (
+    MFA_REQUIRED_ROLES,
+    create_mfa_ticket,
+    decode_mfa_ticket,
+    generate_backup_codes,
+    generate_secret,
+    provisioning_uri,
+    verify_backup_code,
+    verify_code,
+)
+from core.password_policy import (
+    PASSWORD_HISTORY,
+    PasswordPolicyError,
+    password_expiry_status,
+    reject_password_reuse,
+    validate_strength,
+)
+from core.reauth import create_reauth_token
 from core.security import (
-    hash_password,
-    verify_password,
+    ACCESS_TOKEN_MINUTES,
+    REFRESH_TOKEN_DAYS,
     create_access_token,
     create_refresh_token,
     decode_token,
-    ACCESS_TOKEN_MINUTES,
-    REFRESH_TOKEN_DAYS,
+    hash_password,
+    verify_password,
 )
 from services.identity.models import (
-    UserRegister,
+    AdminUserCreate,
+    LoginResult,
+    MfaChallenge,
+    MfaSetupResponse,
+    MfaVerify,
+    PasswordChange,
+    ReauthRequest,
     UserLogin,
     UserPublic,
-    AdminUserCreate,
+    UserRegister,
 )
 
 router = APIRouter(prefix="/auth", tags=["identity"])
@@ -30,31 +62,26 @@ MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
 
 
-def _set_auth_cookies(response: Response, access: str, refresh: str) -> None:
-    # samesite=none + secure required for cross-site cookies (frontend -> preview host).
-    response.set_cookie(
-        "access_token",
-        access,
+def _cookie_kwargs(max_age: int) -> dict:
+    return dict(
         httponly=True,
         secure=True,
         samesite="none",
-        max_age=ACCESS_TOKEN_MINUTES * 60,
+        max_age=max_age,
         path="/",
     )
+
+
+def _set_auth_cookies(response: Response, access: str, refresh: str) -> None:
+    response.set_cookie("access_token", access, **_cookie_kwargs(ACCESS_TOKEN_MINUTES * 60))
     response.set_cookie(
-        "refresh_token",
-        refresh,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=REFRESH_TOKEN_DAYS * 86400,
-        path="/",
+        "refresh_token", refresh, **_cookie_kwargs(REFRESH_TOKEN_DAYS * 86400)
     )
 
 
 def _clear_auth_cookies(response: Response) -> None:
-    response.delete_cookie("access_token", path="/")
-    response.delete_cookie("refresh_token", path="/")
+    for c in ("access_token", "refresh_token", "reauth_token"):
+        response.delete_cookie(c, path="/")
 
 
 def _to_public(user: dict) -> dict:
@@ -64,64 +91,91 @@ def _to_public(user: dict) -> dict:
         "name": user["name"],
         "role": user["role"],
         "phone": user.get("phone"),
+        "status": user.get("status", "active"),
+        "mfa_enabled": bool(user.get("mfa_enabled")),
+        "password_changed_at": user.get("password_changed_at"),
         "created_at": user["created_at"],
     }
 
 
+# ---------------- Register (public → patient role only) ----------------
+
 @router.post("/register", response_model=UserPublic)
-async def register(payload: UserRegister, response: Response):
+async def register(payload: UserRegister, request: Request, response: Response):
     db = get_db()
     email = payload.email.lower().strip()
-    existing = await db.users.find_one({"email": email}, {"_id": 0, "id": 1})
-    if existing:
+    try:
+        validate_strength(payload.password)
+    except PasswordPolicyError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+    if await db.users.find_one({"email": email}, {"_id": 0, "id": 1}):
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
 
-    # Public self-registration is always `patient`. Elevated roles can only be
-    # created by an admin through the /auth/users endpoint.
-    role = "patient"
-
-    now = datetime.now(timezone.utc).isoformat()
+    now_iso = datetime.now(timezone.utc).isoformat()
     user_id = str(uuid.uuid4())
+    hashed = hash_password(payload.password)
     doc = {
         "id": user_id,
         "email": email,
-        "password_hash": hash_password(payload.password),
+        "password_hash": hashed,
+        "password_history": [hashed],
+        "password_changed_at": now_iso,
         "name": payload.name.strip(),
-        "role": role,
+        "role": "patient",
         "phone": payload.phone,
-        "created_at": now,
-        "updated_at": now,
+        "status": "active",
+        "mfa_enabled": False,
+        "created_at": now_iso,
+        "updated_at": now_iso,
     }
     await db.users.insert_one(doc)
 
-    access = create_access_token(user_id, email, role)
+    access = create_access_token(user_id, email, "patient")
     refresh = create_refresh_token(user_id)
     _set_auth_cookies(response, access, refresh)
+    await log_audit(
+        action="auth.registered",
+        actor_id=user_id,
+        actor_email=email,
+        actor_role="patient",
+        request=request,
+    )
     return _to_public(doc)
 
 
-@router.post("/login", response_model=UserPublic)
+# ---------------- Login + MFA ----------------
+
+async def _lockout_check(db, identifier: str) -> None:
+    attempt = await db.login_attempts.find_one({"identifier": identifier}, {"_id": 0})
+    if not attempt:
+        return
+    if attempt.get("count", 0) < MAX_FAILED_ATTEMPTS:
+        return
+    locked_until_str = attempt.get("locked_until")
+    if not locked_until_str:
+        return
+    try:
+        locked_until = datetime.fromisoformat(locked_until_str)
+    except Exception:
+        return
+    if locked_until > datetime.now(timezone.utc):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many failed attempts. Try again later.",
+        )
+
+
+@router.post("/login", response_model=LoginResult)
 async def login(payload: UserLogin, request: Request, response: Response):
     db = get_db()
     email = payload.email.lower().strip()
-    # Lock by email only — K8s ingress rotates source IPs across pods, which
-    # would split an IP-scoped counter and break the lockout.
     identifier = email
-
-    # Brute force lockout check
-    attempt = await db.login_attempts.find_one({"identifier": identifier}, {"_id": 0})
     now = datetime.now(timezone.utc)
-    if attempt and attempt.get("count", 0) >= MAX_FAILED_ATTEMPTS:
-        locked_until_str = attempt.get("locked_until")
-        if locked_until_str:
-            locked_until = datetime.fromisoformat(locked_until_str)
-            if locked_until > now:
-                raise HTTPException(
-                    status.HTTP_429_TOO_MANY_REQUESTS,
-                    "Too many failed attempts. Try again later.",
-                )
 
+    await _lockout_check(db, identifier)
     user = await db.users.find_one({"email": email}, {"_id": 0})
+
     if not user or not verify_password(payload.password, user["password_hash"]):
         await db.login_attempts.update_one(
             {"identifier": identifier},
@@ -133,18 +187,136 @@ async def login(payload: UserLogin, request: Request, response: Response):
             },
             upsert=True,
         )
+        await audit_failure(
+            action="auth.login", request=request, actor_email=email,
+            reason="invalid_credentials",
+        )
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
 
-    await db.login_attempts.delete_one({"identifier": identifier})
+    if user.get("status") == "disabled":
+        await audit_failure(
+            action="auth.login", request=request, actor_email=email,
+            reason="account_disabled",
+        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Account is disabled")
+
+    # Hard expiry — force a password change before issuing session cookies.
+    exp = password_expiry_status(user.get("password_changed_at"))
+    if exp["expired"]:
+        await audit_failure(
+            action="auth.login", request=request, actor_email=email,
+            reason="password_expired",
+        )
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Password has expired. Please reset your password to continue.",
+        )
+
+    # MFA: required for staff-ish roles, optional for patients
+    mfa_required = user.get("mfa_enabled") or user["role"] in MFA_REQUIRED_ROLES
+    if mfa_required and user.get("mfa_enabled"):
+        ticket = create_mfa_ticket(user["id"])
+        await log_audit(
+            action="auth.mfa_challenge_issued",
+            actor_id=user["id"],
+            actor_email=user["email"],
+            actor_role=user["role"],
+            request=request,
+        )
+        return {
+            "user": None,
+            "mfa_required": True,
+            "mfa_ticket": ticket,
+            "password_rotation_due": exp["rotation_due"],
+        }
+
+    # If MFA is REQUIRED by role but the user hasn't enrolled yet, issue a session
+    # but the frontend will redirect to the MFA setup page. This keeps admins from
+    # being locked out during initial rollout.
+    await _finalise_login(db, user, response, request)
+    return {
+        "user": _to_public(user),
+        "mfa_required": False,
+        "password_rotation_due": exp["rotation_due"],
+    }
+
+
+async def _finalise_login(db, user: dict, response: Response, request: Request) -> None:
+    await db.login_attempts.delete_one({"identifier": user["email"]})
     access = create_access_token(user["id"], user["email"], user["role"])
     refresh = create_refresh_token(user["id"])
     _set_auth_cookies(response, access, refresh)
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"last_login_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    await log_audit(
+        action="auth.login",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user["role"],
+        request=request,
+    )
+
+
+@router.post("/mfa/challenge", response_model=UserPublic)
+async def mfa_challenge(payload: MfaChallenge, request: Request, response: Response):
+    db = get_db()
+    try:
+        ticket = decode_mfa_ticket(payload.mfa_ticket)
+    except Exception:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or expired MFA ticket")
+    user = await db.users.find_one({"id": ticket["sub"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+
+    ok = verify_code(user.get("mfa_secret", ""), payload.code)
+    if not ok:
+        # fallback to a backup code
+        consumed = verify_backup_code(user.get("mfa_backup_codes") or [], payload.code)
+        if consumed:
+            await db.users.update_one(
+                {"id": user["id"]}, {"$pull": {"mfa_backup_codes": consumed}}
+            )
+            ok = True
+    if not ok:
+        await audit_failure(
+            action="auth.mfa_verify", request=request, actor_email=user["email"],
+            reason="bad_code",
+        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid MFA code")
+
+    await _finalise_login(db, user, response, request)
+    await log_audit(
+        action="auth.mfa_verified",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user["role"],
+        request=request,
+    )
     return _to_public(user)
 
 
+# ---------------- Other auth endpoints ----------------
+
 @router.post("/logout")
-async def logout(response: Response):
+async def logout(request: Request, response: Response):
+    # best-effort: figure out who is logging out
+    user_id = None
+    token = request.cookies.get("access_token")
+    if token:
+        try:
+            user_id = decode_token(token).get("sub")
+        except Exception:
+            pass
     _clear_auth_cookies(response)
+    await log_audit(
+        action="auth.logout",
+        actor_id=user_id,
+        actor_email=None,
+        actor_role=None,
+        request=request,
+    )
     return {"message": "Logged out"}
 
 
@@ -167,67 +339,280 @@ async def refresh(request: Request, response: Response):
 
     db = get_db()
     user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
-    if not user:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
-
+    if not user or user.get("status") == "disabled":
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not available")
     access = create_access_token(user["id"], user["email"], user["role"])
     response.set_cookie(
-        "access_token",
-        access,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        max_age=ACCESS_TOKEN_MINUTES * 60,
-        path="/",
+        "access_token", access, **_cookie_kwargs(ACCESS_TOKEN_MINUTES * 60)
     )
     return {"message": "Refreshed"}
 
 
-# ----- Admin-only user management -----
+@router.post("/change-password")
+async def change_password(
+    payload: PasswordChange,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full or not verify_password(payload.current_password, full["password_hash"]):
+        await audit_failure(
+            action="auth.password_change", request=request,
+            actor_email=user["email"], reason="wrong_current_password",
+        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Current password is incorrect")
+    try:
+        validate_strength(payload.new_password)
+        reject_password_reuse(payload.new_password, full.get("password_history") or [])
+    except PasswordPolicyError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+    new_hash = hash_password(payload.new_password)
+    history = (full.get("password_history") or [])[-PASSWORD_HISTORY + 1:] + [new_hash]
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one(
+        {"id": user["id"]},
+        {
+            "$set": {
+                "password_hash": new_hash,
+                "password_history": history,
+                "password_changed_at": now_iso,
+                "updated_at": now_iso,
+            }
+        },
+    )
+    await log_audit(
+        action="auth.password_changed",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user["role"],
+        request=request,
+    )
+    return {"message": "Password updated"}
+
+
+@router.post("/reauth")
+async def reauth(
+    payload: ReauthRequest,
+    request: Request,
+    response: Response,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full or not verify_password(payload.password, full["password_hash"]):
+        await audit_failure(
+            action="auth.reauth", request=request, actor_email=user["email"],
+            reason="wrong_password",
+        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid password")
+    token = create_reauth_token(user["id"])
+    response.set_cookie("reauth_token", token, **_cookie_kwargs(5 * 60))
+    await log_audit(
+        action="auth.reauth",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user["role"],
+        request=request,
+    )
+    return {"reauth_token": token}
+
+
+# ---------------- MFA enrolment ----------------
+
+@router.post("/mfa/setup", response_model=MfaSetupResponse)
+async def mfa_setup(request: Request, user: dict = Depends(get_current_user)):
+    db = get_db()
+    secret = generate_secret()
+    codes = generate_backup_codes()
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"mfa_pending_secret": secret, "mfa_pending_backup": codes}},
+    )
+    await log_audit(
+        action="auth.mfa_setup_started",
+        actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+        request=request,
+    )
+    return {
+        "secret": secret,
+        "otpauth_url": provisioning_uri(secret, user["email"]),
+        "backup_codes": codes,
+    }
+
+
+@router.post("/mfa/verify")
+async def mfa_verify(
+    payload: MfaVerify,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    pending = full.get("mfa_pending_secret") if full else None
+    if not pending:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Start MFA setup first")
+    if not verify_code(pending, payload.code):
+        await audit_failure(
+            action="auth.mfa_enable", request=request, actor_email=user["email"],
+            reason="bad_code",
+        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid code")
+    await db.users.update_one(
+        {"id": user["id"]},
+        {
+            "$set": {
+                "mfa_enabled": True,
+                "mfa_secret": pending,
+                "mfa_backup_codes": full.get("mfa_pending_backup") or [],
+            },
+            "$unset": {"mfa_pending_secret": "", "mfa_pending_backup": ""},
+        },
+    )
+    await log_audit(
+        action="auth.mfa_enabled",
+        actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+        request=request,
+    )
+    return {"message": "MFA enabled"}
+
+
+@router.post("/mfa/disable")
+async def mfa_disable(
+    payload: ReauthRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Requires current password (step-down)."""
+    db = get_db()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full or not verify_password(payload.password, full["password_hash"]):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid password")
+    await db.users.update_one(
+        {"id": user["id"]},
+        {
+            "$set": {"mfa_enabled": False},
+            "$unset": {"mfa_secret": "", "mfa_backup_codes": ""},
+        },
+    )
+    await log_audit(
+        action="auth.mfa_disabled",
+        actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+        request=request,
+    )
+    return {"message": "MFA disabled"}
+
+
+# ---------------- Admin user management ----------------
 
 @router.get("/users", response_model=list[UserPublic])
 async def list_users(
+    request: Request,
     role: str | None = None,
-    _admin: dict = Depends(require_role("admin")),
+    include_disabled: bool = False,
+    admin: dict = Depends(require_role("admin")),
 ):
     db = get_db()
     q: dict = {}
     if role:
         q["role"] = role
-    cursor = db.users.find(q, {"_id": 0, "password_hash": 0}).sort("created_at", -1)
-    return [_to_public(u) async for u in cursor]
+    if not include_disabled:
+        q["status"] = {"$ne": "disabled"}
+    cursor = db.users.find(q, {"_id": 0, "password_hash": 0, "password_history": 0}).sort(
+        "created_at", -1
+    )
+    rows = [_to_public(u) async for u in cursor]
+    await audit_success(admin, "user.list_viewed", request, metadata={"count": len(rows)})
+    return rows
 
 
 @router.post("/users", response_model=UserPublic, status_code=201)
 async def create_user(
     payload: AdminUserCreate,
-    _admin: dict = Depends(require_role("admin")),
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
 ):
     db = get_db()
     email = payload.email.lower().strip()
+    try:
+        validate_strength(payload.password)
+    except PasswordPolicyError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
     if await db.users.find_one({"email": email}, {"_id": 0, "id": 1}):
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
 
     now = datetime.now(timezone.utc).isoformat()
+    hashed = hash_password(payload.password)
     doc = {
         "id": str(uuid.uuid4()),
         "email": email,
-        "password_hash": hash_password(payload.password),
+        "password_hash": hashed,
+        "password_history": [hashed],
+        "password_changed_at": now,
         "name": payload.name.strip(),
         "role": payload.role,
         "phone": payload.phone,
+        "status": "active",
+        "mfa_enabled": False,
         "created_at": now,
         "updated_at": now,
     }
     await db.users.insert_one(doc)
+    await audit_success(
+        admin, "user.created", request,
+        entity_type="user", entity_id=doc["id"],
+        metadata={"email": email, "role": payload.role},
+    )
     return _to_public(doc)
+
+
+@router.post("/users/{user_id}/disable")
+async def disable_user(
+    user_id: str,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    if user_id == admin["id"]:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot disable yourself")
+    db = get_db()
+    result = await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"status": "disabled", "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    await audit_success(
+        admin, "user.disabled", request, entity_type="user", entity_id=user_id,
+    )
+    return {"message": "User disabled"}
+
+
+@router.post("/users/{user_id}/enable")
+async def enable_user(
+    user_id: str,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    db = get_db()
+    result = await db.users.update_one(
+        {"id": user_id},
+        {"$set": {"status": "active", "updated_at": datetime.now(timezone.utc).isoformat()}},
+    )
+    if result.matched_count == 0:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    await audit_success(
+        admin, "user.enabled", request, entity_type="user", entity_id=user_id,
+    )
+    return {"message": "User enabled"}
 
 
 @router.get("/providers", response_model=list[UserPublic])
 async def list_providers(_user: dict = Depends(get_current_user)):
-    """Anyone authenticated can see the list of doctors (providers)."""
     db = get_db()
     cursor = db.users.find(
-        {"role": "doctor"}, {"_id": 0, "password_hash": 0}
+        {"role": "doctor", "status": {"$ne": "disabled"}},
+        {"_id": 0, "password_hash": 0, "password_history": 0},
     ).sort("name", 1)
     return [_to_public(u) async for u in cursor]
