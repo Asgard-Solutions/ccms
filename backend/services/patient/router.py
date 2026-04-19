@@ -152,7 +152,7 @@ async def create_patient(
     await audit_success(
         actor, "patient.created", request,
         entity_type="patient", entity_id=doc["id"],
-        phi_accessed=True, metadata={"name": f"{doc['first_name']} {doc['last_name']}"},
+        phi_accessed=False, metadata={},
     )
     return _shape(stored, unmasked=True)
 

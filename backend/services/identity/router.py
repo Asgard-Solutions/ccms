@@ -385,7 +385,13 @@ async def refresh(request: Request, response: Response):
     user = await db.users.find_one({"id": payload["sub"]}, {"_id": 0})
     if not user or user.get("status") == "disabled":
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not available")
-    access = create_access_token(user["id"], user["email"], user["role"])
+    # Enforce session epoch on refresh too — privilege change kills refresh token.
+    if int(payload.get("epoch", 0)) != int(user.get("session_epoch", 0)):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session invalidated")
+    sst = payload.get("sst") or datetime.now(timezone.utc).isoformat()
+    access = create_access_token(
+        user["id"], user["email"], user["role"], int(user.get("session_epoch", 0)), sst,
+    )
     response.set_cookie(
         "access_token", access, **_cookie_kwargs(ACCESS_TOKEN_MINUTES * 60)
     )
