@@ -573,6 +573,8 @@ async def create_user(
         "updated_at": now,
     }
     await db.users.insert_one(doc)
+    # Provider list cache may be stale if the new user is a doctor.
+    await cache.invalidate_prefix(cache_keys.PREFIX_PROVIDERS)
     await audit_success(
         admin, "user.created", request,
         entity_type="user", entity_id=doc["id"],
