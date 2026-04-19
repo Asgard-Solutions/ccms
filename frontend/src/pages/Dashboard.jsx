@@ -4,6 +4,15 @@ import { Activity, ArrowRight, CalendarDays, Users } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { formatDateTime, relativeFromNow } from "../utils/time";
+
+/** Return a friendly greeting name. Skips honorifics like "Dr.", "Mrs." etc. */
+function greetingName(fullName) {
+  if (!fullName) return "there";
+  const tokens = fullName.split(/\s+/).filter(Boolean);
+  const first = tokens[0] || "";
+  if (/\.$/.test(first) && tokens.length > 1) return tokens[1];
+  return first;
+}
 import { Button } from "../components/ui/button";
 import { Skeleton } from "../components/ui/skeleton";
 import { Badge } from "../components/ui/badge";
@@ -115,7 +124,7 @@ export default function Dashboard() {
           Overview
         </span>
         <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight text-[#1F2924] sm:text-5xl">
-          Hello, {user.name.split(" ")[0]}.
+          Hello, {greetingName(user.name)}.
         </h1>
         <p className="mt-4 max-w-xl text-base leading-relaxed text-[#5C6A61]">
           Here is what is happening across the clinic today. Scheduling events

@@ -31,12 +31,21 @@ class UserPublic(BaseModel):
 
 
 class UserRegister(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     email: EmailStr
     password: str = Field(min_length=6, max_length=128)
     name: str = Field(min_length=1, max_length=200)
     phone: str | None = None
-    # Role is restricted server-side. Public registration is treated as `patient`.
-    role: Role | None = None
+
+
+class AdminUserCreate(BaseModel):
+    """Admin-only: can assign any role."""
+    model_config = ConfigDict(extra="forbid")
+    email: EmailStr
+    password: str = Field(min_length=6, max_length=128)
+    name: str = Field(min_length=1, max_length=200)
+    phone: str | None = None
+    role: Role = "staff"
 
 
 class UserLogin(BaseModel):

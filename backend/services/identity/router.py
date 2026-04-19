@@ -21,6 +21,7 @@ from services.identity.models import (
     UserRegister,
     UserLogin,
     UserPublic,
+    AdminUserCreate,
 )
 
 router = APIRouter(prefix="/auth", tags=["identity"])
@@ -103,8 +104,9 @@ async def register(payload: UserRegister, response: Response):
 async def login(payload: UserLogin, request: Request, response: Response):
     db = get_db()
     email = payload.email.lower().strip()
-    ip = request.client.host if request.client else "unknown"
-    identifier = f"{ip}:{email}"
+    # Lock by email only — K8s ingress rotates source IPs across pods, which
+    # would split an IP-scoped counter and break the lockout.
+    identifier = email
 
     # Brute force lockout check
     attempt = await db.login_attempts.find_one({"identifier": identifier}, {"_id": 0})
@@ -198,7 +200,7 @@ async def list_users(
 
 @router.post("/users", response_model=UserPublic, status_code=201)
 async def create_user(
-    payload: UserRegister,
+    payload: AdminUserCreate,
     _admin: dict = Depends(require_role("admin")),
 ):
     db = get_db()
@@ -206,17 +208,13 @@ async def create_user(
     if await db.users.find_one({"email": email}, {"_id": 0, "id": 1}):
         raise HTTPException(status.HTTP_409_CONFLICT, "Email already registered")
 
-    role = payload.role or "staff"
-    if role not in {"admin", "doctor", "staff", "patient"}:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid role")
-
     now = datetime.now(timezone.utc).isoformat()
     doc = {
         "id": str(uuid.uuid4()),
         "email": email,
         "password_hash": hash_password(payload.password),
         "name": payload.name.strip(),
-        "role": role,
+        "role": payload.role,
         "phone": payload.phone,
         "created_at": now,
         "updated_at": now,

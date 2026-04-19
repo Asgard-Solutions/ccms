@@ -69,8 +69,14 @@ async def seed() -> None:
 
     # Seed a demo patient record linked to the demo patient user
     db = get_db()
-    patient_user = await db.users.find_one({"email": "patient@ccms.local"}, {"_id": 0})
+    patient_email = "patient@ccms.app"
+    patient_user = await db.users.find_one({"email": patient_email}, {"_id": 0})
     if patient_user:
+        # Re-link any stale Morgan Lee record left behind by earlier seeds.
+        await db.patients.update_many(
+            {"email": {"$in": ["patient@ccms.local", patient_email]}},
+            {"$set": {"user_id": patient_user["id"], "email": patient_email}},
+        )
         has_record = await db.patients.find_one(
             {"user_id": patient_user["id"]}, {"_id": 0, "id": 1}
         )
