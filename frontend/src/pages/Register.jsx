@@ -3,14 +3,18 @@ import { Link, Navigate, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Stethoscope } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import { api } from "../api/client";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+
+const PRIVACY_POLICY_VERSION = "2026-02-v1";
 
 export default function Register() {
   const { user, register, formatApiError } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ name: "", email: "", password: "", phone: "" });
+  const [acceptedPrivacy, setAcceptedPrivacy] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   if (user) return <Navigate to="/" replace />;
@@ -19,6 +23,10 @@ export default function Register() {
 
   async function onSubmit(e) {
     e.preventDefault();
+    if (!acceptedPrivacy) {
+      toast.error("Please accept the Privacy Notice to continue");
+      return;
+    }
     setSubmitting(true);
     try {
       await register({
@@ -27,6 +35,14 @@ export default function Register() {
         password: form.password,
         phone: form.phone.trim() || null,
       });
+      // Record versioned consent immediately after registration (fire-and-forget).
+      try {
+        await api.post("/privacy/consents/accept", {
+          policy_type: "privacy_notice",
+          policy_version: PRIVACY_POLICY_VERSION,
+          action: "accepted",
+        });
+      } catch { /* non-blocking */ }
       toast.success("Account created");
       navigate("/");
     } catch (err) {
@@ -111,11 +127,32 @@ export default function Register() {
           <Button
             type="submit"
             data-testid="register-submit-button"
-            disabled={submitting}
-            className="h-11 w-full rounded-sm bg-[#7B9A82] px-6 font-medium text-white hover:bg-[#65826C]"
+            disabled={submitting || !acceptedPrivacy}
+            className="h-11 w-full rounded-sm bg-[#7B9A82] px-6 font-medium text-white hover:bg-[#65826C] disabled:opacity-60"
           >
             {submitting ? "Creating…" : "Create account"}
           </Button>
+
+          <label
+            htmlFor="privacy-accept"
+            className="flex items-start gap-2 rounded-sm border border-stone-200 bg-[#FAF9F6] p-3 text-xs text-[#5C6A61]"
+          >
+            <input
+              id="privacy-accept"
+              data-testid="register-privacy-checkbox"
+              type="checkbox"
+              checked={acceptedPrivacy}
+              onChange={(e) => setAcceptedPrivacy(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded-sm border-stone-300 accent-[#7B9A82]"
+            />
+            <span>
+              I have read and accept the Privacy Notice (version
+              <span className="mx-1 font-mono">{PRIVACY_POLICY_VERSION}</span>)
+              and acknowledge how CCMS collects, stores, and processes my data.
+              This acceptance is recorded against my account for compliance
+              purposes.
+            </span>
+          </label>
 
           <p className="text-center text-sm text-[#5C6A61]">
             Already have an account?{" "}

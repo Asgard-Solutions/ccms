@@ -369,6 +369,64 @@ async def me(user: dict = Depends(get_current_user)):
     return _to_public(user)
 
 
+@router.get("/me/export")
+async def export_me(request: Request, user: dict = Depends(get_current_user)):
+    """Self-service account-data export. Returns the caller's identity
+    profile, consent history, communication preferences, and a summary of
+    their own audit events (auth + privacy-related actions). For full
+    clinical data (patient profile, medical records, appointments) patients
+    should use GET /api/patients/{id}/export."""
+    db = get_db_read()
+    account = {
+        k: user.get(k)
+        for k in (
+            "id", "email", "name", "role", "phone", "status",
+            "mfa_enabled", "mfa_policy_required",
+            "password_changed_at", "created_at", "updated_at", "last_login_at",
+        )
+    }
+    prefs = await db.communication_preferences.find_one(
+        {"user_id": user["id"]}, {"_id": 0},
+    )
+    consents = [
+        c
+        async for c in db.consent_records.find(
+            {"user_id": user["id"]}, {"_id": 0},
+        ).sort("accepted_at", -1).limit(200)
+    ]
+    privacy_requests = [
+        r
+        async for r in db.privacy_requests.find(
+            {"$or": [{"subject_user_id": user["id"]}, {"submitted_by_id": user["id"]}]},
+            {"_id": 0},
+        ).sort("created_at", -1).limit(200)
+    ]
+    recent_events = [
+        e
+        async for e in db.audit_logs.find(
+            {"actor_id": user["id"]},
+            {"_id": 0, "action": 1, "outcome": 1, "created_at": 1, "ip": 1},
+        ).sort("created_at", -1).limit(100)
+    ]
+    await audit_success(
+        user, "account.self_exported", request,
+        entity_type="user", entity_id=user["id"],
+        metadata={
+            "consents": len(consents),
+            "privacy_requests": len(privacy_requests),
+            "events": len(recent_events),
+        },
+    )
+    return {
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "account": account,
+        "communication_preferences": prefs,
+        "consents": consents,
+        "privacy_requests": privacy_requests,
+        "recent_events": recent_events,
+    }
+
+
 @router.post("/refresh")
 async def refresh(request: Request, response: Response):
     token = request.cookies.get("refresh_token")

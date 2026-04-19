@@ -254,9 +254,16 @@ async def delete_patient(
     require_reauth(request, admin)
 
     db = get_db_write()
-    p = await db.patients.find_one({"id": patient_id}, {"_id": 0, "id": 1, "status": 1})
+    p = await db.patients.find_one(
+        {"id": patient_id}, {"_id": 0, "id": 1, "status": 1, "legal_hold": 1},
+    )
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    if p.get("legal_hold"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Patient is under legal hold; clear the hold before deletion.",
+        )
 
     now = datetime.now(timezone.utc)
     retention_until = now + timedelta(days=365 * RETENTION_YEARS)
