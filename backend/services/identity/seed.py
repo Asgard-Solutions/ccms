@@ -68,6 +68,13 @@ async def _upsert_user(email: str, password: str, name: str, role: str, phone: s
                 (existing.get("password_history") or [])[-4:] + [hashed]
             )
             updates["password_changed_at"] = now
+        else:
+            # Backfill password_history for users seeded before the policy existed,
+            # so the very first change-password call cannot reuse the seeded password.
+            if not existing.get("password_history"):
+                updates["password_history"] = [existing["password_hash"]]
+            if not existing.get("password_changed_at"):
+                updates["password_changed_at"] = existing.get("created_at", now)
         await db.users.update_one({"email": email}, {"$set": updates})
 
 
