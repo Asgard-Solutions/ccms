@@ -35,7 +35,7 @@ from services.patient.models import (
 router = APIRouter(prefix="/patients", tags=["patient"])
 
 STAFF_ROLES = ("admin", "doctor", "staff")
-PATIENT_ENCRYPTED = ["address", "emergency_contact", "notes"]
+PATIENT_ENCRYPTED = ["date_of_birth", "address", "emergency_contact", "notes"]
 RECORD_ENCRYPTED = ["description", "diagnosis", "treatment"]
 RETENTION_YEARS = 7
 REASON_MIN_LENGTH = 8

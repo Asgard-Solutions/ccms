@@ -15,6 +15,7 @@ import Security from "./pages/Security";
 import AuditLog from "./pages/AuditLog";
 import Compliance from "./pages/Compliance";
 import Privacy from "./pages/Privacy";
+import SecurityConfig from "./pages/SecurityConfig";
 import PasswordReset from "./pages/PasswordReset";
 import "./App.css";
 
@@ -43,6 +44,7 @@ export default function App() {
           <Route path="/audit-log" element={<Shell roles={["admin"]}><AuditLog /></Shell>} />
           <Route path="/compliance" element={<Shell roles={["admin"]}><Compliance /></Shell>} />
           <Route path="/privacy" element={<Shell roles={["admin"]}><Privacy /></Shell>} />
+          <Route path="/security-config" element={<Shell roles={["admin"]}><SecurityConfig /></Shell>} />
           <Route path="/security" element={<Shell><Security /></Shell>} />
         </Routes>
       </BrowserRouter>

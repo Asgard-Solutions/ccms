@@ -22,6 +22,7 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 
+from core import config, key_manager
 from core.db import get_db_read
 from core.deps import require_role
 from core.redis_client import ping as redis_ping
@@ -107,21 +108,18 @@ CONTROL_CATALOG: list[dict] = [
 
 def _env_flags() -> dict:
     """Snapshot of env-driven hardening flags. Booleans only — no secret values."""
-    frontend_url = os.environ.get("FRONTEND_URL", "").strip()
-    cors_raw = os.environ.get("CORS_ORIGINS", "*").strip()
-    mongo_url = os.environ.get("MONGO_URL", "")
-    mongo_read_url = os.environ.get("MONGO_READ_URL", "")
-    jwt_secret = os.environ.get("JWT_SECRET", "")
-    dek = os.environ.get("DATA_ENCRYPTION_KEY", "")
+    cfg = config.describe()
     return {
-        "cors_origin_locked": bool(frontend_url) or (cors_raw and cors_raw != "*"),
-        "frontend_url_configured": bool(frontend_url),
-        "jwt_secret_strong": len(jwt_secret) >= 32,
-        "data_encryption_key_configured": len(dek) >= 32,
-        "mfa_issuer_configured": bool(os.environ.get("MFA_ISSUER")),
-        "redis_url_configured": bool(os.environ.get("REDIS_URL")),
-        "mongo_read_url_distinct": bool(mongo_read_url) and mongo_read_url != mongo_url,
-        "admin_password_configured": bool(os.environ.get("ADMIN_PASSWORD")),
+        "cors_origin_locked": cfg["cors_locked_to_frontend"],
+        "frontend_url_configured": cfg["recommended"]["FRONTEND_URL"],
+        "jwt_secret_strong": "JWT_SECRET" not in cfg["weak_secrets"]
+        and cfg["required"]["JWT_SECRET"],
+        "data_encryption_key_configured": cfg["required"]["DATA_ENCRYPTION_KEY"],
+        "mfa_issuer_configured": cfg["recommended"]["MFA_ISSUER"],
+        "redis_url_configured": cfg["recommended"]["REDIS_URL"],
+        "mongo_read_url_distinct": bool(os.environ.get("MONGO_READ_URL"))
+        and os.environ.get("MONGO_READ_URL") != os.environ.get("MONGO_URL"),
+        "admin_password_configured": cfg["recommended"]["ADMIN_PASSWORD"],
     }
 
 
@@ -245,5 +243,84 @@ async def overview(_admin: dict = Depends(require_role("admin"))):
             "/app/memory/CONTROL_INVENTORY.md",
             "/app/memory/COMPLIANCE_BACKLOG.md",
             "/app/memory/HIPAA_COMPLIANCE.md",
+        ],
+    }
+
+
+
+@router.get("/security-config")
+async def security_config(_admin: dict = Depends(require_role("admin"))):
+    """Admin-only internal view of data-protection + secure-config signals.
+
+    This is **informational**. It never returns secret values; only lengths,
+    masked prefixes, and boolean feature flags. Source of truth:
+      - core/config.py      — env-var required/recommended + weak-secret
+        detection
+      - core/key_manager.py — encryption-key provider + active version
+
+    Use together with `/api/compliance/overview` and the in-repo docs:
+      - /app/memory/DATA_PROTECTION_AND_KEYS.md
+      - /app/memory/ACCESS_CONTROL_AND_AUDIT.md
+    """
+    cfg = config.describe()
+    redis_alive = await redis_ping()
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "disclaimer": (
+            "Informational readiness view — not a certification claim. "
+            "Secrets are rendered as lengths / masked prefixes only."
+        ),
+        "app_env": cfg["app_env"],
+        "production_ready": cfg["production_ready"],
+        "required_config": cfg["required"],
+        "recommended_config": cfg["recommended"],
+        "missing_required": cfg["missing_required"],
+        "weak_secrets": cfg["weak_secrets"],
+        "secret_strength": {
+            "jwt_secret_length": cfg["secret_lengths"].get("JWT_SECRET", 0),
+            "data_encryption_key_length": cfg["secret_lengths"].get(
+                "DATA_ENCRYPTION_KEY", 0
+            ),
+            "jwt_secret_masked": config.mask_secret(os.environ.get("JWT_SECRET")),
+            "data_encryption_key_masked": config.mask_secret(
+                os.environ.get("DATA_ENCRYPTION_KEY")
+            ),
+        },
+        "encryption": {
+            **key_manager.describe(),
+            "patient_encrypted_fields": [
+                "date_of_birth",
+                "address",
+                "emergency_contact",
+                "notes",
+            ],
+            "medical_record_encrypted_fields": [
+                "description",
+                "diagnosis",
+                "treatment",
+            ],
+        },
+        "runtime": {
+            "redis_alive": redis_alive,
+            "cors_locked_to_frontend": cfg["cors_locked_to_frontend"],
+        },
+        "features": {
+            "mfa_enabled_in_code": True,
+            "audit_log_enabled": True,
+            "privacy_workflows_enabled": True,
+            "phi_masking_enabled": True,
+            "legal_hold_enabled": True,
+            "retention_worker_running": False,
+        },
+        "production_gaps": [
+            gap
+            for gap, present in [
+                ("FRONTEND_URL missing — CORS not origin-locked", cfg["recommended"]["FRONTEND_URL"]),
+                ("REDIS_URL missing — rate-limit and cache run in local-fallback mode", cfg["recommended"]["REDIS_URL"]),
+                ("ADMIN_PASSWORD missing — seed will use the default, unsafe for prod", cfg["recommended"]["ADMIN_PASSWORD"]),
+                ("MFA_ISSUER missing — branding in authenticator apps", cfg["recommended"]["MFA_ISSUER"]),
+                ("KMS_PROVIDER not set — DATA_ENCRYPTION_KEY is env-loaded, not KMS-wrapped", key_manager.provider() != "env"),
+            ]
+            if not present
         ],
     }

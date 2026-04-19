@@ -15,6 +15,7 @@ from fastapi import APIRouter, FastAPI, Request  # noqa: E402
 from starlette.middleware.cors import CORSMiddleware  # noqa: E402
 
 from core import metrics  # noqa: E402
+from core.config import ensure_required as ensure_config  # noqa: E402
 from core.db import close_client, create_indexes  # noqa: E402
 from core.redis_client import close as close_redis, ping as redis_ping  # noqa: E402
 from services.audit.router import router as audit_router  # noqa: E402
@@ -107,6 +108,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def on_startup():
+    ensure_config()  # fail-fast on missing MONGO_URL / DB_NAME / JWT_SECRET / DATA_ENCRYPTION_KEY
     await create_indexes()
     register_comm_subscribers()
     await seed_identity()

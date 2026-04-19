@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   ClipboardCheck,
   Scale,
+  KeyRound,
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { Button } from "../ui/button";
@@ -43,6 +44,7 @@ const NAV_ITEMS = [
   { to: "/audit-log", label: "Audit log", icon: Shield, roles: ["admin"] },
   { to: "/compliance", label: "Compliance", icon: ClipboardCheck, roles: ["admin"] },
   { to: "/privacy", label: "Privacy", icon: Scale, roles: ["admin"] },
+  { to: "/security-config", label: "Security config", icon: KeyRound, roles: ["admin"] },
   { to: "/security", label: "Security", icon: ShieldCheck, roles: ["admin", "doctor", "staff", "patient"] },
 ];
 

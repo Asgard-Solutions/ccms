@@ -8,24 +8,39 @@ plaintext rows (e.g. from older seeds) during the rollout window — any value
 without the prefix is returned as-is.
 
 Key management:
-  - Phase 1: symmetric key loaded from DATA_ENCRYPTION_KEY (base64 32 bytes)
-  - Production: swap `_load_key()` for a KMS fetch (AWS KMS, Azure Key Vault,
-    or HashiCorp Vault) — the public API does not change.
+  - All key material comes from `core.key_manager`. Never read
+    `DATA_ENCRYPTION_KEY` directly from here or from any caller.
+  - Today the key is loaded from the env var `DATA_ENCRYPTION_KEY` (phase 1).
+  - Production should set `KMS_PROVIDER=aws_kms|azure_kv|vault` and wire a
+    provider-specific fetch in `core/key_manager.py`. Call sites do not
+    change.
+
+Forward rotation:
+  - Each ciphertext embeds the key version that encrypted it (`enc:vN:...`).
+  - On read we ask the key manager for the correct version.
+  - On write we use the currently-active version.
 """
 import base64
-import os
 import secrets
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-ENC_PREFIX = "enc:v1:"
+from core import key_manager
+
+ENC_PREFIX = "enc:"
 
 
-def _load_key() -> bytes:
-    raw = os.environ["DATA_ENCRYPTION_KEY"]
-    key = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
-    if len(key) != 32:
-        raise RuntimeError("DATA_ENCRYPTION_KEY must decode to 32 bytes (256 bits)")
-    return key
+def _format(version: str, nonce: bytes, ct: bytes) -> str:
+    payload = base64.urlsafe_b64encode(nonce + ct).decode("ascii")
+    return f"{ENC_PREFIX}{version}:{payload}"
+
+
+def _parse(value: str) -> tuple[str, bytes, bytes]:
+    # Accept both `enc:v1:<b64>` (current) and the historical `enc:v1:<b64>`
+    # form — they happen to be identical.
+    rest = value[len(ENC_PREFIX):]
+    version, b64 = rest.split(":", 1)
+    raw = base64.urlsafe_b64decode(b64)
+    return version, raw[:12], raw[12:]
 
 
 def encrypt_text(plaintext: str | None) -> str | None:
@@ -33,11 +48,11 @@ def encrypt_text(plaintext: str | None) -> str | None:
         return plaintext
     if isinstance(plaintext, str) and plaintext.startswith(ENC_PREFIX):
         return plaintext  # already encrypted — idempotent
-    aes = AESGCM(_load_key())
+    version = key_manager.current_version()
+    aes = AESGCM(key_manager.get_key(version))
     nonce = secrets.token_bytes(12)
     ct = aes.encrypt(nonce, plaintext.encode("utf-8"), None)
-    payload = base64.urlsafe_b64encode(nonce + ct).decode("ascii")
-    return f"{ENC_PREFIX}{payload}"
+    return _format(version, nonce, ct)
 
 
 def decrypt_text(value: str | None) -> str | None:
@@ -45,9 +60,8 @@ def decrypt_text(value: str | None) -> str | None:
         return value
     if not isinstance(value, str) or not value.startswith(ENC_PREFIX):
         return value  # legacy plaintext — return as-is
-    aes = AESGCM(_load_key())
-    raw = base64.urlsafe_b64decode(value[len(ENC_PREFIX):])
-    nonce, ct = raw[:12], raw[12:]
+    version, nonce, ct = _parse(value)
+    aes = AESGCM(key_manager.get_key(version))
     return aes.decrypt(nonce, ct, None).decode("utf-8")
 
 
