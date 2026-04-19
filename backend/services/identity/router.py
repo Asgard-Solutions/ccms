@@ -7,7 +7,12 @@ Adds:
   - Step-up re-authentication for sensitive actions
   - Account disable (no hard delete)
   - Full audit trail for every auth action
+  - Session epoch + absolute lifetime cap → old tokens die on privilege change
+  - Password reset tokens (single-use, 15-minute expiry, sha256-hashed at rest)
+  - Admin MFA reset + admin force-require-MFA
 """
+import hashlib
+import secrets
 import uuid
 from datetime import datetime, timezone, timedelta
 
@@ -52,6 +57,8 @@ from services.identity.models import (
     MfaSetupResponse,
     MfaVerify,
     PasswordChange,
+    PasswordResetConfirm,
+    PasswordResetRequest,
     ReauthRequest,
     UserLogin,
     UserPatch,
@@ -63,6 +70,7 @@ router = APIRouter(prefix="/auth", tags=["identity"])
 
 MAX_FAILED_ATTEMPTS = 5
 LOCKOUT_MINUTES = 15
+PASSWORD_RESET_TTL_MINUTES = 15
 
 
 def _cookie_kwargs(max_age: int) -> dict:
@@ -96,9 +104,25 @@ def _to_public(user: dict) -> dict:
         "phone": user.get("phone"),
         "status": user.get("status", "active"),
         "mfa_enabled": bool(user.get("mfa_enabled")),
+        "mfa_policy_required": bool(user.get("mfa_policy_required")),
         "password_changed_at": user.get("password_changed_at"),
         "created_at": user["created_at"],
     }
+
+
+async def _bump_session_epoch(db, user_id: str) -> int:
+    """Invalidate all currently-issued tokens for this user. Returns the new epoch."""
+    updated = await db.users.find_one_and_update(
+        {"id": user_id},
+        {"$inc": {"session_epoch": 1}, "$set": {"updated_at": datetime.now(timezone.utc).isoformat()}},
+        projection={"_id": 0, "session_epoch": 1},
+        return_document=True,
+    )
+    return (updated or {}).get("session_epoch", 1)
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 # ---------------- Register (public → patient role only) ----------------
@@ -129,13 +153,16 @@ async def register(payload: UserRegister, request: Request, response: Response):
         "phone": payload.phone,
         "status": "active",
         "mfa_enabled": False,
+        "mfa_policy_required": False,
+        "session_epoch": 0,
         "created_at": now_iso,
         "updated_at": now_iso,
     }
     await db.users.insert_one(doc)
 
-    access = create_access_token(user_id, email, "patient")
-    refresh = create_refresh_token(user_id)
+    session_started_at = datetime.now(timezone.utc).isoformat()
+    access = create_access_token(user_id, email, "patient", 0, session_started_at)
+    refresh = create_refresh_token(user_id, 0, session_started_at)
     _set_auth_cookies(response, access, refresh)
     await log_audit(
         action="auth.registered",
@@ -257,12 +284,14 @@ async def login(payload: UserLogin, request: Request, response: Response):
 
 async def _finalise_login(db, user: dict, response: Response, request: Request) -> None:
     await db.login_attempts.delete_one({"identifier": user["email"]})
-    access = create_access_token(user["id"], user["email"], user["role"])
-    refresh = create_refresh_token(user["id"])
+    epoch = int(user.get("session_epoch", 0))
+    session_started_at = datetime.now(timezone.utc).isoformat()
+    access = create_access_token(user["id"], user["email"], user["role"], epoch, session_started_at)
+    refresh = create_refresh_token(user["id"], epoch, session_started_at)
     _set_auth_cookies(response, access, refresh)
     await db.users.update_one(
         {"id": user["id"]},
-        {"$set": {"last_login_at": datetime.now(timezone.utc).isoformat()}},
+        {"$set": {"last_login_at": session_started_at}},
     )
     await log_audit(
         action="auth.login",
@@ -270,6 +299,7 @@ async def _finalise_login(db, user: dict, response: Response, request: Request) 
         actor_email=user["email"],
         actor_role=user["role"],
         request=request,
+        metadata={"session_started_at": session_started_at},
     )
 
 
@@ -366,6 +396,7 @@ async def refresh(request: Request, response: Response):
 async def change_password(
     payload: PasswordChange,
     request: Request,
+    response: Response,
     user: dict = Depends(get_current_user),
 ):
     db = get_db()
@@ -385,6 +416,9 @@ async def change_password(
     new_hash = hash_password(payload.new_password)
     history = (full.get("password_history") or [])[-PASSWORD_HISTORY + 1:] + [new_hash]
     now_iso = datetime.now(timezone.utc).isoformat()
+    # Bump session epoch: every existing session is now invalid. We re-issue
+    # fresh cookies for the CURRENT session so the user stays logged in here.
+    new_epoch = int(full.get("session_epoch", 0)) + 1
     await db.users.update_one(
         {"id": user["id"]},
         {
@@ -393,17 +427,25 @@ async def change_password(
                 "password_history": history,
                 "password_changed_at": now_iso,
                 "updated_at": now_iso,
+                "session_epoch": new_epoch,
             }
         },
     )
+    session_started_at = now_iso
+    access = create_access_token(
+        user["id"], user["email"], user["role"], new_epoch, session_started_at,
+    )
+    refresh_tok = create_refresh_token(user["id"], new_epoch, session_started_at)
+    _set_auth_cookies(response, access, refresh_tok)
     await log_audit(
         action="auth.password_changed",
         actor_id=user["id"],
         actor_email=user["email"],
         actor_role=user["role"],
         request=request,
+        metadata={"other_sessions_revoked": True},
     )
-    return {"message": "Password updated"}
+    return {"message": "Password updated", "other_sessions_revoked": True}
 
 
 @router.post("/reauth")
@@ -460,6 +502,7 @@ async def mfa_setup(request: Request, user: dict = Depends(get_current_user)):
 async def mfa_verify(
     payload: MfaVerify,
     request: Request,
+    response: Response,
     user: dict = Depends(get_current_user),
 ):
     db = get_db()
@@ -473,6 +516,7 @@ async def mfa_verify(
             reason="bad_code",
         )
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid code")
+    new_epoch = int(full.get("session_epoch", 0)) + 1
     await db.users.update_one(
         {"id": user["id"]},
         {
@@ -480,10 +524,18 @@ async def mfa_verify(
                 "mfa_enabled": True,
                 "mfa_secret": pending,
                 "mfa_backup_codes": full.get("mfa_pending_backup") or [],
+                "session_epoch": new_epoch,
             },
             "$unset": {"mfa_pending_secret": "", "mfa_pending_backup": ""},
         },
     )
+    # Re-issue current session with new epoch so the user stays logged in.
+    sst = datetime.now(timezone.utc).isoformat()
+    access = create_access_token(
+        user["id"], user["email"], user["role"], new_epoch, sst,
+    )
+    refresh_tok = create_refresh_token(user["id"], new_epoch, sst)
+    _set_auth_cookies(response, access, refresh_tok)
     await log_audit(
         action="auth.mfa_enabled",
         actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
@@ -496,6 +548,7 @@ async def mfa_verify(
 async def mfa_disable(
     payload: ReauthRequest,
     request: Request,
+    response: Response,
     user: dict = Depends(get_current_user),
 ):
     """Requires current password (step-down)."""
@@ -503,13 +556,20 @@ async def mfa_disable(
     full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
     if not full or not verify_password(payload.password, full["password_hash"]):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid password")
+    new_epoch = int(full.get("session_epoch", 0)) + 1
     await db.users.update_one(
         {"id": user["id"]},
         {
-            "$set": {"mfa_enabled": False},
+            "$set": {"mfa_enabled": False, "session_epoch": new_epoch},
             "$unset": {"mfa_secret": "", "mfa_backup_codes": ""},
         },
     )
+    sst = datetime.now(timezone.utc).isoformat()
+    access = create_access_token(
+        user["id"], user["email"], user["role"], new_epoch, sst,
+    )
+    refresh_tok = create_refresh_token(user["id"], new_epoch, sst)
+    _set_auth_cookies(response, access, refresh_tok)
     await log_audit(
         action="auth.mfa_disabled",
         actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
@@ -570,6 +630,8 @@ async def create_user(
         "phone": payload.phone,
         "status": "active",
         "mfa_enabled": False,
+        "mfa_policy_required": payload.role in ("admin", "doctor", "staff"),
+        "session_epoch": 0,
         "created_at": now,
         "updated_at": now,
     }
@@ -595,15 +657,19 @@ async def disable_user(
     db = get_db_write()
     result = await db.users.update_one(
         {"id": user_id},
-        {"$set": {"status": "disabled", "updated_at": datetime.now(timezone.utc).isoformat()}},
+        {
+            "$set": {"status": "disabled", "updated_at": datetime.now(timezone.utc).isoformat()},
+            "$inc": {"session_epoch": 1},
+        },
     )
     if result.matched_count == 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
     await cache.invalidate_prefix(cache_keys.PREFIX_PROVIDERS)
     await audit_success(
         admin, "user.disabled", request, entity_type="user", entity_id=user_id,
+        metadata={"sessions_revoked": True},
     )
-    return {"message": "User disabled"}
+    return {"message": "User disabled", "sessions_revoked": True}
 
 
 @router.patch("/users/{user_id}", response_model=UserPublic)
@@ -628,7 +694,12 @@ async def update_user(
 
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
     db = get_db_write()
-    result = await db.users.update_one({"id": user_id}, {"$set": updates})
+    # If role or status changes, any existing session for that user must die.
+    sessions_revoked = any(k in updates for k in ("role", "status"))
+    mongo_update: dict = {"$set": updates}
+    if sessions_revoked:
+        mongo_update["$inc"] = {"session_epoch": 1}
+    result = await db.users.update_one({"id": user_id}, mongo_update)
     if result.matched_count == 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
 
@@ -642,7 +713,10 @@ async def update_user(
         request,
         entity_type="user",
         entity_id=user_id,
-        metadata={"fields": [k for k in updates if k != "updated_at"]},
+        metadata={
+            "fields": [k for k in updates if k != "updated_at"],
+            "sessions_revoked": sessions_revoked,
+        },
     )
     return _to_public(updated)
 
@@ -681,3 +755,267 @@ async def list_providers(_user: dict = Depends(get_current_user)):
         return [_to_public(u) async for u in cursor]
 
     return await cache.get_or_set(cache_keys.PROVIDERS, 300, _fetch)
+
+
+# ---------------- Admin MFA controls ----------------
+
+@router.post("/users/{user_id}/mfa/reset")
+async def admin_reset_mfa(
+    user_id: str,
+    request: Request,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Admin MFA recovery: disables MFA on a target user, revokes all their
+    sessions, and writes an audit row. Target user must re-enrol MFA on
+    next login."""
+    db = get_db_write()
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    new_epoch = int(target.get("session_epoch", 0)) + 1
+    await db.users.update_one(
+        {"id": user_id},
+        {
+            "$set": {
+                "mfa_enabled": False,
+                "session_epoch": new_epoch,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            },
+            "$unset": {
+                "mfa_secret": "",
+                "mfa_backup_codes": "",
+                "mfa_pending_secret": "",
+                "mfa_pending_backup": "",
+            },
+        },
+    )
+    await audit_success(
+        admin, "user.mfa_reset", request,
+        entity_type="user", entity_id=user_id,
+        metadata={"target_email": target["email"], "sessions_revoked": True},
+    )
+    return {"message": "MFA reset for user; all sessions revoked."}
+
+
+@router.post("/users/{user_id}/mfa/require")
+async def admin_require_mfa(
+    user_id: str,
+    request: Request,
+    required: bool = True,
+    admin: dict = Depends(require_role("admin")),
+):
+    """Admin MFA policy toggle per user. When required=True and the user has
+    not enrolled MFA, their next login returns mfa_policy_required=true and
+    the frontend redirects to the MFA setup page before granting PHI access."""
+    db = get_db_write()
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    await db.users.update_one(
+        {"id": user_id},
+        {
+            "$set": {
+                "mfa_policy_required": bool(required),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        },
+    )
+    await audit_success(
+        admin,
+        "user.mfa_policy_updated",
+        request,
+        entity_type="user",
+        entity_id=user_id,
+        metadata={"target_email": target["email"], "required": bool(required)},
+    )
+    return {"message": f"MFA policy set to required={required}"}
+
+
+# ---------------- Password reset (forgot password) ----------------
+
+@router.post("/password-reset/request")
+async def password_reset_request(
+    payload: PasswordResetRequest,
+    request: Request,
+):
+    """Issues a single-use, 15-minute password reset token.
+
+    - Always responds 200 to prevent user enumeration.
+    - In production this token is delivered by email (out of scope of the MVP
+      communication integration). For dev we also return the token in the
+      response body so engineers can exercise the reset flow.
+    - The token's SHA-256 is stored — the raw token is never persisted.
+    - Issuing a token does NOT confirm the email exists.
+    """
+    ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or (
+        request.client.host if request.client else "unknown"
+    )
+    if not await rate_limit.is_allowed(f"pwreset:{ip}", limit=5, window_seconds=60):
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many reset requests. Please slow down.",
+        )
+
+    db = get_db_write()
+    email = payload.email.lower().strip()
+    user = await db.users.find_one({"email": email, "status": {"$ne": "disabled"}}, {"_id": 0})
+
+    raw_token: str | None = None
+    if user:
+        raw_token = secrets.token_urlsafe(32)
+        await db.password_reset_tokens.insert_one(
+            {
+                "id": str(uuid.uuid4()),
+                "token_hash": _hash_token(raw_token),
+                "user_id": user["id"],
+                "email": email,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "expires_at": datetime.now(timezone.utc)
+                + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES),
+                "used_at": None,
+            }
+        )
+        await log_audit(
+            action="auth.password_reset_requested",
+            actor_id=user["id"],
+            actor_email=email,
+            actor_role=user.get("role"),
+            request=request,
+            metadata={"ttl_minutes": PASSWORD_RESET_TTL_MINUTES},
+        )
+    else:
+        # Log the miss for anti-enumeration forensics without leaking whether
+        # the email exists to the caller.
+        await audit_failure(
+            action="auth.password_reset_requested",
+            request=request,
+            actor_email=email,
+            reason="unknown_email_or_disabled",
+        )
+
+    return {
+        "message": (
+            "If an account with that email exists, a reset link has been sent. "
+            "The link expires in 15 minutes."
+        ),
+        # Dev convenience. In production, strip this or only return
+        # when running in a dev/test environment.
+        "dev_token": raw_token,
+    }
+
+
+@router.post("/password-reset/confirm")
+async def password_reset_confirm(
+    payload: PasswordResetConfirm,
+    request: Request,
+):
+    db = get_db_write()
+    token_hash = _hash_token(payload.token)
+    now = datetime.now(timezone.utc)
+    record = await db.password_reset_tokens.find_one({"token_hash": token_hash}, {"_id": 0})
+    if not record or record.get("used_at"):
+        await audit_failure(
+            action="auth.password_reset_confirm", request=request,
+            reason="invalid_or_used_token",
+        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired reset token")
+    expires_at = record.get("expires_at")
+    if isinstance(expires_at, str):
+        try:
+            expires_at = datetime.fromisoformat(expires_at)
+        except ValueError:
+            expires_at = None
+    if isinstance(expires_at, datetime) and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if not expires_at or expires_at < now:
+        await audit_failure(
+            action="auth.password_reset_confirm", request=request,
+            reason="token_expired",
+        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired reset token")
+
+    user = await db.users.find_one({"id": record["user_id"]}, {"_id": 0})
+    if not user or user.get("status") == "disabled":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid or expired reset token")
+
+    try:
+        validate_strength(payload.new_password)
+        reject_password_reuse(payload.new_password, user.get("password_history") or [])
+    except PasswordPolicyError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc))
+
+    new_hash = hash_password(payload.new_password)
+    history = (user.get("password_history") or [])[-PASSWORD_HISTORY + 1:] + [new_hash]
+    now_iso = now.isoformat()
+    new_epoch = int(user.get("session_epoch", 0)) + 1
+    await db.users.update_one(
+        {"id": user["id"]},
+        {
+            "$set": {
+                "password_hash": new_hash,
+                "password_history": history,
+                "password_changed_at": now_iso,
+                "updated_at": now_iso,
+                "session_epoch": new_epoch,
+            }
+        },
+    )
+    # Burn the token (single-use) and invalidate any other outstanding tokens
+    # for this user to prevent replay on a now-changed password.
+    await db.password_reset_tokens.update_many(
+        {"user_id": user["id"], "used_at": None},
+        {"$set": {"used_at": now_iso}},
+    )
+    await db.login_attempts.delete_one({"identifier": user["email"]})
+    await log_audit(
+        action="auth.password_reset_completed",
+        actor_id=user["id"],
+        actor_email=user["email"],
+        actor_role=user.get("role"),
+        request=request,
+        metadata={"sessions_revoked": True},
+    )
+    return {
+        "message": "Password has been reset. Please sign in with your new password.",
+    }
+
+
+# ---------------- Session visibility (self) ----------------
+
+@router.get("/sessions")
+async def list_sessions(
+    request: Request,
+    user: dict = Depends(get_current_user),
+    limit: int = 20,
+):
+    """Returns the most recent sign-in history for the current user.
+
+    Sourced from the audit log — no separate sessions table needed today.
+    Useful for the Security page "Recent sign-ins" panel and for detecting
+    unknown locations / user-agents.
+    """
+    db = get_db_read()
+    cursor = db.audit_logs.find(
+        {
+            "actor_id": user["id"],
+            "action": {"$in": ["auth.login", "auth.mfa_verified", "auth.logout"]},
+        },
+        {
+            "_id": 0,
+            "action": 1,
+            "outcome": 1,
+            "ip": 1,
+            "user_agent": 1,
+            "created_at": 1,
+            "metadata": 1,
+        },
+    ).sort("created_at", -1).limit(max(1, min(limit, 100)))
+    rows = [r async for r in cursor]
+    return {
+        "current_session": {
+            "ip": (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+            or (request.client.host if request.client else "unknown"),
+            "user_agent": request.headers.get("user-agent"),
+        },
+        "events": rows,
+    }

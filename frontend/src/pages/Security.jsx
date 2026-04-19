@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Lock, ShieldCheck, KeyRound, CheckCircle2 } from "lucide-react";
+import { Lock, ShieldCheck, KeyRound, CheckCircle2, History, Globe } from "lucide-react";
 import { api } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { formatApiError } from "../api/client";
+import { formatDateTime, relativeFromNow } from "../utils/time";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
@@ -317,6 +318,7 @@ export default function Security() {
 
       <PasswordChangeCard />
       <MfaCard />
+      <RecentSignInsCard />
 
       <div className="rounded-sm border border-stone-200 bg-white p-6 text-sm text-[#5C6A61]">
         <div className="flex items-center gap-2 text-[#1F2924]">
@@ -324,11 +326,117 @@ export default function Security() {
           <span className="font-['Outfit'] text-base font-medium">Session hardening active</span>
         </div>
         <ul className="mt-2 list-disc space-y-1 pl-5">
-          <li>15-minute idle auto-logoff.</li>
+          <li>15-minute idle auto-logoff; 12-hour absolute session cap.</li>
           <li>Lockout after 5 failed logins (15-minute window).</li>
+          <li>Password / role / status / MFA changes immediately revoke all sessions.</li>
           <li>Step-up re-auth required for delete patient + add medical record.</li>
           <li>All PHI accesses recorded in the audit log.</li>
         </ul>
+      </div>
+    </div>
+  );
+}
+
+function RecentSignInsCard() {
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await api.get("/auth/sessions", { params: { limit: 10 } });
+        setData(data);
+      } catch {
+        setData({ current_session: {}, events: [] });
+      }
+    })();
+  }, []);
+
+  if (!data) {
+    return (
+      <div className="rounded-sm border border-stone-200 bg-white p-6 text-sm text-[#5C6A61]">
+        Loading recent sign-ins…
+      </div>
+    );
+  }
+
+  return (
+    <div
+      data-testid="sessions-card"
+      className="rounded-sm border border-stone-200 bg-white p-6"
+    >
+      <div className="flex items-center gap-2">
+        <History className="h-5 w-5 text-[#526B58]" />
+        <h2 className="font-['Outfit'] text-2xl font-medium">Recent sign-ins</h2>
+      </div>
+      <p className="mt-2 text-sm text-[#5C6A61]">
+        Review recent authentication events on your account. Unexpected
+        sign-ins? Change your password immediately — this will revoke every
+        active session, including suspicious ones.
+      </p>
+
+      <div
+        data-testid="current-session-panel"
+        className="mt-4 rounded-sm border border-stone-200 bg-[#FAF9F6] p-3 text-xs text-[#5C6A61]"
+      >
+        <div className="flex items-center gap-2 text-[#1F2924]">
+          <Globe className="h-3.5 w-3.5" />
+          <span className="font-semibold uppercase tracking-wider">This session</span>
+        </div>
+        <div className="mt-1 space-y-0.5">
+          <div>IP: <span className="font-mono text-[#1F2924]">{data.current_session?.ip || "unknown"}</span></div>
+          <div className="truncate">UA: <span className="font-mono">{data.current_session?.user_agent || "—"}</span></div>
+        </div>
+      </div>
+
+      <div className="mt-4 overflow-hidden rounded-sm border border-stone-200">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-[#FAF9F6] text-[11px] uppercase tracking-[0.15em] text-[#5C6A61]">
+            <tr>
+              <th className="px-3 py-2 font-medium">When</th>
+              <th className="px-3 py-2 font-medium">Event</th>
+              <th className="px-3 py-2 font-medium">Outcome</th>
+              <th className="px-3 py-2 font-medium">IP</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.events.length === 0 ? (
+              <tr>
+                <td colSpan={4} className="px-3 py-4 text-center text-xs text-[#5C6A61]">
+                  No sign-in events yet.
+                </td>
+              </tr>
+            ) : (
+              data.events.map((e, i) => (
+                <tr
+                  key={`${e.created_at}-${i}`}
+                  data-testid={`session-row-${i}`}
+                  className="border-t border-stone-100"
+                >
+                  <td className="px-3 py-2 align-top">
+                    <div>{formatDateTime(e.created_at)}</div>
+                    <div className="text-[11px] text-[#5C6A61]">{relativeFromNow(e.created_at)}</div>
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <code className="font-mono text-xs">{e.action}</code>
+                  </td>
+                  <td className="px-3 py-2 align-top">
+                    <span
+                      className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
+                        e.outcome === "success"
+                          ? "bg-[#EDF2EE] text-[#526B58]"
+                          : "bg-[#FBF1EE] text-[#C76D54]"
+                      }`}
+                    >
+                      {e.outcome || "—"}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 align-top font-mono text-xs text-[#5C6A61]">
+                    {e.ip || "—"}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );

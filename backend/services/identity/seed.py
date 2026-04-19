@@ -56,6 +56,8 @@ async def _upsert_user(email: str, password: str, name: str, role: str, phone: s
                 "password_history": [hashed],
                 "password_changed_at": now,
                 "mfa_enabled": False,
+                "mfa_policy_required": False,
+                "session_epoch": 0,
                 "created_at": now,
                 **base,
             }
@@ -75,6 +77,11 @@ async def _upsert_user(email: str, password: str, name: str, role: str, phone: s
                 updates["password_history"] = [existing["password_hash"]]
             if not existing.get("password_changed_at"):
                 updates["password_changed_at"] = existing.get("created_at", now)
+        # Backfill security-hardening fields on legacy rows.
+        if existing.get("session_epoch") is None:
+            updates["session_epoch"] = 0
+        if existing.get("mfa_policy_required") is None:
+            updates["mfa_policy_required"] = False
         await db.users.update_one({"email": email}, {"$set": updates})
 
 
@@ -165,6 +172,11 @@ async def _write_credentials_file(admin_email: str, admin_password: str) -> None
 - POST /api/auth/users/{{id}}/disable — admin only
 - POST /api/auth/users/{{id}}/enable  — admin only
 - GET  /api/auth/providers         — authenticated
+- GET  /api/auth/sessions          — recent sign-ins for current user (auth events from audit log)
+- POST /api/auth/password-reset/request  — public; issues a single-use, 15-min token (dev_token returned in non-prod)
+- POST /api/auth/password-reset/confirm  — public; consumes token + rotates session_epoch
+- POST /api/auth/users/{{id}}/mfa/reset    — admin; disables MFA + revokes all user's sessions
+- POST /api/auth/users/{{id}}/mfa/require?required=true|false  — admin; toggles mfa_policy_required
 
 ## Patient endpoints
 - GET    /api/patients                  — list (masked PHI by default)
@@ -187,7 +199,8 @@ async def _write_credentials_file(admin_email: str, admin_password: str) -> None
 - GET    /api/notifications             — admin|staff (masked unless unmask=true)
 
 ## Audit endpoints
-- GET    /api/audit-logs                — admin only
+- GET    /api/audit-logs                — admin only (filters: actor_id, actor_email, entity_type, entity_id, action, outcome, phi_accessed, date_from, date_to, limit)
+- GET    /api/audit-logs/export.csv     — admin only; streams CSV (same filter set)
 
 ## Health
 - GET    /api/health

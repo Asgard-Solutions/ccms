@@ -28,6 +28,7 @@ class UserPublic(BaseModel):
     phone: str | None = None
     status: UserStatus = "active"
     mfa_enabled: bool = False
+    mfa_policy_required: bool = False
     password_changed_at: str | None = None
     created_at: datetime
 
@@ -92,3 +93,14 @@ class MfaVerify(BaseModel):
 class MfaChallenge(BaseModel):
     mfa_ticket: str
     code: str
+
+
+class PasswordResetRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    email: EmailStr
+
+
+class PasswordResetConfirm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    token: str = Field(min_length=16, max_length=128)
+    new_password: str = Field(min_length=12, max_length=128)

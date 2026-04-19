@@ -154,6 +154,16 @@ function LoginForm() {
         </Button>
 
         <p className="text-center text-sm text-[#5C6A61]">
+          <Link
+            to="/password-reset"
+            data-testid="login-forgot-password-link"
+            className="font-medium text-[#526B58] underline-offset-4 hover:underline"
+          >
+            Forgot your password?
+          </Link>
+        </p>
+
+        <p className="text-center text-sm text-[#5C6A61]">
           New patient?{" "}
           <Link
             to="/register"

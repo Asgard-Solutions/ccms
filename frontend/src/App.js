@@ -14,6 +14,7 @@ import Notifications from "./pages/Notifications";
 import Security from "./pages/Security";
 import AuditLog from "./pages/AuditLog";
 import Compliance from "./pages/Compliance";
+import PasswordReset from "./pages/PasswordReset";
 import "./App.css";
 
 function Shell({ children, roles }) {
@@ -31,6 +32,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/password-reset" element={<PasswordReset />} />
           <Route path="/" element={<Shell><Dashboard /></Shell>} />
           <Route path="/patients" element={<Shell><Patients /></Shell>} />
           <Route path="/patients/:id" element={<Shell><PatientDetail /></Shell>} />
