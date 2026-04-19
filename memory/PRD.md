@@ -115,7 +115,16 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **PHI hygiene**: removed `{first_name + last_name}` from `patient.created` audit metadata after bug caught in iteration_5.
 - **Verified**: 26/26 backend tests (iteration_5 + iteration_6) pass. 0 bugs. Frontend smoke (login forgot-link, password-reset tabs, sessions card, audit advanced filters + export) all green.
 
-## 9. Key reference docs
+## 9. Privacy & data-governance phase (2026-02-18)
+- **New `services/privacy/` microservice**: data inventory endpoint, DSAR request lifecycle (`received→in_review→approved→fulfilled|rejected|withdrawn`), versioned consent records, communication preferences, patient legal hold.
+- **Data-subject rights**: `GET /api/auth/me/export` (self-service account export) + `GET /api/patients/{id}/export` (pre-existing clinical export) now complemented by a dedicated request/approval audit trail.
+- **Legal hold**: `patients.legal_hold` blocks both `DELETE /patients/{id}` and `/privacy/requests/{id}/fulfill-delete` with 409 Conflict until cleared. Reauth required to toggle.
+- **Consent**: register page captures Privacy Notice v`2026-02-v1`; submit button disabled until accepted; `consent_records` append-only collection.
+- **Admin UI**: `/privacy` page with Requests tab (intake form, status/type filters, state-machine-aware transition buttons, fulfil-delete action) and Data inventory tab (8 categories with CCPA/PHI/retention metadata).
+- **Docs**: `/app/memory/PRIVACY_AND_RETENTION.md` — full workflow + retention model + CCPA mapping + out-of-app boundaries.
+- **Verified**: 27/27 new tests + 26/26 regression tests pass (iteration_7). 0 issues.
+
+## 10. Key reference docs
 - `/app/memory/HIPAA_COMPLIANCE.md` — full safeguard inventory (implemented vs. external)
 - `/app/memory/test_credentials.md` — demo accounts
 - `/app/test_reports/iteration_2.json` — testing agent report (24/24)
