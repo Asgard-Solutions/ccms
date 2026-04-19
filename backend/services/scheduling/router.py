@@ -1,0 +1,276 @@
+"""
+Scheduling Service router — /api/appointments/*
+
+Publishes domain events to the in-process event bus so the Communication Service
+(or any future subscriber, e.g. Billing) can react independently.
+"""
+import uuid
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+
+from core.db import get_db
+from core.deps import get_current_user, require_role
+from core.event_bus import publish
+from services.scheduling.models import (
+    AppointmentCreate,
+    AppointmentUpdate,
+    AppointmentPublic,
+)
+
+router = APIRouter(prefix="/appointments", tags=["scheduling"])
+
+STAFF_ROLES = ("admin", "doctor", "staff")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _to_iso(dt: datetime) -> str:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).isoformat()
+
+
+async def _hydrate(apps: list[dict]) -> list[dict]:
+    if not apps:
+        return apps
+    db = get_db()
+    provider_ids = list({a["provider_id"] for a in apps})
+    patient_ids = list({a["patient_id"] for a in apps})
+    providers = {
+        u["id"]: u["name"]
+        async for u in db.users.find(
+            {"id": {"$in": provider_ids}}, {"_id": 0, "id": 1, "name": 1}
+        )
+    }
+    patients = {
+        p["id"]: f"{p['first_name']} {p['last_name']}"
+        async for p in db.patients.find(
+            {"id": {"$in": patient_ids}},
+            {"_id": 0, "id": 1, "first_name": 1, "last_name": 1},
+        )
+    }
+    for a in apps:
+        a["provider_name"] = providers.get(a["provider_id"])
+        a["patient_name"] = patients.get(a["patient_id"])
+    return apps
+
+
+async def _check_conflict(
+    provider_id: str,
+    start_iso: str,
+    end_iso: str,
+    exclude_id: str | None = None,
+) -> None:
+    """Raise 409 if the provider already has a scheduled appointment overlapping
+    [start, end).  Two intervals overlap iff a.start < b.end AND b.start < a.end.
+    """
+    db = get_db()
+    q: dict = {
+        "provider_id": provider_id,
+        "status": "scheduled",
+        "start_time": {"$lt": end_iso},
+        "end_time": {"$gt": start_iso},
+    }
+    if exclude_id:
+        q["id"] = {"$ne": exclude_id}
+    clash = await db.appointments.find_one(q, {"_id": 0, "id": 1, "start_time": 1})
+    if clash:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Provider already booked at this time (conflicts with appt {clash['id']})",
+        )
+
+
+@router.post("", response_model=AppointmentPublic, status_code=201)
+async def create_appointment(
+    payload: AppointmentCreate,
+    actor: dict = Depends(require_role(*STAFF_ROLES)),
+):
+    db = get_db()
+    if payload.end_time <= payload.start_time:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "end_time must be after start_time")
+
+    # Validate patient + provider exist
+    patient = await db.patients.find_one({"id": payload.patient_id}, {"_id": 0, "id": 1})
+    if not patient:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    provider = await db.users.find_one(
+        {"id": payload.provider_id, "role": "doctor"}, {"_id": 0, "id": 1, "name": 1}
+    )
+    if not provider:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Provider not found")
+
+    start_iso = _to_iso(payload.start_time)
+    end_iso = _to_iso(payload.end_time)
+    await _check_conflict(payload.provider_id, start_iso, end_iso)
+
+    now = _now_iso()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "patient_id": payload.patient_id,
+        "provider_id": payload.provider_id,
+        "start_time": start_iso,
+        "end_time": end_iso,
+        "reason": payload.reason,
+        "notes": payload.notes,
+        "status": "scheduled",
+        "created_by": actor["id"],
+        "created_at": now,
+        "updated_at": now,
+    }
+    await db.appointments.insert_one(doc)
+    doc.pop("_id", None)
+
+    # Fire event — Communication Service handler will create notification records.
+    await publish("appointment.booked", {"appointment": doc, "actor_id": actor["id"]})
+
+    (hydrated,) = await _hydrate([doc])
+    return hydrated
+
+
+@router.get("", response_model=list[AppointmentPublic])
+async def list_appointments(
+    user: dict = Depends(get_current_user),
+    provider_id: str | None = None,
+    patient_id: str | None = None,
+    appt_status: str | None = Query(default=None, alias="status"),
+    from_date: str | None = Query(default=None, alias="from"),
+    to_date: str | None = Query(default=None, alias="to"),
+):
+    db = get_db()
+    q: dict = {}
+
+    # Role-based row filtering
+    if user["role"] == "patient":
+        patient_record = await db.patients.find_one(
+            {"user_id": user["id"]}, {"_id": 0, "id": 1}
+        )
+        if not patient_record:
+            return []
+        q["patient_id"] = patient_record["id"]
+    elif user["role"] == "doctor":
+        # doctors see their own appts by default, but can opt to see any
+        if not provider_id and not patient_id:
+            q["provider_id"] = user["id"]
+
+    if provider_id:
+        q["provider_id"] = provider_id
+    if patient_id:
+        q["patient_id"] = patient_id
+    if appt_status:
+        q["status"] = appt_status
+    if from_date or to_date:
+        range_q: dict = {}
+        if from_date:
+            range_q["$gte"] = from_date
+        if to_date:
+            range_q["$lte"] = to_date
+        q["start_time"] = range_q
+
+    cursor = db.appointments.find(q, {"_id": 0}).sort("start_time", 1)
+    apps = [a async for a in cursor]
+    return await _hydrate(apps)
+
+
+@router.get("/{appointment_id}", response_model=AppointmentPublic)
+async def get_appointment(appointment_id: str, user: dict = Depends(get_current_user)):
+    db = get_db()
+    a = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+    if not a:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
+    if user["role"] == "patient":
+        patient_record = await db.patients.find_one(
+            {"user_id": user["id"]}, {"_id": 0, "id": 1}
+        )
+        if not patient_record or patient_record["id"] != a["patient_id"]:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
+    (hydrated,) = await _hydrate([a])
+    return hydrated
+
+
+@router.put("/{appointment_id}", response_model=AppointmentPublic)
+async def update_appointment(
+    appointment_id: str,
+    payload: AppointmentUpdate,
+    actor: dict = Depends(require_role(*STAFF_ROLES)),
+):
+    db = get_db()
+    current = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+    if not current:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
+    if current["status"] == "cancelled":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Cannot modify a cancelled appointment")
+
+    updates: dict = {}
+    if payload.start_time or payload.end_time:
+        new_start = payload.start_time or datetime.fromisoformat(current["start_time"])
+        new_end = payload.end_time or datetime.fromisoformat(current["end_time"])
+        if new_end <= new_start:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "end_time must be after start_time")
+        start_iso = _to_iso(new_start)
+        end_iso = _to_iso(new_end)
+        await _check_conflict(current["provider_id"], start_iso, end_iso, exclude_id=appointment_id)
+        updates["start_time"] = start_iso
+        updates["end_time"] = end_iso
+    if payload.reason is not None:
+        updates["reason"] = payload.reason
+    if payload.notes is not None:
+        updates["notes"] = payload.notes
+    if payload.status is not None:
+        updates["status"] = payload.status
+
+    if not updates:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No fields to update")
+    updates["updated_at"] = _now_iso()
+
+    await db.appointments.update_one({"id": appointment_id}, {"$set": updates})
+    updated = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+
+    await publish(
+        "appointment.updated",
+        {"appointment": updated, "previous": current, "actor_id": actor["id"]},
+    )
+
+    (hydrated,) = await _hydrate([updated])
+    return hydrated
+
+
+@router.post("/{appointment_id}/cancel", response_model=AppointmentPublic)
+async def cancel_appointment(
+    appointment_id: str,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db()
+    a = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+    if not a:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
+
+    # Patient owners may cancel their own; otherwise staff/doctor/admin only
+    if user["role"] == "patient":
+        patient_record = await db.patients.find_one(
+            {"user_id": user["id"]}, {"_id": 0, "id": 1}
+        )
+        if not patient_record or patient_record["id"] != a["patient_id"]:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
+    elif user["role"] not in STAFF_ROLES:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
+
+    if a["status"] == "cancelled":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Already cancelled")
+
+    await db.appointments.update_one(
+        {"id": appointment_id},
+        {"$set": {"status": "cancelled", "updated_at": _now_iso()}},
+    )
+    updated = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+
+    await publish(
+        "appointment.cancelled",
+        {"appointment": updated, "actor_id": user["id"]},
+    )
+
+    (hydrated,) = await _hydrate([updated])
+    return hydrated

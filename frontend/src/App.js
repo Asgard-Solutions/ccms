@@ -1,54 +1,84 @@
-import { useEffect } from "react";
-import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { Toaster } from "./components/ui/sonner";
+import { AuthProvider } from "./contexts/AuthContext";
+import ProtectedRoute from "./components/layout/ProtectedRoute";
+import AppShell from "./components/layout/AppShell";
+import Login from "./pages/Login";
+import Register from "./pages/Register";
+import Dashboard from "./pages/Dashboard";
+import Patients from "./pages/Patients";
+import PatientDetail from "./pages/PatientDetail";
+import Appointments from "./pages/Appointments";
+import CalendarPage from "./pages/Calendar";
+import Notifications from "./pages/Notifications";
+import "./App.css";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
-
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
+function Shell({ children, roles }) {
   return (
-    <div>
-      <header className="App-header">
-        <a
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
-  );
-};
-
-function App() {
-  return (
-    <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </div>
+    <ProtectedRoute roles={roles}>
+      <AppShell>{children}</AppShell>
+    </ProtectedRoute>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <AuthProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route
+            path="/"
+            element={
+              <Shell>
+                <Dashboard />
+              </Shell>
+            }
+          />
+          <Route
+            path="/patients"
+            element={
+              <Shell>
+                <Patients />
+              </Shell>
+            }
+          />
+          <Route
+            path="/patients/:id"
+            element={
+              <Shell>
+                <PatientDetail />
+              </Shell>
+            }
+          />
+          <Route
+            path="/appointments"
+            element={
+              <Shell>
+                <Appointments />
+              </Shell>
+            }
+          />
+          <Route
+            path="/calendar"
+            element={
+              <Shell roles={["admin", "doctor", "staff"]}>
+                <CalendarPage />
+              </Shell>
+            }
+          />
+          <Route
+            path="/notifications"
+            element={
+              <Shell roles={["admin", "staff"]}>
+                <Notifications />
+              </Shell>
+            }
+          />
+        </Routes>
+      </BrowserRouter>
+      <Toaster richColors position="top-right" />
+    </AuthProvider>
+  );
+}

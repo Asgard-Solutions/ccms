@@ -1,0 +1,74 @@
+{
+  "summary": "Comprehensive backend+frontend review of CCMS Phase 1 MVP. Built pytest suite (20 tests) covering Identity/Auth, RBAC, Patients, Scheduling+Event-flow, Notifications. Backend 17/20 pass (85%). Frontend verified via Playwright: login, role-aware sidebar, booking dialog, Patients/Appointments/Notifications navigation. Found 2 HIGH-priority backend bugs and 1 MEDIUM bug. All core flows (book/reschedule/cancel with 6 notifications, conflict 409, CRUD, RBAC enforcement) work correctly.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "services/identity/seed.py:72",
+        "issue": "TYPO: seed looks up patient user by email 'patient@ccms.local' but DEMO_USERS defines it as 'patient@ccms.app'. As a result Morgan Lee's patient record is created WITHOUT user_id link (or with a stale user_id from an old seed run). This breaks every patient-role flow: GET /api/patients returns [] for patient role, patient cannot see their own appointments or cancel them, and UI 'Patients' page shows 'No patients yet' when logged in as patient@ccms.app.",
+        "priority": "HIGH",
+        "fix": "Change 'patient@ccms.local' to 'patient@ccms.app' on seed.py line 72. Also backfill existing Morgan Lee record: db.patients.update_one({first_name:'Morgan',last_name:'Lee'}, {'$set':{'user_id': <patient@ccms.app user id>}}) or drop and re-seed."
+      },
+      {
+        "endpoint": "POST /api/auth/login (brute-force lockout)",
+        "issue": "Lockout uses identifier = f'{request.client.host}:{email}'. Behind the Kubernetes ingress/LB the client host varies between requests (observed 10.64.130.9 and 10.64.129.166 for the same real client), so failed-attempt counters get split across identifiers and the 6th wrong attempt returns 401 instead of 429. Brute-force protection is effectively bypassable.",
+        "priority": "HIGH",
+        "fix": "Lock by email only (or parse X-Forwarded-For / trust ProxyHeadersMiddleware). Identifier should be just `email.lower()`; optionally combined with a trusted leftmost XFF IP."
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "POST /api/patients (and PUT /api/patients/{id})",
+        "issue": "No explicit email/phone format validation beyond Pydantic strings; creating a new patient does NOT auto-link to an existing user account with the same email (user_id stays null). Same-email user and patient stay orphaned — this is how the seed typo bug slipped in."
+      },
+      {
+        "endpoint": "POST /api/auth/register",
+        "issue": "Accepts arbitrary `role` field in payload (correctly ignores it server-side), but the model should reject the field (extra='forbid') to avoid giving callers a false impression they can elevate role."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "PatientDashboard / PatientsList for patient role",
+        "issue": "Shows 'No patients yet' and 'No upcoming appointments' for patient@ccms.app even though Morgan Lee record + test appointments exist. Root cause is the seed bug above (Morgan Lee's user_id doesn't match patient@ccms.app).",
+        "selector": "page /patients and /",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Patient Dashboard", "issues": ["'Hello, Dr..' truncated greeting for Dr. Alicia Monroe — name split logic appears to truncate after the period in 'Dr.' (cosmetic)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "FIX seed.py line 72: change 'patient@ccms.local' -> 'patient@ccms.app'. Also backfill the existing Morgan Lee patient doc with the correct user_id so demo patient flows work without a DB reset.",
+    "FIX brute-force lockout identifier: use email-only (or X-Forwarded-For) so Kubernetes LB source-IP rotation doesn't split the counter. 6th wrong attempt currently returns 401 instead of 429.",
+    "Optional: auto-link new patient to existing user on POST /api/patients when emails match.",
+    "Cosmetic: Dashboard greeting truncates 'Dr. Alicia Monroe' to 'Dr..' — use first word token split on space rather than split('.')."
+  ],
+  "critical_code_review_comments": [
+    "identity/router.py brute-force bucket keyed by request.client.host will be unreliable in any load-balanced/ingress deployment — should normalize via X-Forwarded-For or drop IP entirely.",
+    "identity/seed.py hardcoded 'patient@ccms.local' vs DEMO_USERS 'patient@ccms.app' is a very easy-to-miss typo; consider deriving the lookup email from DEMO_USERS constant instead of a literal string.",
+    "patient/router.py create_patient does not auto-link user_id even when a user with that email exists — easy data-integrity footgun.",
+    "Overall structure (routers per service + in-process event bus + hydration helpers) is clean, async/await used correctly, _id excluded everywhere, env vars respected, data-testid coverage is good on Appointments."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (new)",
+    "/app/backend/tests/__init__.py (new)"
+  ],
+  "success_rate": {"backend": "85% (17/20)", "frontend": "80% (admin/doctor/patient sidebar + booking dialog open verified; patient data flow blocked by seed bug)"},
+  "test_credentials": "admin@ccms.app/Admin@123, doctor@ccms.app/Doctor@123, staff@ccms.app/Staff@123, patient@ccms.app/Patient@123",
+  "seed_data_creation": "Tests created several TEST_* users (patient role via register) and one additional doctor via admin POST /api/auth/users, plus a few appointments (some cancelled, some scheduled far-future) linked to Morgan Lee. Not cleaned up — they do not conflict with demo seeds.",
+  "mocked_apis_verified": "Communication service is mock-only by design: notifications persisted to db.notifications with channel=email|sms and status=sent_mock. Verified 2 rows per event (booked/updated/cancelled = 6 total per appointment lifecycle).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend suite lives at /app/backend/tests/backend_test.py and produces JUnit XML at /app/test_reports/pytest/pytest_results.xml. 2 real backend bugs must be fixed: (1) seed.py line 72 email typo, (2) brute-force IP-based identifier. After fix, rerun pytest — test_patient_role_sees_only_self and test_full_lifecycle and test_brute_force_lockout should all pass. Frontend role-aware sidebar is already verified working for all 3 non-admin roles. Event-driven pipeline works end-to-end (+2 notifications per event).",
+  "rca_of_issues": {
+    "patient_cannot_see_own_data": "seed.py calls db.users.find_one({'email':'patient@ccms.local'}). Demo user email is 'patient@ccms.app'. Lookup returns None, so the `if patient_user:` block was skipped at original seed time — but a stale Morgan Lee record with a different user_id already exists from an earlier seed. Net effect: patient@ccms.app user_id != Morgan Lee.user_id, so all patient-role queries (list_patients, list_appointments) return empty. Fix: change the email literal AND backfill the existing doc (or wipe + re-seed).",
+    "brute_force_lockout_not_triggering": "Kubernetes ingress round-robins traffic to backend pods with different source IPs (as observed in login_attempts collection — same browser session produced identifier IPs 10.64.130.9 and 10.64.129.166). Since identifier = IP+email, 5 failures get split (e.g. 3+2) and never reach the threshold of 5 on a single bucket. Fix: use email-only identifier, or parse X-Forwarded-For."
+  }
+}
