@@ -58,6 +58,32 @@ public release yet — we're pre-1.0).
   `Patients`, `Register`, `Dashboard`, `PermissionMatrix`, `toast`.
 
 ### Added (theme guardrail)
+- **Refactored every core Shadcn primitive** to match the spec:
+  `button.jsx`, `input.jsx`, `textarea.jsx`, `select.jsx`, `card.jsx`,
+  `dialog.jsx`, `dropdown-menu.jsx`, `tabs.jsx`, `badge.jsx`,
+  `table.jsx`, `sonner.jsx`. Each now uses:
+  - Semantic tokens only (no raw Tailwind palette, no hex) — controls
+    consume `bg-surface`, `bg-card`, `bg-popover`, `text-foreground`,
+    `text-muted-foreground`, `border-border` directly.
+  - 8px radius on controls (`rounded-sm`), 12px on cards & dialogs
+    (`rounded-lg`) per spec §7.
+  - 40px default height on buttons and inputs (36/44 for sm/lg) per
+    spec §6.
+  - 600 weight on button labels, `font-display` on card/dialog titles,
+    12px bold-uppercase headers on tables per spec §5.
+  - Accessible 2px focus ring with offset against the local surface,
+    driven by the `--focus` token, on every keyboard-focusable
+    element (spec §10).
+  - Tokenized row hover / selected via `--table-row-hover` and
+    `--table-row-selected` alias tokens.
+  - Copper `premium` badge variant using `--badge-premium-*` alias
+    tokens — reserved for billing / admin emphasis per spec §9.
+- **Dialog**: overlay now reads `--dialog-overlay` (2px backdrop
+  blur), content sits on `bg-card` with `shadow-md` + 12px radius.
+- **Sonner**: replaced the broken `next-themes` import with the
+  app's own `ThemeContext`, so toasts flip with the user's Light /
+  Dark / System preference. Added tokenized `success` / `warning` /
+  `info` / `error` variant classes.
 - **`scripts/check_theme.py`** — Python CI guard. Scans
   `frontend/src/**` for raw hex arbitrary values, forbidden Tailwind
   palette families (slate / gray / stone / blue / red / etc.), and
