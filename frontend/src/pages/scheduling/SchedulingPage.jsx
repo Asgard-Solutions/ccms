@@ -118,15 +118,27 @@ export default function SchedulingPage() {
             <WeekView
               date={date}
               countsByDate={countsByDate}
+              canBook={canBook}
               onOpenDay={(d) => goToDay(d)}
               onOpenAppointment={(a) => {
                 if (canBook && a.status === "scheduled") openReschedule(a);
                 else goToDay(new Date(a.start_time));
               }}
+              onCreateAt={(d) => openNewAt(d)}
             />
           )}
           {view === "month" && (
-            <MonthView date={date} countsByDate={countsByDate} onOpenDay={(d) => goToDay(d)} />
+            <MonthView
+              date={date}
+              countsByDate={countsByDate}
+              canBook={canBook}
+              onOpenDay={(d) => goToDay(d)}
+              onOpenAppointment={(a) => {
+                if (canBook && a.status === "scheduled") openReschedule(a);
+                else goToDay(new Date(a.start_time));
+              }}
+              onCreateAt={(d) => openNewAt(d)}
+            />
           )}
           {view === "year" && (
             <YearView

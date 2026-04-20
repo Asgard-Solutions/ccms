@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { Plus } from "lucide-react";
 import {
   addDays,
   isoDateKey,
@@ -19,8 +20,10 @@ const PREVIEW_LIMIT = 3;
 export default function WeekView({
   date,
   countsByDate,
+  canBook,
   onOpenDay,
   onOpenAppointment,
+  onCreateAt,
 }) {
   const weekStart = useMemo(() => startOfWeek(date), [date]);
   const days = useMemo(
@@ -57,29 +60,46 @@ export default function WeekView({
             <div
               key={key}
               data-testid={`scheduling-week-cell-${key}`}
-              className={`flex min-h-[180px] flex-col gap-2 p-3 ${isToday(d) ? "bg-background" : "bg-card"}`}
+              className={`group relative flex min-h-[180px] flex-col gap-2 p-3 ${isToday(d) ? "bg-background" : "bg-card"}`}
             >
-              <button
-                type="button"
-                data-testid={`scheduling-week-open-day-${key}`}
-                onClick={() => onOpenDay?.(d)}
-                className="group flex items-center justify-between gap-2 rounded-sm border border-transparent px-2 py-1 text-left hover:border-border hover:bg-muted"
-                aria-label={`Open ${dayLabel} in day view`}
-              >
-                <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground group-hover:text-foreground">
-                  {dayLabel}
-                </span>
-                <span
-                  data-testid={`scheduling-week-count-${key}`}
-                  className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
-                    count === 0
-                      ? "bg-muted text-muted-foreground"
-                      : "bg-primary/10 text-primary"
-                  }`}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  data-testid={`scheduling-week-open-day-${key}`}
+                  onClick={() => onOpenDay?.(d)}
+                  className="group/header flex flex-1 items-center justify-between gap-2 rounded-sm border border-transparent px-2 py-1 text-left hover:border-border hover:bg-muted"
+                  aria-label={`Open ${dayLabel} in day view`}
                 >
-                  {count === 0 ? "0" : `${count} appt${count === 1 ? "" : "s"}`}
-                </span>
-              </button>
+                  <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground group-hover/header:text-foreground">
+                    {dayLabel}
+                  </span>
+                  <span
+                    data-testid={`scheduling-week-count-${key}`}
+                    className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
+                      count === 0
+                        ? "bg-muted text-muted-foreground"
+                        : "bg-primary/10 text-primary"
+                    }`}
+                  >
+                    {count === 0 ? "0" : `${count} appt${count === 1 ? "" : "s"}`}
+                  </span>
+                </button>
+                {canBook && (
+                  <button
+                    type="button"
+                    data-testid={`scheduling-week-add-${key}`}
+                    onClick={() => {
+                      const slot = new Date(d);
+                      slot.setHours(9, 0, 0, 0);
+                      onCreateAt?.(slot);
+                    }}
+                    aria-label={`Book a new appointment on ${dayLabel}`}
+                    className="hidden h-6 w-6 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary group-hover:flex"
+                  >
+                    <Plus className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
 
               {count === 0 ? (
                 <div

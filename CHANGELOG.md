@@ -11,6 +11,29 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Scheduling — direct actions from calendar cells (Task 11).**
+  - **Week & Month cells** now expose a compact hover-reveal `+`
+    quick-add button (`data-testid="scheduling-week-add-{date}"` /
+    `scheduling-month-add-{date}"`) that opens the booking dialog
+    pre-filled for that date at 09:00. Admin / doctor / staff only;
+    hidden when `canBook` is false.
+  - **Month view** refactored from an outer `<button>` cell to a
+    `<div>` with independently-focusable children — fixes the
+    previously invalid nested-button structure and makes each
+    appointment preview clickable. Scheduled previews open the
+    reschedule dialog; cancelled previews navigate to Day view
+    (since rescheduling a cancelled appt is not meaningful). The
+    day-number and count badge are separate buttons that both open
+    Day view. The "+N more" affordance still routes to Day view.
+  - No behaviour change to Day view's empty-slot click — it
+    continues to open the booking dialog pre-filled to that 15-min
+    slot (Task 6). Cancel affordance remains available inside the
+    reschedule dialog (Task 6).
+  - Acceptance criteria all met: empty-slot click creates an appt
+    with correct prefilled date/time; appointment click opens the
+    correct workflow; day click from summary views navigates to
+    Day view.
+
 - **Scheduling summary views now use count aggregation (Task 10).**
   New backend endpoint `GET /api/appointments/counts` runs a single
   MongoDB aggregation pipeline that buckets `start_time` by the

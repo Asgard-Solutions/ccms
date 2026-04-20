@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { Plus } from "lucide-react";
 import {
   buildMonthGrid,
   isoDateKey,
@@ -9,7 +10,23 @@ import { formatTime } from "../../utils/time";
 
 const PREVIEW_LIMIT = 2;
 
-export default function MonthView({ date, countsByDate, onOpenDay }) {
+/**
+ * Month view.
+ *
+ * Each cell is a <div> (no outer button — avoids invalid nested buttons) so
+ * the header, each appointment preview, and the quick-add "+" can each be
+ * their own focusable target. Clicking the header opens Day view; clicking
+ * a preview opens the reschedule workflow; clicking "+" opens the booking
+ * dialog pre-filled for that date.
+ */
+export default function MonthView({
+  date,
+  countsByDate,
+  canBook,
+  onOpenDay,
+  onOpenAppointment,
+  onCreateAt,
+}) {
   const weeks = useMemo(() => buildMonthGrid(date), [date]);
   const currentMonth = date.getMonth();
 
@@ -35,38 +52,60 @@ export default function MonthView({ date, countsByDate, onOpenDay }) {
             const extra = Math.max(0, count - preview.length);
             const inMonth = d.getMonth() === currentMonth;
             const today = isToday(d);
+            const openDayLabel = d.toLocaleDateString("en-US", {
+              weekday: "long", month: "long", day: "numeric",
+            });
 
             return (
-              <button
+              <div
                 key={key}
-                type="button"
                 data-testid={`scheduling-month-cell-${key}`}
-                onClick={() => onOpenDay?.(d)}
-                aria-label={`${d.toLocaleDateString("en-US", {
-                  weekday: "long", month: "long", day: "numeric",
-                })} — ${count} appointment${count === 1 ? "" : "s"}`}
-                className={`group flex min-h-[120px] flex-col items-stretch gap-1 border-b border-r border-border p-2 text-left transition-colors hover:bg-muted ${
+                className={`group relative flex min-h-[120px] flex-col items-stretch gap-1 border-b border-r border-border p-2 ${
                   wi === weeks.length - 1 ? "border-b-0" : ""
                 } ${inMonth ? "bg-card" : "bg-background text-muted-foreground"}`}
               >
                 <div className="flex items-center justify-between">
-                  <span
-                    className={`font-display text-sm ${
+                  <button
+                    type="button"
+                    data-testid={`scheduling-month-open-day-${key}`}
+                    onClick={() => onOpenDay?.(d)}
+                    aria-label={`Open ${openDayLabel} in Day view`}
+                    className={`font-display text-sm transition-colors hover:text-primary ${
                       today
-                        ? "rounded-sm bg-primary px-1.5 text-primary-foreground"
+                        ? "rounded-sm bg-primary px-1.5 text-primary-foreground hover:text-primary-foreground"
                         : ""
                     }`}
                   >
                     {d.getDate()}
-                  </span>
-                  {count > 0 && (
-                    <span
-                      data-testid={`scheduling-month-count-${key}`}
-                      className="rounded-sm bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary"
-                    >
-                      {count} appt{count === 1 ? "" : "s"}
-                    </span>
-                  )}
+                  </button>
+                  <div className="flex items-center gap-1">
+                    {count > 0 && (
+                      <button
+                        type="button"
+                        data-testid={`scheduling-month-count-${key}`}
+                        onClick={() => onOpenDay?.(d)}
+                        className="rounded-sm bg-primary/10 px-1.5 py-0.5 text-[11px] font-semibold text-primary hover:bg-primary/20"
+                        aria-label={`${count} appointments on ${openDayLabel}`}
+                      >
+                        {count} appt{count === 1 ? "" : "s"}
+                      </button>
+                    )}
+                    {canBook && (
+                      <button
+                        type="button"
+                        data-testid={`scheduling-month-add-${key}`}
+                        onClick={() => {
+                          const slot = new Date(d);
+                          slot.setHours(9, 0, 0, 0);
+                          onCreateAt?.(slot);
+                        }}
+                        aria-label={`Book a new appointment on ${openDayLabel}`}
+                        className="hidden h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary group-hover:flex"
+                      >
+                        <Plus className="h-3 w-3" />
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 {count === 0 ? (
@@ -74,31 +113,38 @@ export default function MonthView({ date, countsByDate, onOpenDay }) {
                 ) : (
                   <ul className="flex flex-col gap-[3px]">
                     {preview.map((a) => (
-                      <li
-                        key={a.id}
-                        data-testid={`scheduling-month-appt-${a.id}`}
-                        className={`truncate rounded-[3px] border-l-2 px-1.5 py-0.5 text-[11px] ${
-                          a.status === "cancelled"
-                            ? "border-destructive bg-destructive-soft text-destructive line-through"
-                            : "border-primary bg-primary/10 text-foreground"
-                        }`}
-                        title={`${formatTime(a.start_time)} · ${a.patient_name}`}
-                      >
-                        <span className="font-medium">{formatTime(a.start_time)}</span>{" "}
-                        <span className="text-muted-foreground">{a.patient_name}</span>
+                      <li key={a.id}>
+                        <button
+                          type="button"
+                          data-testid={`scheduling-month-appt-${a.id}`}
+                          onClick={() => onOpenAppointment?.(a)}
+                          className={`block w-full truncate rounded-[3px] border-l-2 px-1.5 py-0.5 text-left text-[11px] transition-colors ${
+                            a.status === "cancelled"
+                              ? "border-destructive bg-destructive-soft text-destructive line-through"
+                              : "border-primary bg-primary/10 text-foreground hover:bg-primary/20"
+                          }`}
+                          title={`${formatTime(a.start_time)} · ${a.patient_name}`}
+                        >
+                          <span className="font-medium">{formatTime(a.start_time)}</span>{" "}
+                          <span className="text-muted-foreground">{a.patient_name}</span>
+                        </button>
                       </li>
                     ))}
                     {extra > 0 && (
-                      <li
-                        data-testid={`scheduling-month-more-${key}`}
-                        className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground group-hover:text-foreground"
-                      >
-                        +{extra} more
+                      <li>
+                        <button
+                          type="button"
+                          data-testid={`scheduling-month-more-${key}`}
+                          onClick={() => onOpenDay?.(d)}
+                          className="w-full text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                        >
+                          +{extra} more
+                        </button>
                       </li>
                     )}
                   </ul>
                 )}
-              </button>
+              </div>
             );
           })
         )}
