@@ -93,16 +93,21 @@ When you create a new doc:
 ## Automation hooks
 Today the policy is enforced by:
 - `.github/pull_request_template.md` checkbox list.
-- **`.github/workflows/docs-guard.yml` + `scripts/check_changelog.sh`** —
-  fails the PR when `backend/**` or `frontend/**` changed without a matching
-  `CHANGELOG.md` update. Mirror guard runs locally via the opt-in
-  `.githooks/pre-commit` hook (enable once with
-  `git config core.hooksPath .githooks`).
+- **`scripts/check_docs.py` + `docs/doc_rules.yml`** — matrix-aware guard
+  that inspects the PR diff and fails when any rule's `when` patterns
+  match a changed file without the corresponding `require` docs being
+  updated in the same PR. The ruleset is declarative and easy to extend.
+- **`.github/workflows/docs-guard.yml`** — runs the matrix guard on every
+  pull request and posts GitHub annotations pointing back to this file.
+- **`.githooks/pre-commit`** — opt-in local mirror of the CI guard.
+  Enable once per clone with `git config core.hooksPath .githooks`.
 - The testing agent's `test_credentials.md` freshness check.
 - The main agent's `finish` tool, which updates `memory/PRD.md` on every
   successful feature completion.
 
 Future automation (tracked in `memory/COMPLIANCE_BACKLOG.md`):
-- Matrix-aware guard that inspects changed paths and verifies *each*
-  required document was touched (not just CHANGELOG).
 - Auto-label PRs with the doc-categories their diff affects.
+- `scripts/check_docs.py --emit-changelog-stub` helper that prepends a
+  well-formed `[Unreleased]` block when one is missing.
+- Verification that CHANGELOG additions land under `## [Unreleased]`
+  (not under an older dated heading).

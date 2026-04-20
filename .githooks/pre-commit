@@ -3,16 +3,16 @@
 # Pre-commit hook — activated via:
 #     git config core.hooksPath .githooks
 #
-# Runs the CHANGELOG guard locally before every commit.
+# Runs the matrix-aware documentation guard locally before every commit.
 # Skip with: git commit --no-verify (not recommended).
 #
 set -e
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-SCRIPT="${REPO_ROOT}/scripts/check_changelog.sh"
+GUARD="${REPO_ROOT}/scripts/check_docs.py"
 
-if [[ ! -x "$SCRIPT" ]]; then
-  echo "pre-commit: check_changelog.sh missing or not executable — skipping guard."
+if [[ ! -x "$GUARD" ]]; then
+  echo "pre-commit: scripts/check_docs.py missing or not executable — skipping."
   exit 0
 fi
 
-"$SCRIPT"
+"$GUARD"

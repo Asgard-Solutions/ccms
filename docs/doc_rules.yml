@@ -1,0 +1,121 @@
+# CCMS — Documentation update rules
+#
+# Each rule matches a set of changed file paths (`when`) and requires one
+# or more docs to be updated in the same PR (`require`). All patterns use
+# gitignore-style globs:
+#
+#   *       matches any character except `/`
+#   **      matches any character including `/` (recursive)
+#   ?       matches a single character except `/`
+#
+# Required docs (`require`) must ALL appear in the diff for the rule to
+# pass. Rules whose `when` patterns do not match anything in the PR are
+# skipped silently.
+#
+# Keep this file in sync with /app/docs/DOC_UPDATE_POLICY.md — the matrix
+# there is the human-readable projection of these rules.
+
+rules:
+  - name: code-changes-need-changelog
+    description: >
+      Any change under backend/ or frontend/ must append an entry to
+      CHANGELOG.md's [Unreleased] section.
+    when:
+      - "backend/**"
+      - "frontend/**"
+    require:
+      - "CHANGELOG.md"
+
+  - name: auth-changes-need-credentials-refresh
+    description: >
+      Changes to identity service, security, MFA, reauth, or password
+      policy must keep memory/test_credentials.md in sync and explain the
+      change in CHANGELOG.
+    when:
+      - "backend/services/identity/**"
+      - "backend/core/security.py"
+      - "backend/core/reauth.py"
+      - "backend/core/mfa.py"
+      - "backend/core/password_policy.py"
+    require:
+      - "memory/test_credentials.md"
+      - "CHANGELOG.md"
+
+  - name: rbac-changes-need-authz-guide
+    description: >
+      RBAC policy, permission catalogue, or role seed changes must update
+      memory/AUTHORIZATION_GUIDE.md.
+    when:
+      - "backend/services/authz/**"
+      - "backend/core/deps.py"
+    require:
+      - "memory/AUTHORIZATION_GUIDE.md"
+      - "CHANGELOG.md"
+
+  - name: tenancy-changes-need-architecture-doc
+    description: >
+      Tenant + location scoping rule changes must update
+      memory/MULTI_TENANCY_ARCHITECTURE.md.
+    when:
+      - "backend/core/tenant_scope.py"
+      - "backend/core/tenancy.py"
+      - "backend/services/tenancy/**"
+    require:
+      - "memory/MULTI_TENANCY_ARCHITECTURE.md"
+      - "CHANGELOG.md"
+
+  - name: phi-surface-changes-need-hipaa-doc
+    description: >
+      Encryption, masking, or audit-logic changes must update
+      memory/HIPAA_COMPLIANCE.md and flag security implications in CHANGELOG.
+    when:
+      - "backend/core/crypto.py"
+      - "backend/core/masking.py"
+      - "backend/core/audit.py"
+      - "backend/core/consent_pdf.py"
+      - "backend/core/object_storage.py"
+    require:
+      - "memory/HIPAA_COMPLIANCE.md"
+      - "CHANGELOG.md"
+
+  - name: privacy-retention-changes
+    description: >
+      Soft-delete, retention, or legal-hold logic changes must update
+      memory/PRIVACY_AND_RETENTION.md.
+    when:
+      - "backend/services/privacy/**"
+    require:
+      - "memory/PRIVACY_AND_RETENTION.md"
+      - "CHANGELOG.md"
+
+  - name: dependency-changes-need-changelog
+    description: >
+      Adding, removing, or bumping a Python or JS dependency must be
+      recorded in CHANGELOG under the Dependencies heading.
+    when:
+      - "backend/requirements.txt"
+      - "frontend/package.json"
+    require:
+      - "CHANGELOG.md"
+
+  - name: readme-when-deployment-changes
+    description: >
+      Supervisor, env, or port configuration changes must update the
+      README "Running locally" section.
+    when:
+      - "backend/.env.example"
+      - "frontend/.env.example"
+      - "supervisord.conf"
+      - ".emergent/**"
+    require:
+      - "README.md"
+      - "CHANGELOG.md"
+
+  - name: doc-rules-self-update
+    description: >
+      Whenever doc_rules.yml changes, the human-readable matrix in
+      docs/DOC_UPDATE_POLICY.md must be updated to match.
+    when:
+      - "docs/doc_rules.yml"
+    require:
+      - "docs/DOC_UPDATE_POLICY.md"
