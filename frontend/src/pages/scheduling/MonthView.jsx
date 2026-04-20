@@ -62,7 +62,11 @@ export default function MonthView({
                 data-testid={`scheduling-month-cell-${key}`}
                 className={`group relative flex min-h-[120px] flex-col items-stretch gap-1 border-b border-r border-border p-2 ${
                   wi === weeks.length - 1 ? "border-b-0" : ""
-                } ${inMonth ? "bg-card" : "bg-background text-muted-foreground"}`}
+                } ${inMonth ? "bg-card" : "bg-background text-muted-foreground"} ${
+                  today
+                    ? "bg-primary/5 ring-2 ring-inset ring-primary"
+                    : ""
+                }`}
               >
                 <div className="flex items-center justify-between">
                   <button

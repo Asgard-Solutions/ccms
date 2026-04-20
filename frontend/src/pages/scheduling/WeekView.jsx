@@ -47,10 +47,29 @@ export default function WeekView({
         {days.map((d, i) => (
           <div
             key={`h-${d.toISOString()}`}
-            className={`px-4 py-3 ${isToday(d) ? "text-primary" : ""}`}
+            data-testid={`scheduling-week-header-${isoDateKey(d)}`}
+            className={`px-4 py-3 ${
+              isToday(d)
+                ? "border-t-2 border-t-primary bg-primary/10 text-primary"
+                : ""
+            }`}
           >
-            <div>{WEEKDAY_SHORT[i]}</div>
-            <div className="mt-1 font-display text-lg font-medium text-foreground">
+            <div className="flex items-center gap-1.5">
+              <span>{WEEKDAY_SHORT[i]}</span>
+              {isToday(d) && (
+                <span
+                  data-testid={`scheduling-week-today-pill-${isoDateKey(d)}`}
+                  className="rounded-sm bg-primary px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-wider text-primary-foreground"
+                >
+                  Today
+                </span>
+              )}
+            </div>
+            <div
+              className={`mt-1 font-display text-lg font-medium ${
+                isToday(d) ? "text-primary" : "text-foreground"
+              }`}
+            >
               {d.getDate()}
             </div>
           </div>
@@ -87,7 +106,7 @@ export default function WeekView({
                 isClosed
                   ? "bg-muted/40"
                   : isToday(d)
-                  ? "bg-background"
+                  ? "bg-primary/5 ring-2 ring-inset ring-primary"
                   : "bg-card"
               }`}
             >

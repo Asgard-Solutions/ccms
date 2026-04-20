@@ -11,6 +11,18 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Scheduling — "Today" cell is now visually distinct on Week and
+  Month views.** Previously the current day blended into the
+  background. Now:
+  - **Week view** today-cell: primary-tinted background
+    (`bg-primary/5`), a `ring-2 ring-inset ring-primary` accent, a
+    primary top-border on the header strip, and a small `Today` pill
+    next to the day label so the column is unmistakable.
+  - **Month view** today-cell: same `bg-primary/5` +
+    `ring-2 ring-inset ring-primary` treatment. The existing
+    primary-pill date number stays.
+  Active cancelled-pill gating + half-column rendering are unchanged.
+
 - **Scheduling + Clinic Settings — Appointment types.** Introduces a
   tenant-scoped catalog of bookable visit types with a per-type default
   duration (minutes). Backend: new service at
