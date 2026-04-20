@@ -38,6 +38,7 @@ import {
 } from "../components/ui/select";
 import BreakGlassDialog from "../components/BreakGlassDialog";
 import ReauthDialog from "../components/ReauthDialog";
+import PatientDocumentsCard from "../components/PatientDocumentsCard";
 
 // ---------------------------------------------------------------------------
 // Expanded-intake section renderers (Phase 4).
@@ -130,18 +131,35 @@ function InsurancePlanBlock({ plan, label, testId }) {
   );
 }
 
-function ConsentLine({ label, consent }) {
+function ConsentLine({ label, consent, consentType, onDownloadPdf }) {
   if (!consent || !consent.accepted) return null;
   const meta = [consent.signature_name, consent.signed_at].filter(Boolean).join(" · ");
   return (
-    <div className="flex items-start justify-between gap-4 text-sm">
+    <div
+      className="flex items-start justify-between gap-4 text-sm"
+      data-testid={consentType ? `consent-row-${consentType}` : undefined}
+    >
       <span className="text-[#1F2924]">{label}</span>
-      <span className="text-right text-xs text-[#5C6A61]">{meta || "Accepted"}</span>
+      <div className="flex items-center gap-2">
+        <span className="text-right text-xs text-[#5C6A61]">{meta || "Accepted"}</span>
+        {onDownloadPdf && consentType && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => onDownloadPdf(consentType)}
+            data-testid={`consent-pdf-${consentType}`}
+            className="h-6 px-2 text-[11px] font-semibold uppercase tracking-wider text-[#526B58] hover:bg-[#EDF2EE]"
+          >
+            <Download className="mr-1 h-3 w-3" /> PDF
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
 
-function IntakeSections({ patient }) {
+function IntakeSections({ patient, onDownloadConsent }) {
   const demo = patient.demographics || {};
   const contact = patient.contact || {};
   const addr = patient.address_details || {};
@@ -357,17 +375,19 @@ function IntakeSections({ patient }) {
             hint="Every consent is versioned and audited."
             testId="intake-consents"
           >
-            <ConsentLine label="HIPAA privacy notice" consent={consents.hipaa} />
-            <ConsentLine label="Consent to treatment" consent={consents.treatment} />
-            <ConsentLine label="Financial policy" consent={consents.financial} />
-            <ConsentLine label="Telehealth" consent={consents.telehealth} />
-            <ConsentLine label="Photo release" consent={consents.photo_release} />
+            <ConsentLine label="HIPAA privacy notice" consent={consents.hipaa} consentType="hipaa" onDownloadPdf={onDownloadConsent} />
+            <ConsentLine label="Consent to treatment" consent={consents.treatment} consentType="treatment" onDownloadPdf={onDownloadConsent} />
+            <ConsentLine label="Financial policy" consent={consents.financial} consentType="financial" onDownloadPdf={onDownloadConsent} />
+            <ConsentLine label="Telehealth" consent={consents.telehealth} consentType="telehealth" onDownloadPdf={onDownloadConsent} />
+            <ConsentLine label="Photo release" consent={consents.photo_release} consentType="photo_release" onDownloadPdf={onDownloadConsent} />
             {Array.isArray(consents.additional) &&
               consents.additional.map((c, i) => (
                 <ConsentLine
                   key={`${c?.type || "extra"}-${i}`}
                   label={(c?.type || "Consent").replace(/_/g, " ")}
                   consent={c}
+                  consentType={c?.type}
+                  onDownloadPdf={onDownloadConsent}
                 />
               ))}
           </IntakeCard>
@@ -520,6 +540,26 @@ export default function PatientDetail() {
     }
   }
 
+  async function downloadConsentPdf(consentType) {
+    try {
+      const params = {};
+      if (reason) params.reason = reason;
+      const resp = await api.get(
+        `/patients/${id}/consents/${consentType}/pdf`,
+        { params, responseType: "blob" }
+      );
+      const url = URL.createObjectURL(resp.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `consent-${consentType}-${id.slice(0, 8)}.pdf`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      toast.success("Signed consent PDF downloaded");
+    } catch (err) {
+      toast.error(formatApiError(err));
+    }
+  }
+
   async function softDelete() {
     try {
       const { data } = await api.delete(`/patients/${id}`, {
@@ -590,14 +630,30 @@ export default function PatientDetail() {
           {canEditIntake && (
             <Button
               variant="outline"
-              onClick={() => {
-                if (!patient.unmasked) {
-                  toast.message("Unmask first to edit intake", {
-                    description: "Edits need the full (unmasked) record so you don't overwrite fields with masked placeholders.",
-                  });
+              onClick={async () => {
+                if (patient.unmasked) {
+                  setEditWizardOpen(true);
                   return;
                 }
-                setEditWizardOpen(true);
+                // Inline unmask flow — if the staff member is allowed to
+                // unmask (admin), flip it automatically and open the wizard
+                // right after the patient reloads. Audit trail still fires.
+                if (canUnmask) {
+                  try {
+                    setUnmask(true);
+                    await load({ withUnmask: true, breakGlassReason: reason });
+                    setEditWizardOpen(true);
+                  } catch (err) {
+                    setUnmask(false);
+                    toast.error(formatApiError(err));
+                  }
+                  return;
+                }
+                // Non-admin clinicians still need break-glass — nudge them
+                // to supply a reason instead of silently failing.
+                toast.message("Break-glass required to edit intake", {
+                  description: "Enter a reason above to unmask this record before editing.",
+                });
               }}
               data-testid="patient-edit-intake-btn"
               className="rounded-sm"
@@ -667,7 +723,9 @@ export default function PatientDetail() {
         </div>
       </section>
 
-      <IntakeSections patient={patient} />
+      <IntakeSections patient={patient} onDownloadConsent={downloadConsentPdf} />
+
+      <PatientDocumentsCard patientId={id} canEdit={canEditIntake} />
 
       <section>
         <div className="mb-4 flex items-end justify-between">

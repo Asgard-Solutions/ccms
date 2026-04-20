@@ -35,6 +35,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../components/ui/dialog";
+import { SignaturePad } from "../components/SignaturePad";
 import {
   PAIN_AREA_OPTIONS,
   SYMPTOM_OPTIONS,
@@ -162,6 +163,7 @@ const EMPTY_FORM = {
   releaseOfInformation: false,
   signatureName: "",
   signatureDate: "",
+  signatureImage: null,
 };
 
 // -----------------------------------------------------------------------
@@ -749,6 +751,13 @@ function StepCaseConsents({ form, set, visibility }) {
       </Field>
       <Field label="Signature date" htmlFor="sigDate">
         <TextInput id="sigDate" type="date" testId="w-sig-date" value={form.signatureDate} onChange={set("signatureDate")} max={TODAY_ISO} />
+      </Field>
+      <Field label="Drawn signature (optional, wet-ink style)" htmlFor="sigImage" className="col-span-full">
+        <SignaturePad
+          testId="w-sig-pad"
+          value={form.signatureImage}
+          onChange={set("signatureImage")}
+        />
       </Field>
     </div>
   );

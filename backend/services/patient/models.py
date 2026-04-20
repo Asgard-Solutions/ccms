@@ -186,6 +186,7 @@ class ConsentRecord(BaseModel):
     type: str | None = None
     accepted: bool | None = None
     signature_name: str | None = None
+    signature_image: str | None = None  # base64 PNG data-URL (encrypted at rest inside `consents` section)
     signed_at: str | None = None
     document_version: str | None = None
     ip_address: str | None = None

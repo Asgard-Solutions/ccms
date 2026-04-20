@@ -480,6 +480,7 @@ function buildPayload(form, _today = new Date()) {
 
   const sigName = cleanStr(f.signatureName);
   const sigDate = cleanStr(f.signatureDate);
+  const sigImage = cleanStr(f.signatureImage);
   const mkConsent = (type, accepted) =>
     accepted
       ? compactObj({
@@ -487,6 +488,7 @@ function buildPayload(form, _today = new Date()) {
           accepted: true,
           signature_name: sigName,
           signed_at: sigDate,
+          signature_image: sigImage,
         })
       : undefined;
   const additional = [
@@ -560,7 +562,7 @@ const EMPTY_FORM = {
   hipaaAcknowledged: false, consentToTreat: false,
   financialPolicyAccepted: false, assignmentOfBenefits: false,
   releaseOfInformation: false,
-  signatureName: "", signatureDate: "",
+  signatureName: "", signatureDate: "", signatureImage: null,
 };
 
 function _coerceStr(v) {
@@ -577,15 +579,18 @@ function _pickSignature(consents) {
     consents?.telehealth, consents?.photo_release,
     ...(Array.isArray(consents?.additional) ? consents.additional : []),
   ];
+  let image = null;
   for (const c of sources) {
+    if (!image && c?.signature_image) image = c.signature_image;
     if (c?.signature_name || c?.signed_at) {
       return {
         signatureName: _coerceStr(c.signature_name),
         signatureDate: _coerceStr(c.signed_at).slice(0, 10),
+        signatureImage: image || c.signature_image || null,
       };
     }
   }
-  return { signatureName: "", signatureDate: "" };
+  return { signatureName: "", signatureDate: "", signatureImage: image };
 }
 
 /**
@@ -608,7 +613,7 @@ function payloadToForm(patient) {
   const clin = patient.clinical_intake || {};
   const cd = patient.case_details || {};
   const cons = patient.consents || {};
-  const { signatureName, signatureDate } = _pickSignature(cons);
+  const { signatureName, signatureDate, signatureImage } = _pickSignature(cons);
   const additional = Array.isArray(cons.additional) ? cons.additional : [];
   const hasConsent = (type) =>
     additional.some((c) => c && c.type === type && c.accepted === true);
@@ -728,6 +733,7 @@ function payloadToForm(patient) {
     releaseOfInformation: hasConsent("release_of_information"),
     signatureName,
     signatureDate,
+    signatureImage: signatureImage || null,
   };
   return out;
 }

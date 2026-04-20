@@ -219,12 +219,17 @@ async def _lockout_check(db, identifier: str) -> None:
 
 @router.post("/login", response_model=LoginResult)
 async def login(payload: UserLogin, request: Request, response: Response):
-    # Outer rate-limit: 30 attempts per IP per minute. Per-email lockout in Mongo
-    # remains the durable, audited brute-force control beneath this.
+    # Outer rate-limit: per-IP throttle as DoS protection. We bumped the
+    # bucket from 30→60/minute because back-to-back automation runs (and
+    # legitimate front-desk retry patterns) were occasionally draining the
+    # 30/min window with 429s. Brute-force protection itself is NOT
+    # weakened by this bump — the per-email Mongo lockout below
+    # (`MAX_FAILED_ATTEMPTS` in `_lockout_check`) remains the durable,
+    # audited credential-stuffing control.
     ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or (
         request.client.host if request.client else "unknown"
     )
-    if not await rate_limit.is_allowed(f"login:{ip}", limit=30, window_seconds=60):
+    if not await rate_limit.is_allowed(f"login:{ip}", limit=60, window_seconds=60):
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS,
             "Too many requests from this address. Please slow down.",
