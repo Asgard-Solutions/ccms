@@ -12,6 +12,68 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Billing Phase 5 — Remittance posting, denials, AR aging, statements
+  (iteration 28).**
+  - New collections: `remittances`, `remittance_claims`,
+    `remittance_lines`, `statements`.
+  - Backend endpoints (all tenant-scoped, auditable):
+    - `POST /api/billing/remittances` — atomic post of header +
+      per-claim + per-line rows + payment (method=`era_posting`) +
+      allocations + contractual adjustments + denial work items.
+      Enforces: payer consistency across claims, sum(paid) ==
+      header total, claim must exist on the same tenant. Advances
+      the claim's Phase-4 state machine (submitted → accepted →
+      paid/partially_paid/denied) and rolls patient balance forward
+      via the standard `_recompute_invoice_balance` helper (no
+      hidden mutations).
+    - `GET /api/billing/remittances/{id}` — header + claims + lines.
+    - `PUT /api/billing/denial-work-items/{id}` — status / assignee
+      / resolution notes. Uses the canonical denial state machine
+      (`open → in_progress → resolved/escalated → closed`).
+    - `GET /api/billing/ar/aging` — buckets `0-30 / 31-60 / 61-90 /
+      91-120 / 120+` based on `invoice.issued_at` (fallback
+      `created_at`). Optional `payer_id` filter.
+    - `GET /api/billing/ar/aging/by-payer` — aggregates aging grouped
+      by payer (self-pay surfaced as a row).
+    - `POST /api/billing/patients/{pid}/statements` — snapshots open
+      invoices into a plain-text statement row. Scaffolding only
+      (no PDF, no email yet). List + read endpoints included.
+  - Permission registry: added `remit.post` (high sensitivity,
+    financial) and `denial.work` to super_admin + billing_specialist.
+  - Per user choices: patient responsibility is left on the invoice
+    (choice 1b — no extra line minted); denial work items are
+    auto-created with `assigned_to_id=null` (choice 2).
+
+### Frontend
+  - `RemittancePosting.jsx` — two-section form: remittance header
+    + eligible-claims picker with per-row paid/contractual/patient
+    /denied/denial-code inputs, live `Total paid` recompute.
+  - `RemittanceDetail.jsx` — header + per-claim + per-line tables.
+  - `DenialsQueue.jsx` — filterable work queue with inline status +
+    assignee + resolution-notes dialog (`denial-edit-*` testids).
+  - `ArAgingReport.jsx` — overall bucket bars + per-payer breakdown.
+  - `useRemittance.js` — hooks & helpers for remittances, denials,
+    aging, statements.
+  - Sidebar entries (`AppShell.jsx`): Claims / Denials / AR aging /
+    Post remit. Routes wired in `App.js` with RBAC.
+
+### Tests
+  - `backend/tests/test_billing_phase5.py` — 17 passing:
+    - Aging math (bucket boundaries, date parsing, roll-up)
+    - Statement body rendering (deterministic, full balance check)
+    - Remittance posting: full-pay closes invoice & advances claim
+      submitted→accepted→paid; partial-pay + contractual leaves
+      patient balance; denial opens work item auto-unassigned;
+      mismatched header total rejected; cross-payer claim rejected
+    - Denial mutations: assign + progress status audited; illegal
+      transition rejected; unknown assignee rejected
+    - AR aging endpoints: bucket label invariance; payer grouping
+    - Statements: generate + list + read
+    - Tenant isolation: cross-tenant post rejected; cross-tenant
+      statement read returns 404
+  - Combined Phase 3 + 4 + 5 pytest: **55 passing**.
+
+### Added
 - **Billing Phase 4 — Claim submission scaffolding, outcomes, work
   queues, timeline (iteration 27).**
   - New `claim_submissions` collection (tenant-scoped) tracking every

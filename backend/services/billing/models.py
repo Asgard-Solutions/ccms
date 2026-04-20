@@ -678,3 +678,108 @@ class DenialWorkItemPublic(BaseModel):
     closed_at: str | None = None
     created_at: str
     updated_at: str
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Remittances, AR aging, statements
+# ---------------------------------------------------------------------------
+class RemittanceLineInput(BaseModel):
+    """One adjudicated line inside a remittance claim row."""
+    model_config = ConfigDict(extra="forbid")
+    claim_line_id: str | None = None
+    cpt_code: str | None = Field(default=None, max_length=20)
+    billed_cents: int = Field(ge=0, le=10_000_000)
+    paid_cents: int = Field(default=0, ge=0, le=10_000_000)
+    contractual_cents: int = Field(default=0, ge=0, le=10_000_000)
+    patient_resp_cents: int = Field(default=0, ge=0, le=10_000_000)
+    denied_cents: int = Field(default=0, ge=0, le=10_000_000)
+    denial_code: str | None = Field(default=None, max_length=20)
+    denial_category: str | None = Field(default=None, max_length=60)
+
+
+class RemittanceClaimInput(BaseModel):
+    """Adjudication of one claim inside a remittance."""
+    model_config = ConfigDict(extra="forbid")
+    claim_id: str
+    payer_control_number: str | None = Field(default=None, max_length=60)
+    billed_cents: int = Field(ge=0, le=10_000_000)
+    paid_cents: int = Field(default=0, ge=0, le=10_000_000)
+    contractual_cents: int = Field(default=0, ge=0, le=10_000_000)
+    patient_resp_cents: int = Field(default=0, ge=0, le=10_000_000)
+    denied_cents: int = Field(default=0, ge=0, le=10_000_000)
+    denial_code: str | None = Field(default=None, max_length=20)
+    lines: list[RemittanceLineInput] = Field(default_factory=list, max_length=50)
+
+
+class RemittancePostRequest(BaseModel):
+    """Create + post a remittance in one call."""
+    model_config = ConfigDict(extra="forbid")
+    payer_id: str
+    received_at: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}")
+    check_or_eft_number: str | None = Field(default=None, max_length=60)
+    total_paid_cents: int = Field(ge=0, le=100_000_000)
+    notes: str | None = Field(default=None, max_length=2000)
+    claims: list[RemittanceClaimInput] = Field(min_length=1, max_length=100)
+
+
+class RemittanceClaimPublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    tenant_id: str
+    remittance_id: str
+    claim_id: str
+    payer_control_number: str | None = None
+    billed_cents: int
+    paid_cents: int
+    contractual_cents: int
+    patient_resp_cents: int
+    denied_cents: int
+    denial_code: str | None = None
+    created_at: str
+
+
+class RemittanceLinePublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    tenant_id: str
+    remittance_claim_id: str
+    claim_line_id: str | None = None
+    cpt_code: str | None = None
+    billed_cents: int
+    paid_cents: int
+    contractual_cents: int
+    patient_resp_cents: int
+    denied_cents: int
+    denial_code: str | None = None
+    denial_category: str | None = None
+    created_at: str
+
+
+class DenialWorkItemUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: DenialWorkItemStatus | None = None
+    assigned_to_id: str | None = None
+    resolution_notes: str | None = Field(default=None, max_length=4000)
+
+
+class StatementPublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    tenant_id: str
+    patient_id: str
+    generated_at: str
+    generated_by: str
+    as_of_date: str
+    total_balance_cents: int
+    invoice_count: int
+    body: str           # rendered plain-text statement
+    created_at: str
+
+
+class AgingBucket(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    bucket: str         # e.g. "0-30"
+    min_days: int
+    max_days: int | None # null means "open-ended 120+"
+    balance_cents: int
+    invoice_count: int

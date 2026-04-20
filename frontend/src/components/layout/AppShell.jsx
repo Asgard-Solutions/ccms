@@ -20,6 +20,9 @@ import {
   Unlock,
   Receipt,
   FileStack,
+  ShieldAlert,
+  TrendingDown,
+  Wallet,
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { Button } from "../ui/button";
@@ -48,6 +51,9 @@ const NAV_ITEMS = [
   { to: "/scheduling", label: "Scheduling", icon: CalendarDays, roles: ["admin", "doctor", "staff", "patient"] },
   { to: "/billing", label: "Billing", icon: Receipt, roles: ["admin", "doctor", "staff"] },
   { to: "/billing/claims", label: "Claims", icon: FileStack, roles: ["admin", "doctor", "staff"] },
+  { to: "/billing/denials", label: "Denials", icon: ShieldAlert, roles: ["admin", "doctor", "staff"] },
+  { to: "/billing/ar-aging", label: "AR aging", icon: TrendingDown, roles: ["admin", "doctor", "staff"] },
+  { to: "/billing/remittances/new", label: "Post remit", icon: Wallet, roles: ["admin", "staff"] },
   { to: "/settings/clinic", label: "Clinic settings", icon: Building2, roles: ["admin"] },
   { to: "/notifications", label: "Notifications", icon: BellRing, roles: ["admin", "staff"] },
   { to: "/audit-log", label: "Audit log", icon: Shield, roles: ["admin"] },

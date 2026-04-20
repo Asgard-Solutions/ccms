@@ -24,6 +24,11 @@ from core.tenant_scope import scoped_filter, stamp_for_write
 from services.authz.policy import require_permission
 from services.billing import transitions
 from services.billing.ledger import build_patient_ledger
+from services.billing.remittance import (
+    compute_ar_buckets,
+    post_remittance,
+    render_statement_body,
+)
 from services.billing.submission import (
     DEFAULT_FOLLOWUP_DAYS,
     build_json_payload,
@@ -34,6 +39,7 @@ from services.billing.submission import (
 from services.billing.models import (
     AdjustmentCreate,
     AdjustmentPublic,
+    AgingBucket,
     ClaimAssignmentUpdate,
     ClaimCreate,
     ClaimPublic,
@@ -42,6 +48,7 @@ from services.billing.models import (
     ClaimSubmissionOutcome,
     ClaimSubmissionPublic,
     DenialWorkItemPublic,
+    DenialWorkItemUpdate,
     DEFAULT_CURRENCY,
     InvoiceCreate,
     InvoiceLinePublic,
@@ -57,7 +64,11 @@ from services.billing.models import (
     PaymentStatus,
     RefundCreate,
     RefundPublic,
+    RemittanceClaimPublic,
+    RemittanceLinePublic,
+    RemittancePostRequest,
     RemittancePublic,
+    StatementPublic,
 )
 
 router = APIRouter(prefix="/billing", tags=["billing"])
@@ -2792,4 +2803,294 @@ async def read_claim_queue(
         [("updated_at", -1)]
     ).limit(limit)
     return [c async for c in cursor]
+
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Remittances posting, AR aging, statements, denial mgmt
+# ---------------------------------------------------------------------------
+@router.post("/remittances", response_model=RemittancePublic, status_code=201)
+async def create_and_post_remittance(
+    body: RemittancePostRequest,
+    request: Request,
+    user: dict = Depends(require_permission("remit", "post")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Create a remittance header and post it in one atomic call.
+
+    Creates: remittance header + remittance_claims + remittance_lines
+    + payment (era_posting) + allocations + contractual adjustments
+    + denial_work_items. Invoice balances are refreshed via the
+    standard `_recompute_invoice_balance` helper — no hidden mutations.
+    """
+    db = tenant_db(ctx.tenant_id)
+    try:
+        result = await post_remittance(
+            db, ctx, user, body,
+            recompute_invoice_balance=_recompute_invoice_balance,
+        )
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc))
+    await audit_success(
+        user, "billing.remittance.posted", request,
+        entity_type="remittance", entity_id=result["remittance_id"],
+        metadata={
+            "payer_id": body.payer_id,
+            "total_paid_cents": body.total_paid_cents,
+            "claim_count": len(body.claims),
+            "denial_count": result["denial_count"],
+            "adjustment_count": result["adjustment_count"],
+            "payment_id": result["payment_id"],
+        },
+    )
+    remit = await db.remittances.find_one(
+        {"id": result["remittance_id"], "tenant_id": ctx.tenant_id},
+        {"_id": 0},
+    )
+    return _public(remit)
+
+
+@router.get("/remittances/{remit_id}")
+async def read_remittance_detail(
+    remit_id: str,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    remit = await db.remittances.find_one(
+        {"id": remit_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    if not remit:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Remittance not found")
+    claims = [c async for c in db.remittance_claims.find(
+        {"tenant_id": ctx.tenant_id, "remittance_id": remit_id}, {"_id": 0},
+    ).sort([("created_at", 1)])]
+    claim_ids = [c["id"] for c in claims]
+    lines = [ln async for ln in db.remittance_lines.find(
+        {"tenant_id": ctx.tenant_id,
+         "remittance_claim_id": {"$in": claim_ids}}, {"_id": 0},
+    ).sort([("created_at", 1)])]
+    return {"remittance": _public(remit),
+            "claims": claims, "lines": lines}
+
+
+# ---------------------------------------------------------------------------
+# Denial work items — mutations
+# ---------------------------------------------------------------------------
+@router.put(
+    "/denial-work-items/{item_id}",
+    response_model=DenialWorkItemPublic,
+)
+async def update_denial_work_item(
+    item_id: str,
+    body: DenialWorkItemUpdate,
+    request: Request,
+    user: dict = Depends(require_permission("denial", "work")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    item = await db.denial_work_items.find_one(
+        {"id": item_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    if not item:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Denial work item not found")
+
+    set_fields: dict = {"updated_at": _now(), "updated_by": user["id"]}
+    current_status = item.get("status", "open")
+
+    if body.status and body.status != current_status:
+        new_status = transitions.http_advance(
+            "denial", current_status, body.status,
+        )
+        set_fields["status"] = new_status
+        if new_status in ("resolved", "closed"):
+            set_fields["closed_at"] = _now()
+    if body.assigned_to_id is not None:
+        if body.assigned_to_id:
+            assignee = await db.users.find_one(
+                {"id": body.assigned_to_id, "tenant_id": ctx.tenant_id},
+                {"_id": 0, "id": 1},
+            )
+            if not assignee:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "Assignee not found on this tenant",
+                )
+        set_fields["assigned_to_id"] = body.assigned_to_id
+    if body.resolution_notes is not None:
+        set_fields["resolution_notes"] = body.resolution_notes
+
+    await db.denial_work_items.update_one(
+        {"id": item_id, "tenant_id": ctx.tenant_id},
+        {"$set": set_fields,
+         "$push": {"history": {
+             "at": _now(), "by": user["id"], "action": "updated",
+             "from_status": current_status,
+             "to_status": set_fields.get("status", current_status),
+             "assigned_to_id": set_fields.get("assigned_to_id"),
+         }}},
+    )
+    await audit_success(
+        user, "billing.denial.updated", request,
+        entity_type="denial_work_item", entity_id=item_id,
+        metadata={"status_from": current_status,
+                  "status_to": set_fields.get("status", current_status),
+                  "assigned_to": set_fields.get("assigned_to_id")},
+    )
+    fresh = await db.denial_work_items.find_one(
+        {"id": item_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    return _public(fresh)
+
+
+# ---------------------------------------------------------------------------
+# AR aging
+# ---------------------------------------------------------------------------
+@router.get("/ar/aging")
+async def read_ar_aging(
+    payer_id: str | None = None,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Return aging buckets for open-balance invoices.
+
+    If `payer_id` is supplied, only invoices tied to that payer are
+    included.
+    """
+    db = tenant_db(ctx.tenant_id)
+    q: dict = {"tenant_id": ctx.tenant_id, "balance_cents": {"$gt": 0}}
+    if payer_id:
+        q["payer_id"] = payer_id
+    invoices = [i async for i in db.invoices.find(q, {"_id": 0})]
+    result = compute_ar_buckets(invoices)
+    return result
+
+
+@router.get("/ar/aging/by-payer")
+async def read_ar_aging_by_payer(
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Roll up aging grouped by payer (self-pay shown as `Self-pay`)."""
+    db = tenant_db(ctx.tenant_id)
+    all_invoices = [i async for i in db.invoices.find(
+        {"tenant_id": ctx.tenant_id, "balance_cents": {"$gt": 0}},
+        {"_id": 0},
+    )]
+    by_payer: dict = {}
+    for inv in all_invoices:
+        by_payer.setdefault(inv.get("payer_id"), []).append(inv)
+    out: list[dict] = []
+    for pid, invs in by_payer.items():
+        payer_name = None
+        if pid:
+            p = await db.payers.find_one(
+                {"id": pid, "tenant_id": ctx.tenant_id},
+                {"_id": 0, "name": 1},
+            )
+            payer_name = p and p.get("name")
+        out.append({
+            "payer_id": pid,
+            "payer_name": payer_name or ("Self-pay" if pid is None else pid[:8]),
+            **compute_ar_buckets(invs),
+        })
+    out.sort(key=lambda r: r["total_balance_cents"], reverse=True)
+    return {"rows": out}
+
+
+# ---------------------------------------------------------------------------
+# Statements — scaffolding (no PDF / no email yet)
+# ---------------------------------------------------------------------------
+@router.post(
+    "/patients/{patient_id}/statements",
+    response_model=StatementPublic, status_code=201,
+)
+async def create_statement(
+    patient_id: str,
+    request: Request,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    patient = await db.patients.find_one(
+        {"id": patient_id, "tenant_id": ctx.tenant_id},
+        {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+         "email": 1, "phone": 1},
+    )
+    if not patient:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    open_invoices = [i async for i in db.invoices.find(
+        {"tenant_id": ctx.tenant_id, "patient_id": patient_id,
+         "balance_cents": {"$gt": 0}},
+        {"_id": 0},
+    ).sort([("issued_at", 1)])]
+
+    now = _now()
+    body_text = render_statement_body(
+        patient=patient, invoices=open_invoices, as_of_iso=now,
+    )
+    total = sum(int(i.get("balance_cents") or 0) for i in open_invoices)
+
+    stmt_id = str(uuid.uuid4())
+    doc = stamp_for_write({
+        "id": stmt_id,
+        "patient_id": patient_id,
+        "generated_at": now,
+        "generated_by": user["id"],
+        "as_of_date": now[:10],
+        "total_balance_cents": total,
+        "invoice_count": len(open_invoices),
+        "invoice_ids": [i["id"] for i in open_invoices],
+        "body": body_text,
+        "created_at": now,
+        "updated_at": now,
+    }, ctx, location_id=None)
+    await db.statements.insert_one(doc)
+    await audit_success(
+        user, "billing.statement.generated", request,
+        entity_type="statement", entity_id=stmt_id,
+        metadata={"patient_id": patient_id,
+                  "total_balance_cents": total,
+                  "invoice_count": len(open_invoices)},
+    )
+    fresh = await db.statements.find_one(
+        {"id": stmt_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    return _public(fresh)
+
+
+@router.get(
+    "/patients/{patient_id}/statements",
+    response_model=list[StatementPublic],
+)
+async def list_statements(
+    patient_id: str,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    rows = [_public(s) async for s in db.statements.find(
+        {"tenant_id": ctx.tenant_id, "patient_id": patient_id}, {"_id": 0},
+    ).sort([("generated_at", -1)])]
+    return rows
+
+
+@router.get(
+    "/patients/{patient_id}/statements/{stmt_id}",
+    response_model=StatementPublic,
+)
+async def read_statement(
+    patient_id: str,
+    stmt_id: str,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    row = await db.statements.find_one(
+        {"id": stmt_id, "patient_id": patient_id,
+         "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Statement not found")
+    return _public(row)
 

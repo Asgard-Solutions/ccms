@@ -957,3 +957,58 @@ page into a single operational scheduling experience.
 - Denial work queue integration — Phase 5 should tie `/denial-work-items`
   to the new `rejected/denied` outcomes.
 
+
+## Iteration 28 — Billing Phase 5 remittance + denials + AR (2026-04-20)
+
+### Backend (new this iteration)
+- `services/billing/remittance.py`:
+  - `post_remittance()` — atomic pipeline: remittance header + claims
+    + lines + payment (era_posting) + allocations + contractual
+    adjustments + denial work items. Rolls patient balance via
+    existing `_recompute_invoice_balance` (no hidden mutations).
+  - `compute_ar_buckets()` — 0-30/31-60/61-90/91-120/120+
+    aging rollup.
+  - `render_statement_body()` — deterministic plain-text statement.
+- Router: 7 new endpoints (create/read remittance, denial PUT,
+  aging, aging-by-payer, 3 statement routes).
+- Permission registry: `remit.post`, `denial.work` added to
+  super_admin + billing_specialist.
+- Per user choices:
+  1b — patient responsibility rolls via the invoice balance
+       (no new line minted)
+  2  — denial work items auto-created with `assigned_to_id=null`
+
+### Frontend (new this iteration)
+- `RemittancePosting.jsx` — header + eligible-claims picker +
+  per-row math; live total-paid recompute.
+- `RemittanceDetail.jsx` — drill-down.
+- `DenialsQueue.jsx` — filter bar + inline work dialog (status,
+  assignee, resolution notes).
+- `ArAgingReport.jsx` — overall buckets + per-payer table.
+- `useRemittance.js` — hooks for all of the above.
+- Sidebar: Claims / Denials / AR aging / Post remit.
+
+### Tests
+- `backend/tests/test_billing_phase5.py` — 17 passing:
+  - Aging math (bucket boundaries, date diff, void exclusion)
+  - Statement body (deterministic, full balance)
+  - Remittance posting: full-pay, partial + contractual, denied;
+    mismatched header total rejected; cross-payer rejected
+  - Denial mutations: assign + progress + notes audited; illegal
+    transitions rejected; unknown assignee rejected
+  - AR aging endpoints: bucket invariance; payer breakdown
+  - Statements: generate + list + read
+  - Tenant isolation: sunrise tenant cannot post against default;
+    cross-tenant statement returns 404.
+- Combined Phase 3 + 4 + 5 pytest: 55 passing.
+
+### Follow-ups open
+- Statement generation should become a scheduled job + PDF+email in
+  Phase 6.
+- Denial categories — add a `denial_category` taxonomy so the queue
+  can be grouped by reason (not just status).
+- Bulk post remittance — upload a CSV/835 file; scaffold already
+  relational-ready.
+- Patient-responsibility roll-forward currently stays implicit via
+  invoice balance; if finance wants explicit audit lines, Phase 6
+  can add `invoice_lines.type=patient_responsibility` behind a flag.

@@ -31,6 +31,10 @@ import InvoiceDetail from "./pages/billing/InvoiceDetail";
 import PatientLedgerPage from "./pages/billing/PatientLedgerPage";
 import ClaimsQueue from "./pages/billing/ClaimsQueue";
 import ClaimDetail from "./pages/billing/ClaimDetail";
+import RemittancePosting from "./pages/billing/RemittancePosting";
+import RemittanceDetail from "./pages/billing/RemittanceDetail";
+import DenialsQueue from "./pages/billing/DenialsQueue";
+import ArAgingReport from "./pages/billing/ArAgingReport";
 import "./App.css";
 
 function Shell({ children, roles }) {
@@ -63,6 +67,10 @@ export default function App() {
               <Route path="/billing/patients/:id/ledger" element={<Shell roles={["admin", "doctor", "staff"]}><PatientLedgerPage /></Shell>} />
               <Route path="/billing/claims" element={<Shell roles={["admin", "doctor", "staff"]}><ClaimsQueue /></Shell>} />
               <Route path="/billing/claims/:id" element={<Shell roles={["admin", "doctor", "staff"]}><ClaimDetail /></Shell>} />
+              <Route path="/billing/remittances/new" element={<Shell roles={["admin", "staff"]}><RemittancePosting /></Shell>} />
+              <Route path="/billing/remittances/:id" element={<Shell roles={["admin", "doctor", "staff"]}><RemittanceDetail /></Shell>} />
+              <Route path="/billing/denials" element={<Shell roles={["admin", "doctor", "staff"]}><DenialsQueue /></Shell>} />
+              <Route path="/billing/ar-aging" element={<Shell roles={["admin", "doctor", "staff"]}><ArAgingReport /></Shell>} />
               <Route path="/appointments" element={<Navigate to="/scheduling" replace />} />
               <Route path="/calendar" element={<Navigate to="/scheduling" replace />} />
               <Route path="/notifications" element={<Shell roles={["admin", "staff"]}><Notifications /></Shell>} />
