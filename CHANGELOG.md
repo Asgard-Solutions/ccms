@@ -12,6 +12,55 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Billing Phase 6 — Bulk 835 import + patient statements (2026-02-20).**
+  - Backend:
+    - `services/billing/remittance_import.py` — 835 X12 parser + JSON
+      parser (`schema: ccms.remit.import.v1`, max 2 MB). Staged uploads
+      auto-match claims by `clm01` payer control number (primary) and
+      patient control number (fallback), resolve payer by NM1/JSON
+      name, and expose a `preview → commit` workflow that is idempotent
+      and does NOT mutate the ledger until `POST
+      /api/billing/remittances/import/{id}/commit`.
+    - `services/billing/statement_delivery.py` — Reportlab-based
+      patient statement PDF generator (clinic header, aged AR
+      summary, per-invoice line items) + Resend email integration
+      (falls back to `provider='mock'` when `RESEND_API_KEY` is
+      unset so the flow stays testable in dev/preview).
+    - Endpoints:
+      `POST /api/billing/remittances/import/json`,
+      `POST /api/billing/remittances/import/x12`,
+      `POST /api/billing/remittances/import/{id}/commit`,
+      `GET  /api/billing/remittances/import/{id}`,
+      `GET/POST /api/billing/patients/{id}/statements`,
+      `GET  /api/billing/patients/{id}/statements/{stmt_id}/pdf`,
+      `POST /api/billing/patients/{id}/statements/{stmt_id}/send`.
+    - Tenant isolation enforced on every import, PDF, and send call
+      (cross-tenant access returns 404).
+  - Frontend:
+    - New `pages/billing/RemittanceImport.jsx` with dropzone upload,
+      preview table, match-method pills, unresolved-payer banner,
+      and commit button gated on `unmatched===0 && resolved_payer_id`.
+    - New `pages/billing/PatientStatementsCard.jsx` embedded on
+      `PatientLedgerPage` — generate statement, download PDF, send
+      email. Uses semantic theme tokens only (no raw hex / tailwind
+      color classes).
+    - `AppShell` gains a persistent "Import 835" nav entry
+      (`admin`, `staff`).
+    - New `useRemittance.js` hooks:
+      `uploadRemittanceImport`, `commitRemittanceImport`,
+      `listStatements`, `generateStatement`, `emailStatement`,
+      `statementPdfUrl`.
+  - Tests: `backend/tests/test_billing_phase6.py` — 18 passing
+    covering JSON import happy path, X12 parsing, unmatched-row
+    commit block, unresolved-payer block, empty-upload rejection,
+    PDF generation, mocked email path, email-missing rejection,
+    and cross-tenant isolation for imports + PDF downloads.
+    Frontend E2E validated via Playwright in iteration_29 — all
+    Phase 6 flows pass (login → nav → upload → preview → commit
+    gating; ledger → generate → PDF → email). Only UX nit: after a
+    reauth 401, the user re-picks the file once (tracked as optional
+    follow-up).
+
 - **Billing Phase 5 follow-up — Denial taxonomy (iteration 29).**
   - New `services/billing/denial_categories.py` mapping ANSI CARC
     codes to six operational categories: `coding`, `eligibility`,

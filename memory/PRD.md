@@ -1045,3 +1045,60 @@ page into a single operational scheduling experience.
 - Historical backfill — a one-time migration script to tag pre-
   taxonomy denials based on `denial_code`. (Currently those rows
   show as "Other / unmapped".)
+
+## Iteration 30 — Billing Phase 6: Bulk 835 import + patient statements (2026-02-20)
+
+### Backend
+- `services/billing/remittance_import.py` — X12 835 parser + JSON
+  parser (`schema: ccms.remit.import.v1`, 2 MB cap). Stages uploads,
+  matches claims by `clm01` payer control number (primary) +
+  patient control number (fallback), resolves payer by NM1/name.
+- Preview → commit workflow; commit is blocked when any row is
+  unmatched or the payer is unresolved, so the ledger is never
+  mutated from a bad file.
+- `services/billing/statement_delivery.py` — Reportlab patient
+  statement PDF (clinic header, aged AR summary, per-invoice
+  breakdown) + Resend email delivery. Mock provider is used when
+  `RESEND_API_KEY` is unset so dev/preview stays testable.
+
+### Endpoints
+- `POST /api/billing/remittances/import/json|x12`
+- `GET  /api/billing/remittances/import/{id}`
+- `POST /api/billing/remittances/import/{id}/commit`
+- `GET/POST /api/billing/patients/{id}/statements`
+- `GET  /api/billing/patients/{id}/statements/{stmt_id}/pdf`
+- `POST /api/billing/patients/{id}/statements/{stmt_id}/send`
+
+### Frontend
+- `pages/billing/RemittanceImport.jsx` — dropzone, preview table,
+  match-method pills, commit gated on `unmatched===0 && resolved_payer_id`.
+- `pages/billing/PatientStatementsCard.jsx` — embedded on
+  `PatientLedgerPage`; generate, download PDF, send email.
+- `AppShell.jsx` — "Import 835" nav entry (admin, staff).
+- `useRemittance.js` — hooks: `uploadRemittanceImport`,
+  `commitRemittanceImport`, `listStatements`, `generateStatement`,
+  `emailStatement`, `statementPdfUrl`.
+
+### Tests
+- `backend/tests/test_billing_phase6.py` — 18 passing
+  (JSON import e2e, X12 parsing, unmatched / unresolved / empty-upload
+  rejections, PDF generation, mocked email path, email-missing
+  rejection, cross-tenant isolation for imports and PDFs).
+- Frontend E2E (iteration_29) — Playwright verified every in-scope
+  Phase 6 UI flow end-to-end.
+
+### Follow-ups open (optional)
+- Cache the picked `File` in `RemittanceImport.jsx` so the upload
+  auto-retries after a reauth 401 (currently the user re-picks the
+  file once).
+- Seed one patient with `email` set to exercise the mocked email
+  happy-path end-to-end in the demo environment.
+- Split oversized `services/billing/router.py` (>3100 lines) into
+  `claims_router.py`, `remittances_router.py`,
+  `invoices_router.py` for maintainability.
+
+### Phase 6 status
+- Backend: DONE (18/18 tests pass)
+- Frontend: DONE (Playwright e2e pass)
+- Docs: DONE (this entry + CHANGELOG.md)
+- **Phase 6: CLOSED** ✅
