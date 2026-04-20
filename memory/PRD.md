@@ -671,3 +671,78 @@ page into a single operational scheduling experience.
   edit, further start changes left end untouched. ✅
 - `scripts/check_theme.py` OK. `CHANGELOG.md` updated.
 
+
+
+---
+
+## [2026-04-20] Billing Service foundation (iteration 23)
+
+### Backend
+- **New service** `services/billing/` — the canonical billing domain
+  model. PostgreSQL-ready from day one (UUID PKs, integer-cents money,
+  no embedded child lists, strict tenant scoping).
+- **Entities modelled** (Pydantic + future SQL DDL in
+  `services/billing/models.py`):
+  - `payers`, `patient_insurance_policies`
+  - `invoices` + `invoice_lines`
+  - `payments` + `payment_allocations`
+  - `refunds`, `billing_adjustments` (writeoff / discount / courtesy / contractual)
+  - `claims` + `claim_diagnoses` + `claim_lines` + `claim_line_modifiers`
+  - `remittances`, `denial_work_items`
+- **Lifecycle enums + transition maps** for invoice, payment, claim,
+  remittance, denial. Every mutation goes through
+  `services.billing.transitions.advance()` — illegal transitions raise
+  `TransitionError` / HTTP 409. Terminal states (`void`, `refunded`,
+  `failed`, `closed`) reject further moves.
+- **Endpoints** under `/api/billing` with full authz + audit + tenant
+  scoping:
+  - `GET|POST|PUT /payers`, `POST|GET /insurance-policies`
+  - `POST|GET /invoices`, `GET /invoices/{id}`, `GET /invoices/{id}/lines`,
+    `POST /invoices/{id}/status`
+  - `POST|GET /payments`, `POST /payments/{id}/status`
+  - `POST /refunds`, `POST /adjustments`
+  - `POST|GET /claims`, `POST /claims/{id}/submit`, `POST /claims/{id}/status`
+  - `GET /remittances`, `GET /denial-work-items`
+- **RBAC**: existing canonical permissions (`billing.read`,
+  `charge.create`, `payment.collect/refund`, `adjustment.writeoff`,
+  `billing.void`, `claim.*`, `insurance.*`, `remit.read`, etc.) drive
+  route guards via `require_permission()`. `super_admin` picked up
+  bootstrap grants for `charge.create`, `payment.collect`,
+  `insurance.create/update`, `claim.read/create/submit/correct_resubmit`
+  so the default admin can smoke-test the lifecycle. Money-moving
+  actions (`payment.refund`, `adjustment.writeoff`, `billing.void`)
+  stay MFA+APR behind `billing_specialist` / `clinic_manager`.
+- **Audit events**: `billing.payer.created|updated|list_viewed`,
+  `billing.insurance_policy.created|list_viewed`,
+  `billing.invoice.created|viewed|list_viewed|status_changed`,
+  `billing.payment.created|list_viewed|status_changed`,
+  `billing.refund.created`, `billing.adjustment.created`,
+  `billing.claim.created|list_viewed|submitted|status_changed`,
+  `billing.remittance.list_viewed`, `billing.denial.list_viewed`.
+- **Seed**: `seed_billing()` writes 9 common chiropractic CPT codes and
+  6 CMS modifier codes to the system-default (tenant_id=None) catalog.
+  Idempotent.
+- **Indexes** added for every billing collection keyed on
+  `(tenant_id, ...)` composite indexes for hot-path lookups.
+
+### Tests
+- `tests/test_billing.py` — **31/31 passing**. Covers:
+  - Pure unit: all status-transition maps (legal, illegal,
+    idempotent, terminal), model validation (currency, amount bounds,
+    required fields, line-zero rejection).
+  - Integration: payer CRUD + case-insensitive name uniqueness;
+    invoice create/read/list/status transitions and 409 on illegal
+    transition; payment create with allocations + over-allocation
+    rejection + status transitions; claim create/submit/illegal
+    transition; doctor 403 on payer create; admin 401/403 on
+    refund / writeoff (MFA+APR gate); tenant isolation (Sunrise
+    cannot read Default's invoice/payer); audit row emitted on
+    invoice creation.
+
+### Verified
+- Backend boots cleanly. `seed_billing()` runs on every startup.
+- Existing scheduling / appointment-types / clinic-profile tests
+  still green. `scripts/check_theme.py` OK.
+- NOT yet implemented (deliberately out of scope for v1 foundation):
+  clearinghouse adapters, remittance ingestion (ERA/EDI), payer-rules
+  engine, fee schedule CRUD, billing UI.

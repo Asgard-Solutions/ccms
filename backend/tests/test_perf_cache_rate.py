@@ -21,7 +21,7 @@ import pytest
 import redis as redis_sync
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://booking-hub-423.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://clinic-hub-182.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 

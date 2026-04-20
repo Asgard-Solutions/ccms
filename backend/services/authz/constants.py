@@ -306,6 +306,21 @@ ROLE_GRANTS: dict[str, list[dict]] = {
         g("patient", "update"),
         g("patient", "delete", "all_org", "MFA"),
         g("patient", "export", "all_org", "MFA"),
+        # Billing bootstrap grants — mirror the legacy admin capability so
+        # the default admin can drive invoice / payment / claim CRUD in dev
+        # and smoke tests. High-risk money-moving actions
+        # (payment.refund / adjustment.writeoff / billing.void) are
+        # deliberately NOT granted to SA — only billing_specialist /
+        # clinic_manager carry them, with MFA+APR, per the permission
+        # matrix.
+        g("charge", "create"),
+        g("payment", "collect"),
+        g("insurance", "create"),
+        g("insurance", "update"),
+        g("claim", "read"),
+        g("claim", "create"),
+        g("claim", "submit"),
+        g("claim", "correct_resubmit"),
         g("patient_chart", "read", "phi_full", "MFA|BG"),
         g("patient_chart", "create"),
         g("patient_chart", "update"),

@@ -201,3 +201,36 @@ async def create_indexes() -> None:
     # Clinic profile (iteration 21 — clinic hours)
     await db.clinic_profiles.create_index([("tenant_id", 1), ("location_id", 1)], unique=True)
     await db.clinic_profiles.create_index([("tenant_id", 1), ("name", 1)])
+    # Billing (iteration 23 — billing foundation)
+    await db.billing_payers.create_index([("tenant_id", 1), ("name", 1)])
+    await db.billing_payers.create_index([("tenant_id", 1), ("status", 1)])
+    await db.patient_insurance_policies.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("status", 1)],
+    )
+    await db.patient_insurance_policies.create_index(
+        [("tenant_id", 1), ("payer_id", 1)],
+    )
+    await db.invoices.create_index([("tenant_id", 1), ("patient_id", 1), ("created_at", -1)])
+    await db.invoices.create_index([("tenant_id", 1), ("status", 1)])
+    await db.invoices.create_index([("tenant_id", 1), ("location_id", 1)])
+    await db.invoice_lines.create_index([("tenant_id", 1), ("invoice_id", 1), ("sequence", 1)])
+    await db.payments.create_index([("tenant_id", 1), ("patient_id", 1), ("received_at", -1)])
+    await db.payments.create_index([("tenant_id", 1), ("status", 1)])
+    await db.payment_allocations.create_index([("tenant_id", 1), ("payment_id", 1)])
+    await db.payment_allocations.create_index([("tenant_id", 1), ("invoice_id", 1)])
+    await db.refunds.create_index([("tenant_id", 1), ("payment_id", 1)])
+    await db.billing_adjustments.create_index([("tenant_id", 1), ("invoice_id", 1)])
+    await db.claims.create_index([("tenant_id", 1), ("patient_id", 1), ("created_at", -1)])
+    await db.claims.create_index([("tenant_id", 1), ("payer_id", 1), ("status", 1)])
+    await db.claim_diagnoses.create_index([("tenant_id", 1), ("claim_id", 1), ("sequence", 1)])
+    await db.claim_lines.create_index([("tenant_id", 1), ("claim_id", 1), ("sequence", 1)])
+    await db.claim_line_modifiers.create_index([("tenant_id", 1), ("claim_line_id", 1), ("sequence", 1)])
+    await db.remittances.create_index([("tenant_id", 1), ("payer_id", 1), ("received_at", -1)])
+    await db.denial_work_items.create_index([("tenant_id", 1), ("status", 1), ("opened_at", -1)])
+    await db.denial_work_items.create_index([("tenant_id", 1), ("claim_id", 1)])
+    await db.billing_code_catalog.create_index(
+        [("tenant_id", 1), ("code_type", 1), ("code", 1)], unique=True,
+    )
+    await db.billing_modifier_catalog.create_index(
+        [("tenant_id", 1), ("code", 1)], unique=True,
+    )

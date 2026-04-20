@@ -25,6 +25,8 @@ from services.audit.router import router as audit_router  # noqa: E402
 from services.clinic_profile.router import router as clinic_profile_router  # noqa: E402
 from services.appointment_types.router import router as appointment_types_router  # noqa: E402
 from services.authz.router import router as authz_router  # noqa: E402
+from services.billing.router import router as billing_router  # noqa: E402
+from services.billing.seed import seed_billing  # noqa: E402
 from services.authz.reporting import router as authz_reports_router  # noqa: E402
 from services.authz.seed import seed_authz  # noqa: E402
 from services.communication.router import router as communication_router  # noqa: E402
@@ -85,6 +87,7 @@ api_router.include_router(infra_router)
 api_router.include_router(workforce_router)
 api_router.include_router(clinic_profile_router)
 api_router.include_router(appointment_types_router)
+api_router.include_router(billing_router)
 api_router.include_router(metrics_router)  # GET /api/metrics
 
 app.include_router(api_router)
@@ -158,6 +161,7 @@ async def on_startup():
     await seed_identity()
     await seed_authz()
     await seed_compliance_ops()
+    await seed_billing()
     # Purge expired export artifacts (best-effort — errors are logged).
     try:
         await cleanup_expired_exports()

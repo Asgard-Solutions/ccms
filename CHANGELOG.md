@@ -11,6 +11,39 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+### Added
+- **Billing Service foundation (iteration 23).** Introduces the canonical
+  billing domain model: payers, patient insurance policies, invoices
+  (with sibling invoice_lines), payments + payment_allocations, refunds,
+  adjustments (writeoffs / discounts / courtesy / contractual), claims
+  (with sibling claim_diagnoses, claim_lines, claim_line_modifiers),
+  remittances, and denial work items. PostgreSQL-ready: UUID PKs,
+  integer-cents money, no embedded child lists, status vocabularies
+  encoded as enums. Lifecycle transitions enforced via
+  `services.billing.transitions.advance()` (invoice, payment, claim,
+  remittance, denial). New module at `backend/services/billing/` with
+  `models.py` (Pydantic + status maps), `transitions.py` (legal-move
+  validator), `router.py` (placeholder routes wired to the canonical
+  RBAC policy), and `seed.py` (system default CPT + modifier catalog).
+  Routes at `/api/billing/{payers,insurance-policies,invoices,payments,
+  refunds,adjustments,claims,remittances,denial-work-items}` with full
+  tenant scoping, semantic audit rows
+  (`billing.*.created`, `billing.*.status_changed`, `billing.*.viewed`,
+  `billing.*.list_viewed`), and per-entity history append. New indexes
+  for every billing collection keyed on `(tenant_id, ...)`. No
+  clearinghouse integration yet — payer/claim adapters will live
+  outside the canonical model.
+- **RBAC — super_admin bootstrap grants for billing CRUD.** SA now
+  carries `charge.create`, `payment.collect`, `insurance.create`,
+  `insurance.update`, `claim.read/create/submit/correct_resubmit` so
+  the demo admin can drive the billing foundation end-to-end. High-risk
+  money-moving actions (`payment.refund`, `adjustment.writeoff`,
+  `billing.void`) remain behind `billing_specialist` / `clinic_manager`
+  with MFA+APR as defined by the permission matrix.
+
+### Dependencies
+- None.
+
 - **Scheduling — "Today" cell is now visually distinct on Week and
   Month views.** Previously the current day blended into the
   background. Now:
