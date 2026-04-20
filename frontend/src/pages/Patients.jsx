@@ -164,7 +164,7 @@ const EMPTY_FORM = {
 // Small field helpers
 // -----------------------------------------------------------------------
 
-function Field({ label, htmlFor, required, error, children, className = "" }) {
+function Field({ label, htmlFor, required, error, errorTestId, children, className = "" }) {
   return (
     <div className={`space-y-1.5 ${className}`}>
       <Label htmlFor={htmlFor} className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-[#5C6A61]">
@@ -173,7 +173,7 @@ function Field({ label, htmlFor, required, error, children, className = "" }) {
       </Label>
       {children}
       {error && (
-        <p className="text-xs text-[#C76D54]" data-testid={`${htmlFor}-error`}>{error}</p>
+        <p className="text-xs text-[#C76D54]" data-testid={errorTestId || `${htmlFor}-error`}>{error}</p>
       )}
     </div>
   );
@@ -301,7 +301,7 @@ function StepPatientInfo({ form, set, errors }) {
       <Field label="Preferred name" htmlFor="preferredName">
         <TextInput id="preferredName" testId="w-preferred-name" value={form.preferredName} onChange={set("preferredName")} />
       </Field>
-      <Field label="Date of birth" htmlFor="dob" required error={errors.dateOfBirth}>
+      <Field label="Date of birth" htmlFor="dob" required error={errors.dateOfBirth} errorTestId="w-dob-error">
         <TextInput id="dob" type="date" testId="w-dob" value={form.dateOfBirth} onChange={set("dateOfBirth")} max={TODAY_ISO} />
       </Field>
       <Field label="Sex at birth" htmlFor="sexAtBirth">
@@ -330,7 +330,7 @@ function StepPatientInfo({ form, set, errors }) {
       </Field>
 
       <SectionTitle hint="Default contact details. Patient may update them in the portal.">Contact</SectionTitle>
-      <Field label="Mobile phone" htmlFor="mobilePhone" required error={errors.mobilePhone}>
+      <Field label="Mobile phone" htmlFor="mobilePhone" required error={errors.mobilePhone} errorTestId="w-mobile-error">
         <TextInput id="mobilePhone" testId="w-mobile" value={form.mobilePhone} onChange={set("mobilePhone")} autoComplete="tel" />
       </Field>
       <Field label="Home phone" htmlFor="homePhone" error={errors.homePhone}>
@@ -339,7 +339,7 @@ function StepPatientInfo({ form, set, errors }) {
       <Field label="Work phone" htmlFor="workPhone" error={errors.workPhone}>
         <TextInput id="workPhone" testId="w-work-phone" value={form.workPhone} onChange={set("workPhone")} />
       </Field>
-      <Field label="Email" htmlFor="email" error={errors.email}>
+      <Field label="Email" htmlFor="email" error={errors.email} errorTestId="w-email-error">
         <TextInput id="email" type="email" testId="w-email" value={form.email} onChange={set("email")} autoComplete="email" />
       </Field>
       <Field label="Preferred contact method" htmlFor="preferredContactMethod">
@@ -373,7 +373,7 @@ function StepPatientInfo({ form, set, errors }) {
       <Field label="State" htmlFor="state" required error={errors.state}>
         <TextInput id="state" testId="w-state" value={form.state} onChange={set("state")} autoComplete="address-level1" />
       </Field>
-      <Field label="Postal code" htmlFor="postalCode" required error={errors.postalCode}>
+      <Field label="Postal code" htmlFor="postalCode" required error={errors.postalCode} errorTestId="w-postal-error">
         <TextInput id="postalCode" testId="w-postal" value={form.postalCode} onChange={set("postalCode")} autoComplete="postal-code" />
       </Field>
       <Field label="Country" htmlFor="country">
@@ -445,16 +445,16 @@ function StepBillingInsurance({ form, set, errors, providers, locations, visibil
       </div>
       {showGuarantor && (
         <div data-testid="w-guarantor-block" className="col-span-full grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <Field label="Full name" htmlFor="gName" required={requireGuarantor} error={errors.guarantorFullName}>
+          <Field label="Full name" htmlFor="gName" required={requireGuarantor} error={errors.guarantorFullName} errorTestId="w-g-name-error">
             <TextInput id="gName" testId="w-g-name" value={form.guarantorFullName} onChange={set("guarantorFullName")} />
           </Field>
-          <Field label="Relationship" htmlFor="gRel" required={requireGuarantor} error={errors.guarantorRelationship}>
+          <Field label="Relationship" htmlFor="gRel" required={requireGuarantor} error={errors.guarantorRelationship} errorTestId="w-g-rel-error">
             <TextInput id="gRel" testId="w-g-rel" value={form.guarantorRelationship} onChange={set("guarantorRelationship")} />
           </Field>
           <Field label="Date of birth" htmlFor="gDob">
             <TextInput id="gDob" type="date" testId="w-g-dob" value={form.guarantorDateOfBirth} onChange={set("guarantorDateOfBirth")} max={TODAY_ISO} />
           </Field>
-          <Field label="Phone" htmlFor="gPhone" required={requireGuarantor} error={errors.guarantorPhone}>
+          <Field label="Phone" htmlFor="gPhone" required={requireGuarantor} error={errors.guarantorPhone} errorTestId="w-g-phone-error">
             <TextInput id="gPhone" testId="w-g-phone" value={form.guarantorPhone} onChange={set("guarantorPhone")} />
           </Field>
           <Field label="Email" htmlFor="gEmail" error={errors.guarantorEmail}>

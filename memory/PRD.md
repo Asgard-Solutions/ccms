@@ -240,6 +240,34 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **Docs** — `/app/memory/COMPLIANCE_OPS_ARCHITECTURE.md` covers model, lifecycle, HIPAA 45-CFR mapping table, SOC 2 recurring activities, CCPA/CPRA flow linkage, evidence bundle export flow, "how to add a new control domain" cookbook.
 - **Verified (iteration_18)**: 10/10 new tests — dashboard fidelity, multi-framework mapping, framework filter, integrity hash + legal hold, tamper-resistant patch, tenant isolation, overdue access-review auto-flag, incident history append, unknown-type rejection, BAA-missing counted. Combined iteration_17+18 = 25/25 green.
 
+## 23. Iteration 20c — Patient intake Phase 3 conditional logic (2026-02-19)
+
+Business logic & chiropractic UX layered on top of the Phase 2 wizard. All wiring lives in a new pure-JS module so it's directly testable under Node's built-in `--test` runner.
+
+- **`frontend/src/pages/patientWizardLogic.js`** (new) — CommonJS module exporting:
+  * **Chiropractic option lists** — `PAIN_AREA_OPTIONS` (23 body regions incl. Neck / Upper-Mid-Lower back / sciatica L+R / TMJ / coccyx), `SYMPTOM_OPTIONS` (16 entries incl. numbness, tingling, radiating pain, range-of-motion, vertigo), `ONSET_TYPE_OPTIONS` (trauma / sudden / gradual / repetitive_strain / post_surgical / recurring / unknown).
+  * **Date helpers** — `isFutureDate(dob)`, `computeAge(dob)`, `isMinor(dob)` (UTC-safe, birthday-inclusive).
+  * **Format validators** — `isValidEmail` (local regex), `isValidPhone` (7–15 digits after non-digit strip), `isValidPostal` (US ZIP/ZIP+4 or generic 3–10-char alphanumeric).
+  * **`visibilityForForm(form)`** — single source of truth for conditional UI: `{ isMinor, showGuarantor, requireGuarantor, showInsurance, showAccident, showWorkComp, showPersonalInjury, showConsents }`. Minor patients force the guarantor block on; the guarantor is *required* only when the patient is a minor AND the "same as patient" toggle is off (the wizard auto-toggles it off the moment the DOB flips them into minor status).
+  * **`validateStep(step, form)` / `validateAll(form)`** — returns `{ field: message }` maps. Validates only visible fields. Step 1 enforces required presence, future-DOB rejection, and format validators for email/phone/postal on all populated fields (emergency contact alt-phone / email too). Step 2 enforces `assignedProviderId` and the conditional guarantor requireds.
+  * **`buildPayload(form)`** — wizard → grouped backend payload. Guarantor block is `{same_as_patient: true}` when hidden, structured when visible. `insurance` is omitted entirely when the toggle is off. `case_details` only emits the subsets matching the selected case-type flags (a pure work-comp case won't carry empty `attorney_*` keys). `clinical_intake.pain_locations` + `symptoms` merge the checkbox selections with an optional CSV "other" field, de-duped case-insensitively.
+- **`frontend/src/pages/Patients.jsx`** — wired to the logic module:
+  * Removed the duplicated local `cleanStr` / `compactObj` / `buildPayload` / `validateStep` — imports them from `patientWizardLogic`.
+  * DOB inputs carry `max={TODAY_ISO}` to stop calendar pickers from offering future dates.
+  * Step 2 — Guarantor block and the `Insurance` block render conditionally off `visibility.showGuarantor` / `visibility.showInsurance`. When the patient is a minor the "same as patient" checkbox is **disabled** with the hint "Minors cannot be their own responsible party — guarantor details required below." and the required asterisks switch on.
+  * Step 3 — replaced the CSV text inputs with `CheckboxGroup` components for pain areas + symptoms, each backed by the chiropractic option lists. An optional CSV "Other" text input feeds straight into the same array on submit. Onset dropdown now uses the 7-entry chiropractic onset list.
+  * Step 4 — split into three conditional blocks (`w-accident-*`, `w-workcomp-block`, `w-pi-block`) driven by the Step-3 case-type flags. When none are set we show a dashed `w-case-empty-state` card explaining that the fields unlock after ticking the flags on Step 3. `claim_number` is shared across whichever of accident/WC/PI are active without duplication.
+  * Error messages for the "Phase-3" validators thread explicit kebab-case test-ids (`w-dob-error`, `w-mobile-error`, `w-email-error`, `w-postal-error`, `w-g-name-error`, `w-g-rel-error`, `w-g-phone-error`) via a new `errorTestId` prop on `Field`.
+- **Testing**
+  * **`frontend/src/pages/patientWizardLogic.test.js`** — 31 Node-native assertions covering isMinor/isFutureDate birthday edge cases, all three format validators (accept + reject), visibility rules across adult/minor × same-as-patient × hasInsurance × PI/WC/accident permutations, validateStep Step 1 & Step 2 requiredness + visible-only skipping, and buildPayload shape across all conditional blocks (guarantor hidden / minor / insurance on/off / case subsets / painLocations+symptoms merge / pain_level clamp 0–10 / consents.additional[] for AOB+ROI). **31/31 green** under `node --test`.
+  * **`testing_agent_v3_fork` iteration_15** — E2E Playwright run against the live preview confirmed minor → guarantor visible + same_as_patient disabled, adult + unchecked → guarantor visible but optional, adult + checked → guarantor hidden, insurance toggle show/hide, step-4 empty state + conditional blocks tracking each flag independently, pain-area/symptoms checkbox counts, onset labels, DOB future block, email/phone/postal format validators. Initial run flagged a test-id naming gap (`dob-error` vs `w-dob-error`); fixed via the `errorTestId` prop, self-verified with Playwright — all 7 newly-renamed error nodes resolve correctly.
+  * Backend pytest Phase 1 still **6/6 green** after the session; no backend changes needed for Phase 3.
+
+### Follow-up tech debt (still open)
+- `Patients.jsx` is 1300+ lines — a future refactor into `pages/Patients/steps/*.jsx` would let tests target each step in isolation.
+- `w-pi` (personal-injury checkbox) and `w-pi-*` (primary-insurance-*) test-id prefixes collide under attribute-prefix selectors; benign at the component boundary but worth a rename before Playwright regression tests land.
+- Guarantor splits `guarantorFullName` on the first whitespace — a dedicated first/last pair is a Phase 4 polish.
+
 ## 22. Iteration 20b — Patient intake wizard UI (Phase 2, 2026-02-19)
 
 Frontend wizard replacing the small "New patient" modal; wired to the Phase 1 grouped backend payload. No advanced business rules — step-level validation only.
