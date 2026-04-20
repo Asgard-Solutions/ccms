@@ -240,6 +240,27 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **Docs** — `/app/memory/COMPLIANCE_OPS_ARCHITECTURE.md` covers model, lifecycle, HIPAA 45-CFR mapping table, SOC 2 recurring activities, CCPA/CPRA flow linkage, evidence bundle export flow, "how to add a new control domain" cookbook.
 - **Verified (iteration_18)**: 10/10 new tests — dashboard fidelity, multi-framework mapping, framework filter, integrity hash + legal hold, tamper-resistant patch, tenant isolation, overdue access-review auto-flag, incident history append, unknown-type rejection, BAA-missing counted. Combined iteration_17+18 = 25/25 green.
 
+## 22. Iteration 20b — Patient intake wizard UI (Phase 2, 2026-02-19)
+
+Frontend wizard replacing the small "New patient" modal; wired to the Phase 1 grouped backend payload. No advanced business rules — step-level validation only.
+
+- **`frontend/src/pages/Patients.jsx`** — completely rewrote `PatientFormDialog` into `PatientWizardDialog`: a 4-step dialog (max-w-5xl, sage-stone design) with a numbered step indicator, scrollable body, and fixed Back / Cancel / Next / Save footer.
+  * Step 1 — Patient Info: identity (name, middle, preferred, DOB, sex-at-birth, gender identity, pronouns, marital status, language), contact (mobile/home/work phone, email, preferred method + SMS/email/voicemail consent checkboxes), address (line1/2, city, state, postal, country), emergency contact (name, relationship, primary/alt phone, email).
+  * Step 2 — Billing & Insurance: assigned provider (fetched from `/auth/providers`), preferred location (fetched from `/tenancy/me/context`), referral source, employment (occupation, employer + phone), responsible-party/guarantor block (hides when "same as patient"), insurance toggle + primary & secondary plan fields.
+  * Step 3 — Clinical Intake: chief complaint, symptom start date, onset type, pain score (0–10), pain areas / symptoms (comma-separated → arrays), accident/work-comp/personal-injury flags, prior treatment, medications, allergies, surgeries, past medical history, provider notes.
+  * Step 4 — Case Details & Consents: accident date, claim #, auto carrier, adjuster/attorney details, employer-at-injury, workers' comp carrier; HIPAA / treatment / financial / AOB / ROI checkboxes; typed signature + signature date.
+  * `buildPayload(form)` maps the flat wizard state into the grouped backend payload — `demographics`, `contact`, `address` (object), `emergency_contact` (object), `admin` (incl. `primary_provider_id`), `guarantor`, `insurance` (only when "Has insurance" toggled), `clinical_intake` (+ auto-derived `pain_level`, CSV→arrays), `case_details` (+ derived `case_type` from the three flags), `consents` (hipaa/treatment/financial as structured consents; AOB + ROI pushed into `consents.additional[]` with shared signature/date).
+  * Step validation — `STEP1_REQUIRED` (firstName, lastName, DOB, mobilePhone, addressLine1/city/state/postalCode, emergency contact name/relationship/phone), `STEP2_REQUIRED` (assignedProviderId). Next advances only when the current step passes; Save re-runs the whole set and jumps back to the first step with missing fields.
+  * UX: tiny `Field`/`TextInput`/`SelectField`/`CheckboxField`/`SectionTitle` helpers keep the step components readable without over-abstracting; step indicator uses sage check-marks for completed steps; keyboard nav intact (Radix Dialog focus trap unchanged).
+  * List refresh + success toast behavior preserved — `onCreated(data)` still unshifts the new patient onto `setPatients` so the table updates without a fetch.
+- **`backend/services/patient/models.py`** — small follow-on additions so the wizard doesn't silently drop data via `extra="ignore"`: `ContactInfo.phone_work`, `ContactInfo.sms_consent/email_consent/voicemail_consent`, `Demographics.employer_phone`, `GuarantorInfo.employer_phone`, `CaseDetails.work_comp_carrier`, `CaseDetails.auto_carrier`, `ClinicalIntake.onset_type`.
+- **Testing** — `testing_agent_v3_fork` (iteration_14): **23/23 frontend assertions green.** Wizard open/close, step indicator, per-step validation, Back/Next/Cancel/Save controls, grouped payload shape on POST /api/patients, new row in list, search + unmask regression. One benign React "controlled/uncontrolled" warning noted on the Radix Select first-render path — cosmetic only. Backend Phase 1 pytest still 6/6 green after the model additions.
+
+### Follow-up tech debt
+- `Patients.jsx` is ~1200 LOC; a future refactor should split the wizard into `pages/Patients/PatientWizardDialog.jsx` + `steps/*.jsx` for maintainability. (Not done now per "do not over-engineer" directive.)
+- Conditional requiredness (Step 4 fields required only when Step 3 "accident_related / work_comp / personal_injury" flags are set) is deferred to Phase 3, as is signature-when-any-consent-ticked.
+- Step 2 `responsiblePartySameAsPatient=true` sends `{same_as_patient: true}` with no guarantor PHI — desired for privacy; when toggled off the wizard splits `guarantorFullName` into `first_name`/`last_name` on a single space (good-enough for Phase 2).
+
 ## 21. Iteration 20a — Patient intake Phase 1 (2026-02-19)
 
 Backend-only expansion of the patient domain to support richer chiropractic intake, while keeping the legacy flat payload (and therefore the current frontend modal) fully functional. No frontend wizard built in this phase.
