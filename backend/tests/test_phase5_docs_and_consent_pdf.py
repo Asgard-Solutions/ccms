@@ -203,6 +203,24 @@ class TestDocumentUpload:
         # message should mention re-auth
         assert "re-auth" in r.text.lower() or "reauth" in r.text.lower()
 
+    def test_upload_spoofed_mime_rejected_by_magic_sniff(self, admin_session, test_patient):
+        """A non-image payload declared as image/png must be rejected by libmagic sniff."""
+        s = admin_session
+        fake = b"MZ\x90\x00" + b"this is clearly an exe not a png" + b"\x00" * 128
+        files = {"file": ("trojan.png", io.BytesIO(fake), "image/png")}
+        r = s.post(f"{API}/patients/{test_patient['id']}/documents", files=files, data={"category": "other"}, timeout=10)
+        assert r.status_code == 400, f"expected magic-byte rejection, got {r.status_code}: {r.text[:200]}"
+        detail = (r.json().get("detail") or "").lower()
+        assert "content" in detail or "match" in detail or "detected" in detail, detail
+
+    def test_upload_declared_png_actual_pdf_rejected(self, admin_session, test_patient):
+        """PDF bytes uploaded with image/png declared → 400 (magic mismatch)."""
+        s = admin_session
+        pdf_bytes = b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n" + b"\x00" * 512 + b"%%EOF"
+        files = {"file": ("fake.png", io.BytesIO(pdf_bytes), "image/png")}
+        r = s.post(f"{API}/patients/{test_patient['id']}/documents", files=files, data={"category": "other"}, timeout=10)
+        assert r.status_code == 400, f"expected mismatch rejection, got {r.status_code}: {r.text[:200]}"
+
     def test_delete_document_and_verify_gone(self, admin_session, test_patient):
         s = admin_session
         doc_id = getattr(pytest, "doc_id")

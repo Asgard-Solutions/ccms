@@ -397,8 +397,18 @@ Backend-only expansion of the patient domain to support richer chiropractic inta
 - **`/app/frontend/src/components/SignaturePad.jsx`** — canvas-based wet-ink signature capture (pointer events, devicePixelRatio-aware, emits base64 PNG via `onChange`). Wired into `Patients.jsx` wizard Step 4.
 - **`/app/frontend/src/components/PatientDocumentsCard.jsx`** — 8-row upload UI imported into `PatientDetail.jsx`. Automatically presents `ReauthDialog` on 401 responses and retries the pending upload/delete after successful reauth (also works for deletes). Insurance rows accept images only; others accept images + PDF.
 - **`PatientDetail.jsx`** — adds `downloadConsentPdf(type)` handler + `data-testid='consent-pdf-{type}'` button on every accepted consent row in the unmasked view (passes current break-glass `reason` automatically).
-- **Tests** — `/app/backend/tests/test_phase5_docs_and_consent_pdf.py` — 20 scenarios covering upload/list/download/delete, reauth enforcement, validation (empty, >10 MB, bad MIME, bad category), consent PDF happy path for 5 types, 409 unsigned, 404 missing, reason enforcement for doctor/staff, patient-self. **19 pass / 1 env-skipped (no pre-seeded patient→user link for `patient@ccms.app`).**
-- **Dependency** — `reportlab==4.4.10` added to `/app/backend/requirements.txt`.
+- **Tests** — `/app/backend/tests/test_phase5_docs_and_consent_pdf.py` — 22 scenarios covering upload/list/download/delete, reauth enforcement, validation (empty, >10 MB, bad MIME, bad category, **spoofed MIME caught by libmagic**, **PDF-declared-as-PNG caught by libmagic**), consent PDF happy path for 5 types, 409 unsigned, 404 missing, reason enforcement for doctor/staff, patient-self. **21 pass / 1 env-skipped (no pre-seeded patient→user link for `patient@ccms.app`).**
+- **Dependency** — `reportlab==4.4.10`, `python-magic==0.4.27` (+ OS `libmagic1`) added to `/app/backend/requirements.txt`.
+
+### Phase 5 hardening follow-ups (2026-04-20, post-main-agent review)
+- **Magic-byte MIME sniffing** on uploads — `documents_router._sniff_mime()` runs libmagic on the first 4 KB and rejects the request if the sniffed MIME is not in the allow-list OR diverges from the declared `Content-Type`. Closes the "declared `image/png`, actually ELF" spoof vector flagged during HIPAA code review.
+- **Streaming upload into `SpooledTemporaryFile`** — `_stream_upload_to_spool()` reads the multipart body in 64 KB chunks, enforces the 10 MB hard cap as it fills, and rolls over to a tmpfile past 1 MB. Cuts the connection the moment the body exceeds the cap so a malicious client can't balloon server memory during concurrent uploads. First 4 KB are captured inline for libmagic without a double-read.
+- **Router split** — `services/patient/router.py` shrank from 984 → **628 lines**:
+  * `services/patient/_shared.py` (99 LoC) — shared crypto/reason/now helpers + `_patient_repo`.
+  * `services/patient/documents_router.py` (315 LoC) — all `/patients/{id}/documents*` endpoints + streaming + magic sniffing.
+  * `services/patient/consent_pdf_router.py` (114 LoC) — `/patients/{id}/consents/{type}/pdf`.
+  * Parent router includes the sub-routers at the bottom so the public URL surface is unchanged. All 30 phase-1 + phase-5 tests continue to pass.
+
 
 
 

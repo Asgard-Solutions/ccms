@@ -11,30 +11,38 @@ Controls:
   - Adding medical records requires reauth (sensitive PHI mutation).
   - Export endpoint returns a signed JSON blob of everything we hold on the
     patient (right-to-access).
+
+Sub-routers (included at the bottom, same /patients prefix):
+  - `documents_router` — insurance card / ID / referral uploads + downloads.
+  - `consent_pdf_router` — signed-consent PDF generation.
 """
-import json
 import logging
 import uuid
 from datetime import datetime, timezone, timedelta
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from core.audit import audit_emergency, audit_success, log_audit
+from core.audit import audit_emergency, audit_success
 from core import cache, cache_keys
-from core.consent_pdf import CONSENT_BODIES, render_consent_pdf
-from core.crypto import ENC_PREFIX, decrypt_fields, decrypt_text, encrypt_fields, encrypt_text
-from core.db import get_db, get_db_read, get_db_write, read_after_write_db
-from core.deps import get_current_user, require_role
+from core.crypto import decrypt_fields, encrypt_fields
+from core.db import get_db_read, get_db_write, read_after_write_db
+from core.deps import get_current_user
 from core.masking import mask_patient
-from core import object_storage
 from core.reauth import require_reauth
-from core.repository import PatientRepository
 from core.tenancy import TenantContext, get_tenant_context
 from core.tenant_scope import scoped_filter, stamp_for_write
 from services.authz.policy import require_permission
-
-_patient_repo = PatientRepository()
-_logger = logging.getLogger(__name__)
+from services.patient._shared import (
+    PATIENT_ENCRYPTED,
+    REASON_MIN_LENGTH,
+    _patient_repo,
+    decrypt_patient_doc,
+    encrypt_patient_doc,
+    enforce_reason,
+    now_iso,
+)
+from services.patient.consent_pdf_router import router as consent_pdf_router
+from services.patient.documents_router import router as documents_router
 from services.patient.models import (
     MedicalRecordCreate,
     MedicalRecordPublic,
@@ -43,38 +51,14 @@ from services.patient.models import (
     PatientUpdate,
 )
 
+_logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/patients", tags=["patient"])
 
 STAFF_ROLES = ("admin", "doctor", "staff")
 
-# Legacy top-level free-text PHI fields (stored as encrypted strings).
-PATIENT_FLAT_ENCRYPTED = ["date_of_birth", "address", "emergency_contact", "notes"]
-
-# New grouped intake sections — encrypted at rest as JSON blobs. Any
-# sensitive PHI/PII section goes in this list. The structured
-# `address_details` / `emergency_contact_details` projections are also
-# encrypted because they duplicate the same PHI as their legacy scalar
-# counterparts.
-PATIENT_SECTION_ENCRYPTED = [
-    "demographics",
-    "contact",
-    "admin",
-    "guarantor",
-    "insurance",
-    "clinical_intake",
-    "case_details",
-    "consents",
-    "address_details",
-    "emergency_contact_details",
-]
-
-# Master list of encrypted-at-rest patient fields (legacy flat + grouped
-# sections). Used by `_encrypt_patient_doc` / `_decrypt_patient_doc`.
-PATIENT_ENCRYPTED = PATIENT_FLAT_ENCRYPTED + PATIENT_SECTION_ENCRYPTED
-
 RECORD_ENCRYPTED = ["description", "diagnosis", "treatment"]
 RETENTION_YEARS = 7
-REASON_MIN_LENGTH = 8
 
 # Output-only shape keys that the frontend/schema may read.
 PATIENT_GROUPED_KEYS = [
@@ -92,49 +76,7 @@ PATIENT_GROUPED_KEYS = [
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _encrypt_patient_value(value):
-    """Encrypt one patient field. Strings go through AES-GCM as before;
-    dicts/lists are JSON-serialized first so we can store structured intake
-    sections as encrypted blobs without leaking PHI to the database."""
-    if value is None or value == "":
-        return value
-    if isinstance(value, (dict, list)):
-        return encrypt_text(json.dumps(value, default=str))
-    if isinstance(value, str):
-        return encrypt_text(value)
-    # bool/int/float/other scalars are not encrypted (no PHI surface).
-    return value
-
-
-def _decrypt_patient_value(value):
-    if not isinstance(value, str) or not value.startswith(ENC_PREFIX):
-        return value
-    plaintext = decrypt_text(value)
-    if isinstance(plaintext, str) and plaintext[:1] in ("{", "["):
-        try:
-            return json.loads(plaintext)
-        except (ValueError, TypeError):
-            pass
-    return plaintext
-
-
-def _encrypt_patient_doc(doc: dict) -> dict:
-    out = dict(doc)
-    for key in PATIENT_ENCRYPTED:
-        if key in out and out[key] is not None:
-            out[key] = _encrypt_patient_value(out[key])
-    return out
-
-
-def _decrypt_patient_doc(doc: dict) -> dict:
-    out = dict(doc)
-    for key in PATIENT_ENCRYPTED:
-        if key in out and out[key] is not None:
-            out[key] = _decrypt_patient_value(out[key])
-    return out
+    return now_iso()
 
 
 def _address_to_string(addr: dict) -> str | None:
@@ -216,7 +158,7 @@ def _shape(p: dict, *, unmasked: bool) -> dict:
     legacy scalar `address` / `emergency_contact` fields remain populated
     for the current UI and are masked by `mask_patient` as before.
     """
-    decrypted = _decrypt_patient_doc(p)
+    decrypted = decrypt_patient_doc(p)
     if unmasked:
         decrypted["unmasked"] = True
         decrypted["display_name_masked"] = None
@@ -229,14 +171,12 @@ def _shape(p: dict, *, unmasked: bool) -> dict:
 
 
 def _enforce_reason(reason: str | None, *, required: bool) -> str | None:
-    if not required:
-        return reason or None
-    if not reason or len(reason.strip()) < REASON_MIN_LENGTH:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"A clinical reason of at least {REASON_MIN_LENGTH} characters is required for this access.",
-        )
-    return reason.strip()
+    return enforce_reason(reason, required=required)
+
+
+# Keep module-level back-compat aliases for existing imports elsewhere.
+_encrypt_patient_doc = encrypt_patient_doc
+_decrypt_patient_doc = decrypt_patient_doc
 
 
 # ---------------- List ----------------
@@ -680,307 +620,9 @@ async def add_record(
     return hydrated
 
 
-# ---------------------------------------------------------------------------
-# Patient documents (insurance cards, IDs, referral letters, X-rays …)
-#
-# Storage: Emergent object-storage, canonical path
-#     ccms/{tenant_id}/{patient_id}/{uuid}.{ext}
-# Source of truth: MongoDB `patient_documents` collection (tenant-scoped).
-# Files are PHI — every access goes through the backend (auth + audit).
-# ---------------------------------------------------------------------------
-
-MAX_DOCUMENT_BYTES = 10 * 1024 * 1024  # 10 MB hard cap per file
-ALLOWED_DOC_MIMES = {
-    "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif",
-    "application/pdf",
-}
-ALLOWED_DOC_CATEGORIES = {
-    "insurance_card_front", "insurance_card_back",
-    "drivers_license", "referral_letter", "imaging_report",
-    "intake_form", "consent_receipt", "other",
-}
-
-
-def _doc_shape(doc: dict) -> dict:
-    """Public shape for a document record — never exposes the storage path."""
-    return {
-        "id": doc["id"],
-        "patient_id": doc["patient_id"],
-        "category": doc.get("category") or "other",
-        "filename": doc.get("filename"),
-        "content_type": doc.get("content_type"),
-        "size": doc.get("size"),
-        "description": doc.get("description"),
-        "uploaded_by": doc.get("uploaded_by"),
-        "uploaded_at": doc.get("uploaded_at") or doc.get("created_at"),
-    }
-
-
-@router.post("/{patient_id}/documents", status_code=201)
-async def upload_patient_document(
-    patient_id: str,
-    request: Request,
-    file: UploadFile = File(...),
-    category: str = Form("other"),
-    description: str | None = Form(None),
-    ctx: TenantContext = Depends(get_tenant_context),
-    user: dict = Depends(require_permission("patient", "update")),
-):
-    """Upload an insurance card / ID / referral letter attached to a patient.
-    Reauth-gated. Audited. Tenant + patient scoped. 10 MB max; images + PDF."""
-    require_reauth(request, user)
-    if category not in ALLOWED_DOC_CATEGORIES:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unsupported category `{category}`")
-
-    content_type = (file.content_type or "").lower().split(";")[0].strip()
-    if content_type not in ALLOWED_DOC_MIMES:
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            f"Unsupported file type `{content_type}`. Allowed: images (JPEG/PNG/WEBP/HEIC) + PDF.",
-        )
-
-    data = await file.read()
-    if not data:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Empty upload")
-    if len(data) > MAX_DOCUMENT_BYTES:
-        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File exceeds 10 MB cap")
-
-    # Patient must exist in this tenant/location scope.
-    db_read = get_db_read()
-    patient = await db_read.patients.find_one(
-        scoped_filter({"id": patient_id, "status": "active"}, ctx), {"_id": 0}
-    )
-    if not patient:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
-
-    ext = ""
-    if file.filename and "." in file.filename:
-        ext = file.filename.rsplit(".", 1)[-1][:10]
-    doc_uuid = str(uuid.uuid4())
-    storage_path = object_storage.storage_path_for(
-        ctx.tenant_id or "default", patient_id, doc_uuid, ext
-    )
-
-    try:
-        result = object_storage.put_object(storage_path, data, content_type)
-    except object_storage.StorageUnavailable as exc:
-        _logger.error("object storage init/put failed: %s", exc)
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Document storage unavailable")
-    except Exception as exc:  # noqa: BLE001 — upstream network/HTTP errors bubble up
-        _logger.exception("object storage upload failed")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Upload failed: {exc}")
-
-    now = _now()
-    doc = {
-        "id": doc_uuid,
-        "patient_id": patient_id,
-        "category": category,
-        "filename": (file.filename or "").strip()[:255] or f"{doc_uuid}.{ext or 'bin'}",
-        "content_type": content_type,
-        "size": result.get("size", len(data)),
-        "storage_path": result.get("path") or storage_path,
-        "description": (description or "").strip()[:1000] or None,
-        "uploaded_by": user["id"],
-        "is_deleted": False,
-        "created_at": now,
-        "uploaded_at": now,
-    }
-    doc = stamp_for_write(doc, ctx, location_id=patient.get("location_id"))
-
-    db = get_db_write()
-    await db.patient_documents.insert_one(dict(doc))
-    await audit_success(
-        user, "patient.document.uploaded", request,
-        entity_type="patient_document", entity_id=doc_uuid, phi_accessed=True,
-        metadata={
-            "patient_id": patient_id, "category": category,
-            "content_type": content_type, "size": doc["size"],
-        },
-    )
-    return _doc_shape(doc)
-
-
-@router.get("/{patient_id}/documents")
-async def list_patient_documents(
-    patient_id: str,
-    request: Request,
-    ctx: TenantContext = Depends(get_tenant_context),
-    user: dict = Depends(require_permission("patient", "read")),
-):
-    db = get_db_read()
-    cursor = db.patient_documents.find(
-        scoped_filter({"patient_id": patient_id, "is_deleted": False}, ctx),
-        {"_id": 0, "storage_path": 0},
-    ).sort("uploaded_at", -1)
-    docs = [_doc_shape(d) async for d in cursor]
-    await audit_success(
-        user, "patient.documents.listed", request,
-        entity_type="patient", entity_id=patient_id,
-        metadata={"patient_id": patient_id, "count": len(docs)},
-    )
-    return docs
-
-
-@router.get("/{patient_id}/documents/{doc_id}/download")
-async def download_patient_document(
-    patient_id: str,
-    doc_id: str,
-    request: Request,
-    ctx: TenantContext = Depends(get_tenant_context),
-    user: dict = Depends(require_permission("patient", "read")),
-):
-    db = get_db_read()
-    doc = await db.patient_documents.find_one(
-        scoped_filter(
-            {"id": doc_id, "patient_id": patient_id, "is_deleted": False}, ctx
-        ),
-        {"_id": 0},
-    )
-    if not doc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
-
-    try:
-        data, ct = object_storage.get_object(doc["storage_path"])
-    except object_storage.StorageUnavailable as exc:
-        _logger.error("object storage init/get failed: %s", exc)
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Document storage unavailable")
-    except Exception as exc:  # noqa: BLE001
-        _logger.exception("object storage download failed")
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"Download failed: {exc}")
-
-    await audit_success(
-        user, "patient.document.downloaded", request,
-        entity_type="patient_document", entity_id=doc_id, phi_accessed=True,
-        metadata={"patient_id": patient_id, "category": doc.get("category")},
-    )
-    return Response(
-        content=data,
-        media_type=doc.get("content_type") or ct or "application/octet-stream",
-        headers={
-            # Inline for images (thumbnail preview); attachment for PDFs.
-            "Content-Disposition":
-                "inline" if (doc.get("content_type") or "").startswith("image/")
-                else f"attachment; filename=\"{doc.get('filename', 'document')}\"",
-        },
-    )
-
-
-@router.delete("/{patient_id}/documents/{doc_id}", status_code=204)
-async def delete_patient_document(
-    patient_id: str,
-    doc_id: str,
-    request: Request,
-    ctx: TenantContext = Depends(get_tenant_context),
-    user: dict = Depends(require_permission("patient", "update")),
-):
-    """Soft-delete — storage API has no delete, so we flip `is_deleted=True`
-    and hide the record from listings. Audited."""
-    require_reauth(request, user)
-    db = get_db_write()
-    r = await db.patient_documents.update_one(
-        scoped_filter({"id": doc_id, "patient_id": patient_id, "is_deleted": False}, ctx),
-        {"$set": {"is_deleted": True, "deleted_at": _now(), "deleted_by": user["id"]}},
-    )
-    if not r.matched_count:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found")
-    await audit_success(
-        user, "patient.document.deleted", request,
-        entity_type="patient_document", entity_id=doc_id, phi_accessed=True,
-        metadata={"patient_id": patient_id},
-    )
-    return Response(status_code=204)
-
 
 # ---------------------------------------------------------------------------
-# Consent PDF generation
-#
-# Renders the signed consent record as a one-page PDF with the patient's
-# typed + drawn signature for audit / export. The file is produced on
-# demand (never cached) so it always reflects the current consent row.
+# Sub-router mounts (same /patients prefix via include_router)
 # ---------------------------------------------------------------------------
-
-CANONICAL_CONSENT_TYPES = set(CONSENT_BODIES.keys())
-
-
-def _resolve_consent(consents: dict | None, consent_type: str) -> dict | None:
-    """Return the consent record for the given type (or None)."""
-    if not consents or not isinstance(consents, dict):
-        return None
-    if consent_type in CANONICAL_CONSENT_TYPES:
-        record = consents.get(consent_type)
-        if isinstance(record, dict):
-            return record
-        return None
-    # Fallback: search `additional` list for a matching `type`.
-    for extra in consents.get("additional") or []:
-        if isinstance(extra, dict) and (extra.get("type") or "") == consent_type:
-            return extra
-    return None
-
-
-@router.get("/{patient_id}/consents/{consent_type}/pdf")
-async def download_consent_pdf(
-    patient_id: str,
-    consent_type: str,
-    request: Request,
-    reason: str | None = Query(default=None),
-    user: dict = Depends(get_current_user),
-    ctx: TenantContext = Depends(get_tenant_context),
-):
-    """Stream a signed-consent PDF for the given patient + consent type.
-
-    Authorisation mirrors GET /patients/{id}: patient-self or staff with
-    break-glass reason (for doctor/staff). All accesses are audited; PHI
-    leaves the server only via this endpoint + the export endpoint.
-    """
-    p = await _patient_repo.find_one_by_id(patient_id, ctx)
-    if not p:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
-
-    is_self = user["role"] == "patient" and p.get("user_id") == user["id"]
-    if user["role"] == "patient" and not is_self:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
-
-    reason_required = user["role"] in ("doctor", "staff")
-    enforced_reason = _enforce_reason(reason, required=reason_required)
-
-    decrypted = _decrypt_patient_doc(p)
-    consent = _resolve_consent(decrypted.get("consents"), consent_type)
-    if not consent:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Consent not found on this patient")
-    if not consent.get("accepted"):
-        raise HTTPException(
-            status.HTTP_409_CONFLICT,
-            "This consent has not been signed yet.",
-        )
-
-    try:
-        pdf_bytes = render_consent_pdf(
-            consent_type=consent_type,
-            consent=consent,
-            patient={
-                "id": decrypted.get("id"),
-                "first_name": decrypted.get("first_name"),
-                "last_name": decrypted.get("last_name"),
-                "date_of_birth": decrypted.get("date_of_birth"),
-            },
-        )
-    except Exception:  # noqa: BLE001 — render failure surfaces as generic 500
-        _logger.exception("consent pdf render failed")
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            "Unable to generate consent PDF. Please try again or contact support.",
-        )
-
-    await audit_success(
-        user, "patient.consent.downloaded", request,
-        entity_type="patient", entity_id=patient_id, phi_accessed=True,
-        reason=enforced_reason,
-        metadata={"consent_type": consent_type, "bytes": len(pdf_bytes)},
-    )
-    filename = f"consent-{consent_type}-{patient_id[:8]}.pdf"
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+router.include_router(documents_router)
+router.include_router(consent_pdf_router)
