@@ -24,6 +24,11 @@ public release yet — we're pre-1.0).
   `.githooks/pre-commit` for local commits (opt-in via
   `git config core.hooksPath .githooks`). Supports `--json` for CI
   tooling. Supersedes the earlier `scripts/check_changelog.sh`.
+- **CI — changelog stub helper** — `scripts/check_docs.py
+  --emit-changelog-stub [--title …] [--category …] [--write]` drafts a
+  well-formed bullet from the current diff, auto-categorises it
+  (Added/Changed/Fixed/Security/Dependencies), and can prepend it under
+  `## [Unreleased]`. Idempotent — reruns won't duplicate bullets.
 
 ## [2026-04-20] Phase 5 — Intake polish, uploads, signed consents + hardening
 ### Added

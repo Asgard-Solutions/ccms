@@ -82,6 +82,26 @@ scripts/check_docs.py origin/main          # verbose text report
 scripts/check_docs.py origin/main --json   # CI-friendly JSON output
 ```
 
+Need a starting point for your CHANGELOG entry? Let the tool draft one:
+```bash
+# Preview — prints the bullet without writing
+scripts/check_docs.py --emit-changelog-stub origin/main
+
+# Write — prepend the bullet into CHANGELOG.md's [Unreleased] block
+scripts/check_docs.py --emit-changelog-stub origin/main --write
+
+# Override auto-detected title + category
+scripts/check_docs.py --emit-changelog-stub origin/main \
+    --title "Fix MFA cookie race on slow networks" \
+    --category Fixed --write
+```
+
+Category heuristics: files under `backend/core/{audit,crypto,masking,
+reauth,security,mfa,password_policy}.py` or `backend/services/authz/**`
+→ **Security**. `requirements.txt` / `package.json` → **Dependencies**.
+Commit subjects starting with `fix:` / `bug` / `patch` → **Fixed**.
+Everything else → **Added**. Always review the suggestion before pushing.
+
 Bypass (not recommended, only for emergency hotfixes where a follow-up
 doc PR is filed immediately):
 ```bash

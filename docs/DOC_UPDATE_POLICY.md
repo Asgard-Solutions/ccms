@@ -107,7 +107,11 @@ Today the policy is enforced by:
 
 Future automation (tracked in `memory/COMPLIANCE_BACKLOG.md`):
 - Auto-label PRs with the doc-categories their diff affects.
-- `scripts/check_docs.py --emit-changelog-stub` helper that prepends a
-  well-formed `[Unreleased]` block when one is missing.
 - Verification that CHANGELOG additions land under `## [Unreleased]`
   (not under an older dated heading).
+
+Already shipped:
+- `scripts/check_docs.py --emit-changelog-stub [--title …] [--category …] [--write]`
+  drafts a bullet for the current diff and prepends it under
+  `## [Unreleased]` → `### <category>`, creating scaffolding when missing
+  and staying idempotent on repeated runs.
