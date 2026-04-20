@@ -1,0 +1,248 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="18" failures="4" skipped="0" tests="68" time="25.237" timestamp="2026-04-20T00:13:36.667992+00:00" hostname="agent-env-a3108878-c232-4d0d-b887-df4b4632a33f"><testcase classname="backend.tests.test_iteration5.TestLoginShape" name="test_login_returns_new_fields_all_roles" time="1.424" /><testcase classname="backend.tests.test_iteration5.TestSessionEpoch" name="test_disable_revokes_sessions" time="1.669" /><testcase classname="backend.tests.test_iteration5.TestSessionEpoch" name="test_patch_role_bumps_target_epoch_not_admin" time="0.826" /><testcase classname="backend.tests.test_iteration5.TestSessionEpoch" name="test_change_password_keeps_current_session_kills_old_token" time="1.541" /><testcase classname="backend.tests.test_iteration5.TestSessionEpoch" name="test_refresh_dies_after_epoch_bump" time="0.767" /><testcase classname="backend.tests.test_iteration5.TestPasswordReset" name="test_unknown_email_still_200_no_enum" time="0.115" /><testcase classname="backend.tests.test_iteration5.TestPasswordReset" name="test_known_email_returns_dev_token_and_confirm_flow" time="1.598" /><testcase classname="backend.tests.test_iteration5.TestPasswordReset" name="test_confirm_rejects_reused_password_history" time="0.721" /><testcase classname="backend.tests.test_iteration5.TestAdminMFA" name="test_admin_mfa_reset_rbac" time="0.735" /><testcase classname="backend.tests.test_iteration5.TestAdminMFA" name="test_admin_mfa_require_toggle" time="0.746" /><testcase classname="backend.tests.test_iteration5.TestSessions" name="test_sessions_returns_current_and_events" time="0.057" /><testcase classname="backend.tests.test_iteration5.TestAuditFilters" name="test_date_from_to_and_actor_email_filters" time="0.060" /><testcase classname="backend.tests.test_iteration5.TestAuditFilters" name="test_csv_export_admin_only_and_shape" time="0.061" /><testcase classname="backend.tests.test_iteration5.TestAuditFilters" name="test_csv_export_writes_exported_meta_row" time="0.626" /><testcase classname="backend.tests.test_iteration5.TestAuditFilters" name="test_csv_export_forbidden_for_non_admin" time="1.248" /><testcase classname="backend.tests.test_iteration5.TestNoPhiInAudit" name="test_patient_create_audit_metadata_has_no_phi" time="0.369" /><testcase classname="backend.tests.test_iteration5.TestRegressions" name="test_compliance_overview_rbac" time="0.570" /><testcase classname="backend.tests.test_iteration5.TestRegressions" name="test_patients_list_masked_default" time="0.056" /><testcase classname="backend.tests.test_iteration5.TestRegressions" name="test_audit_logs_still_admin_only" time="1.134" /><testcase classname="backend.tests.test_iteration5.TestRegressions" name="test_break_glass_reason_required_for_doctor" time="0.518" /><testcase classname="backend.tests.test_iteration6_refresh" name="test_refresh_success_all_roles[admin-admin@ccms.app-Admin@ComplianceClinic1]" time="0.390" /><testcase classname="backend.tests.test_iteration6_refresh" name="test_refresh_success_all_roles[doctor-doctor@ccms.app-Doctor@ComplianceClinic1]" time="0.390" /><testcase classname="backend.tests.test_iteration6_refresh" name="test_refresh_success_all_roles[staff-staff@ccms.app-Staff@ComplianceClinic1]" time="0.384" /><testcase classname="backend.tests.test_iteration6_refresh" name="test_refresh_success_all_roles[patient-patient@ccms.app-Patient@ComplianceClinic1]" time="0.452" /><testcase classname="backend.tests.test_iteration6_refresh" name="test_refresh_rejected_after_epoch_bump_via_disable_enable" time="1.181" /><testcase classname="backend.tests.test_iteration6_refresh" name="test_refresh_rejected_after_role_patch" time="1.113" /><testcase classname="backend.tests.test_iteration7_privacy.TestDataInventory" name="test_admin_sees_8_categories" time="0.388" /><testcase classname="backend.tests.test_iteration7_privacy.TestDataInventory" name="test_non_admin_forbidden[doctor_sess]" time="0.166"><failure message="AssertionError: login failed doctor@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code">backend/tests/test_iteration7_privacy.py:83: in test_non_admin_forbidden
+    s = request.getfixturevalue(role_fx)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:539: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:627: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:1110: in execute
+    result: FixtureValue = ihook.pytest_fixture_setup(
+/root/.venv/lib/python3.11/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py:53: in run_old_style_hookwrapper
+    return result.get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py:38: in run_old_style_hookwrapper
+    res = yield
+          ^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/setuponly.py:36: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:1202: in pytest_fixture_setup
+    result = call_fixture_func(fixturefunc, request, kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:915: in call_fixture_func
+    fixture_result = fixturefunc(**kwargs)
+                     ^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:57: in doctor_sess
+    return _login(*DOCTOR)
+           ^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed doctor@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestDataInventory" name="test_non_admin_forbidden[staff_sess]" time="0.119"><failure message="AssertionError: login failed staff@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code">backend/tests/test_iteration7_privacy.py:83: in test_non_admin_forbidden
+    s = request.getfixturevalue(role_fx)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:539: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:627: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:1110: in execute
+    result: FixtureValue = ihook.pytest_fixture_setup(
+/root/.venv/lib/python3.11/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py:53: in run_old_style_hookwrapper
+    return result.get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py:38: in run_old_style_hookwrapper
+    res = yield
+          ^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/setuponly.py:36: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:1202: in pytest_fixture_setup
+    result = call_fixture_func(fixturefunc, request, kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:915: in call_fixture_func
+    fixture_result = fixturefunc(**kwargs)
+                     ^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:62: in staff_sess
+    return _login(*STAFF)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed staff@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestDataInventory" name="test_non_admin_forbidden[patient_sess]" time="0.142"><failure message="AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code">backend/tests/test_iteration7_privacy.py:83: in test_non_admin_forbidden
+    s = request.getfixturevalue(role_fx)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:539: in getfixturevalue
+    fixturedef = self._get_active_fixturedef(argname)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:627: in _get_active_fixturedef
+    fixturedef.execute(request=subrequest)
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:1110: in execute
+    result: FixtureValue = ihook.pytest_fixture_setup(
+/root/.venv/lib/python3.11/site-packages/pluggy/_hooks.py:512: in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/pluggy/_manager.py:120: in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py:53: in run_old_style_hookwrapper
+    return result.get_result()
+           ^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/pluggy/_callers.py:38: in run_old_style_hookwrapper
+    res = yield
+          ^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/setuponly.py:36: in pytest_fixture_setup
+    return (yield)
+            ^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:1202: in pytest_fixture_setup
+    result = call_fixture_func(fixturefunc, request, kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/_pytest/fixtures.py:915: in call_fixture_func
+    fixture_result = fixturefunc(**kwargs)
+                     ^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestDataInventory" name="test_anon_unauthorized" time="0.109" /><testcase classname="backend.tests.test_iteration7_privacy.TestPrivacyRequests" name="test_patient_self_request_ok" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestPrivacyRequests" name="test_patient_cannot_request_for_other" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestPrivacyRequests" name="test_doctor_forbidden" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed doctor@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:57: in doctor_sess
+    return _login(*DOCTOR)
+           ^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed doctor@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestPrivacyRequests" name="test_staff_can_create_for_patient" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed staff@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:62: in staff_sess
+    return _login(*STAFF)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed staff@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestPrivacyRequests" name="test_admin_can_create_for_anyone" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed doctor@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:57: in doctor_sess
+    return _login(*DOCTOR)
+           ^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed doctor@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestPrivacyRequests" name="test_admin_list_with_filters" time="0.054" /><testcase classname="backend.tests.test_iteration7_privacy.TestPrivacyRequests" name="test_non_admin_cannot_list" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestPrivacyRequests" name="test_my_requests_returns_self" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestPrivacyRequests" name="test_get_request_admin_and_related" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestPrivacyRequests" name="test_state_machine_valid_transitions" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestPrivacyRequests" name="test_state_machine_terminal_rejects" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestPrivacyRequests" name="test_state_machine_invalid_jump" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestLegalHoldFulfillDelete" name="test_fulfill_delete_requires_reauth" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestLegalHoldFulfillDelete" name="test_legal_hold_blocks_fulfill_and_delete" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestLegalHoldFulfillDelete" name="test_clear_hold_then_fulfill_ok" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestConsentsAndPrefs" name="test_accept_consent_then_list" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestConsentsAndPrefs" name="test_comm_prefs_defaults" time="0.453"><failure message="AssertionError: login failed test_prefs_da9641a7@example.com: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code">backend/tests/test_iteration7_privacy.py:381: in test_comm_prefs_defaults
+    s2 = _login(email, "TestPass@Cadence1")
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed test_prefs_da9641a7@example.com: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestConsentsAndPrefs" name="test_comm_prefs_partial_update" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestSelfExport" name="test_export_shape_and_no_secrets" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestAuditRegression" name="test_patient_created_audit_no_phi" time="0.380" /><testcase classname="backend.tests.test_iteration7_privacy.TestAuditRegression" name="test_compliance_overview_admin_only" time="0.000"><error message="failed on setup with &quot;AssertionError: login failed patient@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration7_privacy.py:67: in patient_sess
+    return _login(*PATIENT)
+           ^^^^^^^^^^^^^^^^
+backend/tests/test_iteration7_privacy.py:31: in _login
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+E   AssertionError: login failed patient@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration7_privacy.TestRegisterConsent" name="test_register_then_accept_consent_v1" time="0.797" /><testcase classname="backend.tests.test_iteration8_security_config.TestSecurityConfigRBAC" name="test_anon_is_401" time="0.105" /><testcase classname="backend.tests.test_iteration8_security_config.TestSecurityConfigRBAC" name="test_patient_is_403" time="0.432" /><testcase classname="backend.tests.test_iteration8_security_config.TestSecurityConfigRBAC" name="test_doctor_is_403" time="0.380" /><testcase classname="backend.tests.test_iteration8_security_config.TestSecurityConfigRBAC" name="test_staff_is_403" time="0.404" /><testcase classname="backend.tests.test_iteration8_security_config.TestSecurityConfigRBAC" name="test_admin_200_and_payload_shape" time="0.410" /><testcase classname="backend.tests.test_iteration8_security_config.TestSecurityConfigRBAC" name="test_no_full_secrets_in_response" time="0.050" /><testcase classname="backend.tests.test_iteration8_security_config.TestComplianceOverviewRegression" name="test_anon_401" time="0.108" /><testcase classname="backend.tests.test_iteration8_security_config.TestComplianceOverviewRegression" name="test_patient_403" time="0.055" /><testcase classname="backend.tests.test_iteration8_security_config.TestComplianceOverviewRegression" name="test_doctor_403" time="0.049" /><testcase classname="backend.tests.test_iteration8_security_config.TestComplianceOverviewRegression" name="test_admin_200" time="0.066" /><testcase classname="backend.tests.test_iteration8_security_config.TestDOBEncryption" name="test_create_unmask_get_and_dob_roundtrip" time="0.387" /><testcase classname="backend.tests.test_iteration8_security_config.TestDOBEncryption" name="test_raw_db_dob_is_ciphertext" time="0.746" /><testcase classname="backend.tests.test_iteration8_security_config.TestLegacyPlaintextPassthrough" name="test_decrypt_text_passes_plaintext_through" time="0.051" /><testcase classname="backend.tests.test_iteration8_security_config.TestEnsureRequiredFailFast" name="test_missing_dek_raises" time="0.038" /><testcase classname="backend.tests.test_iteration8_security_config.TestEnsureRequiredFailFast" name="test_all_present_does_not_raise" time="0.042" /></testsuite></testsuites>

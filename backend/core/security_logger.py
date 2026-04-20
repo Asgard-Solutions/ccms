@@ -75,6 +75,9 @@ def event(
     logger.log(level, line)
 
 
-def suspicious(name: str, **meta: Any) -> None:
-    """Shortcut for alert-worthy events at WARNING level."""
-    event(name, outcome="warning", component="suspicious", level=logging.WARNING, **meta)
+def suspicious(name: str, *, component: str = "suspicious", **meta: Any) -> None:
+    """Shortcut for alert-worthy events at WARNING level.
+
+    Accepts an optional `component` override — callers like the rate-limiter
+    pass their own tag (e.g. `component="rate_limit"`)."""
+    event(name, outcome="warning", component=component, level=logging.WARNING, **meta)
