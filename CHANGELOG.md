@@ -11,6 +11,21 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+### Changed
+- **Sidebar IA refactor (2026-02-20).** Left navigation regrouped into
+  four semantic sections — **Operations**, **Financial**, **Settings**,
+  **Governance** — driven by a new config module
+  `frontend/src/components/layout/navConfig.js` (section grouping,
+  display labels, icons, routes, role gating). Labels normalized:
+  `AR aging → A/R Aging`, `Post remit → Remittance Posting`,
+  `Import 835 → 835 Imports`, `Clinic settings → Clinic Settings`,
+  `Audit log → Audit Log`, `Permission matrix → Permissions`,
+  `Security config → Security Settings`, `Security → Security Dashboard`.
+  Routes are unchanged. Settings + Governance are collapsible with
+  state persisted in `localStorage` (`ccms.sidebar.collapsed`). Each
+  group renders only when the current role has at least one visible
+  item.
+
 ### Added
 - **Billing Phase 6 — Bulk 835 import + patient statements (2026-02-20).**
   - Backend:

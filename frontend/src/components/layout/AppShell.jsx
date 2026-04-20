@@ -1,31 +1,14 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import {
-  Building2,
-  CalendarDays,
-  LayoutDashboard,
+  ChevronDown,
   LogOut,
   Menu,
-  Users,
-  BellRing,
   Stethoscope,
-  Shield,
   ShieldCheck,
-  ClipboardCheck,
-  Scale,
-  KeyRound,
-  UserCog,
-  Table2,
-  FileBarChart,
-  Unlock,
-  Receipt,
-  FileStack,
-  ShieldAlert,
-  TrendingDown,
-  Upload,
-  Wallet,
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
+import { visibleGroupsForRole } from "./navConfig";
 import { Button } from "../ui/button";
 import ThemeToggle from "../ThemeToggle";
 import {
@@ -46,28 +29,32 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 
-const NAV_ITEMS = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "doctor", "staff", "patient"] },
-  { to: "/patients", label: "Patients", icon: Users, roles: ["admin", "doctor", "staff", "patient"] },
-  { to: "/scheduling", label: "Scheduling", icon: CalendarDays, roles: ["admin", "doctor", "staff", "patient"] },
-  { to: "/billing", label: "Billing", icon: Receipt, roles: ["admin", "doctor", "staff"] },
-  { to: "/billing/claims", label: "Claims", icon: FileStack, roles: ["admin", "doctor", "staff"] },
-  { to: "/billing/denials", label: "Denials", icon: ShieldAlert, roles: ["admin", "doctor", "staff"] },
-  { to: "/billing/ar-aging", label: "AR aging", icon: TrendingDown, roles: ["admin", "doctor", "staff"] },
-  { to: "/billing/remittances/new", label: "Post remit", icon: Wallet, roles: ["admin", "staff"] },
-  { to: "/billing/remittances/import", label: "Import 835", icon: Upload, roles: ["admin", "staff"] },
-  { to: "/settings/clinic", label: "Clinic settings", icon: Building2, roles: ["admin"] },
-  { to: "/notifications", label: "Notifications", icon: BellRing, roles: ["admin", "staff"] },
-  { to: "/audit-log", label: "Audit log", icon: Shield, roles: ["admin"] },
-  { to: "/compliance", label: "Compliance", icon: ClipboardCheck, roles: ["admin"] },
-  { to: "/privacy", label: "Privacy", icon: Scale, roles: ["admin"] },
-  { to: "/roles", label: "Roles", icon: UserCog, roles: ["admin"] },
-  { to: "/permissions", label: "Permission matrix", icon: Table2, roles: ["admin"] },
-  { to: "/access-review", label: "Access review", icon: FileBarChart, roles: ["admin"] },
-  { to: "/elevation", label: "Elevation", icon: Unlock, roles: ["admin", "doctor", "staff"] },
-  { to: "/security-config", label: "Security config", icon: KeyRound, roles: ["admin"] },
-  { to: "/security", label: "Security", icon: ShieldCheck, roles: ["admin", "doctor", "staff", "patient"] },
-];
+const NAV_COLLAPSE_STORAGE_KEY = "ccms.sidebar.collapsed";
+
+function useCollapsedSections() {
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem(NAV_COLLAPSE_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        NAV_COLLAPSE_STORAGE_KEY,
+        JSON.stringify(collapsed),
+      );
+    } catch {
+      /* ignore quota errors */
+    }
+  }, [collapsed]);
+  function toggle(id) {
+    setCollapsed((prev) => ({ ...prev, [id]: !prev[id] }));
+  }
+  return [collapsed, toggle];
+}
 
 function roleLabel(role) {
   return {
@@ -79,7 +66,8 @@ function roleLabel(role) {
 }
 
 function Sidebar({ role, open, onClose }) {
-  const visible = NAV_ITEMS.filter((i) => i.roles.includes(role));
+  const groups = visibleGroupsForRole(role);
+  const [collapsed, toggleCollapsed] = useCollapsedSections();
   return (
     <>
       {open && (
@@ -105,26 +93,62 @@ function Sidebar({ role, open, onClose }) {
           </div>
         </div>
 
-        <nav className="flex-1 overflow-y-auto py-4">
-          {visible.map(({ to, label, icon: Icon }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={to === "/"}
-              data-testid={`nav-${label.toLowerCase().replace(/\s+/g, "-")}`}
-              onClick={onClose}
-              className={({ isActive }) =>
-                `flex items-center gap-3 border-l-2 px-6 py-3 text-sm font-medium transition-colors ${
-                  isActive
-                    ? "border-[var(--sidebar-active-indicator)] bg-[var(--sidebar-active-bg)] pl-[22px] text-[var(--sidebar-active-fg)]"
-                    : "border-transparent text-muted-foreground hover:bg-[var(--sidebar-active-bg)] hover:text-foreground"
-                }`
-              }
-            >
-              <Icon className="h-4 w-4" />
-              {label}
-            </NavLink>
-          ))}
+        <nav className="flex-1 overflow-y-auto py-2">
+          {groups.map((group, gi) => {
+            const isCollapsed = group.collapsible && !!collapsed[group.id];
+            return (
+              <div
+                key={group.id}
+                data-testid={`nav-group-${group.id}`}
+                className={gi === 0 ? "pt-2" : "mt-2 border-t border-border pt-2"}
+              >
+                {group.collapsible ? (
+                  <button
+                    type="button"
+                    data-testid={`nav-group-toggle-${group.id}`}
+                    onClick={() => toggleCollapsed(group.id)}
+                    aria-expanded={!isCollapsed}
+                    className="flex w-full items-center justify-between px-6 py-2 text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    <span>{group.label}</span>
+                    <ChevronDown
+                      className={`h-3.5 w-3.5 transition-transform ${
+                        isCollapsed ? "-rotate-90" : "rotate-0"
+                      }`}
+                    />
+                  </button>
+                ) : (
+                  <div className="px-6 py-2 text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+                    {group.label}
+                  </div>
+                )}
+
+                {!isCollapsed && (
+                  <div className="pb-1">
+                    {group.items.map(({ to, label, icon: Icon, testId }) => (
+                      <NavLink
+                        key={to}
+                        to={to}
+                        end={to === "/"}
+                        data-testid={testId}
+                        onClick={onClose}
+                        className={({ isActive }) =>
+                          `flex items-center gap-3 border-l-2 px-6 py-2.5 text-sm font-medium transition-colors ${
+                            isActive
+                              ? "border-[var(--sidebar-active-indicator)] bg-[var(--sidebar-active-bg)] pl-[22px] text-[var(--sidebar-active-fg)]"
+                              : "border-transparent text-muted-foreground hover:bg-[var(--sidebar-active-bg)] hover:text-foreground"
+                          }`
+                        }
+                      >
+                        <Icon className="h-4 w-4" />
+                        {label}
+                      </NavLink>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </nav>
 
         <div className="border-t border-border px-6 py-4 text-xs text-muted-foreground">
