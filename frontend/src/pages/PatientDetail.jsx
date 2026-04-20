@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Download, Eye, EyeOff, FileText, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Eye, EyeOff, FileText, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, formatApiError } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { formatDate, formatDateTime, relativeFromNow } from "../utils/time";
+import { PatientWizardDialog } from "./Patients";
+import { payloadToForm } from "./patientWizardLogic";
 import { Button } from "../components/ui/button";
 import { Skeleton } from "../components/ui/skeleton";
 import {
@@ -456,6 +458,7 @@ export default function PatientDetail() {
   const navigate = useNavigate();
   const canAddRecord = user.role === "admin" || user.role === "doctor";
   const canDelete = user.role === "admin";
+  const canEditIntake = ["admin", "doctor", "staff"].includes(user.role);
   const reasonRequired = user.role === "doctor" || user.role === "staff";
   const canUnmask = user.role === "admin" || (user.role === "doctor" || user.role === "staff");
   const canExport = user.role === "admin" || user.role === "patient";
@@ -471,6 +474,7 @@ export default function PatientDetail() {
   const [reauthIntent, setReauthIntent] = useState(null); // 'record' | 'delete'
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteReason, setDeleteReason] = useState("");
+  const [editWizardOpen, setEditWizardOpen] = useState(false);
 
   const load = useCallback(
     async ({ withUnmask = false, breakGlassReason = null } = {}) => {
@@ -581,6 +585,24 @@ export default function PatientDetail() {
             >
               {unmask ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
               {unmask ? "Mask" : "Unmask (audited)"}
+            </Button>
+          )}
+          {canEditIntake && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (!patient.unmasked) {
+                  toast.message("Unmask first to edit intake", {
+                    description: "Edits need the full (unmasked) record so you don't overwrite fields with masked placeholders.",
+                  });
+                  return;
+                }
+                setEditWizardOpen(true);
+              }}
+              data-testid="patient-edit-intake-btn"
+              className="rounded-sm"
+            >
+              <Pencil className="mr-2 h-4 w-4" /> Edit intake
             </Button>
           )}
           {canExport && (
@@ -800,6 +822,19 @@ export default function PatientDetail() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {canEditIntake && (
+        <PatientWizardDialog
+          open={editWizardOpen}
+          onClose={() => setEditWizardOpen(false)}
+          mode="edit"
+          patientId={id}
+          initialForm={payloadToForm(patient)}
+          userId={user.id}
+          tenantId={user.tenant_id}
+          onSaved={() => load({ withUnmask: unmask, breakGlassReason: reason })}
+        />
+      )}
     </div>
   );
 }

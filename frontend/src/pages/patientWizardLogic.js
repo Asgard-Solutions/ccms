@@ -517,6 +517,265 @@ function buildPayload(form, _today = new Date()) {
   return payload;
 }
 
+// ---------------------------------------------------------------------------
+// Phase 5 — Edit-from-detail (payload → wizard form) + autosave draft helpers
+// ---------------------------------------------------------------------------
+
+// Canonical "empty" wizard form — kept in sync with Patients.jsx's EMPTY_FORM
+// so a caller can reset to a clean slate without importing the UI file.
+const EMPTY_FORM = {
+  firstName: "", middleName: "", lastName: "", preferredName: "",
+  dateOfBirth: "", sexAtBirth: "", genderIdentity: "", pronouns: "",
+  maritalStatus: "", preferredLanguage: "",
+  mobilePhone: "", homePhone: "", workPhone: "", email: "",
+  preferredContactMethod: "",
+  smsConsent: false, emailConsent: false, voicemailConsent: false,
+  addressLine1: "", addressLine2: "", city: "", state: "", postalCode: "", country: "USA",
+  emergencyContactName: "", emergencyContactRelationship: "",
+  emergencyContactPhone: "", emergencyContactAltPhone: "", emergencyContactEmail: "",
+  assignedProviderId: "", preferredLocationId: "", referralSource: "",
+  occupation: "", employerName: "", employerPhone: "",
+  responsiblePartySameAsPatient: true,
+  guarantorFullName: "", guarantorRelationship: "", guarantorDateOfBirth: "",
+  guarantorPhone: "", guarantorEmail: "", guarantorAddress: "",
+  guarantorEmployerName: "", guarantorEmployerPhone: "",
+  hasInsurance: false,
+  primaryCarrier: "", primaryPlanName: "", primaryPlanType: "",
+  primaryMemberId: "", primaryGroupNumber: "", primaryPolicyHolderName: "",
+  primaryPolicyHolderRelationship: "", primaryPolicyHolderDob: "",
+  primaryEffectiveDate: "", primaryCopay: "", primaryDeductible: "",
+  secondaryCarrier: "", secondaryPlanName: "", secondaryPlanType: "",
+  secondaryMemberId: "", secondaryGroupNumber: "",
+  secondaryPolicyHolderName: "", secondaryPolicyHolderRelationship: "",
+  chiefComplaint: "", symptomStartDate: "", onsetType: "",
+  accidentRelated: false, workComp: false, personalInjury: false,
+  painAreas: [], painAreasOther: "", painScore: "",
+  symptoms: [], symptomsOther: "",
+  priorTreatment: "", medications: "", allergies: "",
+  surgeries: "", medicalHistory: "", providerNotes: "",
+  accidentDate: "", claimNumber: "", autoCarrier: "",
+  adjusterName: "", adjusterPhone: "",
+  attorneyName: "", attorneyPhone: "", attorneyEmail: "",
+  employerAtInjury: "", workCompCarrier: "",
+  hipaaAcknowledged: false, consentToTreat: false,
+  financialPolicyAccepted: false, assignmentOfBenefits: false,
+  releaseOfInformation: false,
+  signatureName: "", signatureDate: "",
+};
+
+function _coerceStr(v) {
+  return v === null || v === undefined ? "" : String(v);
+}
+
+function _consentAccepted(c) {
+  return Boolean(c && c.accepted === true);
+}
+
+function _pickSignature(consents) {
+  const sources = [
+    consents?.hipaa, consents?.treatment, consents?.financial,
+    consents?.telehealth, consents?.photo_release,
+    ...(Array.isArray(consents?.additional) ? consents.additional : []),
+  ];
+  for (const c of sources) {
+    if (c?.signature_name || c?.signed_at) {
+      return {
+        signatureName: _coerceStr(c.signature_name),
+        signatureDate: _coerceStr(c.signed_at).slice(0, 10),
+      };
+    }
+  }
+  return { signatureName: "", signatureDate: "" };
+}
+
+/**
+ * Convert a patient detail response (grouped shape emitted by the backend)
+ * back into the flat wizard form state. Legacy-only records fall back to
+ * top-level scalars where possible. Always returns a shape that merges
+ * cleanly with EMPTY_FORM.
+ */
+function payloadToForm(patient) {
+  if (!patient || typeof patient !== "object") return { ...EMPTY_FORM };
+  const demo = patient.demographics || {};
+  const contact = patient.contact || {};
+  const addr = patient.address_details || {};
+  const ec = patient.emergency_contact_details || {};
+  const admin = patient.admin || {};
+  const g = patient.guarantor || {};
+  const ins = patient.insurance || {};
+  const primary = ins.primary || {};
+  const secondary = ins.secondary || {};
+  const clin = patient.clinical_intake || {};
+  const cd = patient.case_details || {};
+  const cons = patient.consents || {};
+  const { signatureName, signatureDate } = _pickSignature(cons);
+  const additional = Array.isArray(cons.additional) ? cons.additional : [];
+  const hasConsent = (type) =>
+    additional.some((c) => c && c.type === type && c.accepted === true);
+
+  const caseType = cd.case_type || "";
+  const out = {
+    ...EMPTY_FORM,
+    // Demographics / legacy name fallbacks
+    firstName: _coerceStr(demo.first_name || patient.first_name),
+    middleName: _coerceStr(demo.middle_name),
+    lastName: _coerceStr(demo.last_name || patient.last_name),
+    preferredName: _coerceStr(demo.preferred_name),
+    dateOfBirth: _coerceStr(demo.date_of_birth || patient.date_of_birth),
+    sexAtBirth: _coerceStr(demo.sex_at_birth),
+    genderIdentity: _coerceStr(demo.gender || patient.gender),
+    pronouns: _coerceStr(demo.pronouns),
+    maritalStatus: _coerceStr(demo.marital_status),
+    preferredLanguage: _coerceStr(demo.language),
+    occupation: _coerceStr(demo.occupation),
+    employerName: _coerceStr(demo.employer),
+    employerPhone: _coerceStr(demo.employer_phone),
+    // Contact
+    mobilePhone: _coerceStr(contact.phone || patient.phone),
+    homePhone: _coerceStr(contact.phone_alt),
+    workPhone: _coerceStr(contact.phone_work),
+    email: _coerceStr(contact.email || patient.email),
+    preferredContactMethod: _coerceStr(contact.preferred_contact_method),
+    smsConsent: Boolean(contact.sms_consent),
+    emailConsent: Boolean(contact.email_consent),
+    voicemailConsent: Boolean(contact.voicemail_consent),
+    // Address
+    addressLine1: _coerceStr(addr.line1),
+    addressLine2: _coerceStr(addr.line2),
+    city: _coerceStr(addr.city),
+    state: _coerceStr(addr.state),
+    postalCode: _coerceStr(addr.postal_code),
+    country: _coerceStr(addr.country) || "USA",
+    // Emergency contact
+    emergencyContactName: _coerceStr(ec.name),
+    emergencyContactRelationship: _coerceStr(ec.relationship),
+    emergencyContactPhone: _coerceStr(ec.phone),
+    emergencyContactAltPhone: _coerceStr(ec.phone_alt),
+    emergencyContactEmail: _coerceStr(ec.email),
+    // Administrative
+    assignedProviderId: _coerceStr(admin.primary_provider_id),
+    preferredLocationId: _coerceStr(patient.location_id),
+    referralSource: _coerceStr(admin.referral_source),
+    // Guarantor
+    responsiblePartySameAsPatient:
+      g && g.same_as_patient !== undefined
+        ? Boolean(g.same_as_patient)
+        : !g || Object.keys(g).length === 0,
+    guarantorFullName: [g.first_name, g.last_name].filter(Boolean).join(" "),
+    guarantorRelationship: _coerceStr(g.relationship),
+    guarantorDateOfBirth: _coerceStr(g.date_of_birth),
+    guarantorPhone: _coerceStr(g.phone),
+    guarantorEmail: _coerceStr(g.email),
+    guarantorAddress: _coerceStr(g.address),
+    guarantorEmployerName: _coerceStr(g.employer),
+    guarantorEmployerPhone: _coerceStr(g.employer_phone),
+    // Insurance
+    hasInsurance: Boolean(ins && (Object.keys(primary).length || Object.keys(secondary).length)),
+    primaryCarrier: _coerceStr(primary.carrier),
+    primaryPlanName: _coerceStr(primary.plan_name),
+    primaryPlanType: _coerceStr(primary.plan_type),
+    primaryMemberId: _coerceStr(primary.member_id),
+    primaryGroupNumber: _coerceStr(primary.group_number),
+    primaryPolicyHolderName: _coerceStr(primary.policy_holder_name),
+    primaryPolicyHolderRelationship: _coerceStr(primary.policy_holder_relationship),
+    primaryPolicyHolderDob: _coerceStr(primary.policy_holder_dob),
+    primaryEffectiveDate: _coerceStr(primary.effective_date),
+    primaryCopay: _coerceStr(primary.copay),
+    primaryDeductible: _coerceStr(primary.deductible),
+    secondaryCarrier: _coerceStr(secondary.carrier),
+    secondaryPlanName: _coerceStr(secondary.plan_name),
+    secondaryPlanType: _coerceStr(secondary.plan_type),
+    secondaryMemberId: _coerceStr(secondary.member_id),
+    secondaryGroupNumber: _coerceStr(secondary.group_number),
+    secondaryPolicyHolderName: _coerceStr(secondary.policy_holder_name),
+    secondaryPolicyHolderRelationship: _coerceStr(secondary.policy_holder_relationship),
+    // Clinical intake
+    chiefComplaint: _coerceStr(clin.chief_complaint),
+    symptomStartDate: _coerceStr(clin.complaint_onset),
+    onsetType: _coerceStr(clin.onset_type),
+    painScore:
+      typeof clin.pain_level === "number" ? String(clin.pain_level) : "",
+    painAreas: Array.isArray(clin.pain_locations) ? [...clin.pain_locations] : [],
+    painAreasOther: "",
+    symptoms: Array.isArray(clin.symptoms) ? [...clin.symptoms] : [],
+    symptomsOther: "",
+    priorTreatment: _coerceStr(clin.prior_treatments),
+    medications: _coerceStr(clin.medications),
+    allergies: _coerceStr(clin.allergies),
+    surgeries: _coerceStr(clin.past_surgical_history),
+    medicalHistory: _coerceStr(clin.past_medical_history),
+    providerNotes: _coerceStr(clin.notes),
+    // Case-type flags (derived from case_type + raw presence)
+    personalInjury: caseType === "personal_injury" || Boolean(cd.attorney_name || cd.attorney_email),
+    workComp: caseType === "workers_comp" || Boolean(cd.work_comp_carrier || cd.employer_for_claim),
+    accidentRelated:
+      caseType === "auto_accident" || Boolean(cd.auto_carrier || cd.date_of_injury),
+    accidentDate: _coerceStr(cd.date_of_injury),
+    claimNumber: _coerceStr(cd.claim_number),
+    autoCarrier: _coerceStr(cd.auto_carrier),
+    adjusterName: _coerceStr(cd.adjuster_name),
+    adjusterPhone: _coerceStr(cd.adjuster_phone),
+    attorneyName: _coerceStr(cd.attorney_name),
+    attorneyPhone: _coerceStr(cd.attorney_phone),
+    attorneyEmail: _coerceStr(cd.attorney_email),
+    employerAtInjury: _coerceStr(cd.employer_for_claim),
+    workCompCarrier: _coerceStr(cd.work_comp_carrier),
+    // Consents
+    hipaaAcknowledged: _consentAccepted(cons.hipaa),
+    consentToTreat: _consentAccepted(cons.treatment),
+    financialPolicyAccepted: _consentAccepted(cons.financial),
+    assignmentOfBenefits: hasConsent("assignment_of_benefits"),
+    releaseOfInformation: hasConsent("release_of_information"),
+    signatureName,
+    signatureDate,
+  };
+  return out;
+}
+
+// Draft storage — tenant + user scoped so a staff user can't see another
+// staff user's unfinished intake draft on a shared kiosk.
+function draftStorageKey(userId, tenantId) {
+  return `ccms.intake-draft.${tenantId || "default"}.${userId || "anon"}`;
+}
+
+const DRAFT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+function isDraftFresh(savedAtIso, _now = new Date()) {
+  if (!savedAtIso) return false;
+  const ts = new Date(savedAtIso).getTime();
+  if (Number.isNaN(ts)) return false;
+  return _now.getTime() - ts <= DRAFT_MAX_AGE_MS;
+}
+
+// A draft is "worth restoring" only if the staff user entered at least one
+// meaningful field. Empty drafts (e.g. the wizard was opened-and-closed)
+// are silently discarded so we don't show a pointless Resume banner.
+function formHasAnyInput(form) {
+  if (!form || typeof form !== "object") return false;
+  const scalarKeys = [
+    "firstName", "lastName", "middleName", "preferredName", "dateOfBirth",
+    "mobilePhone", "homePhone", "workPhone", "email",
+    "addressLine1", "addressLine2", "city", "state", "postalCode",
+    "emergencyContactName", "emergencyContactPhone", "emergencyContactEmail",
+    "assignedProviderId", "referralSource", "occupation", "employerName",
+    "guarantorFullName", "guarantorPhone", "guarantorEmail",
+    "primaryCarrier", "primaryMemberId", "secondaryCarrier", "secondaryMemberId",
+    "chiefComplaint", "painScore", "painAreasOther", "symptomsOther",
+    "medications", "allergies", "surgeries", "medicalHistory", "providerNotes",
+    "accidentDate", "claimNumber", "autoCarrier", "adjusterName",
+    "attorneyName", "attorneyEmail", "employerAtInjury", "workCompCarrier",
+    "signatureName",
+  ];
+  for (const k of scalarKeys) {
+    if (cleanStr(form[k])) return true;
+  }
+  if (Array.isArray(form.painAreas) && form.painAreas.length) return true;
+  if (Array.isArray(form.symptoms) && form.symptoms.length) return true;
+  if (form.hasInsurance || form.personalInjury || form.workComp || form.accidentRelated) return true;
+  if (form.hipaaAcknowledged || form.consentToTreat || form.financialPolicyAccepted) return true;
+  return false;
+}
+
 module.exports = {
   // Constants
   PAIN_AREA_OPTIONS,
@@ -544,4 +803,10 @@ module.exports = {
   validateAll,
   deriveCaseType,
   buildPayload,
+  // Phase 5 — edit-from-detail + autosave
+  EMPTY_FORM,
+  payloadToForm,
+  draftStorageKey,
+  isDraftFresh,
+  formHasAnyInput,
 };

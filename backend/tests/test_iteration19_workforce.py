@@ -33,18 +33,26 @@ DEFAULT_ADMIN = ("admin@ccms.app", "Admin@ComplianceClinic1")
 # ---------------------------------------------------------------------------
 
 def _login(email: str, password: str, *, extra_headers: dict | None = None) -> requests.Session:
+    """Login over plain HTTP — Secure cookies can't traverse this transport,
+    so lift access_token / reauth_token out of Set-Cookie into headers."""
     s = requests.Session()
     if extra_headers:
         s.headers.update(extra_headers)
     r = s.post(f"{API}/auth/login",
                json={"email": email, "password": password}, timeout=15)
     assert r.status_code == 200, r.text
+    access = r.cookies.get("access_token")
+    if access:
+        s.headers["Authorization"] = f"Bearer {access}"
     return s
 
 
 def _reauth(s: requests.Session, password: str) -> None:
     r = s.post(f"{API}/auth/reauth", json={"password": password}, timeout=10)
     assert r.status_code == 200, r.text
+    reauth = r.cookies.get("reauth_token")
+    if reauth:
+        s.headers["x-reauth-token"] = reauth
 
 
 def _invite_email() -> str:

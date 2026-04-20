@@ -556,3 +556,169 @@ test("validateAll + buildPayload together gate a realistic minor + PI intake", (
   assert.equal(p.consents.hipaa.accepted, true);
   assert.equal(p.consents.treatment.signature_name, "Riley Quinn");
 });
+
+// ---------------------------------------------------------------------------
+// Phase 5 — payloadToForm round-trip + autosave draft helpers
+// ---------------------------------------------------------------------------
+
+const {
+  EMPTY_FORM,
+  payloadToForm,
+  draftStorageKey,
+  isDraftFresh,
+  formHasAnyInput,
+} = require("./patientWizardLogic");
+
+test("payloadToForm — undefined / null input returns the empty form", () => {
+  assert.deepEqual(payloadToForm(undefined), { ...EMPTY_FORM });
+  assert.deepEqual(payloadToForm(null), { ...EMPTY_FORM });
+});
+
+test("payloadToForm — legacy flat record reuses top-level scalars as form values", () => {
+  const legacy = {
+    id: "abc",
+    first_name: "Legacy",
+    last_name: "Patient",
+    email: "legacy@example.com",
+    phone: "+1-555-0100",
+    date_of_birth: "1990-02-14",
+    gender: "male",
+    address: "124 Willow Lane",
+    emergency_contact: "Jane Doe / +1-555-0200",
+    notes: "seasonal back pain",
+  };
+  const form = payloadToForm(legacy);
+  assert.equal(form.firstName, "Legacy");
+  assert.equal(form.lastName, "Patient");
+  assert.equal(form.email, "legacy@example.com");
+  assert.equal(form.mobilePhone, "+1-555-0100");
+  assert.equal(form.dateOfBirth, "1990-02-14");
+  assert.equal(form.genderIdentity, "male");
+  // No structured address → form fields stay blank (the legacy scalar lives
+  // in the top-of-page strip on the detail view).
+  assert.equal(form.addressLine1, "");
+  assert.equal(form.city, "");
+  // Guarantor defaults to "same as patient" when no block is present.
+  assert.equal(form.responsiblePartySameAsPatient, true);
+});
+
+test("payloadToForm — round-trips a grouped payload through buildPayload", () => {
+  const sourceForm = baseGoodForm({
+    dateOfBirth: "1985-07-22",
+    preferredName: "Trin",
+    hasInsurance: true,
+    primaryCarrier: "Aetna",
+    primaryPlanType: "PPO",
+    primaryMemberId: "A-001",
+    personalInjury: true,
+    attorneyName: "Saul G.",
+    attorneyEmail: "saul@law.test",
+    claimNumber: "CLM-RT",
+    hipaaAcknowledged: true,
+    assignmentOfBenefits: true,
+    releaseOfInformation: true,
+    signatureName: "Ada Lovelace",
+    signatureDate: "2026-02-10",
+  });
+  const payload = buildPayload(sourceForm, TODAY);
+  // Simulate what the backend echoes back on GET (grouped shape + top-level scalars).
+  const patient = {
+    id: "p1",
+    first_name: "Ada",
+    last_name: "Lovelace",
+    phone: "+1 (555) 000-0001",
+    email: "ada@example.com",
+    location_id: null,
+    ...payload,
+    // Backend also returns address_details + emergency_contact_details.
+    address_details: { line1: "1 Infinite Loop", city: "Cupertino", state: "CA", postal_code: "95014" },
+    emergency_contact_details: { name: "Byron", relationship: "Spouse", phone: "+1-555-0002" },
+  };
+  const restored = payloadToForm(patient);
+  // Identity survived.
+  assert.equal(restored.firstName, "Ada");
+  assert.equal(restored.lastName, "Lovelace");
+  assert.equal(restored.preferredName, "Trin");
+  // Address restored from address_details.
+  assert.equal(restored.addressLine1, "1 Infinite Loop");
+  assert.equal(restored.city, "Cupertino");
+  assert.equal(restored.state, "CA");
+  assert.equal(restored.postalCode, "95014");
+  // Emergency contact restored from emergency_contact_details.
+  assert.equal(restored.emergencyContactName, "Byron");
+  assert.equal(restored.emergencyContactPhone, "+1-555-0002");
+  // Insurance + flags.
+  assert.equal(restored.hasInsurance, true);
+  assert.equal(restored.primaryCarrier, "Aetna");
+  assert.equal(restored.primaryMemberId, "A-001");
+  assert.equal(restored.personalInjury, true);
+  // Consents restored.
+  assert.equal(restored.hipaaAcknowledged, true);
+  assert.equal(restored.assignmentOfBenefits, true);
+  assert.equal(restored.releaseOfInformation, true);
+  assert.equal(restored.signatureName, "Ada Lovelace");
+  // Re-building the payload from the restored form yields the same
+  // canonical grouped shape on the fields we care about.
+  const rebuilt = buildPayload(restored, TODAY);
+  assert.equal(rebuilt.insurance.primary.member_id, "A-001");
+  assert.equal(rebuilt.case_details.attorney_email, "saul@law.test");
+  assert.equal(rebuilt.consents.hipaa.accepted, true);
+});
+
+test("payloadToForm — splits guarantor name back into guarantorFullName", () => {
+  const form = payloadToForm({
+    guarantor: {
+      same_as_patient: false,
+      first_name: "Riley",
+      last_name: "Quinn-Smith",
+      relationship: "Parent",
+      phone: "+1-555-0909",
+    },
+  });
+  assert.equal(form.guarantorFullName, "Riley Quinn-Smith");
+  assert.equal(form.responsiblePartySameAsPatient, false);
+  assert.equal(form.guarantorRelationship, "Parent");
+});
+
+test("payloadToForm — recovers consent flags from consents.additional[]", () => {
+  const form = payloadToForm({
+    consents: {
+      hipaa: { accepted: true, signature_name: "Sam", signed_at: "2026-02-01T00:00:00Z" },
+      additional: [
+        { type: "assignment_of_benefits", accepted: true },
+        { type: "release_of_information", accepted: true },
+      ],
+    },
+  });
+  assert.equal(form.hipaaAcknowledged, true);
+  assert.equal(form.assignmentOfBenefits, true);
+  assert.equal(form.releaseOfInformation, true);
+  assert.equal(form.signatureName, "Sam");
+  assert.equal(form.signatureDate, "2026-02-01");
+});
+
+// Draft helpers --------------------------------------------------------------
+
+test("draftStorageKey is tenant + user scoped", () => {
+  assert.equal(draftStorageKey("u1", "t1"), "ccms.intake-draft.t1.u1");
+  assert.equal(draftStorageKey("u1"), "ccms.intake-draft.default.u1");
+  assert.equal(draftStorageKey(), "ccms.intake-draft.default.anon");
+});
+
+test("isDraftFresh discards old drafts", () => {
+  const now = new Date(Date.UTC(2026, 1, 20));
+  assert.equal(isDraftFresh(new Date(Date.UTC(2026, 1, 19)).toISOString(), now), true);
+  assert.equal(isDraftFresh(new Date(Date.UTC(2026, 1, 13)).toISOString(), now), true);
+  // 8 days old → stale.
+  assert.equal(isDraftFresh(new Date(Date.UTC(2026, 1, 12)).toISOString(), now), false);
+  assert.equal(isDraftFresh("", now), false);
+  assert.equal(isDraftFresh("garbage", now), false);
+});
+
+test("formHasAnyInput rejects empty + accepts meaningful drafts", () => {
+  assert.equal(formHasAnyInput({ ...EMPTY_FORM }), false);
+  assert.equal(formHasAnyInput({ ...EMPTY_FORM, firstName: "Ada" }), true);
+  assert.equal(formHasAnyInput({ ...EMPTY_FORM, painAreas: ["Neck"] }), true);
+  assert.equal(formHasAnyInput({ ...EMPTY_FORM, personalInjury: true }), true);
+  assert.equal(formHasAnyInput({ ...EMPTY_FORM, hipaaAcknowledged: true }), true);
+});

@@ -43,6 +43,10 @@ import {
   validateStep,
   validateAll,
   visibilityForForm,
+  payloadToForm,
+  draftStorageKey,
+  isDraftFresh,
+  formHasAnyInput,
 } from "./patientWizardLogic";
 
 const STAFF_ROLES = ["admin", "doctor", "staff"];
@@ -754,15 +758,32 @@ function StepCaseConsents({ form, set, visibility }) {
 // Wizard modal
 // -----------------------------------------------------------------------
 
-function PatientWizardDialog({ open, onClose, onCreated }) {
+export function PatientWizardDialog({
+  open,
+  onClose,
+  onCreated,
+  onSaved,
+  mode = "create",
+  patientId,
+  initialForm,
+  userId,
+  tenantId,
+}) {
   const [step, setStep] = useState(1);
   const [form, setForm] = useState(EMPTY_FORM);
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
   const [providers, setProviders] = useState([]);
   const [locations, setLocations] = useState([]);
+  const [draftPrompt, setDraftPrompt] = useState(null); // {savedAt, form}
+  const [draftNotice, setDraftNotice] = useState(false); // "Draft saved"
 
   const visibility = useMemo(() => visibilityForForm(form), [form]);
+  const isEdit = mode === "edit";
+  const draftKey = useMemo(
+    () => (isEdit ? null : draftStorageKey(userId, tenantId)),
+    [isEdit, userId, tenantId]
+  );
 
   const set = (k) => (v) => {
     setForm((prev) => {
@@ -778,11 +799,54 @@ function PatientWizardDialog({ open, onClose, onCreated }) {
     if (errors[k]) setErrors((e) => ({ ...e, [k]: undefined }));
   };
 
+  // Autosave to localStorage (create mode only). Fires on every form change,
+  // so staff don't lose work to an accidental tab close. The key is scoped
+  // to the signed-in user + tenant to avoid leaking drafts on shared kiosks.
+  useEffect(() => {
+    if (!open || isEdit || !draftKey) return;
+    // Skip the first empty write so opening-then-closing doesn't stash junk.
+    if (!formHasAnyInput(form)) return;
+    try {
+      window.localStorage.setItem(
+        draftKey,
+        JSON.stringify({ savedAt: new Date().toISOString(), step, form })
+      );
+      setDraftNotice(true);
+      const t = setTimeout(() => setDraftNotice(false), 1200);
+      return () => clearTimeout(t);
+    } catch {
+      /* localStorage quota / SecurityError — silently ignore */
+    }
+  }, [form, step, draftKey, isEdit, open]);
+
   useEffect(() => {
     if (!open) return;
-    setStep(1);
-    setForm(EMPTY_FORM);
     setErrors({});
+    if (isEdit) {
+      setStep(1);
+      setForm({ ...EMPTY_FORM, ...(initialForm || {}) });
+      setDraftPrompt(null);
+    } else {
+      // Start from a clean form unless the user decides to resume.
+      setForm(EMPTY_FORM);
+      setStep(1);
+      // Probe localStorage for a resumable draft.
+      let draft = null;
+      try {
+        const raw = draftKey && window.localStorage.getItem(draftKey);
+        draft = raw ? JSON.parse(raw) : null;
+      } catch {
+        draft = null;
+      }
+      if (draft && isDraftFresh(draft.savedAt) && formHasAnyInput(draft.form)) {
+        setDraftPrompt(draft);
+      } else {
+        if (draft && draftKey) {
+          try { window.localStorage.removeItem(draftKey); } catch { /* ignore */ }
+        }
+        setDraftPrompt(null);
+      }
+    }
     (async () => {
       try {
         const [pr, ctx] = await Promise.all([
@@ -795,7 +859,26 @@ function PatientWizardDialog({ open, onClose, onCreated }) {
         /* providers/locations optional */
       }
     })();
-  }, [open]);
+  }, [open, isEdit, initialForm, draftKey]);
+
+  const clearDraft = () => {
+    if (!draftKey) return;
+    try { window.localStorage.removeItem(draftKey); } catch { /* ignore */ }
+  };
+
+  const resumeDraft = () => {
+    if (!draftPrompt) return;
+    setForm({ ...EMPTY_FORM, ...(draftPrompt.form || {}) });
+    setStep(Math.min(4, Math.max(1, Number(draftPrompt.step) || 1)));
+    setDraftPrompt(null);
+  };
+
+  const discardDraft = () => {
+    clearDraft();
+    setDraftPrompt(null);
+    setForm(EMPTY_FORM);
+    setStep(1);
+  };
 
   const goNext = () => {
     const errs = validateStep(step, form);
@@ -826,9 +909,19 @@ function PatientWizardDialog({ open, onClose, onCreated }) {
     setSubmitting(true);
     try {
       const payload = buildPayload(form);
-      const { data } = await api.post("/patients", payload);
-      toast.success(`Patient ${data.first_name} ${data.last_name} created`);
-      onCreated(data);
+      let data;
+      if (isEdit) {
+        const resp = await api.put(`/patients/${patientId}`, payload);
+        data = resp.data;
+        toast.success("Patient intake updated");
+        onSaved && onSaved(data);
+      } else {
+        const resp = await api.post("/patients", payload);
+        data = resp.data;
+        toast.success(`Patient ${data.first_name} ${data.last_name} created`);
+        clearDraft();
+        onCreated && onCreated(data);
+      }
       onClose();
     } catch (err) {
       toast.error(formatApiError(err));
@@ -847,10 +940,22 @@ function PatientWizardDialog({ open, onClose, onCreated }) {
       >
         <DialogHeader className="border-b border-stone-200 bg-white px-8 py-5">
           <DialogTitle className="font-['Outfit'] text-2xl font-medium tracking-tight text-[#1F2924]">
-            New patient intake
+            {isEdit ? "Edit patient intake" : "New patient intake"}
           </DialogTitle>
           <DialogDescription className="text-sm text-[#5C6A61]">
             Step {step} of 4 — {current.label}. All PHI is encrypted at rest and every save is audited.
+            {!isEdit && (
+              <span
+                data-testid="wizard-draft-autosave-indicator"
+                className={
+                  "ml-3 text-xs " +
+                  (draftNotice ? "text-[#7B9A82] opacity-100" : "opacity-0")
+                }
+                aria-live="polite"
+              >
+                Draft autosaved.
+              </span>
+            )}
           </DialogDescription>
 
           <ol className="mt-4 grid grid-cols-4 gap-2" data-testid="wizard-steps">
@@ -887,8 +992,41 @@ function PatientWizardDialog({ open, onClose, onCreated }) {
           </ol>
         </DialogHeader>
 
+        {draftPrompt && (
+          <div
+            data-testid="wizard-draft-prompt"
+            className="flex items-center justify-between gap-4 border-b border-[#E5D9A4] bg-[#FAF5DC] px-8 py-3 text-sm text-[#5B4F1F]"
+          >
+            <span>
+              <strong>Unfinished draft found.</strong>{" "}
+              Last saved {new Date(draftPrompt.savedAt).toLocaleString()}. Resume where you left off?
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={discardDraft}
+                data-testid="wizard-draft-discard"
+                className="rounded-sm text-[#5B4F1F] hover:bg-[#F1E7B0]"
+              >
+                Discard
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={resumeDraft}
+                data-testid="wizard-draft-resume"
+                className="rounded-sm bg-[#7B9A82] hover:bg-[#65826C]"
+              >
+                Resume draft
+              </Button>
+            </div>
+          </div>
+        )}
+
         <div
-          className="max-h-[60vh] overflow-y-auto px-8 py-6"
+          className="max-h-[56vh] overflow-y-auto px-8 py-6"
           data-testid={`wizard-step-body-${step}`}
         >
           {step === 1 && <StepPatientInfo form={form} set={set} errors={errors} />}
@@ -945,7 +1083,7 @@ function PatientWizardDialog({ open, onClose, onCreated }) {
                 className="h-10 rounded-sm bg-[#7B9A82] px-6 hover:bg-[#65826C]"
                 data-testid="wizard-save-btn"
               >
-                {submitting ? "Saving…" : "Save patient"}
+                {submitting ? "Saving…" : isEdit ? "Save changes" : "Save patient"}
               </Button>
             )}
           </div>
@@ -1112,6 +1250,8 @@ export default function Patients() {
           open={open}
           onClose={() => setOpen(false)}
           onCreated={(p) => setPatients((xs) => [p, ...(xs || [])])}
+          userId={user.id}
+          tenantId={user.tenant_id}
         />
       )}
     </div>
