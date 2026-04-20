@@ -153,6 +153,7 @@ PAYMENT_TRANSITIONS: dict[str, set[str]] = {
 
 ClaimStatus = Literal[
     "draft",          # being prepared internally
+    "validation_failed",  # scrubber found blocking errors
     "ready",          # passed internal scrubbing, awaiting submission
     "submitted",      # handed off to payer / clearinghouse
     "accepted",       # payer acknowledged receipt
@@ -165,11 +166,12 @@ ClaimStatus = Literal[
 ]
 
 CLAIM_TRANSITIONS: dict[str, set[str]] = {
-    "draft": {"ready", "closed"},
-    "ready": {"submitted", "draft", "closed"},
+    "draft": {"ready", "validation_failed", "closed"},
+    "validation_failed": {"draft", "ready", "closed"},
+    "ready": {"submitted", "draft", "validation_failed", "closed"},
     "submitted": {"accepted", "rejected"},
     "accepted": {"paid", "partially_paid", "denied"},
-    "rejected": {"draft", "ready", "closed"},  # correct & resubmit
+    "rejected": {"draft", "validation_failed", "ready", "closed"},
     "partially_paid": {"paid", "denied", "appealed", "closed"},
     "paid": {"closed"},
     "denied": {"appealed", "closed"},
@@ -524,12 +526,24 @@ class ClaimLineInput(BaseModel):
     modifiers: list[str] = Field(default_factory=list, max_length=4)
 
 
+ClaimType = Literal["professional", "institutional"]
+
+
 class ClaimCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     patient_id: str
     payer_id: str
     policy_id: str | None = None
     location_id: str | None = None
+    source_invoice_id: str | None = None
+    claim_type: ClaimType = "professional"
+    place_of_service: str | None = Field(default=None, max_length=2)   # CMS POS code e.g. "11"
+    frequency_code: str = Field(default="1", max_length=1)             # 1 original, 7 corrected, 8 voided
+    billing_provider_id: str | None = None
+    rendering_provider_id: str | None = None
+    facility_id: str | None = None
+    authorization_number: str | None = Field(default=None, max_length=60)
+    referral_number: str | None = Field(default=None, max_length=60)
     service_date_from: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     service_date_to: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     diagnoses: list[ClaimDiagnosisInput] = Field(min_length=1, max_length=12)
@@ -545,6 +559,15 @@ class ClaimPublic(BaseModel):
     patient_id: str
     payer_id: str
     policy_id: str | None = None
+    source_invoice_id: str | None = None
+    claim_type: ClaimType = "professional"
+    place_of_service: str | None = None
+    frequency_code: str = "1"
+    billing_provider_id: str | None = None
+    rendering_provider_id: str | None = None
+    facility_id: str | None = None
+    authorization_number: str | None = None
+    referral_number: str | None = None
     status: ClaimStatus
     service_date_from: str
     service_date_to: str
@@ -554,6 +577,10 @@ class ClaimPublic(BaseModel):
     accepted_at: str | None = None
     last_denial_code: str | None = None
     notes: str | None = None
+    # Scrubber summary — most recent validation result
+    validation_error_count: int = 0
+    validation_warning_count: int = 0
+    validation_last_run_at: str | None = None
     created_at: str
     updated_at: str
 

@@ -243,3 +243,8 @@ async def create_indexes() -> None:
     )
     await db.medical_records.create_index([("tenant_id", 1), ("patient_id", 1), ("recorded_at", -1)])
     await db.medical_records.create_index([("tenant_id", 1), ("charge_status", 1)])
+    # Claim validation runs (iteration 26 — Phase 3 scrubber)
+    await db.claim_validation_runs.create_index(
+        [("tenant_id", 1), ("claim_id", 1), ("run_at", -1)],
+    )
+    await db.claims.create_index([("tenant_id", 1), ("source_invoice_id", 1)])

@@ -974,6 +974,15 @@ async def create_claim(
         "patient_id": payload.patient_id,
         "payer_id": payload.payer_id,
         "policy_id": payload.policy_id,
+        "source_invoice_id": payload.source_invoice_id,
+        "claim_type": payload.claim_type,
+        "place_of_service": payload.place_of_service,
+        "frequency_code": payload.frequency_code,
+        "billing_provider_id": payload.billing_provider_id,
+        "rendering_provider_id": payload.rendering_provider_id,
+        "facility_id": payload.facility_id,
+        "authorization_number": payload.authorization_number,
+        "referral_number": payload.referral_number,
         "status": "draft",
         "service_date_from": payload.service_date_from,
         "service_date_to": payload.service_date_to,
@@ -983,6 +992,9 @@ async def create_claim(
         "accepted_at": None,
         "last_denial_code": None,
         "notes": payload.notes,
+        "validation_error_count": 0,
+        "validation_warning_count": 0,
+        "validation_last_run_at": None,
         "created_at": now,
         "updated_at": now,
         "created_by": user["id"],
@@ -1791,4 +1803,515 @@ async def capture_encounter(
                   "responsibility": preview["responsibility"]},
     )
     return _public(invoice_doc)
+
+
+
+# ===========================================================================
+# PHASE 3 — Claim draft builder + scrubber
+# ===========================================================================
+from services.billing.scrubber import (  # noqa: E402
+    DEFAULT_RULES, ScrubberContext, run_rules,
+)
+
+
+async def _load_claim_context(db, ctx: TenantContext, claim: dict) -> ScrubberContext:
+    """Build the `ScrubberContext` for one claim — the rules engine needs
+    header + diagnoses + lines + denormalised patient/payer/policy data."""
+    claim_id = claim["id"]
+    diagnoses = [d async for d in db.claim_diagnoses.find(
+        {"tenant_id": ctx.tenant_id, "claim_id": claim_id}, {"_id": 0},
+    ).sort([("sequence", 1)])]
+    lines = [ln async for ln in db.claim_lines.find(
+        {"tenant_id": ctx.tenant_id, "claim_id": claim_id}, {"_id": 0},
+    ).sort([("sequence", 1)])]
+    mods_by_line: dict[str, list[dict]] = {}
+    if lines:
+        async for m in db.claim_line_modifiers.find(
+            {"tenant_id": ctx.tenant_id,
+             "claim_line_id": {"$in": [ln["id"] for ln in lines]}},
+            {"_id": 0},
+        ).sort([("sequence", 1)]):
+            mods_by_line.setdefault(m["claim_line_id"], []).append(m)
+
+    patient = await db.patients.find_one(
+        {"tenant_id": ctx.tenant_id, "id": claim.get("patient_id")},
+        {"_id": 0, "id": 1, "first_name": 1, "last_name": 1, "dob": 1},
+    )
+    payer = await db.billing_payers.find_one(
+        {"tenant_id": ctx.tenant_id, "id": claim.get("payer_id")},
+        {"_id": 0},
+    )
+    policy = None
+    if claim.get("policy_id"):
+        policy = await db.patient_insurance_policies.find_one(
+            {"tenant_id": ctx.tenant_id, "id": claim["policy_id"]},
+            {"_id": 0},
+        )
+
+    return ScrubberContext(
+        claim=claim, diagnoses=diagnoses, lines=lines,
+        line_modifiers_by_line=mods_by_line,
+        patient=patient, payer=payer, policy=policy,
+    )
+
+
+@router.post("/claims/from-invoice/{invoice_id}",
+             response_model=ClaimPublic, status_code=201)
+async def create_claim_from_invoice(
+    invoice_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "create")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Derive a draft claim from a captured (insurance-responsibility)
+    invoice. Claim header inherits the invoice's payer + policy +
+    patient; lines mirror invoice lines with sensible defaults
+    (diagnosis pointer → [1], modifiers copied through).
+    """
+    db = tenant_db(ctx.tenant_id)
+    inv = await _scoped_one(db.invoices, {"id": invoice_id}, ctx)
+    if not inv:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
+    if inv.get("responsibility") not in ("insurance", "mixed"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Only invoices with insurance/mixed responsibility can become claims",
+        )
+    if not inv.get("payer_id"):
+        raise HTTPException(status.HTTP_409_CONFLICT, "Invoice has no payer")
+
+    inv_lines = [ln async for ln in db.invoice_lines.find(
+        {"tenant_id": ctx.tenant_id, "invoice_id": invoice_id}, {"_id": 0},
+    ).sort([("sequence", 1)])]
+    if not inv_lines:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Invoice has no lines")
+
+    source_record_id = inv.get("source_encounter_id")
+    source_record = None
+    if source_record_id:
+        source_record = await db.medical_records.find_one(
+            {"tenant_id": ctx.tenant_id, "id": source_record_id},
+            {"_id": 0, "diagnoses": 1, "recorded_by": 1, "location_id": 1},
+        )
+
+    now = _now()
+    claim_id = str(uuid.uuid4())
+
+    diag_docs: list[dict] = []
+    if source_record and source_record.get("diagnoses"):
+        for d in source_record["diagnoses"]:
+            diag_docs.append(stamp_for_write({
+                "id": str(uuid.uuid4()),
+                "claim_id": claim_id,
+                "sequence": d.get("sequence", len(diag_docs) + 1),
+                "code": d.get("code"),
+                "created_at": now,
+            }, ctx, location_id=None))
+    if not diag_docs:
+        diag_docs.append(stamp_for_write({
+            "id": str(uuid.uuid4()), "claim_id": claim_id,
+            "sequence": 1, "code": "",
+            "created_at": now,
+        }, ctx, location_id=None))
+
+    first_seq = diag_docs[0]["sequence"]
+
+    line_docs: list[dict] = []
+    mod_docs: list[dict] = []
+    for ln in inv_lines:
+        cl_id = str(uuid.uuid4())
+        line_docs.append(stamp_for_write({
+            "id": cl_id,
+            "claim_id": claim_id,
+            "sequence": ln["sequence"],
+            "invoice_line_id": ln["id"],
+            "service_date": ln.get("service_date") or inv.get("issued_at") or now[:10],
+            "code_type": ln.get("code_type", "cpt"),
+            "code": ln["code"],
+            "units": int(ln.get("quantity", 1)),
+            "billed_cents": int(ln.get("unit_price_cents", 0)),
+            "diagnosis_pointers": [first_seq],
+            "created_at": now,
+        }, ctx, location_id=inv.get("location_id")))
+        for i, mc in enumerate(ln.get("modifiers") or [], start=1):
+            mod_docs.append(stamp_for_write({
+                "id": str(uuid.uuid4()),
+                "claim_line_id": cl_id,
+                "sequence": i,
+                "modifier_code": mc,
+                "created_at": now,
+            }, ctx, location_id=None))
+
+    billed_total = sum(ln["billed_cents"] * ln["units"] for ln in line_docs)
+
+    claim_doc = stamp_for_write({
+        "id": claim_id,
+        "location_id": inv.get("location_id"),
+        "patient_id": inv["patient_id"],
+        "payer_id": inv["payer_id"],
+        "policy_id": inv.get("policy_id"),
+        "source_invoice_id": invoice_id,
+        "claim_type": "professional",
+        "place_of_service": "11",
+        "frequency_code": "1",
+        "billing_provider_id": None,
+        "rendering_provider_id": source_record.get("recorded_by") if source_record else None,
+        "facility_id": None,
+        "authorization_number": None,
+        "referral_number": None,
+        "status": "draft",
+        "service_date_from": line_docs[0]["service_date"],
+        "service_date_to": line_docs[-1]["service_date"],
+        "billed_cents": billed_total,
+        "paid_cents": 0,
+        "submitted_at": None,
+        "accepted_at": None,
+        "last_denial_code": None,
+        "notes": None,
+        "validation_error_count": 0,
+        "validation_warning_count": 0,
+        "validation_last_run_at": None,
+        "created_at": now,
+        "updated_at": now,
+        "created_by": user["id"],
+        "updated_by": user["id"],
+        "history": [_history_entry(
+            user, "drafted_from_invoice",
+            invoice_id=invoice_id, lines=len(line_docs),
+            billed_cents=billed_total,
+        )],
+    }, ctx, location_id=inv.get("location_id"))
+
+    if diag_docs:
+        await db.claim_diagnoses.insert_many(diag_docs)
+    if line_docs:
+        await db.claim_lines.insert_many(line_docs)
+    if mod_docs:
+        await db.claim_line_modifiers.insert_many(mod_docs)
+    await db.claims.insert_one(claim_doc)
+
+    await audit_success(
+        user, "billing.claim.drafted_from_invoice", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={"invoice_id": invoice_id, "billed_cents": billed_total,
+                  "lines": len(line_docs)},
+    )
+    return _public(claim_doc)
+
+
+@router.post("/claims/{claim_id}/validate")
+async def validate_claim(
+    claim_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "correct_resubmit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Run the scrubber. Persists findings count on claim header and
+    appends a row to `claim_validation_runs`. Auto-transitions claim
+    status (draft/validation_failed/ready → validation_failed or ready)."""
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+
+    scrub_ctx = await _load_claim_context(db, ctx, claim)
+    result = run_rules(scrub_ctx, DEFAULT_RULES)
+
+    now = _now()
+    new_status = claim["status"]
+    if claim["status"] in ("draft", "validation_failed", "ready"):
+        new_status = "ready" if result["passed"] else "validation_failed"
+
+    set_fields = {
+        "validation_error_count": len(result["errors"]),
+        "validation_warning_count": len(result["warnings"]),
+        "validation_last_run_at": now,
+        "updated_at": now,
+        "updated_by": user["id"],
+    }
+    if new_status != claim["status"]:
+        try:
+            transitions.advance("claim", claim["status"], new_status)
+            set_fields["status"] = new_status
+        except transitions.TransitionError:
+            new_status = claim["status"]
+
+    await db.claims.update_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id},
+        {"$set": set_fields,
+         "$push": {"history": _history_entry(
+             user, "validated",
+             error_count=len(result["errors"]),
+             warning_count=len(result["warnings"]),
+             from_status=claim["status"], to_status=new_status,
+         )}},
+    )
+
+    run_doc = stamp_for_write({
+        "id": str(uuid.uuid4()),
+        "claim_id": claim_id,
+        "run_at": now,
+        "run_by": user["id"],
+        "errors": result["errors"],
+        "warnings": result["warnings"],
+        "passed": result["passed"],
+        "from_status": claim["status"],
+        "to_status": new_status,
+        "created_at": now,
+    }, ctx, location_id=None)
+    await db.claim_validation_runs.insert_one(run_doc)
+
+    await audit_success(
+        user, "billing.claim.validated", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={"errors": len(result["errors"]),
+                  "warnings": len(result["warnings"]),
+                  "from_status": claim["status"],
+                  "to_status": new_status},
+    )
+    return {
+        "claim_id": claim_id,
+        "status": new_status,
+        "errors": result["errors"],
+        "warnings": result["warnings"],
+        "passed": result["passed"],
+        "run_at": now,
+    }
+
+
+@router.get("/claims/{claim_id}/validations")
+async def list_claim_validations(
+    claim_id: str,
+    request: Request,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+    rows = [d async for d in db.claim_validation_runs.find(
+        {"tenant_id": ctx.tenant_id, "claim_id": claim_id}, {"_id": 0},
+    ).sort([("run_at", -1)]).limit(20)]
+    return rows
+
+
+@router.get("/claims/{claim_id}/detail")
+async def claim_detail(
+    claim_id: str,
+    request: Request,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Everything the UI needs on one page — header + diagnoses + lines
+    + modifiers + the most recent scrubber findings."""
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+    scrub_ctx = await _load_claim_context(db, ctx, claim)
+    latest = await db.claim_validation_runs.find_one(
+        {"tenant_id": ctx.tenant_id, "claim_id": claim_id},
+        {"_id": 0}, sort=[("run_at", -1)],
+    )
+    return {
+        "claim": _public(claim),
+        "diagnoses": scrub_ctx.diagnoses,
+        "lines": [
+            {**ln, "modifiers": [m["modifier_code"]
+                                 for m in scrub_ctx.line_modifiers_by_line.get(ln["id"], [])]}
+            for ln in scrub_ctx.lines
+        ],
+        "latest_validation": latest,
+    }
+
+
+_EDITABLE_STATUSES = {"draft", "validation_failed", "rejected"}
+
+
+@router.put("/claims/{claim_id}/header", response_model=ClaimPublic)
+async def update_claim_header(
+    claim_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "correct_resubmit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+    if claim["status"] not in _EDITABLE_STATUSES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Claim in status {claim['status']} is not editable",
+        )
+    body = await request.json()
+    allowed = {
+        "claim_type", "place_of_service", "frequency_code",
+        "billing_provider_id", "rendering_provider_id", "facility_id",
+        "authorization_number", "referral_number",
+        "service_date_from", "service_date_to",
+        "payer_id", "policy_id", "notes",
+    }
+    updates = {k: v for k, v in (body or {}).items() if k in allowed}
+    if not updates:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No editable fields")
+    updates["updated_at"] = _now()
+    updates["updated_by"] = user["id"]
+    await db.claims.update_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id},
+        {"$set": updates,
+         "$push": {"history": _history_entry(
+             user, "header_updated", fields=sorted(list(updates.keys())),
+         )}},
+    )
+    fresh = await db.claims.find_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    await audit_success(
+        user, "billing.claim.header_updated", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={"fields": sorted(list(updates.keys()))},
+    )
+    return _public(fresh)
+
+
+@router.put("/claims/{claim_id}/diagnoses")
+async def replace_claim_diagnoses(
+    claim_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "correct_resubmit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+    if claim["status"] not in _EDITABLE_STATUSES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Claim in status {claim['status']} is not editable",
+        )
+    body = await request.json()
+    if not isinstance(body, list):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "body must be a list of diagnoses")
+    if not 1 <= len(body) <= 12:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "claims need 1..12 diagnoses")
+    now = _now()
+    await db.claim_diagnoses.delete_many(
+        {"tenant_id": ctx.tenant_id, "claim_id": claim_id},
+    )
+    docs = []
+    for i, d in enumerate(body, start=1):
+        docs.append(stamp_for_write({
+            "id": str(uuid.uuid4()),
+            "claim_id": claim_id,
+            "sequence": int(d.get("sequence", i)),
+            "code": (d.get("code") or "").strip(),
+            "created_at": now,
+        }, ctx, location_id=None))
+    if docs:
+        await db.claim_diagnoses.insert_many(docs)
+    await db.claims.update_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id},
+        {"$set": {"updated_at": now, "updated_by": user["id"]},
+         "$push": {"history": _history_entry(
+             user, "diagnoses_replaced", count=len(docs),
+         )}},
+    )
+    await audit_success(
+        user, "billing.claim.diagnoses_replaced", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={"count": len(docs)},
+    )
+    return {"ok": True, "count": len(docs)}
+
+
+@router.put("/claims/{claim_id}/lines")
+async def replace_claim_lines(
+    claim_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "correct_resubmit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+    if claim["status"] not in _EDITABLE_STATUSES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Claim in status {claim['status']} is not editable",
+        )
+    body = await request.json()
+    if not isinstance(body, list) or not 1 <= len(body) <= 50:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "claims need 1..50 lines")
+
+    now = _now()
+    existing_lines = [d async for d in db.claim_lines.find(
+        {"tenant_id": ctx.tenant_id, "claim_id": claim_id},
+        {"_id": 0, "id": 1},
+    )]
+    if existing_lines:
+        await db.claim_line_modifiers.delete_many({
+            "tenant_id": ctx.tenant_id,
+            "claim_line_id": {"$in": [x["id"] for x in existing_lines]},
+        })
+    await db.claim_lines.delete_many(
+        {"tenant_id": ctx.tenant_id, "claim_id": claim_id},
+    )
+
+    line_docs: list[dict] = []
+    mod_docs: list[dict] = []
+    total_billed = 0
+    for i, ln in enumerate(body, start=1):
+        cl_id = str(uuid.uuid4())
+        units = max(1, int(ln.get("units", 1)))
+        billed = int(ln.get("billed_cents", 0))
+        total_billed += units * billed
+        line_docs.append(stamp_for_write({
+            "id": cl_id,
+            "claim_id": claim_id,
+            "sequence": int(ln.get("sequence", i)),
+            "invoice_line_id": ln.get("invoice_line_id"),
+            "service_date": ln.get("service_date"),
+            "code_type": ln.get("code_type", "cpt"),
+            "code": (ln.get("code") or "").strip(),
+            "units": units,
+            "billed_cents": billed,
+            "diagnosis_pointers": ln.get("diagnosis_pointers") or [],
+            "created_at": now,
+        }, ctx, location_id=claim.get("location_id")))
+        for j, mc in enumerate(ln.get("modifiers") or [], start=1):
+            mod_docs.append(stamp_for_write({
+                "id": str(uuid.uuid4()),
+                "claim_line_id": cl_id,
+                "sequence": j,
+                "modifier_code": str(mc).strip(),
+                "created_at": now,
+            }, ctx, location_id=None))
+
+    if line_docs:
+        await db.claim_lines.insert_many(line_docs)
+    if mod_docs:
+        await db.claim_line_modifiers.insert_many(mod_docs)
+
+    await db.claims.update_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id},
+        {"$set": {"billed_cents": total_billed,
+                  "updated_at": now, "updated_by": user["id"]},
+         "$push": {"history": _history_entry(
+             user, "lines_replaced",
+             count=len(line_docs), billed_cents=total_billed,
+         )}},
+    )
+    await audit_success(
+        user, "billing.claim.lines_replaced", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={"count": len(line_docs), "billed_cents": total_billed},
+    )
+    return {"ok": True, "count": len(line_docs), "billed_cents": total_billed}
 
