@@ -43,6 +43,7 @@ from services.patient._shared import (
 )
 from services.patient.consent_pdf_router import router as consent_pdf_router
 from services.patient.documents_router import router as documents_router
+from services.patient.search_router import router as search_router
 from services.patient.models import (
     MedicalRecordCreate,
     MedicalRecordPublic,
@@ -54,6 +55,13 @@ from services.patient.models import (
 _logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/patients", tags=["patient"])
+
+# Sub-routers are included here — before `/{patient_id}` routes below — so
+# their specific paths (e.g. `/search`, `/{id}/documents`) take precedence
+# over the generic `/{patient_id}` matcher.
+router.include_router(search_router)
+router.include_router(documents_router)
+router.include_router(consent_pdf_router)
 
 STAFF_ROLES = ("admin", "doctor", "staff")
 
@@ -622,7 +630,7 @@ async def add_record(
 
 
 # ---------------------------------------------------------------------------
-# Sub-router mounts (same /patients prefix via include_router)
+# Sub-router mounts — already included at the top of this module so their
+# specific paths take precedence over `/{patient_id}`. This block is kept
+# empty for documentation clarity; do not add `include_router` calls here.
 # ---------------------------------------------------------------------------
-router.include_router(documents_router)
-router.include_router(consent_pdf_router)

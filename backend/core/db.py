@@ -121,6 +121,13 @@ async def create_indexes() -> None:
     await db.patients.create_index("status")
     await db.patients.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)])
     await db.patients.create_index([("tenant_id", 1), ("location_id", 1)])
+    # Search-driven prefix + contains lookups on plaintext name/phone fields.
+    # MongoDB uses regex-anchored indexes efficiently when the regex is
+    # a prefix (^Jaco) — wildcard searches fall back to a scan but stay
+    # bounded by the _CANDIDATE_CAP in search_router.
+    await db.patients.create_index([("tenant_id", 1), ("last_name", 1)])
+    await db.patients.create_index([("tenant_id", 1), ("first_name", 1)])
+    await db.patients.create_index([("tenant_id", 1), ("phone", 1)])
     await db.medical_records.create_index("patient_id")
     await db.medical_records.create_index([("patient_id", 1), ("recorded_at", -1)])
     await db.medical_records.create_index([("tenant_id", 1), ("patient_id", 1)])

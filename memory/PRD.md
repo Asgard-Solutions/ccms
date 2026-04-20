@@ -400,8 +400,32 @@ Backend-only expansion of the patient domain to support richer chiropractic inta
 - **Tests** — `/app/backend/tests/test_phase5_docs_and_consent_pdf.py` — 22 scenarios covering upload/list/download/delete, reauth enforcement, validation (empty, >10 MB, bad MIME, bad category, **spoofed MIME caught by libmagic**, **PDF-declared-as-PNG caught by libmagic**), consent PDF happy path for 5 types, 409 unsigned, 404 missing, reason enforcement for doctor/staff, patient-self. **21 pass / 1 env-skipped (no pre-seeded patient→user link for `patient@ccms.app`).**
 - **Dependency** — `reportlab==4.4.10`, `python-magic==0.4.27` (+ OS `libmagic1`) added to `/app/backend/requirements.txt`.
 
-### Per-user theming — light / dark / system (2026-04-20)
-- **Backend** — `theme` field (`light|dark|system`, default `system`) on the
+### Patient lookup workflow — search-first directory (2026-04-20)
+- **Backend** — new `GET /api/patients/search` in
+  `services/patient/search_router.py`. Plaintext regex on indexed
+  `first_name / last_name / email` + post-decrypt filter on encrypted
+  sub-phones, `address_details`, and DOB. `%` wildcard support with
+  safe translation to regex (placeholder swap before `re.escape`).
+  Multi-format DOB parsing, per-search audit, 2 000-row candidate cap
+  with `truncated_candidates` flag, 50-row hard page limit. New Mongo
+  indexes on `(tenant_id, last_name)`, `(tenant_id, first_name)`,
+  `(tenant_id, phone)`.
+- **Frontend** — `pages/Patients.jsx` rewritten from a full-list dump
+  into a lookup-first page: Quick-lookup (debounced typeahead) and
+  Advanced (4 focused inputs + submit) modes; keyboard ↑ / ↓ / Enter;
+  highlighted matches; "Recently viewed" section (localStorage); "too
+  many candidates" warning; clicking a row opens the patient profile.
+- **Sub-router ordering fix** — patient sub-routers (search / documents
+  / consent_pdf) are now `include_router`ed BEFORE the `/{patient_id}`
+  route so their specific paths take precedence in FastAPI's matcher.
+- **Tests** — `backend/tests/test_patient_search.py` — 26 scenarios:
+  wildcard prefix/suffix/middle, no-wildcard contains, case-insensitive,
+  `%%` rejected, 120-char cap, DOB ISO/US/year-only/invalid, plaintext
+  phone, encrypted sub-phone, phone normalisation, address city + line1,
+  result shape masking, limit clamping, offset pagination, auth 401,
+  tenant scoping. All 26 pass.
+
+### Per-user theming — light / dark / system (2026-04-20)- **Backend** — `theme` field (`light|dark|system`, default `system`) on the
   users collection. Exposed in `UserPublic` and toggled via new
   `PATCH /api/auth/me/preferences` (auth-only, no reauth; non-sensitive).
   New `PreferencesUpdate` Pydantic schema rejects unknown fields.

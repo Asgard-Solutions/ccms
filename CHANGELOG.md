@@ -12,6 +12,44 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Patient lookup workflow** — the `/patients` page is no longer a
+  full-list dump. New `GET /api/patients/search` endpoint with:
+  - Global `q` plus per-field `name`, `phone`, `address`, `dob`.
+  - SQL-style `%` wildcards anywhere in the term (prefix, suffix, middle),
+    case-insensitive; safely escaped (`%%` rejected, control chars
+    rejected, 120-char cap).
+  - Plaintext indexed regex for `first_name` / `last_name` / `email`.
+  - Post-decrypt filter for encrypted `contact.phone_*`, `address_details`,
+    and `date_of_birth`, with a 2 000-row candidate cap and
+    `truncated_candidates` flag so the UI can prompt for refinement.
+  - Multi-format DOB parsing (ISO, US, EU, year-only).
+  - Pagination (`limit`, `offset`), hard-capped at 50 per page.
+  - Masked-only projection — results never expose grouped PHI blocks.
+  - Tenant + location scoping preserved; every search emits a
+    `patient.searched` audit with the fields used + result counts.
+  - New Mongo indexes `(tenant_id, last_name)`, `(tenant_id, first_name)`,
+    `(tenant_id, phone)` for prefix-regex queries.
+  - Tests: `backend/tests/test_patient_search.py` — **26 pass** covering
+    wildcard semantics, case-insensitivity, DOB parsing, encrypted
+    phone/address, pagination, auth, tenant scoping.
+- **Frontend lookup UI** — `pages/Patients.jsx` rewritten:
+  - Default view shows a "Recently viewed" section (localStorage, per-user,
+    max 6) or a clean hero with wildcard examples.
+  - Quick-lookup mode with 250 ms debounced typeahead after 2 characters.
+  - Advanced mode with 4 focused inputs (Name / Phone / Address / DOB)
+    and a manual Search submit.
+  - Keyboard navigation (↑ / ↓ / Enter) across results.
+  - Match-highlighting via `<mark>` with wildcard awareness.
+  - "Too many candidates" banner surfaces backend truncation.
+  - Clicking a result opens the full patient profile + pushes the entry
+    onto "Recently viewed".
+  - All interactive elements carry `data-testid`s.
+
+### Removed
+- The default `/api/patients` list call on the Patients page — the page
+  no longer fetches the entire patient population into the browser.
+
+### Changed
 - **Per-user light / dark / system theme** — picker lives in the top-bar
   (sun/moon dropdown), persists to the user's profile via
   `PATCH /api/auth/me/preferences`, and syncs on every login so the
