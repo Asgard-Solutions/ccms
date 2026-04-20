@@ -166,7 +166,14 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **Verified (iteration_12)**: 15/15 new tests pass (matrix shape, legacy-role shim, default-deny, MFA gate, full elevation lifecycle + separation-of-duties, role assign/revoke with session-epoch bump, all 9 reports, scope containment for patient portal, denial audit rows).
 - **Pragmatic exception** (documented in `AUTHORIZATION_GUIDE.md` §7): super_admin grants stripped of APR flag on governance actions (role.assign/create/update, user.disable/reset_mfa, api_key.*, integration.*, etc.) to break the chicken-and-egg for initial bootstrap. OO/CO/other approver roles retain the full MFA+APR posture. Production with multiple admins can re-tighten via custom `role_permissions` rows.
 
-## 14. Key reference docs
+## 14. Authz migration + user-specific overrides (2026-02-20 late)
+- **Router migration**: `patient` (create/update/delete, `patient_chart.create`), `scheduling` (appointment create/update), `audit` (`audit_log.read` + `audit_log.export`) all now route through `require_permission()`. Added `audit_allow=False` param so migrated routes don't double up with their existing semantic audits (only denials/MFA/approval gates always audit). Identity admin routes and privacy/communication still on `require_role()` — migration deferred to a later pass.
+- **Super Admin grant extension**: retained legacy admin CRUD (patient/appointment create/update/delete + audit_log.export) to avoid regressions. Documented as bootstrap posture in `AUTHORIZATION_GUIDE.md` §9.
+- **Per-user overrides (`permission_scopes` collection)**: admin-gated `POST|GET|DELETE /api/authz/users/{uid}/overrides`. Grants are additive, broaden-only (can't narrow a role's scope), optionally expire via `expires_at`, and **bump session_epoch on grant AND revoke** so no stale-grant window exists. Every override is audited (`authz.override_granted` / `authz.override_revoked`).
+- **Admin UI**: new "Overrides" button on every row of `/roles` opens a `UserOverridesDialog` with permission autocomplete (115 perms), 8-scope dropdown, reason textbox (client-side 10-char minimum), optional ISO expires_at, and a live list of existing overrides with per-row revoke.
+- **Verified (iteration_13)**: 9/9 new tests pass; full regression 68/68 (iter7 + iter11 + iter12 + iter13). Zero CSP violations. Double-audit regression guarded by `test_migrated_routes_do_not_double_audit`.
+
+## 15. Key reference docs
 - `/app/memory/HIPAA_COMPLIANCE.md` — full safeguard inventory (implemented vs. external)
 - `/app/memory/AUTHORIZATION_GUIDE.md` — RBAC + scopes + policy overlays (2026-02-20)
 - `/app/memory/test_credentials.md` — demo accounts
