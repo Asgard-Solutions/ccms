@@ -965,9 +965,12 @@ async def download_consent_pdf(
                 "date_of_birth": decrypted.get("date_of_birth"),
             },
         )
-    except Exception as exc:  # noqa: BLE001 — render failure surfaces as 500
+    except Exception:  # noqa: BLE001 — render failure surfaces as generic 500
         _logger.exception("consent pdf render failed")
-        raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, f"PDF render failed: {exc}")
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            "Unable to generate consent PDF. Please try again or contact support.",
+        )
 
     await audit_success(
         user, "patient.consent.downloaded", request,

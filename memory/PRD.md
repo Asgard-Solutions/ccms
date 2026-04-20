@@ -388,6 +388,20 @@ Backend-only expansion of the patient domain to support richer chiropractic inta
 - **Validation** — conservative: Pydantic only enforces structural shape; router enforces `first_name` + `last_name` must resolve from either source.
 - **Tests** — `/app/backend/tests/test_patient_intake_phase1.py`: 6 cases covering legacy flat CRUD, grouped-payload create, masked-vs-unmasked projections, grouped PUT preserves other sections, object-address update, raw-Mongo encryption-at-rest probe, and required-name validation. **All 6 green; iteration_14 patient regressions 4/4 green (after rate-limit cooldown).**
 
+### Phase 5 polish — document uploads, signatures, signed-PDF (2026-04-20)
+- **`/app/backend/core/object_storage.py`** — emergentintegrations wrapper: `put_object`, `get_object`, `storage_path_for` (`ccms/{tenant_id}/{patient_id}/{uuid}.{ext}`). Init handshake cached process-wide; uses `EMERGENT_LLM_KEY`.
+- **Patient document endpoints** (router.py): `POST /patients/{id}/documents` (multipart, image+PDF, 10 MB cap, 8 categories incl. `insurance_card_front/back`, `drivers_license`, `referral_letter`, `imaging_report`, `intake_form`, `consent_receipt`, `other`, reauth-gated, audited), `GET /patients/{id}/documents` (tenant-scoped list), `GET /.../{doc_id}/download` (streams bytes + audit), `DELETE /.../{doc_id}` (soft-delete, reauth-gated).
+- **Backend fix** — `require_reauth` is a plain helper, not a FastAPI dependency. Previously misused as `_reauth=Depends(require_reauth)` which produced 422 'user field required' errors; refactored to call `require_reauth(request, user)` inline after permission resolution.
+- **`/app/backend/core/consent_pdf.py`** — reportlab renderer for consents; produces a single-page PDF with clinic header, patient ID + DOB, consent title/body/version, typed signature name, acceptance timestamp (UTC), optional IP, and the wet-ink canvas PNG embedded.
+- **`GET /patients/{id}/consents/{type}/pdf`** — on-demand signed-consent PDF; supports canonical types (`hipaa|treatment|financial|telehealth|photo_release`) and any custom entry in `consents.additional[].type`. Authorisation mirrors patient-get: patient-self (no reason), admin (no reason), doctor/staff (reason ≥ 8 chars). Responds 409 if consent not yet accepted, 404 if type missing, 500 with generic message (no trace leakage) on render failure. Audited.
+- **`/app/frontend/src/components/SignaturePad.jsx`** — canvas-based wet-ink signature capture (pointer events, devicePixelRatio-aware, emits base64 PNG via `onChange`). Wired into `Patients.jsx` wizard Step 4.
+- **`/app/frontend/src/components/PatientDocumentsCard.jsx`** — 8-row upload UI imported into `PatientDetail.jsx`. Automatically presents `ReauthDialog` on 401 responses and retries the pending upload/delete after successful reauth (also works for deletes). Insurance rows accept images only; others accept images + PDF.
+- **`PatientDetail.jsx`** — adds `downloadConsentPdf(type)` handler + `data-testid='consent-pdf-{type}'` button on every accepted consent row in the unmasked view (passes current break-glass `reason` automatically).
+- **Tests** — `/app/backend/tests/test_phase5_docs_and_consent_pdf.py` — 20 scenarios covering upload/list/download/delete, reauth enforcement, validation (empty, >10 MB, bad MIME, bad category), consent PDF happy path for 5 types, 409 unsigned, 404 missing, reason enforcement for doctor/staff, patient-self. **19 pass / 1 env-skipped (no pre-seeded patient→user link for `patient@ccms.app`).**
+- **Dependency** — `reportlab==4.4.10` added to `/app/backend/requirements.txt`.
+
+
+
 ### Compatibility notes
 - Database migration: none. Old records read back unchanged; new grouped keys are simply absent until a patient is written with them.
 - Frontend: current `Patients.jsx` modal continues to send `{first_name, last_name, email, phone, date_of_birth, gender, address, emergency_contact, notes}` and the API round-trips it identically. `PatientDetail.jsx` keeps reading `patient.address` / `patient.emergency_contact` as strings — the derived legacy scalars are always populated.

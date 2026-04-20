@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { CreditCard, Download, FileText, ImagePlus, Loader2, Trash2, Upload } from "lucide-react";
 import { api, formatApiError } from "../api/client";
 import { Button } from "./ui/button";
+import ReauthDialog from "./ReauthDialog";
 
 const CATEGORIES = [
   { value: "insurance_card_front", label: "Insurance card — front", icon: CreditCard },
@@ -15,15 +16,24 @@ const CATEGORIES = [
   { value: "other", label: "Other document", icon: FileText },
 ];
 
+function needsReauth(err) {
+  if (err?.response?.status !== 401) return false;
+  const detail = err.response?.data?.detail || "";
+  return typeof detail === "string" && /re-auth/i.test(detail);
+}
+
 /**
  * PatientDocumentsCard — insurance-card-first upload + inline list + delete.
  * Files are PHI — links below trigger an authenticated download via the
- * backend, which streams signed bytes + audits the access.
+ * backend, which streams signed bytes + audits the access. Upload + delete
+ * are reauth-gated; a 401 automatically pops the ReauthDialog and retries.
  */
 export default function PatientDocumentsCard({ patientId, canEdit }) {
   const [documents, setDocuments] = useState(null);
   const [uploading, setUploading] = useState(null); // `category` while uploading
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [reauthOpen, setReauthOpen] = useState(false);
+  const pendingAction = useRef(null); // () => Promise — rerun after reauth
   const inputsRef = useRef({});
 
   const load = useCallback(async () => {
@@ -38,6 +48,19 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
 
   useEffect(() => { load(); }, [load]);
 
+  async function runWithReauth(fn) {
+    try {
+      await fn();
+    } catch (err) {
+      if (needsReauth(err)) {
+        pendingAction.current = fn;
+        setReauthOpen(true);
+        return;
+      }
+      toast.error(formatApiError(err));
+    }
+  }
+
   async function upload(category, file) {
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) {
@@ -45,7 +68,7 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
       return;
     }
     setUploading(category);
-    try {
+    await runWithReauth(async () => {
       const body = new FormData();
       body.append("file", file);
       body.append("category", category);
@@ -54,12 +77,9 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
       });
       toast.success("Document uploaded");
       load();
-    } catch (err) {
-      toast.error(formatApiError(err));
-    } finally {
-      setUploading(null);
-      if (inputsRef.current[category]) inputsRef.current[category].value = "";
-    }
+    });
+    setUploading(null);
+    if (inputsRef.current[category]) inputsRef.current[category].value = "";
   }
 
   async function download(doc) {
@@ -78,14 +98,19 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
   }
 
   async function remove(doc) {
-    try {
+    await runWithReauth(async () => {
       await api.delete(`/patients/${patientId}/documents/${doc.id}`);
       toast.success("Document removed");
       setPendingDelete(null);
       load();
-    } catch (err) {
-      toast.error(formatApiError(err));
-    }
+    });
+  }
+
+  function onReauthConfirmed() {
+    setReauthOpen(false);
+    const fn = pendingAction.current;
+    pendingAction.current = null;
+    if (fn) fn().catch((err) => toast.error(formatApiError(err)));
   }
 
   const docsByCategory = (documents || []).reduce((acc, d) => {
@@ -235,6 +260,17 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
           </div>
         </div>
       )}
+
+      <ReauthDialog
+        open={reauthOpen}
+        title="Confirm it's you"
+        description="HIPAA policy requires step-up re-authentication before uploading or removing patient documents."
+        onClose={() => {
+          setReauthOpen(false);
+          pendingAction.current = null;
+        }}
+        onConfirmed={onReauthConfirmed}
+      />
     </section>
   );
 }
