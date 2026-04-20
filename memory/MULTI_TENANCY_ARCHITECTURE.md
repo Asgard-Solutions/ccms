@@ -274,3 +274,65 @@ MongoDB does not support row-level security policies (Postgres does). Our curren
 - **Verified (iteration_15)**: 6/6 new tests — demo-data visibility, location-scoping for downtown-doc, cross-tenant probe audit, repository fail-closed, unsafe empty-filter rejection, background context acceptance. Regression 19/19 (iteration_14).
 
 
+
+## 16. Iteration 16 — Cache isolation, background jobs, reports & exports (2026-02-21)
+
+### 16.1 Tenant-safe cache (`core/tenant_cache.py`)
+
+- **Key builder** `key_for(tenant_id, *parts)` — the only sanctioned way to build a cache key. Format: `t:<tenant_id>:<seg>[:<seg>…]`; platform-admin-only data uses the `pa:` namespace.
+- **Wrapper** `TenantCache.get/set/get_or_set/invalidate/invalidate_tenant` — refuses any key that doesn't start with `t:` or `pa:` (`UnsafeCacheKeyError`). TTL is bounded to `(0, 86400]` — no infinite caches of tenant data.
+- **`invalidate_tenant(tenant_id)`** — wipes every cached entry for a tenant in one call. Used after role-epoch bumps, tenant setting changes, or data-export revocations.
+- **What MUST NOT be cached**: unmasked PHI, JWTs, reauth tokens, mfa tickets, password-reset tokens, export download tokens.
+- **What CAN be cached** (short TTL): masked patient list (30 s), providers per tenant (300 s), appointment list per tenant+location+filter (30 s), effective permissions per user (120 s, invalidate on epoch bump), report result set (300–3600 s).
+
+### 16.2 Background jobs (`core/tenant_jobs.py`)
+
+- **Payload schema**: `{tenant_id (required), job_type, payload, actor_user_id?, location_id?, run_at?}`. `enqueue()` refuses a missing `tenant_id` with `MissingJobContext`.
+- **Handler contract**: `async def handler(ctx: TenantContext, payload: dict, meta: dict)`. `ctx` is built via `TenantContext.for_background(tenant_id=..., actor="worker:<job>")` — explicitly non-platform-admin.
+- **Auditing**: `job.enqueued`, `job.started`, `job.completed`, `job.failed` audit rows with the tenant_id, actor, and job metadata.
+- **Durability**: job rows are persisted in the `jobs` collection so dead jobs are visible + retryable. Same payload shape as a future Celery / SQS worker — zero business-logic change to migrate.
+
+### 16.3 Reporting (`services/reports/`)
+
+- **Registry + single entry point** `run_report(ctx, name, filters)`. `location_ids` are validated against `ctx.allowed_location_ids`; unauthorized scope raises `UnauthorizedReportScopeError` → 403.
+- **Built-in reports**:
+  - `appointments_by_day` — counts per day for the last N days (max 365).
+  - `provider_productivity` — appointments per provider, with tenant-scoped name hydration.
+  - `location_performance` — patients + appointments per location (subset or tenant-wide).
+- **Cache keying** `t:<tid>:report:<name>:<filters_hash>` TTL 300 s; cache is per-tenant by construction.
+- **Audits** — `report.generated` on success, `report.denied` on scope rejection.
+
+### 16.4 Exports (`services/exports/`)
+
+- **Storage layout** — `/app/data/exports/<tenant_id>/<export_id>.csv`. Tenant id is part of the path; there is no shared directory. File names contain no PHI.
+- **Lifecycle** — request → audit `export.requested` → enqueue `export.generate` job → job runs as tenant-bound background context → write CSV → status flips to `ready` → audit `export.generated`.
+- **Download** — `GET /api/exports/{id}/download?token=<jwt>`. The JWT carries `{sub, tid, eid, exp}`, is signed with `JWT_SECRET`, TTL 15 min. Server re-verifies token signature + tenant match + export tenant + status=`ready`. Emits `export.downloaded` on success, `export.download_denied` on failure.
+- **PHI privilege** is stashed on the export row at request time (`include_phi`), so the background worker writes the exact set of columns the requesting user's role is authorized to see — not more (because the worker's own role is `worker`, zero PHI by default), not less (because `include_phi` was captured pre-job from the real actor).
+- **Cross-tenant token replay** is detected and audited — even if a token is stolen, it cannot be used by a user in a different tenant.
+- **Cleanup** — `cleanup_expired_exports()` runs on boot and is callable at `POST /api/exports/cleanup` (tenant admin). Marks `status=expired`, unlinks the file, emits `export.expired` audit rows.
+
+### 16.5 Platform-admin bypass audit
+
+`require_permission()` now short-circuits for platform admins (no user_roles needed) and emits `authz.platform_admin_bypass` on every allow. The platform team's every action is thus traceable by `action=authz.platform_admin_bypass` in the audit log, regardless of the resource/action they touched.
+
+### 16.6 Tests (iteration 16)
+
+`/app/backend/tests/test_iteration16_cache_jobs_reports_exports.py` — 10/10 pass:
+- Cache key builder emits tenant-namespaced keys and rejects unsafe keys + extreme TTLs.
+- `POST /reports/location_performance/run` produces different results per tenant.
+- Location-restricted users cannot pass a foreign `location_ids` (→ 403).
+- Location-restricted users see the report scoped to their own locations only.
+- Export create → poll → download succeeds end-to-end for the requester.
+- Download token replay by a different tenant is denied (401/403/404).
+- Hand-forged expired JWTs are denied (401).
+- `enqueue()` without tenant_id raises `MissingJobContext`.
+- Audit trail covers `export.requested`, `export.generated`, `export.downloaded`.
+
+### 16.7 Anti-patterns that this iteration forbids
+
+- Caching tenant data under a record id alone (`patient:<id>`) — `TenantCache` refuses the key.
+- Running a background job without a tenant — `enqueue()` refuses it and `for_background()` refuses an empty tenant_id.
+- Issuing export download URLs that are unauthenticated or long-lived — every link is a signed JWT with 15-min exp, re-verified server-side.
+- Storing exports in a shared bucket/directory — path is `/app/data/exports/<tenant_id>/…` and there is no shared location.
+- Passing user-supplied `location_ids` to a report without validation — `run_report()` rejects with 403 before the aggregation runs.
+

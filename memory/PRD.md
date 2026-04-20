@@ -197,7 +197,16 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **Developer cookbook added** in `MULTI_TENANCY_ARCHITECTURE.md` §14 with copy-paste-safe patterns and clearly flagged anti-patterns.
 - **Verified (iteration_15)**: 6/6 new tests — demo-data visibility, location-scoping for downtown-doc, cross-tenant probe audit, repository fail-closed, unsafe empty-filter rejection, background context acceptance. Regression 19/19 (iteration_14) still green.
 
-## 17. Deferred (still)
+## 17. Iteration 16 — cache isolation, bg jobs, reports, exports (2026-02-21)
+- **`core/tenant_cache.py`** — tenant-namespaced cache key builder (`t:<tid>:...`) + `TenantCache` wrapper that refuses unsafe keys (`UnsafeCacheKeyError`) and bounds TTL to (0, 86400]. `invalidate_tenant(id)` wipes a tenant's cache in one call. Documented list of cache-ok vs cache-never data.
+- **`core/tenant_jobs.py`** — `@tenant_job("job_type")` decorator + persistent `jobs` collection. `enqueue()` refuses missing tenant_id (`MissingJobContext`). Handlers receive `(ctx, payload, meta)` with `ctx = TenantContext.for_background(tenant_id=..., actor="worker:<job>")`. Audits `job.enqueued/started/completed/failed` — tenant-tagged.
+- **`services/reports/`** — `run_report(ctx, name, filters)` single entry point, validates `location_ids` against `ctx.allowed_location_ids` (403 on mismatch). Built-in reports: `appointments_by_day`, `provider_productivity`, `location_performance`. Results cached `t:<tid>:report:<name>:<hash>` for 300 s. Audited `report.generated` / `report.denied`.
+- **`services/exports/`** — `POST /api/exports` → tenant-scoped CSV generator via the job system; `GET /api/exports/{id}` returns a 15-min signed JWT download token; `GET /api/exports/{id}/download` re-verifies signature + tenant match + status=ready before streaming. Storage path `/app/data/exports/<tenant_id>/<export_id>.csv`. Cross-tenant token replay denied + audited. PHI privilege stashed at request time (`include_phi`) so the worker writes the exact columns the requester is authorized to see. Cleanup worker marks `status=expired` + unlinks file; runs on boot and exposed at `POST /api/exports/cleanup`.
+- **Platform admin short-circuit** in `require_permission()` — audits every allow as `authz.platform_admin_bypass` (resource + action metadata).
+- **Indexes** added for `jobs`, `exports` (tenant_id, status, expires_at).
+- **Verified (iteration_16)**: 10/10 new tests pass. Combined iteration_15 + iteration_16 16/16 green. Lint clean.
+
+## 18. Deferred (still)
 - `privacy`, `communication`, and `elevation` routers rely on the `tenant_id` backfill but do not yet pass queries through `scoped_filter` — safe because we're still single-tenant-per-user but a P1 to harden before onboarding the second paying tenant.
 - Multi-tenant user support (one user across N tenants) — P2; requires `user_tenant_roles` table + tenant-switcher UI.
 - Subdomain-based tenant routing (`acme.ccms.app → tid=acme`) — P2; ingress + middleware work.

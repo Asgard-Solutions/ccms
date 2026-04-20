@@ -169,3 +169,8 @@ async def create_indexes() -> None:
     await db.permission_scopes.create_index([("user_id", 1), ("status", 1)])
     await db.permission_scopes.create_index("permission_key")
     await db.audit_logs.create_index("action")
+    # Jobs & exports (iteration 16)
+    await db.jobs.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)])
+    await db.jobs.create_index([("tenant_id", 1), ("job_type", 1)])
+    await db.exports.create_index([("tenant_id", 1), ("status", 1)])
+    await db.exports.create_index("expires_at")

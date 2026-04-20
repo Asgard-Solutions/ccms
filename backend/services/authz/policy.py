@@ -416,6 +416,19 @@ def require_permission(
     async def _dep(request: Request) -> dict:
         user = await get_current_user(request)
 
+        # Platform admin bypass — global support staff may act on any
+        # resource. Every bypass is audited explicitly so cross-tenant
+        # platform access is always traceable.
+        if user.get("is_platform_admin") or user.get("role") == "platform_admin":
+            from core.audit import audit_success
+            await audit_success(
+                user, "authz.platform_admin_bypass", request,
+                entity_type=resource,
+                metadata={"resource": resource, "action": action,
+                          "platform_admin_access": True},
+            )
+            return user
+
         ctx: dict = {}
         if ctx_from_path:
             for k, path_param in ctx_from_path.items():
