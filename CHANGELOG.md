@@ -12,6 +12,28 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Patient Documents — inline thumbnails** for the three image-first
+  categories (Insurance card front, Insurance card back, Driver's
+  license / ID). `components/PatientDocumentsCard.jsx` now renders a
+  `DocImageThumb` per image document that:
+  - Streams the file over the authenticated
+    `GET /api/patients/:id/documents/:id/download` endpoint (same
+    path used for full download, which also emits an audit event).
+  - Converts the blob response into a process-local
+    `blob:` URL via `URL.createObjectURL`, renders it in an
+    `<img loading="lazy" />`, and **revokes the URL on unmount** so
+    no PHI lingers in memory or the browser tab's resource list.
+  - Shows loading + error states (spinner; "Preview unavailable"
+    fallback on fetch failure).
+  - Wraps the image in a `<button>` with a visible focus ring so
+    keyboard users can open the full-size view (re-uses the existing
+    download helper → opens the authenticated blob in a new tab).
+  - Falls back gracefully to a compact row when the stored file is
+    not an image (e.g. PDF insurance card uploaded).
+- The rest of the documents card (referral letter, imaging report,
+  intake form, consent receipt, other) continues to use the compact
+  row layout — image previews are reserved for categories where the
+  visual scan-ability actually helps staff.
 - **Chiro Software Theme System (Slate + Teal + Copper)** — adopted the
   binding design system defined in `/app/docs/theme/`:
   - `CHIRO_SOFTWARE_THEME_STANDARD.md` — brand standard.

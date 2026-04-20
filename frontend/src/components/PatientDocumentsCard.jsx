@@ -1,19 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { CreditCard, Download, FileText, ImagePlus, Loader2, Trash2, Upload } from "lucide-react";
+import {
+  CreditCard,
+  Download,
+  FileText,
+  ImageOff,
+  ImagePlus,
+  Loader2,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { api, formatApiError } from "../api/client";
 import { Button } from "./ui/button";
 import ReauthDialog from "./ReauthDialog";
 
 const CATEGORIES = [
-  { value: "insurance_card_front", label: "Insurance card — front", icon: CreditCard },
-  { value: "insurance_card_back", label: "Insurance card — back", icon: CreditCard },
-  { value: "drivers_license", label: "Driver's license / ID", icon: FileText },
-  { value: "referral_letter", label: "Referral letter", icon: FileText },
-  { value: "imaging_report", label: "Imaging report", icon: FileText },
-  { value: "intake_form", label: "Signed intake form", icon: FileText },
-  { value: "consent_receipt", label: "Consent receipt", icon: FileText },
-  { value: "other", label: "Other document", icon: FileText },
+  { value: "insurance_card_front", label: "Insurance card — front", icon: CreditCard, imageFirst: true },
+  { value: "insurance_card_back",  label: "Insurance card — back",  icon: CreditCard, imageFirst: true },
+  { value: "drivers_license",      label: "Driver's license / ID",   icon: FileText,   imageFirst: true },
+  { value: "referral_letter",      label: "Referral letter",         icon: FileText,   imageFirst: false },
+  { value: "imaging_report",       label: "Imaging report",          icon: FileText,   imageFirst: false },
+  { value: "intake_form",          label: "Signed intake form",      icon: FileText,   imageFirst: false },
+  { value: "consent_receipt",      label: "Consent receipt",         icon: FileText,   imageFirst: false },
+  { value: "other",                label: "Other document",          icon: FileText,   imageFirst: false },
 ];
 
 function needsReauth(err) {
@@ -22,11 +31,105 @@ function needsReauth(err) {
   return typeof detail === "string" && /re-auth/i.test(detail);
 }
 
+function isImage(doc) {
+  return typeof doc?.content_type === "string" && doc.content_type.startsWith("image/");
+}
+
+// ---------------------------------------------------------------------------
+// DocImageThumb
+// ---------------------------------------------------------------------------
+// PHI-safe inline thumbnail. Fetches the document over the authenticated
+// download endpoint (which also emits an audit event), turns the response
+// blob into an object URL, and revokes it on unmount. No raw PHI bytes ever
+// sit in a query string or public URL — the <img> src is a process-local
+// blob: URL only.
+// ---------------------------------------------------------------------------
+function DocImageThumb({ patientId, doc, onOpen }) {
+  const [state, setState] = useState("loading"); // loading | ready | error
+  const [href, setHref] = useState(null);
+  const urlRef = useRef(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setState("loading");
+    setHref(null);
+
+    api
+      .get(`/patients/${patientId}/documents/${doc.id}/download`, {
+        responseType: "blob",
+      })
+      .then((resp) => {
+        if (cancelled) return;
+        const url = URL.createObjectURL(resp.data);
+        urlRef.current = url;
+        setHref(url);
+        setState("ready");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setState("error");
+      });
+
+    return () => {
+      cancelled = true;
+      if (urlRef.current) {
+        URL.revokeObjectURL(urlRef.current);
+        urlRef.current = null;
+      }
+    };
+  }, [patientId, doc.id]);
+
+  if (state === "loading") {
+    return (
+      <div
+        data-testid={`docs-thumb-loading-${doc.id}`}
+        className="flex aspect-[16/10] w-full items-center justify-center rounded-sm border border-border bg-muted text-muted-foreground"
+      >
+        <Loader2 className="h-5 w-5 animate-spin" />
+      </div>
+    );
+  }
+
+  if (state === "error" || !href) {
+    return (
+      <div
+        data-testid={`docs-thumb-error-${doc.id}`}
+        className="flex aspect-[16/10] w-full flex-col items-center justify-center gap-1 rounded-sm border border-border bg-muted text-xs text-muted-foreground"
+      >
+        <ImageOff className="h-5 w-5" />
+        <span>Preview unavailable</span>
+      </div>
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      data-testid={`docs-thumb-${doc.id}`}
+      onClick={() => onOpen?.(doc)}
+      className="group relative block w-full overflow-hidden rounded-sm border border-border bg-background focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus)] focus-visible:ring-offset-2 focus-visible:ring-offset-card"
+      aria-label={`Open ${doc.filename} at full size`}
+    >
+      <img
+        src={href}
+        alt={doc.filename}
+        loading="lazy"
+        className="aspect-[16/10] w-full object-cover transition-transform duration-200 group-hover:scale-[1.02]"
+      />
+      <span className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-foreground/60 px-2 py-1 text-[11px] text-background opacity-0 transition-opacity group-hover:opacity-100">
+        <span className="truncate">{doc.filename}</span>
+        <span className="font-mono">{Math.round((doc.size || 0) / 1024)} KB</span>
+      </span>
+    </button>
+  );
+}
+
 /**
- * PatientDocumentsCard — insurance-card-first upload + inline list + delete.
- * Files are PHI — links below trigger an authenticated download via the
- * backend, which streams signed bytes + audits the access. Upload + delete
- * are reauth-gated; a 401 automatically pops the ReauthDialog and retries.
+ * PatientDocumentsCard — insurance-card-first upload + inline thumbnails +
+ * authenticated download + delete. Files are PHI — every preview, view, and
+ * download streams through the backend which audits the access. Upload +
+ * delete are reauth-gated; a 401 automatically pops the ReauthDialog and
+ * retries.
  */
 export default function PatientDocumentsCard({ patientId, canEdit }) {
   const [documents, setDocuments] = useState(null);
@@ -128,16 +231,17 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
           Documents &amp; attachments
         </h3>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          Insurance cards, IDs, referral letters &amp; imaging reports. All uploads are
-          encrypted at rest and every access is audited.
+          Insurance cards, IDs, referral letters &amp; imaging reports. Previews
+          and downloads stream from the authenticated backend and every access
+          is audited.
         </p>
       </div>
 
       {documents === null ? (
         <div className="py-4 text-sm text-muted-foreground">Loading…</div>
       ) : (
-        <div className="space-y-5">
-          {CATEGORIES.map(({ value, label, icon: Icon }) => {
+        <div className="space-y-6">
+          {CATEGORIES.map(({ value, label, icon: Icon, imageFirst }) => {
             const items = docsByCategory[value] || [];
             const isInsurance = value.startsWith("insurance_card");
             if (!canEdit && items.length === 0) return null;
@@ -181,47 +285,110 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
                   )}
                 </div>
                 {items.length > 0 && (
-                  <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    {items.map((doc) => (
-                      <li
-                        key={doc.id}
-                        data-testid={`docs-item-${doc.id}`}
-                        className="flex items-center justify-between gap-3 rounded-sm border border-border bg-background px-3 py-2 text-sm"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-foreground">{doc.filename}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {doc.content_type} · {Math.round((doc.size || 0) / 1024)} KB ·{" "}
-                            {new Date(doc.uploaded_at).toLocaleString()}
+                  imageFirst ? (
+                    <ul
+                      data-testid={`docs-grid-${value}`}
+                      className="grid grid-cols-1 gap-3 sm:grid-cols-2"
+                    >
+                      {items.map((doc) => (
+                        <li
+                          key={doc.id}
+                          data-testid={`docs-item-${doc.id}`}
+                          className="overflow-hidden rounded-sm border border-border bg-background"
+                        >
+                          {isImage(doc) ? (
+                            <DocImageThumb
+                              patientId={patientId}
+                              doc={doc}
+                              onOpen={download}
+                            />
+                          ) : (
+                            <div className="flex aspect-[16/10] w-full flex-col items-center justify-center gap-1 bg-muted text-xs text-muted-foreground">
+                              <FileText className="h-5 w-5" />
+                              <span>Non-image file</span>
+                            </div>
+                          )}
+                          <div className="flex items-center justify-between gap-2 border-t border-border px-3 py-2 text-xs">
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-foreground">{doc.filename}</div>
+                              <div className="text-muted-foreground">
+                                {doc.content_type} · {Math.round((doc.size || 0) / 1024)} KB ·{" "}
+                                {new Date(doc.uploaded_at).toLocaleString()}
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => download(doc)}
+                                data-testid={`docs-download-${doc.id}`}
+                                className="h-7 px-2 text-primary hover:bg-primary/10"
+                                aria-label={`Download ${doc.filename}`}
+                              >
+                                <Download className="h-3.5 w-3.5" />
+                              </Button>
+                              {canEdit && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="ghost"
+                                  onClick={() => setPendingDelete(doc)}
+                                  data-testid={`docs-delete-${doc.id}`}
+                                  className="h-7 px-2 text-destructive hover:bg-destructive-soft"
+                                  aria-label={`Delete ${doc.filename}`}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => download(doc)}
-                            data-testid={`docs-download-${doc.id}`}
-                            className="h-7 px-2 text-primary hover:bg-primary/10"
-                          >
-                            <Download className="h-3.5 w-3.5" />
-                          </Button>
-                          {canEdit && (
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <ul className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {items.map((doc) => (
+                        <li
+                          key={doc.id}
+                          data-testid={`docs-item-${doc.id}`}
+                          className="flex items-center justify-between gap-3 rounded-sm border border-border bg-background px-3 py-2 text-sm"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-foreground">{doc.filename}</div>
+                            <div className="text-xs text-muted-foreground">
+                              {doc.content_type} · {Math.round((doc.size || 0) / 1024)} KB ·{" "}
+                              {new Date(doc.uploaded_at).toLocaleString()}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
                             <Button
                               type="button"
                               size="sm"
                               variant="ghost"
-                              onClick={() => setPendingDelete(doc)}
-                              data-testid={`docs-delete-${doc.id}`}
-                              className="h-7 px-2 text-destructive hover:bg-destructive-soft"
+                              onClick={() => download(doc)}
+                              data-testid={`docs-download-${doc.id}`}
+                              className="h-7 px-2 text-primary hover:bg-primary/10"
                             >
-                              <Trash2 className="h-3.5 w-3.5" />
+                              <Download className="h-3.5 w-3.5" />
                             </Button>
-                          )}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
+                            {canEdit && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setPendingDelete(doc)}
+                                data-testid={`docs-delete-${doc.id}`}
+                                className="h-7 px-2 text-destructive hover:bg-destructive-soft"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </Button>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )
                 )}
               </div>
             );
