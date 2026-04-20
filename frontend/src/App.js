@@ -3,6 +3,7 @@ import { Toaster } from "./components/ui/sonner";
 import { AuthProvider } from "./contexts/AuthContext";
 import { PermissionsProvider } from "./contexts/PermissionsContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
+import { ReauthProvider } from "./components/ReauthGate";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
 import AppShell from "./components/layout/AppShell";
 import Login from "./pages/Login";
@@ -43,7 +44,8 @@ export default function App() {
     <ThemeProvider>
       <AuthProvider>
         <PermissionsProvider>
-          <BrowserRouter>
+          <ReauthProvider>
+            <BrowserRouter>
             <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
@@ -73,6 +75,7 @@ export default function App() {
             </Routes>
           </BrowserRouter>
           <Toaster richColors position="top-right" />
+          </ReauthProvider>
         </PermissionsProvider>
       </AuthProvider>
     </ThemeProvider>

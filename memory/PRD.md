@@ -746,3 +746,67 @@ page into a single operational scheduling experience.
 - NOT yet implemented (deliberately out of scope for v1 foundation):
   clearinghouse adapters, remittance ingestion (ERA/EDI), payer-rules
   engine, fee schedule CRUD, billing UI.
+
+
+---
+
+## [2026-04-20] Billing Phase 1 — Invoices, Patient Ledger, Payments (iteration 24)
+
+### Backend
+- `_recompute_invoice_balance()` is now the single source of truth for
+  `invoices.balance_cents` and auto-advances invoice status:
+  live allocations (skipping void/failed payments), proportional refund
+  reversal across the invoices the payment touched, and adjustments
+  are folded into one `applied + adjustments` sum. Auto status:
+  `issued ↔ partially_paid ↔ paid`. New legal transitions
+  `paid → partially_paid` and `paid → issued` support refund-driven
+  reversion.
+- Payments with method `cash` or `check` post as `captured` on create.
+- Refunds post as `processed` immediately, flip payment to
+  `refunded` / `partially_refunded`, re-inflate touched invoice
+  balances, and guard against over-refund against a single payment.
+- New endpoints:
+  - `GET /api/billing/patients/{patient_id}/ledger` — chronological
+    denormalised rows + running balance + per-kind totals.
+  - `POST /api/billing/payments/{payment_id}/allocations` — post-hoc
+    allocation of unallocated payment balance onto invoices.
+  - `POST /api/billing/invoices/{invoice_id}/void?reason=...` —
+    terminal void, MFA-only for super_admin / MFA+APR for billing
+    specialists, blocks future adjustments.
+- RBAC: `super_admin` picked up `payment.refund`,
+  `adjustment.writeoff`, `billing.void` with **MFA** (no APR) so the
+  demo admin can drive the full lifecycle.
+- Read routes (list/get for payers, insurance-policies, invoices +
+  lines, payments, claims, remittances, denial-work-items, ledger)
+  moved from `require_permission` → `require_role("admin", "doctor",
+  "staff")` — consistent with `clinic_profile` / `appointment_types`
+  and avoids browser reauth on every billing page. Mutations still
+  go through `require_permission` with the full authz matrix.
+
+### Frontend
+- `/billing` dashboard, `/billing/invoices` list, `/billing/invoices/:id`
+  detail, `/billing/patients/:id/ledger` standalone, and an embedded
+  `PatientLedgerCard` on `PatientDetail`.
+- `PostPaymentDialog` — multi-invoice allocation with oldest-first
+  auto-allocate, over-allocation guard, method/reference capture.
+- New sidebar nav item "Billing" (admin / doctor / staff).
+- Shared `/utils/money.js` (cents ↔ display) + 6 Jest tests.
+- **Global `ReauthGate`**: a `ReauthProvider` installs an axios
+  response interceptor that detects 401 "Re-authentication required",
+  opens the shared `ReauthDialog`, and replays the original request
+  after the user confirms. Removes every per-feature reauth wrapper
+  — works for billing mutations AND fixes a latent patient-documents
+  401 bug flagged during testing.
+
+### Tests
+- `backend/tests/test_billing.py` — 40/40 passing (21 added for Phase 1).
+- `frontend/src/utils/money.test.js` — 6/6 passing.
+
+### Verified visually (browser E2E)
+- Admin logs in → sidebar shows Billing → dashboard stats accurate
+  ($3,980.00 outstanding / $6,105.00 lifetime / 54 payments).
+- Invoices list with filter + search works.
+- Invoice detail with status pill, totals cards, lines table.
+- Post-payment dialog → submit → ReauthGate fires → enter password →
+  request replayed → toast "Posted $10.00 payment" → invoice status
+  flips ISSUED → PARTIALLY PAID, balance $55.00 → $45.00. ✅

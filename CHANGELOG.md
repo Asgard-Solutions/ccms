@@ -75,6 +75,19 @@ public release yet — we're pre-1.0).
     `sumAmountCents`, and their Jest tests (6 passing).
   - New sidebar nav entry "Billing" visible to admin / doctor / staff.
 
+- **Global ReauthGate — app-wide MFA auto-retry.** A new singleton
+  `ReauthProvider` installs an axios response interceptor that
+  detects 401s flagged `Re-authentication required` (or carrying the
+  `X-Reauth-Required: 1` header) and opens the shared `ReauthDialog`.
+  When the user confirms, the *original* request is replayed once
+  with the fresh reauth cookie. This means every MFA-gated mutation
+  (post payment, apply adjustment, void invoice, refund, write
+  medical record, delete patient, …) now has zero per-feature reauth
+  wiring — the interceptor catches them globally. Also fixes a
+  latent bug flagged by the testing agent where
+  `GET /api/patients/{id}/documents` silently failed on
+  `PatientDetail` due to the same missing reauth flow.
+
 ### Tests
 - `backend/tests/test_billing.py` — **40 passing** (added 10 Phase 1
   tests: partial-payment balance progression, adjustment closing,
