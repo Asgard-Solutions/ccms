@@ -676,7 +676,7 @@ export default function PatientDetail() {
               variant="outline"
               onClick={() => setDeleteConfirm(true)}
               data-testid="patient-delete-btn"
-              className="rounded-sm border-[#C76D54] text-danger hover:surface-danger-soft"
+              className="rounded-sm border-destructive text-danger hover:surface-danger-soft"
             >
               <Trash2 className="mr-2 h-4 w-4" /> Soft-delete
             </Button>

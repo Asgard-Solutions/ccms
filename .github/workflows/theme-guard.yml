@@ -1,0 +1,32 @@
+name: Theme guard
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  theme-token-guard:
+    name: No raw hex / raw palette classes in feature code
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Make guard script executable
+        run: chmod +x scripts/check_theme.py
+
+      - name: Run theme compliance guard
+        env:
+          FORCE_COLOR: "1"
+        run: ./scripts/check_theme.py
+
+      - name: Post policy pointer on failure
+        if: ${{ failure() }}
+        run: |
+          echo "::error title=Theme tokens violated::Raw hex literals or raw Tailwind palette classes were detected in frontend/src. Replace with semantic tokens (bg-primary, bg-card, text-muted-foreground, bg-success-soft, etc.)."
+          echo "::notice title=Spec::See docs/theme/CHIRO_THEME_ENGINEERING_IMPLEMENTATION_SPEC.md §8.2 'Approved utility usage'."

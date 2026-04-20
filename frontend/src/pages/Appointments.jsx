@@ -44,7 +44,7 @@ function statusChip(status) {
   };
   return (
     <span
-      className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${map[status] || "bg-stone-100"}`}
+      className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${map[status] || "bg-muted"}`}
     >
       {status}
     </span>
@@ -335,7 +335,7 @@ export default function Appointments() {
             onClick={() => setFilter(f.v)}
             className={`rounded-sm border px-4 py-1.5 text-sm font-medium transition-colors ${
               filter === f.v
-                ? "border-[#7B9A82] surface-sage text-sage-deep"
+                ? "border-primary surface-sage text-sage-deep"
                 : "border-subtle bg-card text-muted-strong hover:surface-muted"
             }`}
           >
@@ -379,7 +379,7 @@ export default function Appointments() {
                 <tr
                   key={a.id}
                   data-testid={`appt-row-${a.id}`}
-                  className="border-b border-stone-100 last:border-b-0 hover:surface-muted/50"
+                  className="border-b border-border last:border-b-0 hover:surface-muted/50"
                 >
                   <td className="px-6 py-4 text-sm">
                     <div className="font-medium">{formatDateTime(a.start_time)}</div>

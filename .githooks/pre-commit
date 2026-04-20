@@ -3,16 +3,29 @@
 # Pre-commit hook — activated via:
 #     git config core.hooksPath .githooks
 #
-# Runs the matrix-aware documentation guard locally before every commit.
-# Skip with: git commit --no-verify (not recommended).
+# Runs two guardrails locally before every commit:
+#   1. Matrix-aware documentation guard   (scripts/check_docs.py)
+#   2. Theme / token compliance guard     (scripts/check_theme.py)
+#
+# Skip both with: git commit --no-verify (not recommended).
 #
 set -e
 REPO_ROOT="$(git rev-parse --show-toplevel)"
-GUARD="${REPO_ROOT}/scripts/check_docs.py"
 
-if [[ ! -x "$GUARD" ]]; then
+DOCS_GUARD="${REPO_ROOT}/scripts/check_docs.py"
+if [[ -x "$DOCS_GUARD" ]]; then
+  "$DOCS_GUARD"
+else
   echo "pre-commit: scripts/check_docs.py missing or not executable — skipping."
-  exit 0
 fi
 
-"$GUARD"
+THEME_GUARD="${REPO_ROOT}/scripts/check_theme.py"
+if [[ -x "$THEME_GUARD" ]]; then
+  "$THEME_GUARD" --quiet || {
+    echo ""
+    echo "pre-commit: theme violations found — run scripts/check_theme.py for details."
+    exit 1
+  }
+else
+  echo "pre-commit: scripts/check_theme.py missing or not executable — skipping."
+fi

@@ -190,7 +190,7 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
           {rows.length === 0 ? (
             <div className="text-sm text-muted-strong">No overrides.</div>
           ) : (
-            <ul className="divide-y divide-stone-100">
+            <ul className="divide-y divide-border">
               {rows.map((o) => (
                 <li
                   key={o.id}
@@ -202,7 +202,7 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
                     <div className="text-xs text-muted-strong">
                       scope: {o.scope} · {o.reason}
                     </div>
-                    <div className="text-[10px] text-stone-400">
+                    <div className="text-[10px] text-soft">
                       granted by {o.granted_by_email} · {new Date(o.created_at).toLocaleString()}
                       {o.expires_at && ` · expires ${o.expires_at}`}
                     </div>
@@ -219,7 +219,7 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
                         <Trash2 className="mr-1 h-3 w-3" /> Revoke
                       </Button>
                     ) : (
-                      <Badge className="bg-stone-100 text-stone-500">revoked</Badge>
+                      <Badge className="bg-muted text-muted-foreground">revoked</Badge>
                     )}
                   </div>
                 </li>
@@ -362,7 +362,7 @@ export default function RoleManagement() {
                 </div>
                 <div className="text-sm text-muted-strong">{r.description}</div>
                 {r.privileged && (
-                  <Badge className="mt-1 bg-[#FDF0EA] text-danger-soft">privileged</Badge>
+                  <Badge className="mt-1 bg-accent text-accent-foreground">privileged</Badge>
                 )}
                 {r.service_account && (
                   <Badge className="mt-1 ml-1 surface-sage text-sage-deep">
@@ -447,7 +447,7 @@ function UserRow({ user, onAssign, onRevoke, onOverrides }) {
   return (
     <tr
       data-testid={`user-row-${user.id}`}
-      className="border-t border-stone-100 align-top"
+      className="border-t border-border align-top"
     >
       <td className="px-3 py-2">
         <div className="font-medium text-strong">{user.name}</div>
@@ -457,7 +457,7 @@ function UserRow({ user, onAssign, onRevoke, onOverrides }) {
         <Badge
           className={
             user.status === "disabled"
-              ? "bg-[#FDE8E3] text-danger-soft"
+              ? "bg-destructive-soft text-destructive"
               : "surface-sage text-sage-deep"
           }
         >

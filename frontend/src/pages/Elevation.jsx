@@ -18,13 +18,13 @@ import { KeyRound, Check, X, Clock, Shield } from "lucide-react";
 
 function statusBadge(status) {
   const cls = {
-    pending: "surface-warning text-[#D4A373]",
+    pending: "surface-warning text-warning",
     approved: "surface-sage text-sage-deep",
-    rejected: "bg-[#FDE8E3] text-danger-soft",
-    expired: "bg-stone-100 text-stone-500",
+    rejected: "bg-destructive-soft text-destructive",
+    expired: "bg-muted text-muted-foreground",
     used: "surface-sage text-sage-deep",
-    revoked: "bg-stone-100 text-stone-500",
-  }[status] || "bg-stone-100";
+    revoked: "bg-muted text-muted-foreground",
+  }[status] || "bg-muted";
   return <Badge className={cls} data-testid={`elevation-status-${status}`}>{status}</Badge>;
 }
 
@@ -141,7 +141,7 @@ export default function Elevation() {
                 <tr
                   key={r.id}
                   data-testid={`elevation-row-${r.id}`}
-                  className="border-t border-stone-100 align-top"
+                  className="border-t border-border align-top"
                 >
                   <td className="px-2 py-2">{statusBadge(r.status)}</td>
                   <td className="px-2 py-2 font-mono text-[11px] text-strong">
@@ -156,7 +156,7 @@ export default function Elevation() {
                     <Clock className="mr-1 inline h-3 w-3" />
                     {r.ttl_minutes}m
                   </td>
-                  <td className="px-2 py-2 text-xs text-stone-400">
+                  <td className="px-2 py-2 text-xs text-soft">
                     {new Date(r.created_at).toLocaleString()}
                   </td>
                   <td className="px-2 py-2 space-x-2">
@@ -279,7 +279,7 @@ export default function Elevation() {
             <DialogTitle>Review elevation request</DialogTitle>
             <DialogDescription>
               {reviewDlg?.requester_email} → <code>{reviewDlg?.permission_key}</code>
-              <div className="mt-2 rounded-sm bg-stone-50 p-2 text-sm text-muted-strong">
+              <div className="mt-2 rounded-sm bg-muted p-2 text-sm text-muted-strong">
                 {reviewDlg?.reason}
               </div>
             </DialogDescription>

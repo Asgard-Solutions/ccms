@@ -35,3 +35,35 @@ This directory is the canonical source of truth for the Chiro Software design sy
 ## Changelog discipline
 
 Any change to `frontend/**` — including token tweaks — requires a `CHANGELOG.md` entry and may require a theme/policy doc update per `/app/docs/doc_rules.yml`.
+
+## CI guardrails
+
+Two Python scripts enforce this system automatically:
+
+| Script | Purpose | Where it runs |
+| --- | --- | --- |
+| `/app/scripts/check_docs.py` | Matrix-aware docs guard — ensures `CHANGELOG.md`, `PRD.md`, `HIPAA_COMPLIANCE.md`, etc. get updated when the relevant code paths change. | pre-commit (`.githooks/pre-commit`) + GitHub Actions (`.github/workflows/docs-guard.yml`) |
+| `/app/scripts/check_theme.py` | Theme compliance guard — fails on any raw `#hex` in class strings, any forbidden Tailwind palette family (`slate-*`, `blue-*`, `stone-*`, `red-*`, …), and any inline `style={{ color: "#..." }}` inside `frontend/src/**`. Exempts the theme layer itself (`index.css`, `tailwind.config.js`) and shadcn primitives (`components/ui/**`). | pre-commit (`.githooks/pre-commit`) + GitHub Actions (`.github/workflows/theme-guard.yml`) |
+
+Run the theme guard locally any time:
+
+```bash
+python scripts/check_theme.py          # full scan
+python scripts/check_theme.py --paths frontend/src/pages/Calendar.jsx
+python scripts/check_theme.py --quiet  # pre-commit mode
+```
+
+If it flags a new component, fix it by consuming semantic utilities
+(`bg-primary`, `bg-card`, `text-muted-foreground`, `bg-success-soft`,
+`border-border`, `divide-border`, etc.) instead of reaching for raw
+Tailwind palette classes or hex literals. If you genuinely need a new
+shade, add a token centrally in `index.css` under the appropriate
+layer (foundation → semantic → component alias) — that is the
+escalation path, not a one-off inline color.
+
+## PR template
+
+`.github/pull_request_template.md` includes a **Theme compliance**
+block. Every UI-touching PR must confirm light/dark parity, focus
+states, semantic token usage, and alignment with
+`CHIRO_UI_REVIEW_AND_COMPLIANCE_CHECKLIST.md`.

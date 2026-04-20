@@ -232,7 +232,7 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
       {pendingDelete && (
         <div
           data-testid="docs-delete-confirm"
-          className="mt-5 flex items-start justify-between gap-4 rounded-sm border border-[#E7C4B9] surface-danger-soft px-4 py-3 text-sm text-danger-strong"
+          className="mt-5 flex items-start justify-between gap-4 rounded-sm border border-destructive-soft surface-danger-soft px-4 py-3 text-sm text-danger-strong"
         >
           <span>
             Remove <strong>{pendingDelete.filename}</strong>? This soft-deletes the
@@ -244,7 +244,7 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
               size="sm"
               variant="ghost"
               onClick={() => setPendingDelete(null)}
-              className="h-7 text-danger-strong hover:bg-[#F5DFD7]"
+              className="h-7 text-danger-strong hover:bg-destructive-soft"
             >
               Cancel
             </Button>
@@ -253,7 +253,7 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
               size="sm"
               onClick={() => remove(pendingDelete)}
               data-testid="docs-delete-confirm-btn"
-              className="h-7 rounded-sm bg-danger hover:bg-[#A85540]"
+              className="h-7 rounded-sm bg-danger hover:bg-danger-hover"
             >
               Remove
             </Button>

@@ -26,7 +26,7 @@ function outcomeChip(outcome) {
   return (
     <span
       className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
-        map[outcome] || "bg-stone-100"
+        map[outcome] || "bg-muted"
       }`}
     >
       {outcome}
@@ -144,7 +144,7 @@ export default function AuditLog() {
           data-testid="audit-export-csv"
           onClick={downloadCsv}
           disabled={exporting}
-          className="rounded-sm bg-[#1F2924] text-white hover:bg-[#0F1A15]"
+          className="rounded-sm bg-primary text-primary-foreground hover:bg-sage-hover"
         >
           <Download className="mr-2 h-4 w-4" />
           {exporting ? "Exporting…" : "Export CSV"}
@@ -159,7 +159,7 @@ export default function AuditLog() {
             onClick={() => setFilter(f.v)}
             className={`rounded-sm border px-3 py-1.5 text-sm font-medium transition-colors ${
               filter === f.v
-                ? "border-[#7B9A82] surface-sage text-sage-deep"
+                ? "border-primary surface-sage text-sage-deep"
                 : "border-subtle bg-card text-muted-strong hover:surface-muted"
             }`}
           >
@@ -279,7 +279,7 @@ export default function AuditLog() {
                 <tr
                   key={r.id}
                   data-testid={`audit-row-${r.id}`}
-                  className="border-b border-stone-100 last:border-b-0 hover:surface-muted/50"
+                  className="border-b border-border last:border-b-0 hover:surface-muted/50"
                 >
                   <td className="px-4 py-3 align-top text-strong">
                     <div>{formatDateTime(r.created_at)}</div>
@@ -335,7 +335,7 @@ export default function AuditLog() {
                   <td className="px-4 py-3 align-top">{outcomeChip(r.outcome)}</td>
                   <td className="px-4 py-3 align-top">
                     {r.phi_accessed ? (
-                      <span className="rounded-sm surface-warning px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[#D4A373]">
+                      <span className="rounded-sm surface-warning px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-warning">
                         PHI
                       </span>
                     ) : (

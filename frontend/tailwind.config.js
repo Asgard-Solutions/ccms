@@ -32,6 +32,7 @@ module.exports = {
                 secondary: {
                     DEFAULT: "hsl(var(--secondary))",
                     foreground: "hsl(var(--secondary-foreground))",
+                    hover: "var(--secondary-hover)",
                 },
                 muted: {
                     DEFAULT: "hsl(var(--muted))",

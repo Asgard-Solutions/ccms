@@ -218,7 +218,7 @@ export default function Login() {
           alt=""
           className="absolute inset-0 h-full w-full object-cover"
         />
-        <div className="absolute inset-0 bg-gradient-to-br from-[#FAF9F6]/40 via-[#FAF9F6]/10 to-[#7B9A82]/20" />
+        <div className="absolute inset-0 bg-gradient-to-br from-background/40 via-background/10 to-primary/20" />
         <div className="relative z-10 flex h-full flex-col justify-end p-12 text-strong">
           <blockquote className="max-w-md font-['Outfit'] text-2xl font-medium leading-tight">
             “The calm scheduling desk we always wished we had.”

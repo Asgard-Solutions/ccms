@@ -229,7 +229,7 @@ function CheckboxField({ id, checked, onChange, label, testId, disabled }) {
         "flex items-start gap-3 rounded-sm border border-subtle bg-card px-3 py-2.5 text-sm " +
         (disabled
           ? "cursor-not-allowed text-soft"
-          : "cursor-pointer text-strong hover:border-[#7B9A82]")
+          : "cursor-pointer text-strong hover:border-primary")
       }
     >
       <Checkbox
@@ -238,7 +238,7 @@ function CheckboxField({ id, checked, onChange, label, testId, disabled }) {
         disabled={disabled}
         onCheckedChange={(v) => onChange(Boolean(v))}
         data-testid={testId}
-        className="mt-0.5 border-stone-400 data-[state=checked]:border-[#7B9A82] data-[state=checked]:bg-sage"
+        className="mt-0.5 border-border-strong data-[state=checked]:border-primary data-[state=checked]:bg-primary"
       />
       <span className="leading-snug">{label}</span>
     </label>
@@ -277,7 +277,7 @@ function CheckboxGroup({ options, selected, onChange, testId }) {
               checked={checked}
               onCheckedChange={() => toggle(opt)}
               data-testid={`${testId}-opt-${opt.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`}
-              className="border-stone-400 data-[state=checked]:border-[#7B9A82] data-[state=checked]:bg-sage"
+              className="border-border-strong data-[state=checked]:border-primary data-[state=checked]:bg-primary"
             />
             <span>{opt}</span>
           </label>
@@ -976,9 +976,9 @@ export function PatientWizardDialog({
                     className={
                       "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold " +
                       (state === "done"
-                        ? "border-[#7B9A82] bg-sage text-white"
+                        ? "border-primary bg-primary text-primary-foreground"
                         : state === "active"
-                        ? "border-[#1F2924] bg-card text-strong"
+                        ? "border-foreground bg-card text-strong"
                         : "border-strong bg-card text-soft")
                     }
                   >
@@ -1004,7 +1004,7 @@ export function PatientWizardDialog({
         {draftPrompt && (
           <div
             data-testid="wizard-draft-prompt"
-            className="flex items-center justify-between gap-4 border-b border-[#E5D9A4] bg-[#FAF5DC] px-8 py-3 text-sm text-[#5B4F1F]"
+            className="flex items-center justify-between gap-4 border-b border-border surface-warning px-8 py-3 text-sm text-warning"
           >
             <span>
               <strong>Unfinished draft found.</strong>{" "}
@@ -1017,7 +1017,7 @@ export function PatientWizardDialog({
                 variant="ghost"
                 onClick={discardDraft}
                 data-testid="wizard-draft-discard"
-                className="rounded-sm text-[#5B4F1F] hover:bg-[#F1E7B0]"
+                className="rounded-sm text-warning hover:surface-warning"
               >
                 Discard
               </Button>

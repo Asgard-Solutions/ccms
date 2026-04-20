@@ -22,7 +22,7 @@ function Cell({ grant }) {
     return (
       <span
         data-testid="matrix-cell-denied"
-        className="inline-flex h-5 min-w-[24px] items-center justify-center rounded-sm border border-subtle bg-card px-1 text-[10px] text-stone-300"
+        className="inline-flex h-5 min-w-[24px] items-center justify-center rounded-sm border border-subtle bg-card px-1 text-[10px] text-soft"
       >
         —
       </span>
@@ -147,7 +147,7 @@ export default function PermissionMatrix() {
             </thead>
             <tbody>
               {filtered.map((p) => (
-                <tr key={p.key} className="border-t border-stone-100">
+                <tr key={p.key} className="border-t border-border">
                   <td className="sticky left-0 z-10 bg-card px-2 py-2 font-mono text-[11px] text-strong">
                     <div className="flex items-center gap-2">
                       {p.privileged && (
@@ -158,7 +158,7 @@ export default function PermissionMatrix() {
                       )}
                       {p.key}
                     </div>
-                    <div className="text-[9px] uppercase tracking-wider text-stone-400">
+                    <div className="text-[9px] uppercase tracking-wider text-soft">
                       {p.sensitivity}
                       {p.phi && " · phi"}
                       {p.export && " · export"}

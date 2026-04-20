@@ -60,8 +60,23 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
   status colors, radius scale, shadow scale, and font families.
 - Preserved legacy `bg-sage`, `surface-raised`, `text-strong`, etc. as
   aliases pointing to the new palette so all 22 existing pages inherit
-  the new brand without a file-by-file rewrite. Phase 2 will migrate
-  those class names to semantic utilities.
+  the new brand without a file-by-file rewrite.
+
+### Theme discipline Phase 2 (2026-04-20)
+- Swept **every** raw hex / raw Tailwind palette class from
+  `frontend/src/**` and replaced with semantic tokens. 51+ instances
+  across 17 files.
+- Added **`scripts/check_theme.py`** — Python CI guardrail that blocks
+  raw `#hex` arbitrary values, forbidden Tailwind palette families
+  (`slate-*`, `stone-*`, `blue-*`, etc.), and inline `style` color
+  usages inside `frontend/src/**`. Exempts the theme layer and shadcn
+  primitives.
+- Wired the guardrail into `.githooks/pre-commit` and a new GitHub
+  Actions workflow `.github/workflows/theme-guard.yml`.
+- Added **Theme compliance** checklist block to
+  `.github/pull_request_template.md`.
+- Verified light/dark parity via screenshots on Login, Dashboard,
+  Patients lookup, Calendar, Audit Log, Compliance.
 
 ### Performance + scalability pass (2026-04-19)
 - **Redis** (supervisord-managed, `127.0.0.1:6379`, `maxmemory 128mb allkeys-lru`) for application cache + IP rate-limit buckets

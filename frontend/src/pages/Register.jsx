@@ -143,7 +143,7 @@ export default function Register() {
               type="checkbox"
               checked={acceptedPrivacy}
               onChange={(e) => setAcceptedPrivacy(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded-sm border-strong accent-[#7B9A82]"
+              className="mt-0.5 h-4 w-4 rounded-sm border-strong accent-primary"
             />
             <span>
               I have read and accept the Privacy Notice (version

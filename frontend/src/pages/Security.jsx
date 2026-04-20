@@ -254,7 +254,7 @@ function MfaCard() {
             type="submit"
             variant="outline"
             data-testid="mfa-disable-btn"
-            className="rounded-sm border-[#C76D54] text-danger hover:surface-danger-soft"
+            className="rounded-sm border-destructive text-danger hover:surface-danger-soft"
           >
             Disable MFA
           </Button>
@@ -298,7 +298,7 @@ export default function Security() {
           data-testid="password-age-banner"
           className={`flex items-start gap-3 rounded-sm border p-4 ${
             passwordAge >= 90
-              ? "border-[#D4A373] surface-warning text-muted-strong"
+              ? "border-warning surface-warning text-muted-foreground"
               : "border-subtle bg-card text-muted-strong"
           }`}
         >
@@ -409,7 +409,7 @@ function RecentSignInsCard() {
                 <tr
                   key={`${e.created_at}-${i}`}
                   data-testid={`session-row-${i}`}
-                  className="border-t border-stone-100"
+                  className="border-t border-border"
                 >
                   <td className="px-3 py-2 align-top">
                     <div>{formatDateTime(e.created_at)}</div>

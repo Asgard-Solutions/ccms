@@ -145,8 +145,8 @@ export default function CalendarPage() {
                           data-testid={`cal-appt-${a.id}`}
                           className={`cursor-default rounded-r-sm border-l-2 p-2 text-xs ${
                             a.status === "cancelled"
-                              ? "border-[#C76D54] surface-danger-soft text-danger line-through"
-                              : "border-[#7B9A82] surface-sage text-strong hover:bg-[#E0EBE2]"
+                              ? "border-destructive surface-danger-soft text-danger line-through"
+                              : "border-primary surface-sage text-strong hover:surface-sage-soft"
                           }`}
                         >
                           <div className="font-medium">{formatTime(a.start_time)}</div>

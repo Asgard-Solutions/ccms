@@ -13,8 +13,8 @@ const STATUS_META = {
   },
   partial: {
     label: "Partial",
-    chip: "surface-warning text-[#B5823E]",
-    dot: "bg-[#D4A373]",
+    chip: "surface-warning text-warning",
+    dot: "bg-warning",
     icon: CircleDashed,
   },
   missing: {
@@ -25,8 +25,8 @@ const STATUS_META = {
   },
   out_of_app: {
     label: "Out of app scope",
-    chip: "bg-stone-100 text-stone-600",
-    dot: "bg-stone-400",
+    chip: "bg-muted text-muted-foreground",
+    dot: "bg-muted-foreground",
     icon: FileText,
   },
 };
@@ -66,7 +66,7 @@ function ControlRow({ c }) {
   const meta = STATUS_META[c.status] || STATUS_META.missing;
   const Icon = meta.icon;
   return (
-    <tr data-testid={`control-row-${c.id}`} className="border-b border-stone-100 last:border-0">
+    <tr data-testid={`control-row-${c.id}`} className="border-b border-border last:border-0">
       <td className="py-3 pr-4 align-top">
         <div className="flex items-start gap-2">
           <Icon className="mt-0.5 h-4 w-4 text-muted-strong" />
@@ -119,7 +119,7 @@ export default function Compliance() {
 
   if (error) {
     return (
-      <div data-testid="compliance-error" className="rounded-sm border border-[#E6D5CF] surface-danger-soft p-4 text-sm text-danger">
+      <div data-testid="compliance-error" className="rounded-sm border border-destructive-soft surface-danger-soft p-4 text-sm text-danger">
         {error}
       </div>
     );
@@ -173,7 +173,7 @@ export default function Compliance() {
         </p>
         <div
           data-testid="compliance-disclaimer"
-          className="mt-4 flex items-start gap-2 rounded-sm border border-[#EDE0C7] surface-warning p-3 text-xs text-[#8A6C33]"
+          className="mt-4 flex items-start gap-2 rounded-sm border border-border surface-warning p-3 text-xs text-warning"
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
           <span>
@@ -280,8 +280,8 @@ export default function Compliance() {
                 onClick={() => setGroupFilter(g)}
                 className={`rounded-sm px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider transition-colors ${
                   groupFilter === g
-                    ? "bg-[#1F2924] text-white"
-                    : "bg-stone-100 text-muted-strong hover:bg-stone-200"
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary text-muted-foreground hover:bg-secondary-hover"
                 }`}
               >
                 {g === "all" ? "All" : g}

@@ -223,8 +223,8 @@ export default function PasswordReset() {
               onClick={() => setMode("request")}
               className={`rounded-sm px-3 py-1.5 text-xs font-medium uppercase tracking-wider transition-colors ${
                 mode === "request"
-                  ? "bg-[#1F2924] text-white"
-                  : "bg-stone-100 text-muted-strong hover:bg-stone-200"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-muted-foreground hover:bg-secondary-hover"
               }`}
             >
               1. Request link
@@ -234,8 +234,8 @@ export default function PasswordReset() {
               onClick={() => setMode("confirm")}
               className={`rounded-sm px-3 py-1.5 text-xs font-medium uppercase tracking-wider transition-colors ${
                 mode === "confirm"
-                  ? "bg-[#1F2924] text-white"
-                  : "bg-stone-100 text-muted-strong hover:bg-stone-200"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-secondary text-muted-foreground hover:bg-secondary-hover"
               }`}
             >
               2. Confirm reset
@@ -253,7 +253,7 @@ export default function PasswordReset() {
               {devToken && (
                 <div
                   data-testid="dev-token-hint"
-                  className="rounded-sm border border-[#EDE0C7] surface-warning p-3 text-xs text-[#8A6C33]"
+                  className="rounded-sm border border-border surface-warning p-3 text-xs text-warning"
                 >
                   <div className="font-semibold uppercase tracking-wider">Dev token (pre-production only)</div>
                   <div className="mt-1 break-all font-mono">{devToken}</div>
@@ -281,7 +281,7 @@ export default function PasswordReset() {
           alt=""
           className="absolute inset-0 h-full w-full object-cover"
         />
-        <div className="absolute inset-0 bg-gradient-to-br from-[#FAF9F6]/40 via-[#FAF9F6]/10 to-[#7B9A82]/20" />
+        <div className="absolute inset-0 bg-gradient-to-br from-background/40 via-background/10 to-primary/20" />
       </div>
     </div>
   );

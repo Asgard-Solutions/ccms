@@ -46,7 +46,7 @@ function statusBadge(status) {
     cancelled: "surface-danger-soft text-danger",
   };
   return (
-    <Badge className={`rounded-sm border-0 font-medium ${map[status] || "bg-stone-100"}`}>
+    <Badge className={`rounded-sm border-0 font-medium ${map[status] || "bg-muted"}`}>
       {status}
     </Badge>
   );
@@ -198,7 +198,7 @@ export default function Dashboard() {
                   <tr
                     key={a.id}
                     data-testid={`dashboard-appt-row-${a.id}`}
-                    className="border-b border-stone-100 last:border-b-0 hover:surface-muted/50"
+                    className="border-b border-border last:border-b-0 hover:surface-muted/50"
                   >
                     <td className="px-6 py-4 text-sm">
                       <div className="font-medium text-strong">

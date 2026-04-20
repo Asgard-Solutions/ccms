@@ -41,7 +41,7 @@ function EventList({ title, rows, emptyText, testId }) {
         {!rows?.length ? (
           <div className="text-sm text-muted-strong">{emptyText}</div>
         ) : (
-          <ul className="divide-y divide-stone-100 text-sm">
+          <ul className="divide-y divide-border text-sm">
             {rows.slice(0, 15).map((r, i) => (
               <li key={i} className="py-2">
                 <div className="flex items-start justify-between gap-3">
@@ -54,7 +54,7 @@ function EventList({ title, rows, emptyText, testId }) {
                       <div className="text-[11px] text-danger-soft">{r.reason}</div>
                     )}
                   </div>
-                  <time className="shrink-0 text-[11px] text-stone-400">
+                  <time className="shrink-0 text-[11px] text-soft">
                     {new Date(r.created_at).toLocaleString()}
                   </time>
                 </div>
@@ -187,7 +187,7 @@ export default function AccessReview() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base font-normal">
             <ShieldCheck className="h-4 w-4 text-muted-strong" /> Privileged users
-            <Badge className="bg-[#FDF0EA] text-danger-soft">{privileged.length}</Badge>
+            <Badge className="bg-accent text-accent-foreground">{privileged.length}</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -203,7 +203,7 @@ export default function AccessReview() {
             </thead>
             <tbody>
               {privileged.map((u, i) => (
-                <tr key={i} className="border-t border-stone-100">
+                <tr key={i} className="border-t border-border">
                   <td className="px-2 py-1 font-mono text-[11px]">{u.email}</td>
                   <td className="px-2 py-1">{u.name}</td>
                   <td className="px-2 py-1 text-xs">{u.role_key}</td>

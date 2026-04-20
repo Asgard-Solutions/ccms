@@ -89,7 +89,7 @@ export default function Notifications() {
             onClick={() => setFilter(f.v)}
             className={`rounded-sm border px-4 py-1.5 text-sm font-medium transition-colors ${
               filter === f.v
-                ? "border-[#7B9A82] surface-sage text-sage-deep"
+                ? "border-primary surface-sage text-sage-deep"
                 : "border-subtle bg-card text-muted-strong hover:surface-muted"
             }`}
           >
@@ -131,7 +131,7 @@ export default function Notifications() {
                         </span>
                         <span className="text-xs text-muted-strong">→ {n.to_address || "—"}</span>
                         {n.unmasked && (
-                          <span className="rounded-sm surface-warning px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#D4A373]">
+                          <span className="rounded-sm surface-warning px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
                             Unmasked
                           </span>
                         )}

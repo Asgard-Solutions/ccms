@@ -27,18 +27,18 @@ const STATUS_FLOW = {
 };
 const STATUS_CHIP = {
   received: "surface-sage text-sage-deep",
-  in_review: "surface-warning text-[#B5823E]",
-  approved: "bg-[#E8EEF3] text-[#425D7A]",
-  fulfilled: "bg-[#E4ECE6] text-[#3F6147]",
+  in_review: "surface-warning text-warning",
+  approved: "bg-info-soft text-info",
+  fulfilled: "bg-success-soft text-success",
   rejected: "surface-danger-soft text-danger",
-  withdrawn: "bg-stone-100 text-stone-600",
+  withdrawn: "bg-muted text-muted-foreground",
 };
 
 function StatusChip({ s }) {
   return (
     <span
       className={`inline-block rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
-        STATUS_CHIP[s] || "bg-stone-100"
+        STATUS_CHIP[s] || "bg-muted"
       }`}
     >
       {s}
@@ -86,7 +86,7 @@ function InventoryTab() {
                 <div className="font-['Outfit'] text-lg font-medium">{c.name}</div>
               </div>
               {c.phi && (
-                <span className="rounded-sm surface-warning px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[#D4A373]">
+                <span className="rounded-sm surface-warning px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-warning">
                   PHI
                 </span>
               )}
@@ -204,7 +204,7 @@ function NewRequestForm({ onCreated }) {
             type="submit"
             data-testid="new-request-submit"
             disabled={submitting}
-            className="h-9 w-full rounded-sm bg-[#1F2924] text-white hover:bg-[#0F1A15]"
+            className="h-9 w-full rounded-sm bg-primary text-primary-foreground hover:bg-sage-hover"
           >
             {submitting ? "Logging…" : "Log request"}
           </Button>
@@ -266,7 +266,7 @@ function RequestRow({ r, onChanged }) {
   return (
     <tr
       data-testid={`request-row-${r.id}`}
-      className="border-b border-stone-100 last:border-0 align-top"
+      className="border-b border-border last:border-0 align-top"
     >
       <td className="px-3 py-3">
         <div>{formatDateTime(r.created_at)}</div>
@@ -310,7 +310,7 @@ function RequestRow({ r, onChanged }) {
               data-testid={`fulfill-delete-${r.id}`}
               onClick={fulfillDelete}
               disabled={busy}
-              className="rounded-sm border border-[#C76D54] surface-danger-soft px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-danger"
+              className="rounded-sm border border-destructive surface-danger-soft px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-danger"
             >
               Fulfil delete
             </button>
@@ -435,7 +435,7 @@ export default function Privacy() {
         </p>
         <div
           data-testid="privacy-disclaimer"
-          className="mt-4 flex items-start gap-2 rounded-sm border border-[#EDE0C7] surface-warning p-3 text-xs text-[#8A6C33]"
+          className="mt-4 flex items-start gap-2 rounded-sm border border-border surface-warning p-3 text-xs text-warning"
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
           <span>
@@ -458,7 +458,7 @@ export default function Privacy() {
               onClick={() => setTab(t.v)}
               className={`inline-flex items-center gap-2 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors ${
                 tab === t.v
-                  ? "bg-[#1F2924] text-white"
+                  ? "bg-primary text-primary-foreground"
                   : "border border-subtle bg-card text-muted-strong hover:surface-muted"
               }`}
             >

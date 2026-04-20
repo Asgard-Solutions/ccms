@@ -45,6 +45,40 @@ public release yet — we're pre-1.0).
   (teal-400) in dark. Accent warmth shifts to copper
   (`#FAF0EB` / `#6B432B`). Radius base raised from 2px to 8px to match
   the "refined, not playful" shape language.
+- **Phase 2 theme-discipline sweep** — replaced **every remaining**
+  raw hex (`bg-[#…]`, `text-[#…]`, `border-[#…]`, `accent-[#…]`) and
+  raw Tailwind palette class (`stone-*`, `divide-stone-*`) across
+  `frontend/src/**` with semantic tokens (`bg-primary`,
+  `bg-destructive-soft`, `text-muted-foreground`, `text-warning`,
+  `bg-info-soft`, `border-border`, `divide-border`, …). Touched:
+  `ProtectedRoute`, `PatientDocumentsCard`, `Login`, `PasswordReset`,
+  `Calendar`, `RoleManagement`, `Appointments`, `SecurityConfig`,
+  `Security`, `AuditLog`, `Notifications`, `Elevation`,
+  `PatientDetail`, `Compliance`, `AccessReview`, `Privacy`,
+  `Patients`, `Register`, `Dashboard`, `PermissionMatrix`, `toast`.
+
+### Added (theme guardrail)
+- **`scripts/check_theme.py`** — Python CI guard. Scans
+  `frontend/src/**` for raw hex arbitrary values, forbidden Tailwind
+  palette families (slate / gray / stone / blue / red / etc.), and
+  inline `style={{ color: "#…" }}` usages. Exits non-zero on any
+  violation. Exempts the theme layer (`index.css`,
+  `tailwind.config.js`) and shadcn primitives
+  (`components/ui/**`). Runs as part of pre-commit and a new
+  `.github/workflows/theme-guard.yml` CI job.
+- **`.github/workflows/theme-guard.yml`** — runs `check_theme.py`
+  on every PR targeting main/master/develop.
+- **`.githooks/pre-commit`** — now runs both `check_docs.py` and
+  `check_theme.py --quiet`; blocks commits that introduce palette
+  violations (bypass with `--no-verify`).
+- **`.github/pull_request_template.md`** — new "Theme compliance"
+  section; every UI-touching PR confirms light/dark parity, focus
+  states, semantic token usage, and reference to the UI Review
+  Compliance Checklist.
+
+- **Tailwind config** — exposed `secondary.hover` token
+  (`bg-secondary-hover` utility) to cover the tab/pill pressed state
+  used by Privacy / Compliance / PasswordReset.
 
 - **Patient lookup workflow** — the `/patients` page is no longer a
   full-list dump. New `GET /api/patients/search` endpoint with:
