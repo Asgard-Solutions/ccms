@@ -1,6 +1,25 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-02-18 (Compliance foundation baseline)
+**Last updated:** 2026-04-20 (Chiro Software theme system adopted)
+
+## 0. Design system (binding)
+The Chiro Software design system is authoritative for every UI surface.
+
+- **Palette:** Slate + Teal + Copper (deprecated: sage + stone).
+- **Typography:** Outfit (display), Manrope (body), JetBrains Mono (technical).
+- **Sources of truth:** `/app/docs/theme/`
+  - `CHIRO_SOFTWARE_THEME_STANDARD.md`
+  - `CHIRO_THEME_ENGINEERING_IMPLEMENTATION_SPEC.md`
+  - `CHIRO_UI_REVIEW_AND_COMPLIANCE_CHECKLIST.md`
+- **Implementation:** three-layer CSS tokens in `frontend/src/index.css`
+  (foundation → semantic → component alias), mapped by
+  `frontend/tailwind.config.js` to semantic utilities (`bg-background`,
+  `bg-primary`, `bg-card`, `text-muted-foreground`, `rounded-sm/lg`,
+  `shadow-sm/md`, `font-display/body/mono`).
+- **Enforcement:** no raw hex or raw Tailwind palette (`bg-slate-500`,
+  `bg-blue-600`, `dark:bg-zinc-900`) in feature code. Every interactive
+  element needs a visible focus state. Every new component must ship
+  with light + dark parity.
 
 ## 1. Original problem statement
 Multi-tenant Chiropractic Clinic Management System on a microservices, event-driven architecture. Phase 1 delivered Identity / Patient / Scheduling / Communication. The HIPAA hardening pass added technical safeguards in line with 45 CFR §164.312.
@@ -32,6 +51,17 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 ### Phase 1 (2026-04-19)
 - Identity, Patient CRUD, Scheduling with conflict detection, mock notifications via in-process event bus
 - Sage + stone medical theme, 7 role-aware pages
+
+### Theme system adoption (2026-04-20)
+- Adopted Chiro Software Slate + Teal + Copper design system.
+- Rewrote `frontend/src/index.css` with foundations / semantic / alias
+  token layers and Outfit · Manrope · JetBrains Mono typography.
+- Extended `frontend/tailwind.config.js` with new semantic surfaces,
+  status colors, radius scale, shadow scale, and font families.
+- Preserved legacy `bg-sage`, `surface-raised`, `text-strong`, etc. as
+  aliases pointing to the new palette so all 22 existing pages inherit
+  the new brand without a file-by-file rewrite. Phase 2 will migrate
+  those class names to semantic utilities.
 
 ### Performance + scalability pass (2026-04-19)
 - **Redis** (supervisord-managed, `127.0.0.1:6379`, `maxmemory 128mb allkeys-lru`) for application cache + IP rate-limit buckets

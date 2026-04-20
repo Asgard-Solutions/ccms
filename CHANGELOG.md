@@ -12,6 +12,40 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Chiro Software Theme System (Slate + Teal + Copper)** — adopted the
+  binding design system defined in `/app/docs/theme/`:
+  - `CHIRO_SOFTWARE_THEME_STANDARD.md` — brand standard.
+  - `CHIRO_THEME_ENGINEERING_IMPLEMENTATION_SPEC.md` — engineering source
+    of truth.
+  - `CHIRO_UI_REVIEW_AND_COMPLIANCE_CHECKLIST.md` — pass/fail review tool.
+  - `docs/theme/README.md` — index + rule of adherence.
+- **Rewrote `frontend/src/index.css`** to the spec's three-layer token
+  architecture: foundation palette (slate / teal / copper / status) +
+  typography / spacing / radius / shadow primitives, semantic light +
+  dark tokens (shadcn HSL channels + hex), and component alias tokens
+  (`--sidebar-active-bg`, `--table-row-hover`, `--dialog-overlay`,
+  `--badge-premium-bg`, …).
+- **Extended `tailwind.config.js`** — semantic `surface`, `surface-2`,
+  `surface-3`, `border-strong`, `success`, `warning`, `info`,
+  `accent-strong`, and chart colors; radius scale (`xs`→`xl`); shadow
+  scale (`xs`→`lg`); font families (`display`, `body`, `mono`).
+- **Typography migration** — Outfit / Manrope / JetBrains Mono wired via
+  CSS variables; headings auto-render in Outfit, body in Manrope.
+- **Legacy sage utility classes preserved as brand-aliases** —
+  `text-sage`, `bg-sage`, `surface-sage`, `text-strong`, `surface-raised`,
+  etc. now point to the new slate+teal+copper values so the 22 existing
+  pages inherit the new brand without a file-by-file rewrite. A
+  future pass will migrate them to semantic Tailwind classes
+  (`bg-primary`, `text-foreground`, `bg-card`) per the spec.
+
+### Changed
+- **Brand direction** — deprecated the sage + stone palette in favor of
+  the premium Slate + Teal + Copper system. Primary brand color moves
+  from `#7B9A82` (sage) to `#14757C` (teal-700) in light and `#4CB5BA`
+  (teal-400) in dark. Accent warmth shifts to copper
+  (`#FAF0EB` / `#6B432B`). Radius base raised from 2px to 8px to match
+  the "refined, not playful" shape language.
+
 - **Patient lookup workflow** — the `/patients` page is no longer a
   full-list dump. New `GET /api/patients/search` endpoint with:
   - Global `q` plus per-field `name`, `phone`, `address`, `dob`.
