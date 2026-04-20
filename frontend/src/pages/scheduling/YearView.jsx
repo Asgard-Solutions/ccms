@@ -1,13 +1,26 @@
 import { useMemo } from "react";
 import { groupByDay, isoDateKey, isToday, MONTH_LONG } from "./dateHelpers";
 
+const MINI_WEEKDAYS = ["M", "T", "W", "T", "F", "S", "S"];
+
+function tintFor(count) {
+  if (count === 0) return "bg-muted text-muted-foreground/70 hover:bg-muted";
+  if (count <= 2) return "bg-primary/15 text-primary hover:bg-primary/25";
+  if (count <= 4) return "bg-primary/35 text-foreground hover:bg-primary/45";
+  return "bg-primary text-primary-foreground hover:brightness-110";
+}
+
 /**
- * Year view — 12 mini-month grids. Each day coloured by appointment presence:
- *  - empty -> muted background
- *  - >0 appts -> primary tint scaled slightly by intensity (1/2-3/4+)
- * Clicking any day opens Month view anchored to that month.
+ * Year view — 12 mini-month grids.
+ *
+ * Each day is an individual button that opens Day view (Task 5). A density
+ * tint (4 buckets) keeps the visual signal compact; the exact count is
+ * available on hover via the native `title` tooltip.
+ *
+ * The month header itself is a separate button that opens Month view for
+ * that month — avoiding nested-button invalid HTML.
  */
-export default function YearView({ date, appointments, onOpenMonth }) {
+export default function YearView({ date, appointments, onOpenDay, onOpenMonth }) {
   const year = date.getFullYear();
   const apptsByDay = useMemo(() => groupByDay(appointments), [appointments]);
 
@@ -29,49 +42,63 @@ export default function YearView({ date, appointments, onOpenMonth }) {
           if (!d) continue;
           totalMonth += (apptsByDay.get(isoDateKey(d)) || []).length;
         }
+
         return (
-          <button
+          <div
             key={name}
-            type="button"
             data-testid={`scheduling-year-month-${mi}`}
-            onClick={() => onOpenMonth?.(first)}
-            className="group rounded-sm border border-border bg-card p-3 text-left transition-colors hover:border-primary"
+            className="rounded-sm border border-border bg-card p-3"
           >
-            <div className="mb-2 flex items-baseline justify-between">
-              <span className="font-display text-sm font-medium">{name}</span>
-              <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary">
+            <div className="mb-2 flex items-baseline justify-between gap-2">
+              <button
+                type="button"
+                data-testid={`scheduling-year-month-header-${mi}`}
+                onClick={() => onOpenMonth?.(first)}
+                className="font-display text-sm font-medium hover:text-primary"
+              >
+                {name}
+              </button>
+              <span
+                data-testid={`scheduling-year-month-total-${mi}`}
+                className="rounded-sm bg-muted px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground"
+              >
                 {totalMonth} appt{totalMonth === 1 ? "" : "s"}
               </span>
             </div>
             <div className="grid grid-cols-7 gap-[2px] text-[10px]">
-              {["M","T","W","T","F","S","S"].map((l, i) => (
-                <div key={`l-${mi}-${i}`} className="text-center text-muted-foreground/70">{l}</div>
+              {MINI_WEEKDAYS.map((l, i) => (
+                <div key={`l-${mi}-${i}`} className="text-center text-muted-foreground/70">
+                  {l}
+                </div>
               ))}
               {cells.map((d, i) => {
                 if (!d) return <div key={`b-${mi}-${i}`} className="h-4" />;
-                const count = (apptsByDay.get(isoDateKey(d)) || []).length;
-                const tint =
-                  count === 0
-                    ? "bg-muted text-muted-foreground/70"
-                    : count <= 2
-                    ? "bg-primary/15 text-primary"
-                    : count <= 4
-                    ? "bg-primary/35 text-primary-foreground"
-                    : "bg-primary text-primary-foreground";
+                const key = isoDateKey(d);
+                const count = (apptsByDay.get(key) || []).length;
+                const tint = tintFor(count);
+                const label = `${d.toLocaleDateString("en-US", {
+                  weekday: "short",
+                  month: "short",
+                  day: "numeric",
+                })} — ${count} appointment${count === 1 ? "" : "s"}`;
                 return (
-                  <div
-                    key={isoDateKey(d)}
-                    className={`flex h-4 items-center justify-center rounded-[3px] ${tint} ${
+                  <button
+                    key={key}
+                    type="button"
+                    data-testid={`scheduling-year-day-${key}`}
+                    onClick={() => onOpenDay?.(d)}
+                    title={label}
+                    aria-label={label}
+                    className={`flex h-4 items-center justify-center rounded-[3px] text-[10px] transition-colors ${tint} ${
                       isToday(d) ? "outline outline-1 outline-primary" : ""
                     }`}
-                    title={`${d.toLocaleDateString()} — ${count} appt${count === 1 ? "" : "s"}`}
                   >
                     {d.getDate()}
-                  </div>
+                  </button>
                 );
               })}
             </div>
-          </button>
+          </div>
         );
       })}
     </div>

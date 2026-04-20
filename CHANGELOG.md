@@ -11,6 +11,21 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Scheduling Month view polish (Task 4)** — `MonthView` cells now
+  show up to 2 compact appointment previews (time + patient) and a
+  `+N more` hint when the day has more. Count badge remains in the
+  cell header. Empty days stay visually calm with an en-dash. Today's
+  date is rendered as a primary-filled pill. Adjacent-month filler
+  cells are muted. Clicking any cell opens Day view for that date.
+- **Scheduling Year view polish (Task 5)** — each day in every
+  mini-month is now its own `<button>` that opens Day view for that
+  date. Density tint has four buckets (0 / 1–2 / 3–4 / 5+) and the
+  exact count is surfaced via `title` tooltip + `aria-label` for
+  screen readers. The month header is now a separate `<button>` that
+  jumps to Month view — avoiding the previous invalid nested-button
+  structure. Per-month totals remain visible at the top-right of
+  each card, so macro scanning still works at a glance.
+
 - **Unified Scheduling module** — the separate `Appointments` table page
   and `Calendar` page are merged into a single `/scheduling` experience
   with Day / Week / Month / Year view toggles, shared date-navigation

@@ -103,6 +103,7 @@ export default function SchedulingPage() {
             <YearView
               date={date}
               appointments={appointments}
+              onOpenDay={(d) => goToDay(d)}
               onOpenMonth={(d) => goToMonth(d)}
             />
           )}
