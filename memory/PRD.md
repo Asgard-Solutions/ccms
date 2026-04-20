@@ -142,7 +142,15 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **Docs**: `/app/memory/OPERATIONAL_SECURITY_READINESS.md` — event catalogue, metric catalogue, incident triage recipes, external tooling gaps, test checklist.
 - **Verified**: 17/17 new tests + 88/88 regression tests pass (iter_5/6/7/8). One critical bug caught + fixed (suspicious() signature kwarg clash) then re-verified green in iteration_10.
 
-## 12. Key reference docs
+## 12. TLS / transport security posture (2026-02-18)
+- **`core/security_headers.py` middleware**: attaches on every response — `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy` (geolocation/mic/camera/payment/usb/accel/gyro/magnet all `()`), default **CSP** (`default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline'; connect-src 'self' https:; font-src 'self' data: https:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'; upgrade-insecure-requests`), COOP `same-origin`, CORP `same-site`. Installed after CORS so CORS preflights also carry security headers.
+- **HSTS** (`Strict-Transport-Security: max-age=15552000; includeSubDomains; preload`) only emitted when `APP_ENV=production` AND effective scheme (`x-forwarded-proto`) is `https`. Dev never advertises HSTS.
+- **Env hooks**: `APP_ENV`, `HSTS_MAX_AGE_SECONDS`, `CSP_EXTRA` for per-env overrides without code changes.
+- **Admin diagnostic**: `GET /api/compliance/transport` returns app_env, observed scheme + forwarded headers, cookie flags, HSTS config, CSP preview, transport warnings. 401 anon / 403 non-admin / 200 admin.
+- **Docs**: `/app/memory/TLS_AND_TRANSPORT_SECURITY.md` — ingress vs app responsibilities, what is/isn't in scope, production checklist.
+- **Verified** (iteration_11): 17/17 new tests + 102/102 regression in isolation. Frontend renders with strict CSP, admin login lands on dashboard, all admin pages (Patients / Compliance / Security / SecurityConfig / Privacy) load with **zero CSP violations**.
+
+## 13. Key reference docs
 - `/app/memory/HIPAA_COMPLIANCE.md` — full safeguard inventory (implemented vs. external)
 - `/app/memory/test_credentials.md` — demo accounts
 - `/app/test_reports/iteration_2.json` — testing agent report (24/24)
