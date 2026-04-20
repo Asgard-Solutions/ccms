@@ -15,10 +15,11 @@ from fastapi import APIRouter, FastAPI, Request  # noqa: E402
 from starlette.middleware.cors import CORSMiddleware  # noqa: E402
 
 from core import metrics  # noqa: E402
-from core.config import ensure_required as ensure_config  # noqa: E402
+from core.config import ensure_required as ensure_config, transport_warnings  # noqa: E402
 from core.db import close_client, create_indexes  # noqa: E402
 from core.error_handlers import install as install_error_handler  # noqa: E402
 from core.logging_setup import configure as configure_logging  # noqa: E402
+from core.security_headers import install as install_security_headers  # noqa: E402
 from core.redis_client import close as close_redis, ping as redis_ping  # noqa: E402
 from services.audit.router import router as audit_router  # noqa: E402
 from services.communication.router import router as communication_router  # noqa: E402
@@ -110,11 +111,18 @@ app.add_middleware(
     expose_headers=["X-Reauth-Required"],
 )
 
+# Layered security response headers. Must run AFTER CORSMiddleware is added
+# so CORS preflight handlers still work, but before auth — because FastAPI
+# middlewares execute in reverse registration order.
+install_security_headers(app)
+
 
 @app.on_event("startup")
 async def on_startup():
     configure_logging()
     ensure_config()  # fail-fast on missing MONGO_URL / DB_NAME / JWT_SECRET / DATA_ENCRYPTION_KEY
+    for warning in transport_warnings():
+        logger.warning("Transport posture: %s", warning)
     await create_indexes()
     register_comm_subscribers()
     await seed_identity()

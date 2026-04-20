@@ -102,3 +102,41 @@ def describe() -> dict:
             and env_label == "production"
         ),
     }
+
+
+def transport_warnings() -> list[str]:
+    """Detect deployment assumptions that are unsafe in production.
+
+    Returns a list of human-readable warning strings. Empty list = OK.
+    In `APP_ENV=production` these are logged at WARNING on startup; in dev
+    they're informational."""
+    warnings: list[str] = []
+    env = (os.environ.get("APP_ENV") or "dev").strip().lower()
+    is_prod = env == "production"
+
+    frontend_url = (os.environ.get("FRONTEND_URL") or "").strip()
+    if is_prod and not frontend_url:
+        warnings.append("FRONTEND_URL is not set — CORS will fall back to a wildcard or disabled credentials; production must lock origins.")
+    if is_prod and frontend_url and not frontend_url.lower().startswith("https://"):
+        warnings.append(f"FRONTEND_URL is not HTTPS ({frontend_url!r}) — secure cookies will be rejected by browsers.")
+
+    cors_raw = (os.environ.get("CORS_ORIGINS") or "*").strip()
+    if is_prod and cors_raw == "*":
+        warnings.append("CORS_ORIGINS='*' in production — set explicit allowed origins.")
+
+    if is_prod and (os.environ.get("TRUSTED_PROXY_COUNT") or "") == "":
+        warnings.append(
+            "TRUSTED_PROXY_COUNT not set — x-forwarded-for / x-forwarded-proto are read verbatim. "
+            "Set to the number of proxies in front of the app so client IPs / schemes cannot be spoofed."
+        )
+
+    if is_prod and not (os.environ.get("HSTS_MAX_AGE_SECONDS") or "").strip():
+        # Default still emitted by middleware; only warn if operator wants to customise.
+        pass
+
+    if is_prod and (os.environ.get("COOKIE_SAMESITE") or "none").lower() == "none":
+        # Current default in the app is SameSite=None (+ Secure) which is required
+        # for cross-origin SPA flows. Just surface it so operators see the choice.
+        pass
+
+    return warnings

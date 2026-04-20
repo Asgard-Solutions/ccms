@@ -20,12 +20,13 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 
 from core import config, key_manager
 from core.db import get_db_read
 from core.deps import require_role
 from core.redis_client import ping as redis_ping
+from core.security_headers import DEFAULT_HSTS_MAX_AGE
 
 router = APIRouter(prefix="/compliance", tags=["compliance"])
 
@@ -436,3 +437,60 @@ async def monitoring_hooks(_admin: dict = Depends(require_role("admin"))):
             "GET /api/metrics (Prometheus text exposition)",
         ],
     }
+
+
+# ---------- Transport / TLS posture ----------
+
+@router.get("/transport")
+async def transport_posture(request: Request, _admin: dict = Depends(require_role("admin"))):
+    """Current transport posture: cookie flags, security headers emitted by
+    the app, and any detected deployment warnings.
+
+    True TLS version / cipher enforcement lives at the ingress layer — see
+    `/app/memory/TLS_AND_TRANSPORT_SECURITY.md`. This endpoint only reports
+    what the application can see and control from inside the process."""
+    xfp = request.headers.get("x-forwarded-proto")
+    effective_scheme = (xfp or request.url.scheme or "").split(",")[0].strip().lower()
+    app_env = (os.environ.get("APP_ENV") or "dev").strip().lower()
+    trusted_proxy = (os.environ.get("TRUSTED_PROXY_COUNT") or "").strip()
+    frontend_url = (os.environ.get("FRONTEND_URL") or "").strip()
+
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "disclaimer": (
+            "The application does not terminate TLS. TLS 1.3 + cipher "
+            "policy + certificate lifecycle are ingress / load-balancer / "
+            "reverse-proxy responsibilities. This view shows app-layer "
+            "signals only."
+        ),
+        "app_env": app_env,
+        "observed_scheme": effective_scheme,
+        "scheme_source": "x-forwarded-proto" if xfp else "request.url.scheme",
+        "frontend_url": frontend_url or None,
+        "frontend_url_is_https": frontend_url.lower().startswith("https://") if frontend_url else None,
+        "trusted_proxy_count_configured": bool(trusted_proxy),
+        "cookie_flags": {
+            "secure": True,
+            "httponly": True,
+            "samesite": "None",
+            "path": "/",
+            "note": "Secure=True is hardcoded in services/identity/router.py::_cookie_kwargs; browsers will reject Secure+SameSite=None over plaintext, so ingress must terminate TLS before cookies reach this app.",
+        },
+        "security_headers_emitted_by_app": [
+            "Strict-Transport-Security (production + HTTPS only)",
+            "X-Content-Type-Options: nosniff",
+            "X-Frame-Options: DENY",
+            "Referrer-Policy: strict-origin-when-cross-origin",
+            "Permissions-Policy: geolocation=(), microphone=(), camera=(), payment=(), usb=(), accelerometer=(), gyroscope=(), magnetometer=()",
+            "Content-Security-Policy (default-src 'self'; frame-ancestors 'none'; upgrade-insecure-requests; …)",
+            "Cross-Origin-Opener-Policy: same-origin",
+            "Cross-Origin-Resource-Policy: same-site",
+        ],
+        "hsts": {
+            "max_age_seconds_default": DEFAULT_HSTS_MAX_AGE,
+            "emitted_only_when": "APP_ENV=production AND effective scheme is https",
+        },
+        "transport_warnings": config.transport_warnings(),
+        "reference": "/app/memory/TLS_AND_TRANSPORT_SECURITY.md",
+    }
+
