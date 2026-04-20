@@ -12,6 +12,66 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Billing Phase 4 — Claim submission scaffolding, outcomes, work
+  queues, timeline (iteration 27).**
+  - New `claim_submissions` collection (tenant-scoped) tracking every
+    manual submission attempt with method (`manual_paper`,
+    `manual_portal`, `batch_file`), external reference, payload
+    (JSON + 837P preview), submitter and timestamp.
+  - Claim status machine expanded: added `pending` state between
+    `submitted`/`accepted` and terminal adjudication. Transitions:
+    submitted → accepted / rejected / pending; accepted → pending /
+    paid / partially_paid / denied; pending → accepted / paid /
+    partially_paid / denied / rejected.
+  - New endpoints (all tenant-scoped, auditable):
+    - `POST /api/billing/claims/{id}/submissions` — creates a
+      submission record and advances `ready → submitted`. Rejects
+      non-ready claims with 409.
+    - `GET /api/billing/claims/{id}/submissions` — returns submission
+      history (heavy payload fields omitted).
+    - `GET /api/billing/claims/{id}/submissions/{sub_id}/payload` —
+      returns the full JSON + 837P preview.
+    - `POST /api/billing/claims/{id}/submissions/{sub_id}/outcome` —
+      records `accepted/rejected/pending/paid/partially_paid/denied`
+      and auto-transitions the claim through the canonical state
+      machine. Captures payer_reference, denial_code, paid_cents.
+      Refuses to re-record on an already-closed submission.
+    - `GET /api/billing/claims/{id}/timeline` — merged chronology of
+      history entries, scrubber runs and submissions (with outcomes).
+    - `PUT /api/billing/claims/{id}/assignment` — sets `assigned_to`
+      user id; rejects unknown assignees with 400.
+    - `GET /api/billing/claims/queues/{queue_name}` — three named
+      queues (`pending-submission`, `rejected`, `follow-up`) with
+      filters `payer_id`, `age_days`, `status_in`, `assigned_to`.
+      Follow-up rule = `(submitted && last_submission_at < cutoff)
+      OR (rejected/denied && updated_at < cutoff)` with
+      `DEFAULT_FOLLOWUP_DAYS = 14`.
+  - Payload builders in new `services/billing/submission.py`:
+    - `build_json_payload()` — flat schema `ccms.claim.v1`.
+    - `build_x12_837p_preview()` — lightweight ANSI X12 segments
+      (ISA / GS / ST / BHT / NM1 / CLM / HI / LX / SV1 / DTP / SE / GE / IEA).
+
+### Frontend
+  - `ClaimWorkflow.jsx` (new) — Assignee input, New submission dialog
+    (method, external reference, notes), Outcome dialog (auto-hides
+    denial code / paid fields based on selected outcome), Payload
+    dialog with JSON / 837P preview tabs, submissions table.
+  - `ClaimsQueue.jsx` gains tabs (All / Pending / Rejected / Follow-up)
+    and a filter bar (status, payer, age > days, assignee). Named
+    queues call the new `/queues/{name}` endpoint; the All tab keeps
+    using the original listing endpoint so its behavior is unchanged.
+  - `useClaims.js` adds hooks/helpers for submissions, outcomes,
+    timeline, assignment, and a `useClaimQueue()` hook.
+
+### Tests
+  - `backend/tests/test_billing_phase4.py` — 22 passing
+    (status transition matrix including new `pending`, payload
+    builders, submission lifecycle, outcome lifecycle, timeline
+    merging, assignment + audit, named queue filters, tenant
+    isolation).
+  - Combined billing Phase 3 + Phase 4 pytest suite: **38 passing**.
+
+### Added
 - **Billing Phase 3 — Claims UI wired into app (iteration 26).**
   - New routes `GET /billing/claims` (queue) and `GET /billing/claims/:id`
     (detail) registered in `App.js` under `admin|doctor|staff` RBAC.

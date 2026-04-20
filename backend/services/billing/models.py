@@ -157,6 +157,7 @@ ClaimStatus = Literal[
     "ready",          # passed internal scrubbing, awaiting submission
     "submitted",      # handed off to payer / clearinghouse
     "accepted",       # payer acknowledged receipt
+    "pending",        # payer working the claim (after ack, pre-adjudication)
     "rejected",       # payer rejected at intake (syntax/eligibility) — fixable
     "paid",           # remit received, fully adjudicated paid
     "partially_paid",
@@ -169,8 +170,9 @@ CLAIM_TRANSITIONS: dict[str, set[str]] = {
     "draft": {"ready", "validation_failed", "closed"},
     "validation_failed": {"draft", "ready", "closed"},
     "ready": {"submitted", "draft", "validation_failed", "closed"},
-    "submitted": {"accepted", "rejected"},
-    "accepted": {"paid", "partially_paid", "denied"},
+    "submitted": {"accepted", "rejected", "pending"},
+    "accepted": {"paid", "partially_paid", "denied", "pending"},
+    "pending": {"accepted", "paid", "partially_paid", "denied", "rejected"},
     "rejected": {"draft", "validation_failed", "ready", "closed"},
     "partially_paid": {"paid", "denied", "appealed", "closed"},
     "paid": {"closed"},
@@ -581,8 +583,64 @@ class ClaimPublic(BaseModel):
     validation_error_count: int = 0
     validation_warning_count: int = 0
     validation_last_run_at: str | None = None
+    # Phase 4 — operational workflow fields
+    assigned_to: str | None = None
+    last_submission_at: str | None = None
+    submission_count: int = 0
     created_at: str
     updated_at: str
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Claim submissions + outcomes
+# ---------------------------------------------------------------------------
+SubmissionMethod = Literal["manual_paper", "manual_portal", "batch_file"]
+SubmissionOutcomeKind = Literal[
+    "accepted", "rejected", "pending",
+    "paid", "partially_paid", "denied",
+]
+
+
+class ClaimSubmissionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    method: SubmissionMethod
+    external_reference: str | None = Field(default=None, max_length=60)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ClaimSubmissionOutcome(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    outcome: SubmissionOutcomeKind
+    payer_reference: str | None = Field(default=None, max_length=60)
+    denial_code: str | None = Field(default=None, max_length=20)
+    paid_cents: int | None = Field(default=None, ge=0, le=10_000_000)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ClaimSubmissionPublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    tenant_id: str
+    claim_id: str
+    method: SubmissionMethod
+    external_reference: str | None = None
+    submitted_at: str
+    submitted_by: str
+    payload_format: str          # "json" | "x12-837p-preview"
+    payload_size_bytes: int
+    # Outcome fields (populated once recorded)
+    outcome: SubmissionOutcomeKind | None = None
+    outcome_at: str | None = None
+    outcome_by: str | None = None
+    payer_reference: str | None = None
+    denial_code: str | None = None
+    paid_cents: int | None = None
+    notes: str | None = None
+
+
+class ClaimAssignmentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    assigned_to: str | None = None
 
 
 # ---------------------------------------------------------------------------

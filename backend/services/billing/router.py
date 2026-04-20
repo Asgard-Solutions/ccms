@@ -24,12 +24,23 @@ from core.tenant_scope import scoped_filter, stamp_for_write
 from services.authz.policy import require_permission
 from services.billing import transitions
 from services.billing.ledger import build_patient_ledger
+from services.billing.submission import (
+    DEFAULT_FOLLOWUP_DAYS,
+    build_json_payload,
+    build_x12_837p_preview,
+    followup_claim_ids,
+    followup_threshold_iso,
+)
 from services.billing.models import (
     AdjustmentCreate,
     AdjustmentPublic,
+    ClaimAssignmentUpdate,
     ClaimCreate,
     ClaimPublic,
     ClaimStatus,
+    ClaimSubmissionCreate,
+    ClaimSubmissionOutcome,
+    ClaimSubmissionPublic,
     DenialWorkItemPublic,
     DEFAULT_CURRENCY,
     InvoiceCreate,
@@ -2314,4 +2325,471 @@ async def replace_claim_lines(
         metadata={"count": len(line_docs), "billed_cents": total_billed},
     )
     return {"ok": True, "count": len(line_docs), "billed_cents": total_billed}
+
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — Submissions, outcomes, timeline, work queues, assignment
+# ---------------------------------------------------------------------------
+# Map each outcome kind to the next claim status. Reject/accept/pending
+# are front-line transitions; paid/denied are back-end adjudication.
+_OUTCOME_TO_STATUS: dict[str, str] = {
+    "accepted": "accepted",
+    "rejected": "rejected",
+    "pending": "pending",
+    "paid": "paid",
+    "partially_paid": "partially_paid",
+    "denied": "denied",
+}
+
+
+async def _load_submission_context(db, ctx: TenantContext, claim: dict):
+    """Pull patient + payer + policy + dx + lines for payload builds."""
+    tid = ctx.tenant_id
+    patient = await db.patients.find_one(
+        {"id": claim.get("patient_id"), "tenant_id": tid}, {"_id": 0},
+    ) if claim.get("patient_id") else None
+    payer = await db.payers.find_one(
+        {"id": claim.get("payer_id"), "tenant_id": tid}, {"_id": 0},
+    ) if claim.get("payer_id") else None
+    policy = await db.insurance_policies.find_one(
+        {"id": claim.get("policy_id"), "tenant_id": tid}, {"_id": 0},
+    ) if claim.get("policy_id") else None
+    diagnoses = [d async for d in db.claim_diagnoses.find(
+        {"tenant_id": tid, "claim_id": claim["id"]}, {"_id": 0},
+    ).sort([("sequence", 1)])]
+    lines = [ln async for ln in db.claim_lines.find(
+        {"tenant_id": tid, "claim_id": claim["id"]}, {"_id": 0},
+    ).sort([("sequence", 1)])]
+    # Attach modifiers to each line (phase 3 stored them separately).
+    for ln in lines:
+        mods = [m async for m in db.claim_line_modifiers.find(
+            {"tenant_id": tid, "claim_line_id": ln["id"]}, {"_id": 0},
+        ).sort([("sequence", 1)])]
+        ln["modifiers"] = [m["modifier_code"] for m in mods]
+    return patient, payer, policy, diagnoses, lines
+
+
+@router.post(
+    "/claims/{claim_id}/submissions",
+    response_model=ClaimSubmissionPublic,
+    status_code=201,
+)
+async def create_claim_submission(
+    claim_id: str,
+    body: ClaimSubmissionCreate,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "submit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Record a manual submission attempt. Advances the claim
+    `ready → submitted` (or `rejected → submitted` for resubmissions).
+    Persists both JSON export and 837P preview on the submission row."""
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+
+    # Only certain statuses may be submitted. Use the canonical state
+    # machine so resubmissions from rejected are blocked unless caller
+    # first moved the claim back to ready.
+    current = claim["status"]
+    if current not in ("ready",):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Claim in status '{current}' cannot be submitted; "
+            "transition to 'ready' first.",
+        )
+    new_status = transitions.http_advance("claim", current, "submitted")
+
+    patient, payer, policy, diagnoses, lines = \
+        await _load_submission_context(db, ctx, claim)
+
+    payload_json = build_json_payload(
+        claim=claim, diagnoses=diagnoses, lines=lines,
+        patient=patient, payer=payer, policy=policy,
+    )
+    payload_x12 = build_x12_837p_preview(
+        claim=claim, diagnoses=diagnoses, lines=lines,
+        patient=patient, payer=payer, policy=policy,
+    )
+
+    now = _now()
+    sub_id = str(uuid.uuid4())
+    sub_doc = stamp_for_write({
+        "id": sub_id,
+        "claim_id": claim_id,
+        "method": body.method,
+        "external_reference": body.external_reference,
+        "submitted_at": now,
+        "submitted_by": user["id"],
+        "payload_format": "json+x12-837p-preview",
+        "payload_json": payload_json,
+        "payload_x12": payload_x12,
+        "payload_size_bytes": len(payload_x12),
+        "outcome": None,
+        "outcome_at": None,
+        "outcome_by": None,
+        "payer_reference": None,
+        "denial_code": None,
+        "paid_cents": None,
+        "notes": body.notes,
+        "created_at": now,
+        "updated_at": now,
+    }, ctx, location_id=claim.get("location_id"))
+    await db.claim_submissions.insert_one(sub_doc)
+
+    await db.claims.update_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id},
+        {"$set": {
+            "status": new_status,
+            "submitted_at": now,
+            "last_submission_at": now,
+            "updated_at": now,
+            "updated_by": user["id"],
+         },
+         "$inc": {"submission_count": 1},
+         "$push": {"history": _history_entry(
+             user, "submitted",
+             method=body.method,
+             submission_id=sub_id,
+             external_reference=body.external_reference,
+             from_status=current, to_status=new_status,
+         )}},
+    )
+    await audit_success(
+        user, "billing.claim.submission_created", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={"submission_id": sub_id, "method": body.method,
+                  "external_reference": body.external_reference,
+                  "from": current, "to": new_status},
+    )
+    fresh = await db.claim_submissions.find_one(
+        {"id": sub_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    # Response: exclude heavy payload fields (accessible via dedicated
+    # `/payload` endpoint if needed later).
+    out = {k: v for k, v in fresh.items()
+           if k not in ("payload_json", "payload_x12")}
+    return out
+
+
+@router.get(
+    "/claims/{claim_id}/submissions",
+    response_model=list[ClaimSubmissionPublic],
+)
+async def list_claim_submissions(
+    claim_id: str,
+    user: dict = Depends(require_permission("claim", "read")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+    rows = [s async for s in db.claim_submissions.find(
+        {"tenant_id": ctx.tenant_id, "claim_id": claim_id},
+        {"_id": 0, "payload_json": 0, "payload_x12": 0},
+    ).sort([("submitted_at", -1)])]
+    return rows
+
+
+@router.get("/claims/{claim_id}/submissions/{sub_id}/payload")
+async def read_submission_payload(
+    claim_id: str,
+    sub_id: str,
+    user: dict = Depends(require_permission("claim", "read")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Return the JSON + X12 preview. Separated from the list endpoint
+    so the default queue/list responses stay light."""
+    db = tenant_db(ctx.tenant_id)
+    row = await db.claim_submissions.find_one(
+        {"id": sub_id, "claim_id": claim_id,
+         "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Submission not found")
+    return {
+        "id": row["id"],
+        "claim_id": row["claim_id"],
+        "payload_json": row.get("payload_json"),
+        "payload_x12": row.get("payload_x12"),
+        "payload_format": row.get("payload_format"),
+        "payload_size_bytes": row.get("payload_size_bytes"),
+    }
+
+
+@router.post(
+    "/claims/{claim_id}/submissions/{sub_id}/outcome",
+    response_model=ClaimSubmissionPublic,
+)
+async def record_submission_outcome(
+    claim_id: str,
+    sub_id: str,
+    body: ClaimSubmissionOutcome,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "correct_resubmit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+    sub = await db.claim_submissions.find_one(
+        {"id": sub_id, "claim_id": claim_id,
+         "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    if not sub:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Submission not found")
+    if sub.get("outcome"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Submission already has outcome '{sub['outcome']}'",
+        )
+
+    target_status = _OUTCOME_TO_STATUS[body.outcome]
+    new_status = transitions.http_advance(
+        "claim", claim["status"], target_status,
+    )
+
+    now = _now()
+    sub_set = {
+        "outcome": body.outcome,
+        "outcome_at": now,
+        "outcome_by": user["id"],
+        "payer_reference": body.payer_reference,
+        "denial_code": body.denial_code,
+        "paid_cents": body.paid_cents,
+        "notes": body.notes or sub.get("notes"),
+        "updated_at": now,
+    }
+    await db.claim_submissions.update_one(
+        {"id": sub_id, "tenant_id": ctx.tenant_id}, {"$set": sub_set},
+    )
+
+    claim_set: dict = {
+        "status": new_status,
+        "updated_at": now,
+        "updated_by": user["id"],
+    }
+    if body.outcome == "accepted":
+        claim_set["accepted_at"] = now
+    if body.outcome in ("paid", "partially_paid") and body.paid_cents:
+        claim_set["paid_cents"] = body.paid_cents
+    if body.outcome in ("denied", "rejected") and body.denial_code:
+        claim_set["last_denial_code"] = body.denial_code
+
+    await db.claims.update_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id},
+        {"$set": claim_set,
+         "$push": {"history": _history_entry(
+             user, "outcome_recorded",
+             submission_id=sub_id,
+             outcome=body.outcome,
+             payer_reference=body.payer_reference,
+             denial_code=body.denial_code,
+             paid_cents=body.paid_cents,
+             from_status=claim["status"], to_status=new_status,
+         )}},
+    )
+    await audit_success(
+        user, "billing.claim.outcome_recorded", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={"submission_id": sub_id, "outcome": body.outcome,
+                  "from": claim["status"], "to": new_status},
+    )
+    fresh = await db.claim_submissions.find_one(
+        {"id": sub_id, "tenant_id": ctx.tenant_id},
+        {"_id": 0, "payload_json": 0, "payload_x12": 0},
+    )
+    return fresh
+
+
+@router.get("/claims/{claim_id}/timeline")
+async def read_claim_timeline(
+    claim_id: str,
+    user: dict = Depends(require_permission("claim", "read")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Return a unified timeline: claim history entries, scrubber runs,
+    and submission records — all sorted chronologically with actor +
+    timestamp. Heavy payload fields are intentionally omitted."""
+    db = tenant_db(ctx.tenant_id)
+    # IMPORTANT: fetch the raw doc (including history) — the default
+    # `_public()` helper strips history.
+    claim = await db.claims.find_one(
+        scoped_filter({"id": claim_id}, ctx, location_scoped=False),
+        {"_id": 0},
+    )
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+
+    entries: list[dict] = []
+    for h in claim.get("history", []) or []:
+        entries.append({
+            "kind": "history",
+            "at": h.get("at"),
+            "by": h.get("by"),
+            "action": h.get("action"),
+            "from_status": h.get("from_status"),
+            "to_status": h.get("to_status"),
+            "metadata": {k: v for k, v in h.items()
+                         if k not in {"at", "by", "action",
+                                      "from_status", "to_status"}},
+        })
+
+    async for run in db.claim_validation_runs.find(
+        {"tenant_id": ctx.tenant_id, "claim_id": claim_id}, {"_id": 0},
+    ).sort([("run_at", -1)]):
+        entries.append({
+            "kind": "validation_run",
+            "at": run.get("run_at"),
+            "by": run.get("run_by"),
+            "action": "scrubber_run",
+            "metadata": {
+                "error_count": len(run.get("errors", []) or []),
+                "warning_count": len(run.get("warnings", []) or []),
+                "top_codes": [e.get("code") for e in (run.get("errors") or [])[:3]],
+            },
+        })
+
+    async for sub in db.claim_submissions.find(
+        {"tenant_id": ctx.tenant_id, "claim_id": claim_id},
+        {"_id": 0, "payload_json": 0, "payload_x12": 0},
+    ).sort([("submitted_at", -1)]):
+        entries.append({
+            "kind": "submission",
+            "at": sub.get("submitted_at"),
+            "by": sub.get("submitted_by"),
+            "action": "submission_created",
+            "metadata": {
+                "submission_id": sub.get("id"),
+                "method": sub.get("method"),
+                "external_reference": sub.get("external_reference"),
+                "payload_size_bytes": sub.get("payload_size_bytes"),
+            },
+        })
+        if sub.get("outcome_at"):
+            entries.append({
+                "kind": "submission_outcome",
+                "at": sub.get("outcome_at"),
+                "by": sub.get("outcome_by"),
+                "action": "outcome_recorded",
+                "metadata": {
+                    "submission_id": sub.get("id"),
+                    "outcome": sub.get("outcome"),
+                    "payer_reference": sub.get("payer_reference"),
+                    "denial_code": sub.get("denial_code"),
+                    "paid_cents": sub.get("paid_cents"),
+                },
+            })
+
+    entries.sort(key=lambda e: e.get("at") or "", reverse=True)
+    return {
+        "claim_id": claim_id,
+        "current_status": claim["status"],
+        "entries": entries,
+    }
+
+
+@router.put("/claims/{claim_id}/assignment", response_model=ClaimPublic)
+async def update_claim_assignment(
+    claim_id: str,
+    body: ClaimAssignmentUpdate,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "correct_resubmit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+
+    # Verify the assignee exists on this tenant (optional hygiene).
+    if body.assigned_to:
+        assignee = await db.users.find_one(
+            {"id": body.assigned_to, "tenant_id": ctx.tenant_id},
+            {"_id": 0, "id": 1},
+        )
+        if not assignee:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Assignee not found on this tenant",
+            )
+
+    now = _now()
+    await db.claims.update_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id},
+        {"$set": {"assigned_to": body.assigned_to,
+                  "updated_at": now, "updated_by": user["id"]},
+         "$push": {"history": _history_entry(
+             user, "assignment_changed",
+             from_assignee=claim.get("assigned_to"),
+             to_assignee=body.assigned_to,
+         )}},
+    )
+    await audit_success(
+        user, "billing.claim.assignment_changed", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={"from": claim.get("assigned_to"),
+                  "to": body.assigned_to},
+    )
+    fresh = await db.claims.find_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    return _public(fresh)
+
+
+@router.get("/claims/queues/{queue_name}", response_model=list[ClaimPublic])
+async def read_claim_queue(
+    queue_name: str,
+    payer_id: str | None = None,
+    age_days: int | None = Query(default=None, ge=0, le=365),
+    assigned_to: str | None = None,
+    status_in: str | None = Query(default=None, description="comma-separated statuses"),
+    limit: int = Query(default=100, ge=1, le=500),
+    user: dict = Depends(require_permission("claim", "read")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Named work queues:
+      * `pending-submission` — statuses ready, validation_failed
+      * `rejected` — statuses rejected, denied
+      * `follow-up` — stale submitted/rejected/denied claims per the
+        follow-up rule in submission.py
+    """
+    db = tenant_db(ctx.tenant_id)
+    q: dict = {"tenant_id": ctx.tenant_id}
+
+    qname = queue_name.replace("_", "-").lower()
+    if qname == "pending-submission":
+        q["status"] = {"$in": ["ready", "validation_failed"]}
+    elif qname == "rejected":
+        q["status"] = {"$in": ["rejected", "denied"]}
+    elif qname == "follow-up":
+        ids = await followup_claim_ids(db, ctx.tenant_id)
+        if not ids:
+            return []
+        q["id"] = {"$in": ids}
+    else:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            f"Unknown queue '{queue_name}'")
+
+    if payer_id:
+        q["payer_id"] = payer_id
+    if assigned_to:
+        q["assigned_to"] = assigned_to
+    if status_in:
+        wanted = [s.strip() for s in status_in.split(",") if s.strip()]
+        if wanted:
+            # Intersect with any queue-provided status filter.
+            base = q.get("status", {}).get("$in") if isinstance(q.get("status"), dict) else None
+            q["status"] = {"$in": [s for s in wanted if (base is None or s in base)]}
+    if age_days is not None:
+        q["created_at"] = {"$lt": followup_threshold_iso(age_days)}
+
+    cursor = db.claims.find(q, {"_id": 0}).sort(
+        [("updated_at", -1)]
+    ).limit(limit)
+    return [c async for c in cursor]
 

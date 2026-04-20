@@ -911,3 +911,49 @@ page into a single operational scheduling experience.
   `ClaimDetail.jsx` (currently 755 lines) into
   `pages/billing/dialogs/` for maintainability.
 
+
+## Iteration 27 — Billing Phase 4 claim submission + workflow (2026-04-20)
+
+### Backend (new this iteration)
+- `services/billing/submission.py` — JSON + ANSI X12 837P preview
+  payload builders; `followup_claim_ids()` helper (14-day default).
+- Expanded claim state machine with `pending` state; submissions,
+  outcomes, work queues, timeline, and assignment endpoints.
+- `claim_submissions` collection: one row per manual submission with
+  payload (JSON + 837P preview), method, external_reference,
+  submitter + timestamp, and nullable outcome block populated later.
+
+### Frontend (new this iteration)
+- `ClaimWorkflow.jsx` — assignee editor, submission dialog, outcome
+  dialog (denial code / paid fields auto-shown on relevant outcomes),
+  payload viewer (JSON / 837P preview tabs), submissions table.
+- `ClaimsQueue.jsx` — Tabs (All / Pending submission / Rejected /
+  Follow-up) + compound filter bar (status, payer, age_days,
+  assignee).
+- `useClaims.js` — `useClaimQueue()` hook and helpers
+  (`createClaimSubmission`, `recordSubmissionOutcome`,
+  `fetchClaimTimeline`, `updateClaimAssignment`, …).
+
+### Tests
+- `backend/tests/test_billing_phase4.py` — 22 passing:
+  - Status transition matrix (legal + illegal, including new `pending`)
+  - Payload builders shape + 837P preview segments
+  - Submission lifecycle: ready → submitted, 409 on re-submit
+  - Outcome lifecycle: accepted, rejected (denial_code), paid
+    (paid_cents), idempotency
+  - Timeline merging: history + scrubber runs + submissions + outcomes
+  - Assignment roundtrip audited; unknown assignee → 400
+  - Named queue filtering: pending-submission, rejected, payer_id,
+    unknown queue → 404
+  - Tenant isolation: Sunrise tenant cannot submit or view timeline
+    of default tenant claims
+- Combined Phase 3 + Phase 4 pytest: 38 passing.
+
+### Follow-ups open
+- Bulk submission from queue (select multiple ready claims, submit as
+  a single 837P batch file).
+- Inline eligibility-reason alert on InvoiceDetail when from-invoice
+  returns 409 (the toast-only error is still transient).
+- Denial work queue integration — Phase 5 should tie `/denial-work-items`
+  to the new `rejected/denied` outcomes.
+

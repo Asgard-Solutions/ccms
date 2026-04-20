@@ -42,6 +42,7 @@ import {
   updateClaimHeader,
   validateClaim,
 } from "./useClaims";
+import ClaimWorkflow from "./ClaimWorkflow";
 
 const EDITABLE_STATUSES = new Set(["draft", "validation_failed", "rejected"]);
 
@@ -167,6 +168,9 @@ export default function ClaimDetail() {
         warnings={warnings}
         lastRunAt={latest_validation?.run_at}
       />
+
+      {/* Phase 4 workflow — submissions, outcomes, timeline, assignment */}
+      <ClaimWorkflow claim={claim} onChanged={refresh} />
 
       {/* Header card */}
       <section

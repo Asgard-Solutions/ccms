@@ -96,3 +96,92 @@ export async function replaceClaimLines(claimId, lines) {
   );
   return data;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4 — submissions, outcomes, timeline, queues, assignment
+// ---------------------------------------------------------------------------
+export const SUBMISSION_METHOD_LABELS = {
+  manual_paper: "Manual — paper/fax",
+  manual_portal: "Manual — payer portal",
+  batch_file: "Batch file (837P)",
+};
+
+export const OUTCOME_LABELS = {
+  accepted: "Accepted",
+  rejected: "Rejected",
+  pending: "Pending (payer working)",
+  paid: "Paid",
+  partially_paid: "Partially paid",
+  denied: "Denied",
+};
+
+export const QUEUE_KEYS = [
+  { key: "pending-submission", label: "Pending submission" },
+  { key: "rejected", label: "Rejected / denied" },
+  { key: "follow-up", label: "Follow-up needed" },
+];
+
+export async function createClaimSubmission(claimId, body) {
+  const { data } = await api.post(
+    `/billing/claims/${claimId}/submissions`, body,
+  );
+  return data;
+}
+
+export async function listClaimSubmissions(claimId) {
+  const { data } = await api.get(`/billing/claims/${claimId}/submissions`);
+  return data;
+}
+
+export async function fetchSubmissionPayload(claimId, subId) {
+  const { data } = await api.get(
+    `/billing/claims/${claimId}/submissions/${subId}/payload`,
+  );
+  return data;
+}
+
+export async function recordSubmissionOutcome(claimId, subId, body) {
+  const { data } = await api.post(
+    `/billing/claims/${claimId}/submissions/${subId}/outcome`, body,
+  );
+  return data;
+}
+
+export async function fetchClaimTimeline(claimId) {
+  const { data } = await api.get(`/billing/claims/${claimId}/timeline`);
+  return data;
+}
+
+export async function updateClaimAssignment(claimId, assignedTo) {
+  const { data } = await api.put(
+    `/billing/claims/${claimId}/assignment`,
+    { assigned_to: assignedTo || null },
+  );
+  return data;
+}
+
+export function useClaimQueue({ queue, filters = {} } = {}) {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const statusInKey = filters.status_in?.join(",") || "";
+
+  const load = useCallback(async () => {
+    if (!queue) { setRows([]); setLoading(false); return; }
+    setLoading(true);
+    try {
+      const params = {};
+      if (filters.payer_id) params.payer_id = filters.payer_id;
+      if (filters.assigned_to) params.assigned_to = filters.assigned_to;
+      if (filters.age_days) params.age_days = filters.age_days;
+      if (statusInKey) params.status_in = statusInKey;
+      const { data } = await api.get(
+        `/billing/claims/queues/${queue}`, { params },
+      );
+      setRows(data || []);
+    } finally { setLoading(false); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queue, filters.payer_id, filters.assigned_to, filters.age_days, statusInKey]);
+
+  useEffect(() => { load(); }, [load]);
+  return { rows, loading, refresh: load };
+}
