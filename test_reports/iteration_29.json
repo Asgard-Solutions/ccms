@@ -1,0 +1,54 @@
+{
+  "summary": "Phase 6 Frontend UI validation (RemittanceImport + PatientStatementsCard) COMPLETED via Playwright E2E. Login → Import 835 nav → JSON upload → preview → commit-gating verified. Patient ledger → statements generate → PDF download (valid 200 application/pdf 2.3KB) → email button verified. All required data-testids present and wired correctly. One minor UX concern: after a reauth 401 on the very first upload, the file input is cleared in the finally block and the upload must be manually re-selected by the user (the component doesn't auto-retry after the reauth modal closes).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "RemittanceImport.onPick upload-after-reauth",
+        "issue": "First upload attempt returns 401 (reauth required) because /billing/remittances/import is a privileged action. The axios ReauthGate interceptor shows the reauth dialog, but RemittanceImport.jsx's finally block clears fileInput.current.value = '' so the pending File is lost. After the user confirms reauth, they must re-click 'Choose file' and pick the same file again. UX could be improved by holding a ref to the last-picked File and auto-retrying once the reauth succeeds (or listening to a 'reauth-succeeded' event from the interceptor).",
+        "affected_selectors": ["remit-import-choose-file", "remit-import-file-input"]
+      }
+    ],
+    "design_issues": []
+  },
+  "verified_flows": [
+    "Login admin@ccms.app at /login (review mentioned /auth/login, but the actual route in App.js is /login — the UI renders fine and auto-redirects to /)",
+    "Sidebar 'Import 835' link (AppShell.jsx) is visible & navigates to /billing/remittances/import",
+    "RemittanceImport page renders with data-testid='remit-import' and all UI elements (header, dropzone, file input, Back link)",
+    "Upload JSON with schema ccms.remit.import.v1 → reauth dialog appears → after reauth + re-select, preview renders with data-testid='remit-import-preview'",
+    "Preview correctly shows: PREVIEW · JSON source badge, filename, Total paid, Check/EFT, Payer:unresolved (in destructive tone), CLAIMS 0/1, '1 unmatched' sub-label, per-row data-testid='remit-import-row-0' with MATCH=NONE badge",
+    "Commit button (data-testid='remit-import-commit') is correctly DISABLED when unmatched_count>0 AND resolved_payer_id is null (canCommit gate works as specified)",
+    "PatientLedgerPage renders (data-testid='patient-ledger-page') with PatientStatementsCard embedded below PatientLedgerCard",
+    "PatientStatementsCard: data-testid='patient-statements-card' visible, 'statements-generate-btn' generates a new row on POST /api/billing/patients/{id}/statements",
+    "Generated rows: data-testid='statement-row-{uuid}', columns Generated/As of/Balance/Invoices, PDF anchor data-testid='statement-pdf-{uuid}' with href /api/billing/patients/{id}/statements/{stmtId}/pdf, Email button data-testid='statement-email-{uuid}'",
+    "PDF link: fetch returns 200, content-type application/pdf, 2301 bytes — valid PDF download works",
+    "Email button clicks fire POST /api/billing/patients/{id}/statements/{stmtId}/send; 422 is returned (expected) when patient record has no email on file",
+    "No unexpected console errors on either page; only 401s (reauth-triggered, handled by interceptor) and 422 (expected email-validation)",
+    "Semantic theme tokens honored: success/destructive badges for match/payer states render correctly, card surfaces use bg-card/border-border as expected"
+  ],
+  "test_report_links": [],
+  "action_items": [
+    "OPTIONAL UX: In RemittanceImport.jsx onPick, cache the picked File before await uploadRemittanceImport(f); if the reauth interceptor surfaces 'reauth-succeeded' (or you detect 401 then 200 reauth), auto-retry uploadRemittanceImport(cachedFile) once so the user doesn't have to re-select the file. The current manual re-select works but is an extra step.",
+    "OPTIONAL DOC: Review request says login is at /auth/login, but App.js route is /login. Update the review doc/handoff notes or add a /auth/login alias if desired.",
+    "OPTIONAL E2E: No patient in the demo seed has an email, so the mocked email-send path (provider='mock') cannot be fully observed via the default seed patient. Backend tests (test_billing_phase6.py test_email_mock_path_when_no_key) already cover this path — if a demo-scenario walkthrough is needed, seed one patient with email=patient@ccms.app on the patient record (distinct from the user record)."
+  ],
+  "critical_code_review_comments": [
+    "RemittanceImport.jsx (206 lines) is clean and well-structured; single responsibility. All data-testids wired. canCommit logic matches spec (unmatched===0 && resolved_payer_id).",
+    "PatientStatementsCard.jsx (144 lines) is clean. One minor: the busy state is a single flag shared across generate/email — clicking Email while another email is in flight disables ALL email buttons in the table. Low-severity, not a blocker.",
+    "useRemittance.js (186 lines) is reasonable. Minor: this file has Phase 5 denial/AR hooks + Phase 6 import/statement helpers — consider splitting into useRemittance.js (posting) and useImport.js / useStatements.js as it grows.",
+    "statementPdfUrl in useRemittance.js line 159 correctly uses process.env.REACT_APP_BACKEND_URL with '' fallback — works for local dev and production.",
+    "onPick finally block clears fileInput.current.value = '' which is correct for allowing re-upload of the same file, but in conjunction with the 401-reauth flow it creates the UX issue noted above. Fix: only clear on success, not on transient 401s."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped per request)", "frontend": "100% of in-scope Phase 6 UI flows verified end-to-end"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (login works at /login). Reauth uses the same password.",
+  "seed_data_creation": "Generated 5 statements for patient e9df243b-587f-46bf-bf6e-515eedcfa77c (first patient returned by GET /api/patients, no email on file). Generated 3 statements for another patient (54dcaa5d-…) in the earlier run. These can be ignored or cleaned up; they do not affect other tests.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Login route is /login (not /auth/login). Upload endpoint /api/billing/remittances/import requires reauth — will throw 401 then ReauthGate interceptor opens a dialog (role='dialog' with 'Confirm it' in the header; use input[type='password'] inside it and click the button whose text is 'Confirm'). After reauth, the user must re-select the file because RemittanceImport clears fileInput.current.value in finally. For statements: first patient in demo seed (GET /api/patients) has no email, so email send returns 422 — that's expected behavior, not a bug. For a full mock-email success path, seed a patient with patient.email set.",
+  "rca of the issue": "The reauth-after-401 UX wrinkle in RemittanceImport is a minor usability issue, not a defect: axios interceptor handles the reauth correctly, backend accepts subsequent privileged calls, but the upload Promise chain completes (in the error branch) before the user has reauthenticated, and the file input value is cleared. Mitigation (optional): cache the File in a ref before the upload call and auto-retry once after detecting a reauth-success event, OR avoid clearing fileInput.value on 401 errors. Not a blocker — user simply picks the file again."
+}

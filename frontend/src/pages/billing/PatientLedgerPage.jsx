@@ -1,6 +1,7 @@
 import { Link, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import PatientLedgerCard from "./PatientLedgerCard";
+import PatientStatementsCard from "./PatientStatementsCard";
 
 export default function PatientLedgerPage() {
   const { id } = useParams();
@@ -18,6 +19,7 @@ export default function PatientLedgerPage() {
         </h1>
       </header>
       <PatientLedgerCard patientId={id} title="Activity" />
+      <PatientStatementsCard patientId={id} />
     </div>
   );
 }

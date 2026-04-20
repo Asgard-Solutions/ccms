@@ -32,6 +32,7 @@ import PatientLedgerPage from "./pages/billing/PatientLedgerPage";
 import ClaimsQueue from "./pages/billing/ClaimsQueue";
 import ClaimDetail from "./pages/billing/ClaimDetail";
 import RemittancePosting from "./pages/billing/RemittancePosting";
+import RemittanceImport from "./pages/billing/RemittanceImport";
 import RemittanceDetail from "./pages/billing/RemittanceDetail";
 import DenialsQueue from "./pages/billing/DenialsQueue";
 import ArAgingReport from "./pages/billing/ArAgingReport";
@@ -68,6 +69,7 @@ export default function App() {
               <Route path="/billing/claims" element={<Shell roles={["admin", "doctor", "staff"]}><ClaimsQueue /></Shell>} />
               <Route path="/billing/claims/:id" element={<Shell roles={["admin", "doctor", "staff"]}><ClaimDetail /></Shell>} />
               <Route path="/billing/remittances/new" element={<Shell roles={["admin", "staff"]}><RemittancePosting /></Shell>} />
+              <Route path="/billing/remittances/import" element={<Shell roles={["admin", "staff"]}><RemittanceImport /></Shell>} />
               <Route path="/billing/remittances/:id" element={<Shell roles={["admin", "doctor", "staff"]}><RemittanceDetail /></Shell>} />
               <Route path="/billing/denials" element={<Shell roles={["admin", "doctor", "staff"]}><DenialsQueue /></Shell>} />
               <Route path="/billing/ar-aging" element={<Shell roles={["admin", "doctor", "staff"]}><ArAgingReport /></Shell>} />

@@ -102,6 +102,7 @@ regex==2026.4.4
 reportlab==4.4.10
 requests==2.33.1
 requests-oauthlib==2.0.0
+resend==2.29.0
 rich==14.3.3
 rpds-py==0.30.0
 rsa==4.9.1

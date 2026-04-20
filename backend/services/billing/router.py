@@ -15,7 +15,8 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.responses import Response
 
 from core.audit import audit_success
 from core.deps import require_role
@@ -32,6 +33,17 @@ from services.billing.remittance import (
     compute_ar_buckets,
     post_remittance,
     render_statement_body,
+)
+from services.billing.remittance_import import (
+    match_claims,
+    parse_835,
+    parse_json_import,
+    resolve_payer_id,
+)
+from services.billing.statement_delivery import (
+    render_statement_email_html,
+    render_statement_pdf,
+    send_statement_email,
 )
 from services.billing.submission import (
     DEFAULT_FOLLOWUP_DAYS,
@@ -2377,10 +2389,10 @@ async def _load_submission_context(db, ctx: TenantContext, claim: dict):
     patient = await db.patients.find_one(
         {"id": claim.get("patient_id"), "tenant_id": tid}, {"_id": 0},
     ) if claim.get("patient_id") else None
-    payer = await db.payers.find_one(
+    payer = await db.billing_payers.find_one(
         {"id": claim.get("payer_id"), "tenant_id": tid}, {"_id": 0},
     ) if claim.get("payer_id") else None
-    policy = await db.insurance_policies.find_one(
+    policy = await db.patient_insurance_policies.find_one(
         {"id": claim.get("policy_id"), "tenant_id": tid}, {"_id": 0},
     ) if claim.get("policy_id") else None
     diagnoses = [d async for d in db.claim_diagnoses.find(
@@ -3009,7 +3021,7 @@ async def read_ar_aging_by_payer(
     for pid, invs in by_payer.items():
         payer_name = None
         if pid:
-            p = await db.payers.find_one(
+            p = await db.billing_payers.find_one(
                 {"id": pid, "tenant_id": ctx.tenant_id},
                 {"_id": 0, "name": 1},
             )
@@ -3170,4 +3182,313 @@ async def read_denial_category_summary(
         "total_count": total_count,
         "total_amount_cents": total_amount,
     }
+
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — Bulk remittance import (835 / JSON) + statement PDF + email
+# ---------------------------------------------------------------------------
+_IMPORT_MAX_BYTES = 2 * 1024 * 1024   # 2 MB
+
+
+async def _stage_import(
+    db, ctx: TenantContext, user: dict,
+    ir: dict, filename: str, size: int,
+) -> dict:
+    matches = await match_claims(db, ctx.tenant_id, ir)
+    resolved_payer_id = await resolve_payer_id(db, ctx.tenant_id, ir)
+    now = _now()
+    staged_id = str(uuid.uuid4())
+    doc = stamp_for_write({
+        "id": staged_id,
+        "source": ir["source"],
+        "filename": filename,
+        "size_bytes": size,
+        "status": "staged",
+        "uploaded_by": user["id"],
+        "resolved_payer_id": resolved_payer_id,
+        "header": ir["header"],
+        "claims": [{**c, "match": m}
+                   for c, m in zip(ir["claims"], matches)],
+        "created_at": now,
+        "updated_at": now,
+    }, ctx, location_id=None)
+    await db.remittance_imports.insert_one(doc)
+
+    matched = sum(1 for m in matches if m["matched"])
+    return {
+        "id": staged_id,
+        "source": ir["source"],
+        "filename": filename,
+        "size_bytes": size,
+        "status": "staged",
+        "resolved_payer_id": resolved_payer_id,
+        "header": ir["header"],
+        "claim_count": len(ir["claims"]),
+        "matched_count": matched,
+        "unmatched_count": len(ir["claims"]) - matched,
+        "claims": [{**c, "match": m}
+                   for c, m in zip(ir["claims"], matches)],
+    }
+
+
+@router.post("/remittances/import")
+async def upload_remittance_import(
+    request: Request,
+    file: UploadFile = File(...),
+    user: dict = Depends(require_permission("remit", "post")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Stage an 835 EDI or JSON remittance file for review.
+
+    No mutations to ledger occur here — the caller must hit
+    `POST /remittances/imports/{id}/commit` to actually post.
+    """
+    raw = await file.read()
+    if len(raw) > _IMPORT_MAX_BYTES:
+        raise HTTPException(413, "Import file too large (>2 MB)")
+    if not raw:
+        raise HTTPException(400, "Empty upload")
+
+    filename = file.filename or "remit.unknown"
+    is_json = filename.lower().endswith(".json") or raw.lstrip().startswith(b"{")
+    try:
+        if is_json:
+            ir = parse_json_import(raw)
+        else:
+            ir = parse_835(raw.decode("utf-8", errors="ignore"))
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Parse error: {exc}")
+
+    db = tenant_db(ctx.tenant_id)
+    preview = await _stage_import(db, ctx, user, ir, filename, len(raw))
+    await audit_success(
+        user, "billing.remittance.import_staged", request,
+        entity_type="remittance_import", entity_id=preview["id"],
+        metadata={"filename": filename, "source": ir["source"],
+                  "claim_count": preview["claim_count"],
+                  "matched_count": preview["matched_count"]},
+    )
+    return preview
+
+
+@router.get("/remittances/imports/{staged_id}")
+async def read_remittance_import(
+    staged_id: str,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    row = await db.remittance_imports.find_one(
+        {"id": staged_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, "Import not found")
+    return row
+
+
+@router.post("/remittances/imports/{staged_id}/commit")
+async def commit_remittance_import(
+    staged_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("remit", "post")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Convert a staged import into a posted remittance.
+
+    Rejects if any IR claim is unmatched OR if the caller has not
+    supplied an override for the payer (via a separate PUT) when
+    the header payer could not be resolved.
+    """
+    db = tenant_db(ctx.tenant_id)
+    row = await db.remittance_imports.find_one(
+        {"id": staged_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(404, "Import not found")
+    if row["status"] != "staged":
+        raise HTTPException(409, f"Import already {row['status']}")
+    payer_id = row.get("resolved_payer_id")
+    if not payer_id:
+        raise HTTPException(
+            409,
+            "Could not resolve payer from the import header. "
+            "Create/verify the payer record then retry upload.",
+        )
+
+    # Build a RemittancePostRequest from the staged IR + matches.
+    claims_payload: list[dict] = []
+    for item in row["claims"]:
+        m = item.get("match") or {}
+        if not m.get("matched") or not m.get("claim_id"):
+            raise HTTPException(
+                409,
+                "One or more import rows are unmatched. Reconcile "
+                "them before committing.",
+            )
+        claims_payload.append({
+            "claim_id": m["claim_id"],
+            "payer_control_number": item.get("payer_control_number"),
+            "billed_cents": int(item.get("billed_cents") or 0),
+            "paid_cents": int(item.get("paid_cents") or 0),
+            "contractual_cents": int(item.get("contractual_cents") or 0),
+            "patient_resp_cents": int(item.get("patient_resp_cents") or 0),
+            "denied_cents": int(item.get("denied_cents") or 0),
+            "denial_code": item.get("denial_code"),
+            "lines": item.get("lines") or [],
+        })
+
+    body = RemittancePostRequest(
+        payer_id=payer_id,
+        received_at=row["header"].get("received_at"),
+        check_or_eft_number=row["header"].get("check_or_eft_number"),
+        notes=row["header"].get("notes"),
+        total_paid_cents=int(row["header"].get("total_paid_cents") or 0),
+        claims=claims_payload,
+    )
+
+    try:
+        result = await post_remittance(
+            db, ctx, user, body,
+            recompute_invoice_balance=_recompute_invoice_balance,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+
+    await db.remittance_imports.update_one(
+        {"id": staged_id, "tenant_id": ctx.tenant_id},
+        {"$set": {"status": "committed",
+                  "remittance_id": result["remittance_id"],
+                  "committed_at": _now(),
+                  "committed_by": user["id"],
+                  "updated_at": _now()}},
+    )
+    await audit_success(
+        user, "billing.remittance.import_committed", request,
+        entity_type="remittance_import", entity_id=staged_id,
+        metadata={"remittance_id": result["remittance_id"],
+                  "claim_count": len(claims_payload),
+                  "denial_count": result["denial_count"]},
+    )
+    return {
+        "import_id": staged_id, "status": "committed",
+        **result,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Statement PDF + email
+# ---------------------------------------------------------------------------
+async def _load_statement_with_patient(db, ctx, patient_id, stmt_id):
+    stmt = await db.statements.find_one(
+        {"id": stmt_id, "patient_id": patient_id,
+         "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    if not stmt:
+        raise HTTPException(404, "Statement not found")
+    patient = await db.patients.find_one(
+        {"id": patient_id, "tenant_id": ctx.tenant_id},
+        {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+         "email": 1, "phone": 1},
+    )
+    return stmt, patient
+
+
+@router.get(
+    "/patients/{patient_id}/statements/{stmt_id}/pdf",
+    responses={200: {"content": {"application/pdf": {}}}},
+)
+async def download_statement_pdf(
+    patient_id: str, stmt_id: str, request: Request,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    stmt, patient = await _load_statement_with_patient(
+        db, ctx, patient_id, stmt_id,
+    )
+    pdf = render_statement_pdf(statement=stmt, patient=patient)
+    await audit_success(
+        user, "billing.statement.pdf_downloaded", request,
+        entity_type="statement", entity_id=stmt_id,
+        metadata={"patient_id": patient_id,
+                  "bytes": len(pdf)},
+    )
+    headers = {
+        "Content-Disposition":
+            f'attachment; filename="statement-{stmt_id[:8]}.pdf"',
+    }
+    return Response(content=pdf, media_type="application/pdf",
+                    headers=headers)
+
+
+@router.post(
+    "/patients/{patient_id}/statements/{stmt_id}/send",
+)
+async def email_statement(
+    patient_id: str, stmt_id: str, request: Request,
+    user: dict = Depends(require_role("admin", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    stmt, patient = await _load_statement_with_patient(
+        db, ctx, patient_id, stmt_id,
+    )
+    to = (patient or {}).get("email")
+    if not to:
+        raise HTTPException(422, "Patient has no email on file")
+
+    pdf = render_statement_pdf(statement=stmt, patient=patient)
+    html = render_statement_email_html(patient=patient, statement=stmt)
+    try:
+        sent = await send_statement_email(
+            to=to, subject="Your patient statement",
+            html_body=html, pdf_bytes=pdf,
+            pdf_filename=f"statement-{stmt_id[:8]}.pdf",
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"Email send failed: {exc}")
+
+    now = _now()
+    delivery = stamp_for_write({
+        "id": str(uuid.uuid4()),
+        "statement_id": stmt_id,
+        "patient_id": patient_id,
+        "to_email": to,
+        "provider": sent["provider"],
+        "message_id": sent.get("message_id"),
+        "sent_by": user["id"],
+        "sent_at": now,
+        "created_at": now,
+        "updated_at": now,
+    }, ctx, location_id=None)
+    await db.statement_deliveries.insert_one(delivery)
+    await audit_success(
+        user, "billing.statement.emailed", request,
+        entity_type="statement", entity_id=stmt_id,
+        metadata={"to_email": to, "provider": sent["provider"],
+                  "message_id": sent.get("message_id"),
+                  "patient_id": patient_id},
+    )
+    return {"sent": True,
+            "provider": sent["provider"],
+            "message_id": sent.get("message_id"),
+            "to": to,
+            "delivery_id": delivery["id"]}
+
+
+@router.get(
+    "/patients/{patient_id}/statements/{stmt_id}/deliveries",
+)
+async def list_statement_deliveries(
+    patient_id: str, stmt_id: str,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    rows = [_public(d) async for d in db.statement_deliveries.find(
+        {"tenant_id": ctx.tenant_id,
+         "patient_id": patient_id, "statement_id": stmt_id}, {"_id": 0},
+    ).sort([("sent_at", -1)])]
+    return rows
 

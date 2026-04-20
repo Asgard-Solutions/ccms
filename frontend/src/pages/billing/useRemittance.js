@@ -155,3 +155,31 @@ export async function listStatements(patientId) {
   );
   return data;
 }
+
+export function statementPdfUrl(patientId, stmtId) {
+  const base = process.env.REACT_APP_BACKEND_URL || "";
+  return `${base}/api/billing/patients/${patientId}/statements/${stmtId}/pdf`;
+}
+
+export async function emailStatement(patientId, stmtId) {
+  const { data } = await api.post(
+    `/billing/patients/${patientId}/statements/${stmtId}/send`,
+  );
+  return data;
+}
+
+export async function uploadRemittanceImport(file) {
+  const form = new FormData();
+  form.append("file", file);
+  const { data } = await api.post("/billing/remittances/import", form, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}
+
+export async function commitRemittanceImport(stagedId) {
+  const { data } = await api.post(
+    `/billing/remittances/imports/${stagedId}/commit`,
+  );
+  return data;
+}
