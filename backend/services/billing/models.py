@@ -122,8 +122,8 @@ InvoiceStatus = Literal[
 INVOICE_TRANSITIONS: dict[str, set[str]] = {
     "draft": {"issued", "void"},
     "issued": {"partially_paid", "paid", "adjusted", "void"},
-    "partially_paid": {"paid", "adjusted", "void"},
-    "paid": {"refunded", "adjusted"},
+    "partially_paid": {"paid", "adjusted", "void", "issued"},
+    "paid": {"refunded", "adjusted", "partially_paid", "issued"},
     "adjusted": {"issued", "partially_paid", "paid", "void"},
     "void": set(),
     "refunded": set(),

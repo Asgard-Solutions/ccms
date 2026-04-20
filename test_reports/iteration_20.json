@@ -1,0 +1,46 @@
+{
+  "summary": "Phase 1 Billing Service (CCMS Iteration 24) — both backend and frontend tested. All 40 backend pytest tests pass. New endpoints (ledger, post-hoc allocation, void) work end-to-end via API. Frontend dashboard, invoices list, invoice detail, post-payment dialog, void dialog, embedded patient ledger card, and standalone ledger route all render correctly. ONE pre-flagged blocker confirmed: admin's step_up_required=True causes /api/billing mutations (POST payment / adjustment / void / refund / payer-create) to return 401 'Re-authentication required' because the frontend does not wrap mutation dialogs in a ReauthDialog. The user/main-agent already anticipated this in the context note.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Billing mutations (Post payment / Adjust / Void / Refund / Create payer)",
+        "issue": "Frontend submits the mutation directly and the backend returns 401 'Re-authentication required for this action.' because admin user has step_up_required=True and the dialogs are not wrapped in a ReauthDialog. The dialog stays open with no toast / no reauth prompt — silent failure UX. Reproduced by: login as admin, open invoice detail, click 'Post payment', fill amount, click 'Post $X.XX' → no payment is created (verified via curl POST /api/billing/payments → HTTP 401).",
+        "affected_selectors": [
+          "[data-testid='invoice-post-payment-btn']",
+          "[data-testid='invoice-adjust-btn']",
+          "[data-testid='invoice-void-btn']"
+        ]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_billing.py"
+  ],
+  "action_items": [
+    "Wrap billing mutation dialogs (PostPaymentDialog, AdjustDialog, VoidDialog, refund / payer-create flows) with a ReauthDialog so that when the API returns 401 'Re-authentication required', the user is prompted for password and the mutation is retried automatically. Currently the dialog appears to hang / silently fail.",
+    "Optionally: in useBilling.js add a global 401 handler that surfaces a toast 'Re-auth required' so failures are visible even before the ReauthDialog ships.",
+    "Unrelated finding: GET /api/patients/{id}/documents returns 401 on PatientDetail (also caused by missing reauth) — same root cause, same fix pattern."
+  ],
+  "critical_code_review_comments": [
+    "router.py is large (>1200 lines per the file-of-reference notes); consider splitting per resource (payers / invoices / payments / claims / ledger) for maintainability.",
+    "INVOICE_TRANSITIONS now allows paid→partially_paid and paid→issued — make sure this is only triggered by refund-driven recompute and not by external PUT /status actions; otherwise a user could illegally regress an invoice via the API.",
+    "PostPaymentDialog should disable 'Post' button when allocations.sum != amount and surface server validation errors inline."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (40/40 pytest tests pass + manual API smoke for ledger/audit/auth)",
+    "frontend": "~85% (all reads + dialogs render; mutations blocked by missing reauth wrapper)"
+  },
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (used). Other roles available per /app/memory/test_credentials.md.",
+  "seed_data_creation": "None — used existing seeded billing data (~129 invoices, 63 payments on patient 450d80b2…).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "After main agent adds the ReauthDialog wrapper around billing mutation dialogs, retest the full lifecycle in the UI: open issued invoice → Post payment $X → reauth modal appears → submit → invoice balance & status update inline. Then exercise Adjust (writeoff) and Void from the same screen. Backend tests already cover these flows so re-running pytest after any backend tweaks is enough for backend regression. The post-payment dialog button text is dynamic ('Post' vs 'Post $5.00') — use [role='dialog'] >> button:has-text('Post') for selectors.",
+  "rca of the issue": "Root cause: super_admin role grants payment.refund / adjustment.writeoff / billing.void with mfa_only=True. The auth middleware therefore requires a fresh /api/auth/reauth cookie/token for any mutation that hits these permissions. The backend test helper (_login()) auto-performs the reauth so tests pass, but the React frontend mutation dialogs (PostPaymentDialog / AdjustDialog / VoidDialog / refund / payer create) call the API directly without intercepting 401 'Re-authentication required'. Reproduction: 1) login as admin in browser, 2) open any issued invoice, 3) click Post payment → fill $5 → Post → backend returns 401 and dialog silently does nothing. Mitigation: introduce a ReauthDialog HOC that, on 401 with detail 'Re-authentication required', prompts password, calls /api/auth/reauth, then retries the original mutation. Apply across all billing mutation hooks in useBilling.js."
+}

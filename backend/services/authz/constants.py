@@ -315,6 +315,9 @@ ROLE_GRANTS: dict[str, list[dict]] = {
         # matrix.
         g("charge", "create"),
         g("payment", "collect"),
+        g("payment", "refund", "all_org", "MFA"),
+        g("adjustment", "writeoff", "all_org", "MFA"),
+        g("billing", "void", "all_org", "MFA"),
         g("insurance", "create"),
         g("insurance", "update"),
         g("claim", "read"),

@@ -39,6 +39,7 @@ import {
 import BreakGlassDialog from "../components/BreakGlassDialog";
 import ReauthDialog from "../components/ReauthDialog";
 import PatientDocumentsCard from "../components/PatientDocumentsCard";
+import PatientLedgerCard from "./billing/PatientLedgerCard";
 
 // ---------------------------------------------------------------------------
 // Expanded-intake section renderers (Phase 4).
@@ -841,6 +842,11 @@ export default function PatientDetail() {
             ))}
           </ul>
         )}
+      </section>
+
+      {/* Billing & ledger — embedded card; full-page view at /billing/patients/:id/ledger */}
+      <section data-testid="patient-billing-section">
+        <PatientLedgerCard patientId={id} />
       </section>
 
       {canAddRecord && (

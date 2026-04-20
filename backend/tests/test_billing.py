@@ -424,36 +424,62 @@ class TestClaimFlow:
 
 
 class TestRBAC:
-    def test_admin_cannot_refund_without_approval(self):
-        """payment.refund is flagged MFA|APR; default admin has no such grant.
-        The call must be rejected."""
-        s = _login(*DEFAULT_ADMIN)
-        pid = _first_patient_id(s)
-        r = s.post(f"{API}/billing/payments", json={
-            "patient_id": pid, "method": "cash", "amount_cents": 1000,
-        }, timeout=10)
-        payment_id = r.json()["id"]
-
-        r = s.post(f"{API}/billing/refunds", json={
-            "payment_id": payment_id,
-            "amount_cents": 500,
-            "reason": "duplicate charge",
-        }, timeout=10)
-        # SA does not carry payment.refund → 403. Any other billing role
-        # that does carry it would additionally see a 401 MFA gate first.
-        assert r.status_code in (401, 403), r.text
-
-    def test_admin_cannot_writeoff_without_approval(self):
+    def test_admin_can_refund_with_reauth(self):
+        """payment.refund for super_admin now requires MFA only (reauth
+        token is already attached in `_login`). The refund should succeed
+        and update the invoice balance."""
         s = _login(*DEFAULT_ADMIN)
         pid = _first_patient_id(s)
         inv = _create_invoice(s, pid)
-        r = s.post(f"{API}/billing/adjustments", json={
-            "invoice_id": inv["id"],
-            "kind": "writeoff",
-            "amount_cents": 500,
+        s.post(f"{API}/billing/invoices/{inv['id']}/status?desired=issued",
+               timeout=10)
+        pr = s.post(f"{API}/billing/payments", json={
+            "patient_id": pid, "method": "cash", "amount_cents": 5500,
+            "allocations": [{"invoice_id": inv["id"], "amount_cents": 5500}],
+        }, timeout=10)
+        assert pr.status_code == 201, pr.text
+        payment_id = pr.json()["id"]
+
+        rr = s.post(f"{API}/billing/refunds", json={
+            "payment_id": payment_id,
+            "amount_cents": 2000,
+            "reason": "partial refund for test",
+        }, timeout=10)
+        assert rr.status_code == 201, rr.text
+        refund = rr.json()
+        assert refund["status"] == "processed"
+        assert refund["amount_cents"] == 2000
+
+        # Invoice balance must have re-inflated by the refund amount.
+        r = s.get(f"{API}/billing/invoices/{inv['id']}", timeout=10)
+        assert r.status_code == 200
+        assert r.json()["balance_cents"] == 2000
+        # And the invoice status should drop back from paid → partially_paid.
+        assert r.json()["status"] == "partially_paid"
+
+    def test_admin_can_writeoff_with_reauth(self):
+        s = _login(*DEFAULT_ADMIN)
+        pid = _first_patient_id(s)
+        inv = _create_invoice(s, pid)
+        s.post(f"{API}/billing/invoices/{inv['id']}/status?desired=issued",
+               timeout=10)
+        ar = s.post(f"{API}/billing/adjustments", json={
+            "invoice_id": inv["id"], "kind": "writeoff",
+            "amount_cents": 1000,
             "reason": "patient hardship",
         }, timeout=10)
-        assert r.status_code in (401, 403), r.text
+        assert ar.status_code == 201, ar.text
+        r = s.get(f"{API}/billing/invoices/{inv['id']}", timeout=10)
+        assert r.json()["balance_cents"] == 4500
+        assert r.json()["adjustment_cents"] == 1000
+
+    def test_staff_cannot_refund(self):
+        staff = _login(*DEFAULT_STAFF)
+        r = staff.post(f"{API}/billing/refunds", json={
+            "payment_id": "px", "amount_cents": 1,
+            "reason": "test",
+        }, timeout=10)
+        assert r.status_code == 403, r.text
 
     def test_staff_cannot_create_claim(self):
         staff = _login(*DEFAULT_STAFF)
@@ -493,6 +519,241 @@ class TestTenantIsolation:
 
 class TestAuditEmitted:
     def test_invoice_creation_emits_audit(self):
+        admin = _login(*DEFAULT_ADMIN)
+        pid = _first_patient_id(admin)
+        inv = _create_invoice(admin, pid)
+        r = admin.get(
+            f"{API}/audit-logs?action=billing.invoice.created&limit=50",
+            timeout=15,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        rows = body if isinstance(body, list) else body.get("items", [])
+        assert any(
+            row.get("entity_id") == inv["id"] and
+            row.get("action") == "billing.invoice.created"
+            for row in rows
+        ), f"audit row not found for invoice {inv['id']}"
+
+
+# ===========================================================================
+# Phase 1 — balance math, partial payments, ledger, void
+# ===========================================================================
+class TestBalanceRecompute:
+    def test_partial_payment_advances_status_and_balance(self):
+        s = _login(*DEFAULT_ADMIN)
+        pid = _first_patient_id(s)
+        inv = _create_invoice(s, pid, lines=[{
+            "code_type": "cpt", "code": "98941",
+            "description": "CMT 3-4 regions",
+            "service_date": "2026-02-10",
+            "quantity": 1, "unit_price_cents": 10000,
+        }])
+        s.post(f"{API}/billing/invoices/{inv['id']}/status?desired=issued",
+               timeout=10)
+
+        # Pay half
+        r = s.post(f"{API}/billing/payments", json={
+            "patient_id": pid, "method": "cash", "amount_cents": 5000,
+            "allocations": [{"invoice_id": inv["id"], "amount_cents": 5000}],
+        }, timeout=10)
+        assert r.status_code == 201, r.text
+        fresh = s.get(f"{API}/billing/invoices/{inv['id']}", timeout=10).json()
+        assert fresh["balance_cents"] == 5000
+        assert fresh["status"] == "partially_paid"
+
+        # Pay the rest
+        r = s.post(f"{API}/billing/payments", json={
+            "patient_id": pid, "method": "cash", "amount_cents": 5000,
+            "allocations": [{"invoice_id": inv["id"], "amount_cents": 5000}],
+        }, timeout=10)
+        assert r.status_code == 201
+        fresh = s.get(f"{API}/billing/invoices/{inv['id']}", timeout=10).json()
+        assert fresh["balance_cents"] == 0
+        assert fresh["status"] == "paid"
+
+    def test_adjustment_reduces_balance_and_may_close(self):
+        s = _login(*DEFAULT_ADMIN)
+        pid = _first_patient_id(s)
+        inv = _create_invoice(s, pid, lines=[{
+            "code_type": "cpt", "code": "98940",
+            "description": "x", "service_date": "2026-02-10",
+            "quantity": 1, "unit_price_cents": 4000,
+        }])
+        s.post(f"{API}/billing/invoices/{inv['id']}/status?desired=issued",
+               timeout=10)
+
+        # Writeoff the whole invoice
+        r = s.post(f"{API}/billing/adjustments", json={
+            "invoice_id": inv["id"], "kind": "writeoff",
+            "amount_cents": 4000, "reason": "patient hardship",
+        }, timeout=10)
+        assert r.status_code == 201, r.text
+        fresh = s.get(f"{API}/billing/invoices/{inv['id']}", timeout=10).json()
+        assert fresh["balance_cents"] == 0
+        assert fresh["adjustment_cents"] == 4000
+        assert fresh["status"] == "paid"   # balance zero → closes invoice
+
+
+class TestPaymentAllocation:
+    def test_post_hoc_allocation(self):
+        """Create an unallocated payment, then allocate it onto an invoice."""
+        s = _login(*DEFAULT_ADMIN)
+        pid = _first_patient_id(s)
+        inv = _create_invoice(s, pid)
+        s.post(f"{API}/billing/invoices/{inv['id']}/status?desired=issued",
+               timeout=10)
+
+        r = s.post(f"{API}/billing/payments", json={
+            "patient_id": pid, "method": "cash", "amount_cents": 5500,
+        }, timeout=10)
+        assert r.status_code == 201
+        pay_id = r.json()["id"]
+        assert r.json()["allocated_cents"] == 0
+
+        r = s.post(
+            f"{API}/billing/payments/{pay_id}/allocations",
+            json=[{"invoice_id": inv["id"], "amount_cents": 5500}],
+            timeout=10,
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["allocated_cents"] == 5500
+
+        # Invoice balance should now be zero.
+        fresh = s.get(f"{API}/billing/invoices/{inv['id']}", timeout=10).json()
+        assert fresh["balance_cents"] == 0
+        assert fresh["status"] == "paid"
+
+    def test_allocation_exceeding_remaining_rejected(self):
+        s = _login(*DEFAULT_ADMIN)
+        pid = _first_patient_id(s)
+        inv = _create_invoice(s, pid)
+        s.post(f"{API}/billing/invoices/{inv['id']}/status?desired=issued",
+               timeout=10)
+        r = s.post(f"{API}/billing/payments", json={
+            "patient_id": pid, "method": "cash", "amount_cents": 1000,
+        }, timeout=10)
+        pay_id = r.json()["id"]
+        r = s.post(
+            f"{API}/billing/payments/{pay_id}/allocations",
+            json=[{"invoice_id": inv["id"], "amount_cents": 9999}],
+            timeout=10,
+        )
+        assert r.status_code == 400, r.text
+
+
+class TestVoidInvoice:
+    def test_void_invoice_locks_further_changes(self):
+        s = _login(*DEFAULT_ADMIN)
+        pid = _first_patient_id(s)
+        inv = _create_invoice(s, pid)
+        s.post(f"{API}/billing/invoices/{inv['id']}/status?desired=issued",
+               timeout=10)
+
+        r = s.post(
+            f"{API}/billing/invoices/{inv['id']}/void?reason=billed+in+error",
+            timeout=10,
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "void"
+        assert r.json()["balance_cents"] == 0
+
+        # Adjustment against a void invoice must fail
+        r = s.post(f"{API}/billing/adjustments", json={
+            "invoice_id": inv["id"], "kind": "writeoff",
+            "amount_cents": 100, "reason": "x" * 20,
+        }, timeout=10)
+        assert r.status_code == 409, r.text
+
+
+class TestPatientLedger:
+    def test_ledger_is_chronological_and_balances(self):
+        s = _login(*DEFAULT_ADMIN)
+        pid = _first_patient_id(s)
+
+        # Baseline balance before we add anything new
+        base = s.get(f"{API}/billing/patients/{pid}/ledger", timeout=10).json()
+        base_balance = base["running_balance_cents"]
+
+        # Two invoices, one issued, one paid, one adjusted
+        inv1 = _create_invoice(s, pid, lines=[{
+            "code_type": "cpt", "code": "98940",
+            "description": "x", "service_date": "2026-02-01",
+            "quantity": 1, "unit_price_cents": 5000,
+        }])
+        s.post(f"{API}/billing/invoices/{inv1['id']}/status?desired=issued",
+               timeout=10)
+        # Pay full on inv1
+        s.post(f"{API}/billing/payments", json={
+            "patient_id": pid, "method": "cash", "amount_cents": 5000,
+            "allocations": [{"invoice_id": inv1["id"], "amount_cents": 5000}],
+        }, timeout=10)
+
+        inv2 = _create_invoice(s, pid, lines=[{
+            "code_type": "cpt", "code": "97110",
+            "description": "y", "service_date": "2026-02-03",
+            "quantity": 1, "unit_price_cents": 3000,
+        }])
+        s.post(f"{API}/billing/invoices/{inv2['id']}/status?desired=issued",
+               timeout=10)
+        # Writeoff 1000 on inv2
+        s.post(f"{API}/billing/adjustments", json={
+            "invoice_id": inv2["id"], "kind": "discount",
+            "amount_cents": 1000, "reason": "senior discount",
+        }, timeout=10)
+
+        r = s.get(f"{API}/billing/patients/{pid}/ledger", timeout=10)
+        assert r.status_code == 200, r.text
+        payload = r.json()
+        assert "rows" in payload
+        # Delta from baseline: +5000 (inv1 charge) -5000 (pay) +3000 (inv2 charge) -1000 (adj) = +2000
+        assert payload["running_balance_cents"] == base_balance + 2000
+        # Sort check
+        occurred = [row.get("occurred_at") or "" for row in payload["rows"]]
+        assert occurred == sorted(occurred)
+        # Should contain at least these kinds for this patient's activity.
+        kinds = {row["kind"] for row in payload["rows"]}
+        assert "charge" in kinds
+        assert "payment" in kinds
+        assert "adjustment" in kinds
+
+    def test_ledger_cross_tenant_denied(self):
+        default_admin = _login(*DEFAULT_ADMIN)
+        sunrise_admin = _login(*GROUP_ADMIN)
+        pid = _first_patient_id(default_admin)
+        r = sunrise_admin.get(f"{API}/billing/patients/{pid}/ledger", timeout=10)
+        assert r.status_code == 404, r.text
+
+
+class TestRefundReverses:
+    def test_full_refund_moves_payment_to_refunded(self):
+        s = _login(*DEFAULT_ADMIN)
+        pid = _first_patient_id(s)
+        inv = _create_invoice(s, pid)
+        s.post(f"{API}/billing/invoices/{inv['id']}/status?desired=issued",
+               timeout=10)
+        r = s.post(f"{API}/billing/payments", json={
+            "patient_id": pid, "method": "cash", "amount_cents": 5500,
+            "allocations": [{"invoice_id": inv["id"], "amount_cents": 5500}],
+        }, timeout=10)
+        pay_id = r.json()["id"]
+
+        r = s.post(f"{API}/billing/refunds", json={
+            "payment_id": pay_id, "amount_cents": 5500,
+            "reason": "full refund requested",
+        }, timeout=10)
+        assert r.status_code == 201, r.text
+
+        pay = s.get(f"{API}/billing/payments?patient_id={pid}",
+                    timeout=10).json()
+        pay_doc = next(p for p in pay if p["id"] == pay_id)
+        assert pay_doc["status"] == "refunded"
+
+        inv_fresh = s.get(f"{API}/billing/invoices/{inv['id']}",
+                          timeout=10).json()
+        assert inv_fresh["balance_cents"] == 5500
+        # After full refund, nothing is applied → invoice reverts to "issued"
+        assert inv_fresh["status"] == "issued"
         admin = _login(*DEFAULT_ADMIN)
         pid = _first_patient_id(admin)
         inv = _create_invoice(admin, pid)

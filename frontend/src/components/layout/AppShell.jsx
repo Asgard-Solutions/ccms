@@ -18,6 +18,7 @@ import {
   Table2,
   FileBarChart,
   Unlock,
+  Receipt,
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { Button } from "../ui/button";
@@ -44,6 +45,7 @@ const NAV_ITEMS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "doctor", "staff", "patient"] },
   { to: "/patients", label: "Patients", icon: Users, roles: ["admin", "doctor", "staff", "patient"] },
   { to: "/scheduling", label: "Scheduling", icon: CalendarDays, roles: ["admin", "doctor", "staff", "patient"] },
+  { to: "/billing", label: "Billing", icon: Receipt, roles: ["admin", "doctor", "staff"] },
   { to: "/settings/clinic", label: "Clinic settings", icon: Building2, roles: ["admin"] },
   { to: "/notifications", label: "Notifications", icon: BellRing, roles: ["admin", "staff"] },
   { to: "/audit-log", label: "Audit log", icon: Shield, roles: ["admin"] },

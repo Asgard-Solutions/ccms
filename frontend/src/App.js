@@ -24,6 +24,10 @@ import AccessReview from "./pages/AccessReview";
 import Elevation from "./pages/Elevation";
 import ThemePreview from "./pages/ThemePreview";
 import ClinicSettings from "./pages/ClinicSettings";
+import BillingDashboard from "./pages/billing/BillingDashboard";
+import InvoicesList from "./pages/billing/InvoicesList";
+import InvoiceDetail from "./pages/billing/InvoiceDetail";
+import PatientLedgerPage from "./pages/billing/PatientLedgerPage";
 import "./App.css";
 
 function Shell({ children, roles }) {
@@ -49,6 +53,10 @@ export default function App() {
               <Route path="/patients/:id" element={<Shell><PatientDetail /></Shell>} />
               <Route path="/scheduling" element={<Shell><Scheduling /></Shell>} />
               <Route path="/settings/clinic" element={<Shell roles={["admin"]}><ClinicSettings /></Shell>} />
+              <Route path="/billing" element={<Shell roles={["admin", "doctor", "staff"]}><BillingDashboard /></Shell>} />
+              <Route path="/billing/invoices" element={<Shell roles={["admin", "doctor", "staff"]}><InvoicesList /></Shell>} />
+              <Route path="/billing/invoices/:id" element={<Shell roles={["admin", "doctor", "staff"]}><InvoiceDetail /></Shell>} />
+              <Route path="/billing/patients/:id/ledger" element={<Shell roles={["admin", "doctor", "staff"]}><PatientLedgerPage /></Shell>} />
               <Route path="/appointments" element={<Navigate to="/scheduling" replace />} />
               <Route path="/calendar" element={<Navigate to="/scheduling" replace />} />
               <Route path="/notifications" element={<Shell roles={["admin", "staff"]}><Notifications /></Shell>} />

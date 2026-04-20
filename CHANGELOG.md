@@ -12,6 +12,86 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Billing Phase 1 — Invoices, Patient Ledger, Payments (iteration 24).**
+  User-facing billing core on top of the foundation shipped in iteration
+  23:
+  - **Balance math**: `_recompute_invoice_balance()` is now the single
+    source of truth for an invoice's `balance_cents`. It sums live
+    allocations (skipping void/failed payments), subtracts processed
+    refunds **proportionally** across the invoices a payment touched,
+    subtracts adjustments, and auto-advances the invoice status
+    (`issued ↔ partially_paid ↔ paid`). Runs on every payment create,
+    adjustment, refund, and payment status change. Invoice transitions
+    `paid → partially_paid / issued` are now legal for this purpose.
+  - **Refunds** post immediately as `processed`, flip the payment to
+    `refunded` / `partially_refunded`, re-inflate touched invoice
+    balances, and guard against over-refund (sum of existing + new
+    refunds cannot exceed the original payment).
+  - **Post-hoc allocation**: new `POST /api/billing/payments/{id}/allocations`
+    lets an unallocated payment be applied across invoices later;
+    allocations cannot exceed the payment's remaining unapplied cents.
+  - **Cash / check auto-capture**: payments with method `cash` or
+    `check` now post as `captured` directly (money-in-hand at the
+    front desk). Card / ACH stays `pending` until gateway confirmation.
+  - **Void invoice**: new `POST /api/billing/invoices/{id}/void`
+    (requires `billing.void`, MFA) with a mandatory reason; zeroes the
+    balance, blocks further adjustments, emits
+    `billing.invoice.voided`.
+  - **Patient ledger**: new `GET /api/billing/patients/{id}/ledger`
+    returns a chronological, denormalised row stream (charges,
+    payments, refunds, adjustments, credits, voids) with a
+    precomputed running balance and per-kind totals.
+  - **RBAC**: `super_admin` picked up `payment.refund`,
+    `adjustment.writeoff`, and `billing.void` with `MFA` (no APR) so
+    the demo admin can drive the full lifecycle. `billing_specialist` /
+    `clinic_manager` retain the full `MFA+APR` gate in production.
+  - **Read routes**: list/get endpoints for payers, insurance
+    policies, invoices, payments, claims, remittances, denial work
+    items, and the ledger moved from `require_permission(...)` to
+    `require_role("admin", "doctor", "staff")` — mirroring the
+    pattern used by `clinic_profile` and `appointment_types`. This
+    lets operators browse billing in the web UI without triggering an
+    MFA reauth on every page. **Mutations still go through
+    `require_permission()`** with the full authz matrix.
+
+- **Billing UI (`/billing`).**
+  - Dashboard (`/billing`) with outstanding-balance / lifetime-billed
+    / payments-recorded stat cards, recent-invoices list, and
+    recent-payments list.
+  - Invoices list (`/billing/invoices`) with status filter and
+    ID/patient text search.
+  - Invoice detail (`/billing/invoices/:id`) with line items,
+    subtotal / adjustments / balance totals cards, and inline actions:
+    Issue, Post payment, Adjust / writeoff, Void.
+  - `PostPaymentDialog` — multi-invoice allocation with auto-allocate
+    (oldest invoice first), real-time remaining/over-allocation
+    indicator, optional reference for check # / card last-4.
+  - `PatientLedgerCard` — embedded on `PatientDetail` and as a
+    standalone route at `/billing/patients/:id/ledger`. Shows the
+    chronological ledger with type-tagged rows, per-row running
+    balance, and a four-up totals footer.
+  - Shared money utilities (`/utils/money.js`) with
+    `formatCents` / `parseDollarsToCents` / `clampCents` /
+    `sumAmountCents`, and their Jest tests (6 passing).
+  - New sidebar nav entry "Billing" visible to admin / doctor / staff.
+
+### Tests
+- `backend/tests/test_billing.py` — **40 passing** (added 10 Phase 1
+  tests: partial-payment balance progression, adjustment closing,
+  post-hoc allocation, allocation-overrun rejection, void + downstream
+  lock, patient ledger chronology & totals, cross-tenant ledger denial,
+  full-refund reversal with payment → refunded & invoice → issued,
+  writeoff success / refund success for admin with reauth, staff
+  cannot refund).
+- `frontend/src/utils/money.test.js` — **6 passing** (formatCents /
+  parseDollarsToCents / clampCents / sumAmountCents edge cases).
+
+### Dependencies
+- None.
+
+## [Earlier — iteration 23 billing foundation]
+
+### Added
 - **Billing Service foundation (iteration 23).** Introduces the canonical
   billing domain model: payers, patient insurance policies, invoices
   (with sibling invoice_lines), payments + payment_allocations, refunds,

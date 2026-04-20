@@ -18,10 +18,12 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from core.audit import audit_success
+from core.deps import require_role
 from core.tenancy import TenantContext, require_tenant, tenant_db
 from core.tenant_scope import scoped_filter, stamp_for_write
 from services.authz.policy import require_permission
 from services.billing import transitions
+from services.billing.ledger import build_patient_ledger
 from services.billing.models import (
     AdjustmentCreate,
     AdjustmentPublic,
@@ -79,13 +81,136 @@ async def _scoped_one(coll, q: dict, ctx: TenantContext) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
+# Financial recompute — the single source of truth for invoice balance
+# ---------------------------------------------------------------------------
+async def _recompute_invoice_balance(
+    db, invoice_id: str, tenant_id: str, actor_id: str,
+) -> dict | None:
+    """Recompute `balance_cents` and auto-advance invoice status.
+
+    balance = total - applied_payments - adjustments + refunds_reversing_invoice_payments
+
+    Called after every event that can change the ledger against an invoice:
+      * payment allocation created
+      * adjustment created
+      * refund processed
+      * payment status changed to void/failed (allocation no longer counts)
+
+    Returns the refreshed invoice doc (or None if the invoice has
+    disappeared). Never raises: callers can rely on it being idempotent.
+    """
+    inv = await db.invoices.find_one(
+        {"id": invoice_id, "tenant_id": tenant_id}, {"_id": 0},
+    )
+    if not inv:
+        return None
+
+    # Sum allocations — only from payments that are NOT void/failed.
+    # Refunds against a payment reduce the effective applied amount on
+    # the invoices that payment touched, proportionally to the original
+    # allocation. So if a $100 payment had a 60/40 split across two
+    # invoices and $50 was refunded, $30 is reversed from invoice A and
+    # $20 from invoice B.
+    applied = 0
+    async for alloc in db.payment_allocations.find(
+        {"tenant_id": tenant_id, "invoice_id": invoice_id}, {"_id": 0},
+    ):
+        pmt = await db.payments.find_one(
+            {"id": alloc["payment_id"], "tenant_id": tenant_id},
+            {"_id": 0, "status": 1, "amount_cents": 1},
+        )
+        if not pmt or pmt.get("status") in ("void", "failed"):
+            continue
+
+        # Processed refunds on this payment.
+        refunded_on_pmt = 0
+        async for rf in db.refunds.find(
+            {"tenant_id": tenant_id, "payment_id": alloc["payment_id"],
+             "status": "processed"}, {"_id": 0, "amount_cents": 1},
+        ):
+            refunded_on_pmt += rf["amount_cents"]
+
+        alloc_amount = alloc["amount_cents"]
+        if refunded_on_pmt <= 0 or pmt["amount_cents"] <= 0:
+            effective = alloc_amount
+        else:
+            # Proportional reversal, bounded between 0 and the original alloc.
+            reversed_share = (
+                refunded_on_pmt * alloc_amount
+            ) // pmt["amount_cents"]
+            effective = max(alloc_amount - reversed_share, 0)
+        applied += effective
+
+    # Sum adjustments (writeoffs / discounts / etc).
+    adjustments = 0
+    async for adj in db.billing_adjustments.find(
+        {"tenant_id": tenant_id, "invoice_id": invoice_id}, {"_id": 0},
+    ):
+        adjustments += adj["amount_cents"]
+
+    total = inv.get("total_cents", 0)
+    balance = max(total - applied - adjustments, 0)
+
+    # Auto status progression — but respect terminal states (void, refunded).
+    current_status = inv["status"]
+    next_status = current_status
+    if current_status not in ("void", "refunded", "draft"):
+        if balance == 0 and total > 0:
+            next_status = "paid"
+        elif applied > 0 or adjustments > 0:
+            # Some money was applied but balance still owed.
+            next_status = "partially_paid"
+        else:
+            # No money applied, no adjustments — either still issued,
+            # or a full refund has wiped prior allocations so we fall
+            # back to "issued" from a previously paid state.
+            next_status = "issued"
+
+    set_fields = {
+        "balance_cents": balance,
+        "adjustment_cents": adjustments,
+        "updated_at": _now(),
+        "updated_by": actor_id,
+    }
+    history_action = "balance_recomputed"
+    if next_status != current_status:
+        # Validate the transition via the same helper used by the router.
+        try:
+            transitions.advance("invoice", current_status, next_status)
+            set_fields["status"] = next_status
+            history_action = "balance_recomputed_status_advanced"
+        except transitions.TransitionError:
+            # Fall back to keeping the current status — balance still updates.
+            next_status = current_status
+
+    await db.invoices.update_one(
+        {"id": invoice_id, "tenant_id": tenant_id},
+        {
+            "$set": set_fields,
+            "$push": {"history": {
+                "at": set_fields["updated_at"], "by": actor_id,
+                "action": history_action,
+                "applied_cents": applied,
+                "adjustment_cents": adjustments,
+                "balance_cents": balance,
+                "from_status": current_status,
+                "to_status": next_status,
+            }},
+        },
+    )
+    return await db.invoices.find_one(
+        {"id": invoice_id, "tenant_id": tenant_id}, {"_id": 0},
+    )
+
+
+# ---------------------------------------------------------------------------
 # PAYERS  —  /api/billing/payers
 # ---------------------------------------------------------------------------
 @router.get("/payers", response_model=list[PayerPublic])
 async def list_payers(
     request: Request,
     active_only: bool = Query(default=False),
-    user: dict = Depends(require_permission("billing", "read", audit_allow=False)),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
     ctx: TenantContext = Depends(require_tenant),
 ):
     db = tenant_db(ctx.tenant_id)
@@ -257,7 +382,7 @@ async def create_insurance_policy(
 async def list_insurance_policies(
     request: Request,
     patient_id: str | None = Query(default=None),
-    user: dict = Depends(require_permission("insurance", "read", audit_allow=False)),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
     ctx: TenantContext = Depends(require_tenant),
 ):
     db = tenant_db(ctx.tenant_id)
@@ -370,7 +495,7 @@ async def list_invoices(
     request: Request,
     patient_id: str | None = Query(default=None),
     status_filter: InvoiceStatus | None = Query(default=None, alias="status"),
-    user: dict = Depends(require_permission("billing", "read", audit_allow=False)),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
     ctx: TenantContext = Depends(require_tenant),
 ):
     db = tenant_db(ctx.tenant_id)
@@ -395,7 +520,7 @@ async def list_invoices(
 async def get_invoice(
     invoice_id: str,
     request: Request,
-    user: dict = Depends(require_permission("billing", "read", audit_allow=False)),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
     ctx: TenantContext = Depends(require_tenant),
 ):
     db = tenant_db(ctx.tenant_id)
@@ -414,7 +539,7 @@ async def get_invoice(
 async def list_invoice_lines(
     invoice_id: str,
     request: Request,
-    user: dict = Depends(require_permission("billing", "read", audit_allow=False)),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
     ctx: TenantContext = Depends(require_tenant),
 ):
     db = tenant_db(ctx.tenant_id)
@@ -546,6 +671,24 @@ async def create_payment(
     if alloc_docs:
         await db.payment_allocations.insert_many(alloc_docs)
 
+    # Auto-capture cash/check payments — these are money-in-hand at the
+    # front desk and don't need a separate gateway step. Card / ACH stays
+    # "pending" until the operator records the gateway result.
+    if payload.method in ("cash", "check"):
+        await db.payments.update_one(
+            {"id": payment_id, "tenant_id": ctx.tenant_id},
+            {"$set": {"status": "captured", "updated_at": now}},
+        )
+        payment_doc["status"] = "captured"
+
+    # Recompute balance on every touched invoice. Only issued invoices
+    # normally receive allocations; we still call recompute on drafts so
+    # the ledger stays consistent if the operator pre-applied a payment.
+    for a in payload.allocations:
+        await _recompute_invoice_balance(
+            db, a.invoice_id, ctx.tenant_id, user["id"],
+        )
+
     await audit_success(
         user, "billing.payment.created", request,
         entity_type="payment", entity_id=payment_id,
@@ -587,6 +730,22 @@ async def transition_payment_status(
     fresh = await db.payments.find_one(
         {"id": payment_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
     )
+
+    # If the payment went into/out of an "effectively zero" status, the
+    # ledger math for all its allocated invoices needs to be redone.
+    if pmt["status"] != new_status and (
+        new_status in ("void", "failed")
+        or pmt["status"] in ("void", "failed")
+    ):
+        alloc_invoices = set()
+        async for a in db.payment_allocations.find(
+            {"tenant_id": ctx.tenant_id, "payment_id": payment_id},
+            {"_id": 0, "invoice_id": 1},
+        ):
+            alloc_invoices.add(a["invoice_id"])
+        for inv_id in alloc_invoices:
+            await _recompute_invoice_balance(db, inv_id, ctx.tenant_id, user["id"])
+
     await audit_success(
         user, "billing.payment.status_changed", request,
         entity_type="payment", entity_id=payment_id,
@@ -599,7 +758,7 @@ async def transition_payment_status(
 async def list_payments(
     request: Request,
     patient_id: str | None = Query(default=None),
-    user: dict = Depends(require_permission("billing", "read", audit_allow=False)),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
     ctx: TenantContext = Depends(require_tenant),
 ):
     db = tenant_db(ctx.tenant_id)
@@ -638,6 +797,21 @@ async def create_refund(
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             "refund exceeds payment amount")
 
+    # Guard against over-refunding: existing pending/processed refunds
+    # against this payment plus the new one must not exceed the payment.
+    existing_refunds = 0
+    async for r in db.refunds.find(
+        {"tenant_id": ctx.tenant_id, "payment_id": pmt["id"]},
+        {"_id": 0, "amount_cents": 1, "status": 1},
+    ):
+        if r.get("status") != "failed":
+            existing_refunds += r["amount_cents"]
+    if existing_refunds + payload.amount_cents > pmt["amount_cents"]:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "refund would exceed payment remaining balance",
+        )
+
     now = _now()
     rid = str(uuid.uuid4())
     doc = stamp_for_write({
@@ -645,20 +819,63 @@ async def create_refund(
         "payment_id": payload.payment_id,
         "amount_cents": payload.amount_cents,
         "reason": payload.reason,
-        "status": "pending",
-        "processed_at": None,
+        # Phase 1 posts refunds as immediately processed. When a real
+        # payment gateway is added, this will start in "pending" and flip
+        # to "processed" on gateway confirmation.
+        "status": "processed",
+        "processed_at": now,
         "created_at": now,
         "updated_at": now,
         "created_by": user["id"],
         "updated_by": user["id"],
-        "history": [_history_entry(user, "created")],
+        "history": [_history_entry(user, "created"),
+                    _history_entry(user, "processed")],
     }, ctx, location_id=None)
     await db.refunds.insert_one(doc)
+
+    # Advance the payment status reflecting refund state.
+    total_refunds = existing_refunds + payload.amount_cents
+    if total_refunds >= pmt["amount_cents"]:
+        new_pmt_status = "refunded"
+    else:
+        new_pmt_status = "partially_refunded"
+    try:
+        allowed = transitions.advance("payment", pmt["status"], new_pmt_status)
+    except transitions.TransitionError:
+        # If the current payment status doesn't allow the transition
+        # (e.g. still pending) we park it — the refund row still posts,
+        # but the payment state stays where it is.
+        allowed = pmt["status"]
+    if allowed != pmt["status"]:
+        await db.payments.update_one(
+            {"id": pmt["id"], "tenant_id": ctx.tenant_id},
+            {"$set": {"status": allowed, "updated_at": now,
+                      "updated_by": user["id"]},
+             "$push": {"history": _history_entry(
+                 user, "refund_applied",
+                 from_status=pmt["status"], to_status=allowed,
+                 refund_id=rid,
+             )}},
+        )
+
+    # Recompute balance on every invoice this payment touched — the
+    # cash has effectively left, so the invoice balance re-inflates.
+    touched: set[str] = set()
+    async for a in db.payment_allocations.find(
+        {"tenant_id": ctx.tenant_id, "payment_id": pmt["id"]},
+        {"_id": 0, "invoice_id": 1},
+    ):
+        touched.add(a["invoice_id"])
+    for inv_id in touched:
+        await _recompute_invoice_balance(db, inv_id, ctx.tenant_id, user["id"])
+
     await audit_success(
         user, "billing.refund.created", request,
         entity_type="refund", entity_id=rid,
         metadata={"payment_id": payload.payment_id,
-                  "amount_cents": payload.amount_cents},
+                  "amount_cents": payload.amount_cents,
+                  "new_payment_status": allowed,
+                  "invoices_recomputed": len(touched)},
     )
     return _public(doc)
 
@@ -700,6 +917,10 @@ async def create_adjustment(
         "history": [_history_entry(user, "created", kind=payload.kind)],
     }, ctx, location_id=inv.get("location_id"))
     await db.billing_adjustments.insert_one(doc)
+    # Adjustment changes the invoice balance — recompute & maybe auto-advance status.
+    await _recompute_invoice_balance(
+        db, payload.invoice_id, ctx.tenant_id, user["id"],
+    )
     await audit_success(
         user, "billing.adjustment.created", request,
         entity_type="billing_adjustment", entity_id=aid,
@@ -829,7 +1050,7 @@ async def list_claims(
     request: Request,
     patient_id: str | None = Query(default=None),
     status_filter: ClaimStatus | None = Query(default=None, alias="status"),
-    user: dict = Depends(require_permission("claim", "read", audit_allow=False)),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
     ctx: TenantContext = Depends(require_tenant),
 ):
     db = tenant_db(ctx.tenant_id)
@@ -933,7 +1154,7 @@ async def transition_claim_status(
 @router.get("/remittances", response_model=list[RemittancePublic])
 async def list_remittances(
     request: Request,
-    user: dict = Depends(require_permission("remit", "read", audit_allow=False)),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
     ctx: TenantContext = Depends(require_tenant),
 ):
     db = tenant_db(ctx.tenant_id)
@@ -956,7 +1177,7 @@ async def list_remittances(
             response_model=list[DenialWorkItemPublic])
 async def list_denial_work_items(
     request: Request,
-    user: dict = Depends(require_permission("claim", "read", audit_allow=False)),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
     ctx: TenantContext = Depends(require_tenant),
 ):
     db = tenant_db(ctx.tenant_id)
@@ -970,3 +1191,168 @@ async def list_denial_work_items(
         metadata={"count": len(rows)},
     )
     return rows
+
+
+
+# ---------------------------------------------------------------------------
+# PATIENT LEDGER  —  /api/billing/patients/{patient_id}/ledger
+# ---------------------------------------------------------------------------
+@router.get("/patients/{patient_id}/ledger")
+async def patient_ledger(
+    patient_id: str,
+    request: Request,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Unified chronological ledger for a single patient.
+
+    The response is intentionally *denormalized* — each row carries the
+    fields the UI needs to render without a join. The running balance is
+    precomputed server-side so two clients looking at the same patient
+    always agree on the cents.
+    """
+    db = tenant_db(ctx.tenant_id)
+    patient = await _scoped_one(db.patients, {"id": patient_id}, ctx)
+    if not patient:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+
+    payload = await build_patient_ledger(
+        db, tenant_id=ctx.tenant_id, patient_id=patient_id,
+    )
+    await audit_success(
+        user, "billing.ledger.viewed", request,
+        entity_type="patient", entity_id=patient_id,
+        metadata={"rows": len(payload["rows"]),
+                  "balance_cents": payload["running_balance_cents"]},
+    )
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# POST-HOC PAYMENT ALLOCATION  —  /api/billing/payments/{payment_id}/allocations
+# ---------------------------------------------------------------------------
+@router.post("/payments/{payment_id}/allocations",
+             response_model=PaymentPublic)
+async def allocate_payment(
+    payment_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("payment", "collect")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Allocate remaining payment balance onto invoices.
+
+    Request body: `[{invoice_id, invoice_line_id?, amount_cents}, ...]`.
+    Sum of new allocations must be ≤ payment.amount_cents − already
+    allocated. Each invoice must exist and be in a non-terminal state.
+    """
+    db = tenant_db(ctx.tenant_id)
+    pmt = await _scoped_one(db.payments, {"id": payment_id}, ctx)
+    if not pmt:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Payment not found")
+    if pmt["status"] in ("void", "failed", "refunded"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"cannot allocate a {pmt['status']} payment",
+        )
+
+    # Accept the body as a list of allocation inputs reusing the existing
+    # PaymentAllocationInput shape.
+    body = await request.json()
+    if not isinstance(body, list) or not body:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "body must be a non-empty list of allocations")
+
+    from services.billing.models import PaymentAllocationInput as _Alloc
+    allocs = [_Alloc(**row) for row in body]
+    added_sum = sum(a.amount_cents for a in allocs)
+    remaining = pmt["amount_cents"] - pmt.get("allocated_cents", 0)
+    if added_sum > remaining:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"allocations exceed remaining ({added_sum} > {remaining})",
+        )
+
+    for a in allocs:
+        inv = await _scoped_one(db.invoices, {"id": a.invoice_id}, ctx)
+        if not inv:
+            raise HTTPException(status.HTTP_404_NOT_FOUND,
+                                f"invoice {a.invoice_id} not found")
+        if inv["status"] in ("void", "refunded"):
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"cannot allocate to {inv['status']} invoice",
+            )
+
+    now = _now()
+    docs = [stamp_for_write({
+        "id": str(uuid.uuid4()),
+        "payment_id": payment_id,
+        "invoice_id": a.invoice_id,
+        "invoice_line_id": a.invoice_line_id,
+        "amount_cents": a.amount_cents,
+        "created_at": now,
+    }, ctx, location_id=pmt.get("location_id")) for a in allocs]
+    await db.payment_allocations.insert_many(docs)
+
+    await db.payments.update_one(
+        {"id": payment_id, "tenant_id": ctx.tenant_id},
+        {"$set": {"allocated_cents": pmt.get("allocated_cents", 0) + added_sum,
+                  "updated_at": now, "updated_by": user["id"]},
+         "$push": {"history": _history_entry(
+             user, "allocated", added_cents=added_sum, count=len(docs),
+         )}},
+    )
+
+    touched = {a.invoice_id for a in allocs}
+    for inv_id in touched:
+        await _recompute_invoice_balance(db, inv_id, ctx.tenant_id, user["id"])
+
+    fresh = await db.payments.find_one(
+        {"id": payment_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    await audit_success(
+        user, "billing.payment.allocated", request,
+        entity_type="payment", entity_id=payment_id,
+        metadata={"added_cents": added_sum,
+                  "allocations": len(docs),
+                  "invoices": list(touched)},
+    )
+    return _public(fresh)
+
+
+# ---------------------------------------------------------------------------
+# VOID INVOICE  —  /api/billing/invoices/{id}/void
+# ---------------------------------------------------------------------------
+@router.post("/invoices/{invoice_id}/void", response_model=InvoicePublic)
+async def void_invoice(
+    invoice_id: str,
+    request: Request,
+    reason: str = Query(..., min_length=5, max_length=500),
+    user: dict = Depends(require_permission("billing", "void")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Void an invoice — terminal state. Requires `billing.void` (MFA+APR
+    for billing specialists; MFA-only for super_admin in demo)."""
+    db = tenant_db(ctx.tenant_id)
+    inv = await _scoped_one(db.invoices, {"id": invoice_id}, ctx)
+    if not inv:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
+    new_status = transitions.http_advance("invoice", inv["status"], "void")
+    now = _now()
+    await db.invoices.update_one(
+        {"id": invoice_id, "tenant_id": ctx.tenant_id},
+        {"$set": {"status": new_status, "balance_cents": 0,
+                  "updated_at": now, "updated_by": user["id"]},
+         "$push": {"history": _history_entry(
+             user, "voided", from_status=inv["status"], reason=reason,
+         )}},
+    )
+    fresh = await db.invoices.find_one(
+        {"id": invoice_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    await audit_success(
+        user, "billing.invoice.voided", request,
+        entity_type="invoice", entity_id=invoice_id,
+        metadata={"from": inv["status"], "reason": reason},
+    )
+    return _public(fresh)
