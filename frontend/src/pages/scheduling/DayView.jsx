@@ -291,8 +291,8 @@ export default function DayView({
         >
           <span>
             {outsideWindow} appointment{outsideWindow === 1 ? "" : "s"} outside the
-            configured {String(startH).padStart(2, "0")}:00–{String(endH).padStart(2, "0")}:00
-            window are hidden.
+            configured {String(startH).padStart(2, "0")}:00–{String(endH).padStart(2, "0")}:00{" "}
+            window {outsideWindow === 1 ? "is" : "are"} hidden.
           </span>
           <Button
             variant="outline"

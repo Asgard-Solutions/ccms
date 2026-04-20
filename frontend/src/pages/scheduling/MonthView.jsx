@@ -100,7 +100,7 @@ export default function MonthView({
                           onCreateAt?.(slot);
                         }}
                         aria-label={`Book a new appointment on ${openDayLabel}`}
-                        className="hidden h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary group-hover:flex"
+                        className="hidden h-5 w-5 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary focus-visible:flex focus-visible:bg-primary/10 focus-visible:text-primary group-hover:flex"
                       >
                         <Plus className="h-3 w-3" />
                       </button>

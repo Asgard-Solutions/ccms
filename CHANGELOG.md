@@ -11,6 +11,34 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Scheduling automated test coverage (Task 13).**
+  - New `backend/tests/test_scheduling_workflows.py` — 3 tests:
+    create → range-list → counts reconcile (including reschedule +
+    cancel round-trip and cancelled-appt still counted); patient
+    cannot book for other patients; patient counts never leak
+    cross-tenant. Combined with the earlier
+    `test_clinic_profile.py` (6) and `test_appointment_counts.py`
+    (5), the scheduling workstream now has **14/14 green pytest
+    tests** covering both API surfaces (appointment CRUD + counts
+    aggregation + clinic profile CRUD + RBAC + tenant isolation).
+  - Frontend regression by `testing_agent_v3_fork`: **16/18
+    items green**. Verified: legacy route redirects
+    (/appointments → /scheduling, /calendar → /scheduling),
+    sidebar single-entry, all 4 view toggles + date navigation,
+    range-label updates per view, week/month/year count badges
+    match data, **/counts-vs-/appointments network routing is
+    exactly as per Task 10** (Day view hits list endpoint;
+    Week/Month/Year hit counts endpoint), quick-add pre-fill at
+    09:00, day-slot pre-fill, day fallback 07:00–20:00 with
+    no-hours notice, outside-window banner + expand toggle,
+    BookDialog field set, cancel AlertDialog wiring.
+  - **Fixes from the agent report:**
+    - `DayView` outside-window banner copy: grammar fix —
+      "1 appointment … is hidden" / "N appointments … are hidden".
+    - Week + Month quick-add buttons now render on
+      `focus-visible` as well as `group-hover:flex`, so keyboard
+      users can reach them without relying on pointer hover.
+
 - **Scheduling migration completed (Task 12).** Final sweep
   confirming no stale entry points or broken links survived the
   Appointments → Scheduling collapse:
