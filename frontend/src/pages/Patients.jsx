@@ -773,12 +773,26 @@ export function PatientWizardDialog({
   onCreated,
   onSaved,
   mode = "create",
+  scope = "patient",
   patientId,
   initialForm,
   userId,
   tenantId,
 }) {
-  const [step, setStep] = useState(1);
+  // Scope slices the 4-step wizard into two focused flows:
+  //   - `patient`: steps 1–2 (demographics + billing). Used for Add/Edit
+  //     patient. No clinical intake required here.
+  //   - `intake`:  steps 3–4 (clinical intake + case/consents). Opened from
+  //     an existing patient record to capture/update intake data without
+  //     scrolling past demographics.
+  const visibleStepIds = useMemo(
+    () => (scope === "intake" ? [3, 4] : [1, 2]),
+    [scope]
+  );
+  const firstStep = visibleStepIds[0];
+  const lastStep = visibleStepIds[visibleStepIds.length - 1];
+
+  const [step, setStep] = useState(firstStep);
   const [form, setForm] = useState(EMPTY_FORM);
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
@@ -789,9 +803,12 @@ export function PatientWizardDialog({
 
   const visibility = useMemo(() => visibilityForForm(form), [form]);
   const isEdit = mode === "edit";
+  const isIntakeScope = scope === "intake";
+  // Draft autosave only makes sense for the Patient-scope create flow.
+  // Intake scope is always edit-an-existing-record, so no draft is kept.
   const draftKey = useMemo(
-    () => (isEdit ? null : draftStorageKey(userId, tenantId)),
-    [isEdit, userId, tenantId]
+    () => (isEdit || isIntakeScope ? null : draftStorageKey(userId, tenantId)),
+    [isEdit, isIntakeScope, userId, tenantId]
   );
 
   const set = (k) => (v) => {
@@ -832,13 +849,13 @@ export function PatientWizardDialog({
     if (!open) return;
     setErrors({});
     if (isEdit) {
-      setStep(1);
+      setStep(firstStep);
       setForm({ ...EMPTY_FORM, ...(initialForm || {}) });
       setDraftPrompt(null);
     } else {
       // Start from a clean form unless the user decides to resume.
       setForm(EMPTY_FORM);
-      setStep(1);
+      setStep(firstStep);
       // Probe localStorage for a resumable draft.
       let draft = null;
       try {
@@ -868,7 +885,7 @@ export function PatientWizardDialog({
         /* providers/locations optional */
       }
     })();
-  }, [open, isEdit, initialForm, draftKey]);
+  }, [open, isEdit, initialForm, draftKey, firstStep]);
 
   const clearDraft = () => {
     if (!draftKey) return;
@@ -878,7 +895,10 @@ export function PatientWizardDialog({
   const resumeDraft = () => {
     if (!draftPrompt) return;
     setForm({ ...EMPTY_FORM, ...(draftPrompt.form || {}) });
-    setStep(Math.min(4, Math.max(1, Number(draftPrompt.step) || 1)));
+    // Clamp the resumed step to this scope's visible range.
+    const savedStep = Number(draftPrompt.step) || firstStep;
+    const clamped = visibleStepIds.includes(savedStep) ? savedStep : firstStep;
+    setStep(clamped);
     setDraftPrompt(null);
   };
 
@@ -886,7 +906,7 @@ export function PatientWizardDialog({
     clearDraft();
     setDraftPrompt(null);
     setForm(EMPTY_FORM);
-    setStep(1);
+    setStep(firstStep);
   };
 
   const goNext = () => {
@@ -897,22 +917,29 @@ export function PatientWizardDialog({
       return;
     }
     setErrors({});
-    setStep((s) => Math.min(4, s + 1));
+    const idx = visibleStepIds.indexOf(step);
+    if (idx < visibleStepIds.length - 1) setStep(visibleStepIds[idx + 1]);
   };
 
   const goBack = () => {
     setErrors({});
-    setStep((s) => Math.max(1, s - 1));
+    const idx = visibleStepIds.indexOf(step);
+    if (idx > 0) setStep(visibleStepIds[idx - 1]);
   };
 
   async function submit() {
-    const errs = validateAll(form);
-    if (Object.keys(errs).length) {
-      setErrors(errs);
-      const hasStep1 = Object.keys(errs).some((k) => validateStep(1, form)[k]);
-      setStep(hasStep1 ? 1 : 2);
-      toast.error("Some required fields are missing.");
-      return;
+    // Scope "patient" still enforces demographics + billing validation.
+    // Scope "intake" fields (steps 3–4) have no hard validation — staff can
+    // save partial intake and come back to it later.
+    if (!isIntakeScope) {
+      const errs = validateAll(form);
+      if (Object.keys(errs).length) {
+        setErrors(errs);
+        const hasStep1 = Object.keys(errs).some((k) => validateStep(1, form)[k]);
+        setStep(hasStep1 ? 1 : 2);
+        toast.error("Some required fields are missing.");
+        return;
+      }
     }
 
     setSubmitting(true);
@@ -922,7 +949,7 @@ export function PatientWizardDialog({
       if (isEdit) {
         const resp = await api.put(`/patients/${patientId}`, payload);
         data = resp.data;
-        toast.success("Patient intake updated");
+        toast.success(isIntakeScope ? "Intake updated" : "Patient updated");
         onSaved && onSaved(data);
       } else {
         const resp = await api.post("/patients", payload);
@@ -939,7 +966,18 @@ export function PatientWizardDialog({
     }
   }
 
-  const current = STEPS.find((s) => s.id === step);
+  const visibleSteps = STEPS.filter((s) => visibleStepIds.includes(s.id));
+  const currentIndex = visibleStepIds.indexOf(step);
+  const current = STEPS.find((s) => s.id === step) || visibleSteps[0];
+  const totalSteps = visibleSteps.length;
+
+  const dialogTitle = isIntakeScope
+    ? (isEdit ? "Edit intake" : "Start intake")
+    : (isEdit ? "Edit patient" : "New patient");
+
+  const saveLabel = isIntakeScope
+    ? (isEdit ? "Save intake" : "Save intake")
+    : (isEdit ? "Save changes" : "Save patient");
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && !submitting && onClose()}>
@@ -949,11 +987,11 @@ export function PatientWizardDialog({
       >
         <DialogHeader className="border-b border-border bg-card px-8 py-5">
           <DialogTitle className="font-display text-2xl font-medium tracking-tight text-foreground">
-            {isEdit ? "Edit patient intake" : "New patient intake"}
+            {dialogTitle}
           </DialogTitle>
           <DialogDescription className="text-sm text-muted-foreground">
-            Step {step} of 4 — {current.label}. All PHI is encrypted at rest and every save is audited.
-            {!isEdit && (
+            Step {currentIndex + 1} of {totalSteps} — {current.label}. All PHI is encrypted at rest and every save is audited.
+            {!isEdit && !isIntakeScope && (
               <span
                 data-testid="wizard-draft-autosave-indicator"
                 className={
@@ -967,9 +1005,16 @@ export function PatientWizardDialog({
             )}
           </DialogDescription>
 
-          <ol className="mt-4 grid grid-cols-4 gap-2" data-testid="wizard-steps">
-            {STEPS.map((s) => {
-              const state = s.id < step ? "done" : s.id === step ? "active" : "todo";
+          <ol
+            className={
+              "mt-4 grid gap-2 " +
+              (totalSteps === 2 ? "grid-cols-2" : "grid-cols-4")
+            }
+            data-testid="wizard-steps"
+          >
+            {visibleSteps.map((s) => {
+              const sIdx = visibleStepIds.indexOf(s.id);
+              const state = sIdx < currentIndex ? "done" : s.id === step ? "active" : "todo";
               return (
                 <li key={s.id} data-testid={`wizard-step-${s.id}`} data-state={state} className="flex items-start gap-3">
                   <div
@@ -1069,13 +1114,13 @@ export function PatientWizardDialog({
               type="button"
               variant="ghost"
               onClick={goBack}
-              disabled={step === 1 || submitting}
+              disabled={currentIndex === 0 || submitting}
               className="rounded-sm text-primary hover:bg-primary/10"
               data-testid="wizard-back-btn"
             >
               <ChevronLeft className="mr-1 h-4 w-4" /> Back
             </Button>
-            {step < 4 ? (
+            {step !== lastStep ? (
               <Button
                 type="button"
                 onClick={goNext}
@@ -1092,7 +1137,7 @@ export function PatientWizardDialog({
                 className="h-10 rounded-sm bg-primary px-6 hover:bg-[var(--primary-hover)]"
                 data-testid="wizard-save-btn"
               >
-                {submitting ? "Saving…" : isEdit ? "Save changes" : "Save patient"}
+                {submitting ? "Saving…" : saveLabel}
               </Button>
             )}
           </div>
@@ -1175,7 +1220,7 @@ function Highlight({ value, rx }) {
     <>
       {parts.map((chunk, i) =>
         i % 2 === 1 ? (
-          <mark key={i} className="bg-[color:var(--sage-accent)]/25 text-foreground rounded-sm px-0.5">
+          <mark key={i} className="rounded-sm bg-primary/25 px-0.5 text-foreground">
             {chunk}
           </mark>
         ) : (

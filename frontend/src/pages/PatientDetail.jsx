@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Download, Eye, EyeOff, FileText, Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Eye, EyeOff, FileText, Pencil, Plus, Stethoscope, Trash2 } from "lucide-react";
 import { api, formatApiError } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { formatDate, formatDateTime, relativeFromNow } from "../utils/time";
@@ -495,6 +495,7 @@ export default function PatientDetail() {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteReason, setDeleteReason] = useState("");
   const [editWizardOpen, setEditWizardOpen] = useState(false);
+  const [intakeWizardOpen, setIntakeWizardOpen] = useState(false);
 
   const load = useCallback(
     async ({ withUnmask = false, breakGlassReason = null } = {}) => {
@@ -635,9 +636,6 @@ export default function PatientDetail() {
                   setEditWizardOpen(true);
                   return;
                 }
-                // Inline unmask flow — if the staff member is allowed to
-                // unmask (admin), flip it automatically and open the wizard
-                // right after the patient reloads. Audit trail still fires.
                 if (canUnmask) {
                   try {
                     setUnmask(true);
@@ -649,8 +647,35 @@ export default function PatientDetail() {
                   }
                   return;
                 }
-                // Non-admin clinicians still need break-glass — nudge them
-                // to supply a reason instead of silently failing.
+                toast.message("Break-glass required to edit patient", {
+                  description: "Enter a reason above to unmask this record before editing.",
+                });
+              }}
+              data-testid="patient-edit-patient-btn"
+              className="rounded-sm"
+            >
+              <Pencil className="mr-2 h-4 w-4" /> Edit patient
+            </Button>
+          )}
+          {canEditIntake && (
+            <Button
+              variant="outline"
+              onClick={async () => {
+                if (patient.unmasked) {
+                  setIntakeWizardOpen(true);
+                  return;
+                }
+                if (canUnmask) {
+                  try {
+                    setUnmask(true);
+                    await load({ withUnmask: true, breakGlassReason: reason });
+                    setIntakeWizardOpen(true);
+                  } catch (err) {
+                    setUnmask(false);
+                    toast.error(formatApiError(err));
+                  }
+                  return;
+                }
                 toast.message("Break-glass required to edit intake", {
                   description: "Enter a reason above to unmask this record before editing.",
                 });
@@ -658,7 +683,7 @@ export default function PatientDetail() {
               data-testid="patient-edit-intake-btn"
               className="rounded-sm"
             >
-              <Pencil className="mr-2 h-4 w-4" /> Edit intake
+              <Stethoscope className="mr-2 h-4 w-4" /> Edit intake
             </Button>
           )}
           {canExport && (
@@ -882,17 +907,32 @@ export default function PatientDetail() {
       </AlertDialog>
 
       {canEditIntake && (
-        <PatientWizardDialog
-          open={editWizardOpen}
-          onClose={() => setEditWizardOpen(false)}
-          mode="edit"
-          patientId={id}
-          initialForm={payloadToForm(patient)}
-          userId={user.id}
-          tenantId={user.tenant_id}
-          onSaved={() => load({ withUnmask: unmask, breakGlassReason: reason })}
-        />
+        <>
+          <PatientWizardDialog
+            open={editWizardOpen}
+            onClose={() => setEditWizardOpen(false)}
+            mode="edit"
+            scope="patient"
+            patientId={id}
+            initialForm={payloadToForm(patient)}
+            userId={user.id}
+            tenantId={user.tenant_id}
+            onSaved={() => load({ withUnmask: unmask, breakGlassReason: reason })}
+          />
+          <PatientWizardDialog
+            open={intakeWizardOpen}
+            onClose={() => setIntakeWizardOpen(false)}
+            mode="edit"
+            scope="intake"
+            patientId={id}
+            initialForm={payloadToForm(patient)}
+            userId={user.id}
+            tenantId={user.tenant_id}
+            onSaved={() => load({ withUnmask: unmask, breakGlassReason: reason })}
+          />
+        </>
       )}
     </div>
   );
 }
+

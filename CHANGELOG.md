@@ -11,6 +11,36 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+### Changed
+- **Split patient wizard into two focused flows.** The previous
+  4-step wizard mixed demographics, billing, clinical intake, and
+  case/consents into a single form — confusing when reception just
+  wanted to add a patient and returning staff just wanted to update
+  intake.
+  - **Add / Edit patient** — scope `"patient"`, visible steps 1–2
+    only (Patient Info → Billing & Insurance). Used from the
+    `/patients` page "+ New patient" action and the new
+    **Edit patient** button on `PatientDetail.jsx`.
+  - **Start / Edit intake** — scope `"intake"`, visible steps 3–4
+    only (Clinical Intake → Case & Consents). Used from the new
+    **Edit intake** button on `PatientDetail.jsx`. Edit-only — no
+    "create" scenario for intake alone since intake lives on an
+    existing patient record.
+  - `PatientWizardDialog` now takes a `scope` prop (`"patient"`
+    default or `"intake"`), dynamically titles the dialog (`"New
+    patient"` / `"Edit patient"` / `"Edit intake"` / `"Start
+    intake"`), counts steps within the visible slice ("Step 1 of 2"),
+    and only runs hard validation on the patient scope. Intake scope
+    allows partial saves — staff can return and complete later.
+  - `PatientDetail.jsx` now renders both `PatientWizardDialog`
+    instances with distinct open/close state
+    (`editWizardOpen` + `intakeWizardOpen`), each keyed to its scope.
+    Buttons carry matching `data-testid`s: `patient-edit-patient-btn`
+    and `patient-edit-intake-btn`.
+  - Draft autosave is only kept for the patient-scope **create**
+    flow; intake and edit flows start from the server record with
+    no local draft noise.
+
 ### Added
 - **Patient Documents — inline thumbnails** for the three image-first
   categories (Insurance card front, Insurance card back, Driver's
