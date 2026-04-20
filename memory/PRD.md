@@ -240,6 +240,24 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **Docs** — `/app/memory/COMPLIANCE_OPS_ARCHITECTURE.md` covers model, lifecycle, HIPAA 45-CFR mapping table, SOC 2 recurring activities, CCPA/CPRA flow linkage, evidence bundle export flow, "how to add a new control domain" cookbook.
 - **Verified (iteration_18)**: 10/10 new tests — dashboard fidelity, multi-framework mapping, framework filter, integrity hash + legal hold, tamper-resistant patch, tenant isolation, overdue access-review auto-flag, incident history append, unknown-type rejection, BAA-missing counted. Combined iteration_17+18 = 25/25 green.
 
+## 21. Iteration 20a — Patient intake Phase 1 (2026-02-19)
+
+Backend-only expansion of the patient domain to support richer chiropractic intake, while keeping the legacy flat payload (and therefore the current frontend modal) fully functional. No frontend wizard built in this phase.
+
+- **`services/patient/models.py`** — Added grouped Pydantic section models: `Demographics`, `ContactInfo`, `AddressInfo`, `EmergencyContactInfo`, `AdminInfo`, `GuarantorInfo`, `InsurancePlan` / `InsuranceInfo`, `ClinicalIntake`, `CaseDetails`, `ConsentRecord` / `ConsentsInfo`. `PatientCreate` / `PatientUpdate` now accept either the legacy flat payload OR these grouped sections. `address` and `emergency_contact` are typed as `str | AddressInfo | None` / `str | EmergencyContactInfo | None` so old string clients keep working.
+- **`services/patient/router.py`** —
+  * `_normalize_patient_payload()` handles the union types: when `address` / `emergency_contact` arrive as objects it stores them structured under `address_details` / `emergency_contact_details` AND derives a flat legacy string into the scalar `address` / `emergency_contact` keys so `PatientDetail.jsx` (reads `patient.address` directly) keeps rendering without frontend changes.
+  * Legacy top-level `first_name`, `last_name`, `date_of_birth`, `gender`, `phone`, `email` are backfilled from `demographics` / `contact` when missing so search, masking and existing UI work unchanged.
+  * Email → user auto-linking now runs twice (once for flat `payload.email`, once post-normalization for `contact.email`).
+- **Encryption-at-rest expansion** — `PATIENT_ENCRYPTED` now covers every grouped PHI/PII section (`demographics`, `contact`, `admin`, `guarantor`, `insurance`, `clinical_intake`, `case_details`, `consents`, `address_details`, `emergency_contact_details`) in addition to the existing legacy scalars (`date_of_birth`, `address`, `emergency_contact`, `notes`). New local helpers `_encrypt_patient_doc` / `_decrypt_patient_doc` serialize dict/list sections as JSON under AES-GCM (ENC_PREFIX-tagged) and transparently rehydrate on read. Medical-record crypto path untouched.
+- **Masked responses strip grouped sections** — masked `_shape` output removes every grouped key entirely (legacy scalar masking via `mask_patient` unchanged). Unmasked responses keep the full structured intake.
+- **Validation** — conservative: Pydantic only enforces structural shape; router enforces `first_name` + `last_name` must resolve from either source.
+- **Tests** — `/app/backend/tests/test_patient_intake_phase1.py`: 6 cases covering legacy flat CRUD, grouped-payload create, masked-vs-unmasked projections, grouped PUT preserves other sections, object-address update, raw-Mongo encryption-at-rest probe, and required-name validation. **All 6 green; iteration_14 patient regressions 4/4 green (after rate-limit cooldown).**
+
+### Compatibility notes
+- Database migration: none. Old records read back unchanged; new grouped keys are simply absent until a patient is written with them.
+- Frontend: current `Patients.jsx` modal continues to send `{first_name, last_name, email, phone, date_of_birth, gender, address, emergency_contact, notes}` and the API round-trips it identically. `PatientDetail.jsx` keeps reading `patient.address` / `patient.emergency_contact` as strings — the derived legacy scalars are always populated.
+
 ## 20. Deferred (still)
 - `privacy`, `communication`, and `elevation` routers rely on the `tenant_id` backfill but do not yet pass queries through `scoped_filter` — safe because we're still single-tenant-per-user but a P1 to harden before onboarding the second paying tenant.
 - Multi-tenant user support (one user across N tenants) — P2; requires `user_tenant_roles` table + tenant-switcher UI.

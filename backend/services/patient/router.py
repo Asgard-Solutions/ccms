@@ -12,6 +12,7 @@ Controls:
   - Export endpoint returns a signed JSON blob of everything we hold on the
     patient (right-to-access).
 """
+import json
 import uuid
 from datetime import datetime, timezone, timedelta
 
@@ -19,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from core.audit import audit_emergency, audit_success, log_audit
 from core import cache, cache_keys
-from core.crypto import decrypt_fields, encrypt_fields
+from core.crypto import ENC_PREFIX, decrypt_fields, decrypt_text, encrypt_fields, encrypt_text
 from core.db import get_db, get_db_read, get_db_write, read_after_write_db
 from core.deps import get_current_user, require_role
 from core.masking import mask_patient
@@ -41,25 +42,185 @@ from services.patient.models import (
 router = APIRouter(prefix="/patients", tags=["patient"])
 
 STAFF_ROLES = ("admin", "doctor", "staff")
-PATIENT_ENCRYPTED = ["date_of_birth", "address", "emergency_contact", "notes"]
+
+# Legacy top-level free-text PHI fields (stored as encrypted strings).
+PATIENT_FLAT_ENCRYPTED = ["date_of_birth", "address", "emergency_contact", "notes"]
+
+# New grouped intake sections — encrypted at rest as JSON blobs. Any
+# sensitive PHI/PII section goes in this list. The structured
+# `address_details` / `emergency_contact_details` projections are also
+# encrypted because they duplicate the same PHI as their legacy scalar
+# counterparts.
+PATIENT_SECTION_ENCRYPTED = [
+    "demographics",
+    "contact",
+    "admin",
+    "guarantor",
+    "insurance",
+    "clinical_intake",
+    "case_details",
+    "consents",
+    "address_details",
+    "emergency_contact_details",
+]
+
+# Master list of encrypted-at-rest patient fields (legacy flat + grouped
+# sections). Used by `_encrypt_patient_doc` / `_decrypt_patient_doc`.
+PATIENT_ENCRYPTED = PATIENT_FLAT_ENCRYPTED + PATIENT_SECTION_ENCRYPTED
+
 RECORD_ENCRYPTED = ["description", "diagnosis", "treatment"]
 RETENTION_YEARS = 7
 REASON_MIN_LENGTH = 8
+
+# Output-only shape keys that the frontend/schema may read.
+PATIENT_GROUPED_KEYS = [
+    "demographics",
+    "contact",
+    "address_details",
+    "emergency_contact_details",
+    "admin",
+    "guarantor",
+    "insurance",
+    "clinical_intake",
+    "case_details",
+    "consents",
+]
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _encrypt_patient_value(value):
+    """Encrypt one patient field. Strings go through AES-GCM as before;
+    dicts/lists are JSON-serialized first so we can store structured intake
+    sections as encrypted blobs without leaking PHI to the database."""
+    if value is None or value == "":
+        return value
+    if isinstance(value, (dict, list)):
+        return encrypt_text(json.dumps(value, default=str))
+    if isinstance(value, str):
+        return encrypt_text(value)
+    # bool/int/float/other scalars are not encrypted (no PHI surface).
+    return value
+
+
+def _decrypt_patient_value(value):
+    if not isinstance(value, str) or not value.startswith(ENC_PREFIX):
+        return value
+    plaintext = decrypt_text(value)
+    if isinstance(plaintext, str) and plaintext[:1] in ("{", "["):
+        try:
+            return json.loads(plaintext)
+        except (ValueError, TypeError):
+            pass
+    return plaintext
+
+
+def _encrypt_patient_doc(doc: dict) -> dict:
+    out = dict(doc)
+    for key in PATIENT_ENCRYPTED:
+        if key in out and out[key] is not None:
+            out[key] = _encrypt_patient_value(out[key])
+    return out
+
+
+def _decrypt_patient_doc(doc: dict) -> dict:
+    out = dict(doc)
+    for key in PATIENT_ENCRYPTED:
+        if key in out and out[key] is not None:
+            out[key] = _decrypt_patient_value(out[key])
+    return out
+
+
+def _address_to_string(addr: dict) -> str | None:
+    """Flatten a structured address into the single-line legacy format the
+    existing UI renders. Returns None if the address is empty."""
+    if not isinstance(addr, dict):
+        return None
+    parts = [
+        addr.get("line1"),
+        addr.get("line2"),
+        ", ".join(
+            p for p in [addr.get("city"), addr.get("state")] if p
+        ) or None,
+        addr.get("postal_code"),
+        addr.get("country"),
+    ]
+    joined = ", ".join(p for p in parts if p)
+    return joined or None
+
+
+def _emergency_contact_to_string(ec: dict) -> str | None:
+    if not isinstance(ec, dict):
+        return None
+    label_parts = [ec.get("name")]
+    if ec.get("relationship"):
+        label_parts.append(f"({ec['relationship']})")
+    contact_parts = [p for p in [ec.get("phone"), ec.get("email")] if p]
+    head = " ".join(p for p in label_parts if p).strip()
+    tail = " / ".join(contact_parts)
+    combined = " · ".join(p for p in [head, tail] if p)
+    return combined or None
+
+
+def _normalize_patient_payload(body: dict) -> dict:
+    """Accept both the legacy flat payload and the new grouped payload.
+
+    - If `address` or `emergency_contact` arrive as structured objects we
+      persist them under `address_details` / `emergency_contact_details`
+      AND derive a flat legacy string for backward compatibility.
+    - If the top-level `first_name` / `last_name` / `date_of_birth` /
+      `gender` / `phone` / `email` are missing but available inside the
+      grouped sections (`demographics` / `contact`), backfill them so
+      search, display and the legacy UI continue to work unchanged.
+    """
+    out = dict(body)
+
+    # address — union[str, dict]
+    addr = out.get("address")
+    if isinstance(addr, dict):
+        cleaned = {k: v for k, v in addr.items() if v is not None}
+        out["address_details"] = cleaned or None
+        out["address"] = _address_to_string(cleaned)
+
+    # emergency_contact — union[str, dict]
+    ec = out.get("emergency_contact")
+    if isinstance(ec, dict):
+        cleaned = {k: v for k, v in ec.items() if v is not None}
+        out["emergency_contact_details"] = cleaned or None
+        out["emergency_contact"] = _emergency_contact_to_string(cleaned)
+
+    # Backfill legacy top-level fields from grouped sections when missing.
+    demo = out.get("demographics") or {}
+    contact = out.get("contact") or {}
+    for key in ("first_name", "last_name", "date_of_birth", "gender"):
+        if not out.get(key) and demo.get(key):
+            out[key] = demo[key]
+    for key in ("phone", "email"):
+        if not out.get(key) and contact.get(key):
+            out[key] = contact[key]
+
+    return out
+
+
 def _shape(p: dict, *, unmasked: bool) -> dict:
-    """Decrypt + mask a patient document for the API response."""
-    decrypted = decrypt_fields(p, PATIENT_ENCRYPTED)
+    """Decrypt + mask a patient document for the API response.
+
+    Masked responses strip the richer grouped intake sections entirely —
+    masking each nested PHI leaf is left to the future wizard layer. The
+    legacy scalar `address` / `emergency_contact` fields remain populated
+    for the current UI and are masked by `mask_patient` as before.
+    """
+    decrypted = _decrypt_patient_doc(p)
     if unmasked:
         decrypted["unmasked"] = True
         decrypted["display_name_masked"] = None
         return decrypted
     masked = mask_patient(decrypted)
     masked["unmasked"] = False
+    for key in PATIENT_GROUPED_KEYS:
+        masked.pop(key, None)
     return masked
 
 
@@ -186,6 +347,24 @@ async def create_patient(
 
     body = payload.model_dump()
     body.pop("location_id", None)
+    body = _normalize_patient_payload(body)
+
+    # Validate legacy required names (allow them to come from either the
+    # flat payload or the grouped `demographics` section).
+    if not body.get("first_name") or not body.get("last_name"):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "first_name and last_name are required (either at the top level or within `demographics`).",
+        )
+
+    # Re-resolve email-based user linkage in case email came from `contact`.
+    if not user_id and body.get("email"):
+        existing_user = await db.users.find_one(
+            {"email": body["email"].lower()}, {"_id": 0, "id": 1}
+        )
+        if existing_user:
+            user_id = existing_user["id"]
+
     doc = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
@@ -195,7 +374,7 @@ async def create_patient(
         "updated_at": now,
     }
     doc = stamp_for_write(doc, ctx, location_id=location_id)
-    stored = encrypt_fields(doc, PATIENT_ENCRYPTED)
+    stored = _encrypt_patient_doc(doc)
     await db.patients.insert_one(stored)
     await cache.invalidate_prefix(cache_keys.PREFIX_PATIENTS)
     await cache.invalidate_prefix(cache_keys.PREFIX_DASHBOARD)
@@ -270,12 +449,13 @@ async def update_patient(
     ctx: TenantContext = Depends(get_tenant_context),
 ):
     db = get_db_write()
-    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
-    if not updates:
+    raw_updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not raw_updates:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No fields to update")
 
+    updates = _normalize_patient_payload(raw_updates)
     updates["updated_at"] = _now()
-    updates_to_store = encrypt_fields(updates, PATIENT_ENCRYPTED)
+    updates_to_store = _encrypt_patient_doc(updates)
     q = scoped_filter({"id": patient_id}, ctx, location_scoped=True)
     if q.get("__deny__"):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
@@ -385,7 +565,7 @@ async def export_patient(
     ]
 
     # Decrypt everything for the export.
-    decrypted_patient = decrypt_fields(p, PATIENT_ENCRYPTED)
+    decrypted_patient = _decrypt_patient_doc(p)
     decrypted_records = [decrypt_fields(r, RECORD_ENCRYPTED) for r in records]
 
     await audit_success(
