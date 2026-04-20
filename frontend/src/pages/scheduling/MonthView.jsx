@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import {
   buildMonthGrid,
-  groupByDay,
   isoDateKey,
   isToday,
   WEEKDAY_SHORT,
@@ -10,9 +9,8 @@ import { formatTime } from "../../utils/time";
 
 const PREVIEW_LIMIT = 2;
 
-export default function MonthView({ date, appointments, onOpenDay }) {
+export default function MonthView({ date, countsByDate, onOpenDay }) {
   const weeks = useMemo(() => buildMonthGrid(date), [date]);
-  const apptsByDay = useMemo(() => groupByDay(appointments), [appointments]);
   const currentMonth = date.getMonth();
 
   return (
@@ -31,9 +29,9 @@ export default function MonthView({ date, appointments, onOpenDay }) {
         {weeks.map((week, wi) =>
           week.map((d) => {
             const key = isoDateKey(d);
-            const list = apptsByDay.get(key) || [];
-            const count = list.length;
-            const preview = list.slice(0, PREVIEW_LIMIT);
+            const entry = countsByDate?.[key] || { count: 0, samples: [] };
+            const count = entry.count;
+            const preview = (entry.samples || []).slice(0, PREVIEW_LIMIT);
             const extra = Math.max(0, count - preview.length);
             const inMonth = d.getMonth() === currentMonth;
             const today = isToday(d);
@@ -45,9 +43,7 @@ export default function MonthView({ date, appointments, onOpenDay }) {
                 data-testid={`scheduling-month-cell-${key}`}
                 onClick={() => onOpenDay?.(d)}
                 aria-label={`${d.toLocaleDateString("en-US", {
-                  weekday: "long",
-                  month: "long",
-                  day: "numeric",
+                  weekday: "long", month: "long", day: "numeric",
                 })} — ${count} appointment${count === 1 ? "" : "s"}`}
                 className={`group flex min-h-[120px] flex-col items-stretch gap-1 border-b border-r border-border p-2 text-left transition-colors hover:bg-muted ${
                   wi === weeks.length - 1 ? "border-b-0" : ""

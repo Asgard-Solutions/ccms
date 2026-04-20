@@ -11,6 +11,37 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Scheduling summary views now use count aggregation (Task 10).**
+  New backend endpoint `GET /api/appointments/counts` runs a single
+  MongoDB aggregation pipeline that buckets `start_time` by the
+  caller-supplied IANA `tz` via `$dateToString`, groups by local
+  date, and returns `[{date, count, samples[]}]`. An
+  `include_samples` query parameter (0..10, default 0) decides how
+  many lightweight sample appointments are returned per day; samples
+  are hydrated with patient + provider names in one extra round-trip
+  (same pattern as the list endpoint). Tenant scoping, location
+  scoping, and role-based filters (doctor → own provider_id,
+  patient → own patient_id) all mirror the list endpoint verbatim.
+  Response is cached 30s per
+  `(role, tenant, range, tz, samples, provider_id, patient_id,
+  location_id, status)` cache key.
+  - Week view now fetches counts + 3 samples per day.
+  - Month view fetches counts + 2 samples per day.
+  - Year view fetches counts-only (365/366 dates, 0 samples).
+  - Day view still pulls the full list endpoint since it needs
+    complete timing, phone, reason, notes etc. The detail fetch in
+    `useScheduling` is now skipped when `view !== "day"` — no more
+    duplicate payload on view toggles.
+  - Client-side in-memory cache on `useAppointmentCounts` keyed by
+    `(view, range, tz, samples, providerId)` so quick view hops
+    don't refire the request.
+  - Cancel / reschedule / create paths invalidate **both** the
+    detail and counts caches so the UI stays consistent.
+  - Backend tests (`backend/tests/test_appointment_counts.py`,
+    5/5 green): shape + totals reconcile with the list endpoint,
+    tenant isolation, `include_samples` cap (0 and 11→422 bound),
+    `tz` bucketing smoke-test, patient-role auto-scoping.
+
 - **Scheduling Day view now respects clinic hours (Task 9).** A new
   `useClinicHours` hook resolves the caller's active location via
   `/api/tenancy/me/context` → then pulls `hours[]` from

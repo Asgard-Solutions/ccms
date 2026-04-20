@@ -244,6 +244,151 @@ async def list_appointments(
     return await cache.get_or_set(cache_key, 30, _fetch)
 
 
+@router.get("/counts")
+async def appointment_counts(
+    request: Request,
+    user: dict = Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
+    provider_id: str | None = None,
+    patient_id: str | None = None,
+    location_id: str | None = None,
+    appt_status: str | None = Query(default=None, alias="status"),
+    from_date: str | None = Query(default=None, alias="from"),
+    to_date: str | None = Query(default=None, alias="to"),
+    tz: str = Query(default="UTC", description="IANA timezone for local-day bucketing"),
+    include_samples: int = Query(default=0, ge=0, le=10,
+                                 description="Sample appointments per date (0..10)"),
+):
+    """Return appointment counts grouped by local date.
+
+    - Tenant + location + role scoping mirrors the list endpoint.
+    - Buckets `start_time` into `tz`-local dates via `$dateToString`.
+    - When `include_samples > 0` each date carries the N earliest
+      appointments as lightweight sample objects (no notes, no PHI beyond
+      what the list endpoint already returns): id, start_time, end_time,
+      patient_id, provider_id, status. Patient/provider names are hydrated
+      in one extra read (same pattern as the list endpoint).
+    - Cached 30s — same TTL as the list endpoint.
+    """
+    db = get_db_read()
+    q: dict = {}
+
+    # Role-scoped auto-filters (same policy as list_appointments).
+    if user["role"] == "patient":
+        patient_record = await db.patients.find_one(
+            {"user_id": user["id"]}, {"_id": 0, "id": 1}
+        )
+        if not patient_record:
+            return []
+        q["patient_id"] = patient_record["id"]
+    elif user["role"] == "doctor":
+        if not provider_id and not patient_id:
+            q["provider_id"] = user["id"]
+
+    if provider_id:
+        q["provider_id"] = provider_id
+    if patient_id:
+        q["patient_id"] = patient_id
+    if location_id:
+        q["location_id"] = location_id
+    if appt_status:
+        q["status"] = appt_status
+    if from_date or to_date:
+        range_q: dict = {}
+        if from_date:
+            range_q["$gte"] = from_date
+        if to_date:
+            range_q["$lte"] = to_date
+        q["start_time"] = range_q
+
+    q = scoped_filter(q, ctx, location_scoped=True)
+    if q.get("__deny__"):
+        return []
+
+    async def _aggregate():
+        pipeline = [
+            {"$match": q},
+            {"$sort": {"start_time": 1}},
+            {"$addFields": {
+                "_parsed_start": {"$dateFromString": {"dateString": "$start_time"}},
+            }},
+            {"$addFields": {
+                "_local_date": {"$dateToString": {
+                    "format": "%Y-%m-%d",
+                    "date": "$_parsed_start",
+                    "timezone": tz,
+                }},
+            }},
+            {"$group": {
+                "_id": "$_local_date",
+                "count": {"$sum": 1},
+                "samples": {"$push": {
+                    "id": "$id",
+                    "start_time": "$start_time",
+                    "end_time": "$end_time",
+                    "patient_id": "$patient_id",
+                    "provider_id": "$provider_id",
+                    "status": "$status",
+                }},
+            }},
+            {"$project": {
+                "_id": 0,
+                "date": "$_id",
+                "count": 1,
+                "samples": ({"$slice": ["$samples", include_samples]}
+                            if include_samples > 0 else {"$literal": []}),
+            }},
+            {"$sort": {"date": 1}},
+        ]
+        rows = [doc async for doc in db.appointments.aggregate(pipeline)]
+
+        # Hydrate patient/provider names on samples (if any).
+        if include_samples > 0 and rows:
+            pids: set[str] = set()
+            prids: set[str] = set()
+            for r in rows:
+                for s in r["samples"]:
+                    pids.add(s["patient_id"])
+                    prids.add(s["provider_id"])
+            patients = {
+                p["id"]: f"{p['first_name']} {p['last_name']}"
+                async for p in db.patients.find(
+                    {"id": {"$in": list(pids)}},
+                    {"_id": 0, "id": 1, "first_name": 1, "last_name": 1},
+                )
+            } if pids else {}
+            providers = {
+                u["id"]: u["name"]
+                async for u in db.users.find(
+                    {"id": {"$in": list(prids)}},
+                    {"_id": 0, "id": 1, "name": 1},
+                )
+            } if prids else {}
+            for r in rows:
+                for s in r["samples"]:
+                    s["patient_name"] = patients.get(s["patient_id"])
+                    s["provider_name"] = providers.get(s["provider_id"])
+        return rows
+
+    cache_key = cache_keys.appointments_query(
+        user["role"] + ":counts",
+        {
+            "provider_id": provider_id,
+            "patient_id": patient_id,
+            "location_id": location_id,
+            "status": appt_status,
+            "from": from_date,
+            "to": to_date,
+            "tz": tz,
+            "samples": include_samples,
+            "tenant": ctx.tenant_id or "platform",
+            "doctor_self": user["id"] if (user["role"] == "doctor" and not provider_id and not patient_id) else None,
+            "patient_self": user["id"] if user["role"] == "patient" else None,
+        },
+    )
+    return await cache.get_or_set(cache_key, 30, _aggregate)
+
+
 @router.get("/{appointment_id}", response_model=AppointmentPublic)
 async def get_appointment(
     appointment_id: str, request: Request,

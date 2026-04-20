@@ -21,6 +21,7 @@ import YearView from "./YearView";
 import BookDialog from "./BookDialog";
 import { useScheduling } from "./useScheduling";
 import { useClinicHours } from "./useClinicHours";
+import { useAppointmentCounts } from "./useAppointmentCounts";
 
 const STAFF_ROLES = ["admin", "doctor", "staff"];
 
@@ -43,6 +44,21 @@ export default function SchedulingPage() {
   } = useScheduling({ view: "week" });
 
   const { hours: clinicHours, loading: hoursLoading } = useClinicHours();
+  const {
+    countsByDate,
+    loading: countsLoading,
+    invalidate: invalidateCounts,
+  } = useAppointmentCounts({
+    view,
+    date,
+    providerId: null,
+    enabled: view !== "day",
+  });
+
+  const invalidateAll = () => {
+    invalidate();
+    invalidateCounts();
+  };
 
   const [dialog, setDialog] = useState({ open: false, initial: null, defaultStart: null });
   const [confirmCancel, setConfirmCancel] = useState(null);
@@ -55,13 +71,17 @@ export default function SchedulingPage() {
     try {
       await api.post(`/appointments/${a.id}/cancel`);
       toast.success("Appointment cancelled — notifications queued");
-      invalidate();
+      invalidateAll();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Failed to cancel");
     } finally {
       setConfirmCancel(null);
     }
   }
+
+  const showSkeleton = view === "day"
+    ? loading && appointments.length === 0
+    : countsLoading && Object.keys(countsByDate).length === 0;
 
   return (
     <div data-testid="scheduling-page" className="space-y-8 animate-in fade-in duration-300">
@@ -76,7 +96,7 @@ export default function SchedulingPage() {
         canBook={canBook}
       />
 
-      {loading && appointments.length === 0 ? (
+      {showSkeleton ? (
         <Skeleton data-testid="scheduling-skeleton" className="h-[560px] rounded-sm" />
       ) : (
         <>
@@ -97,7 +117,7 @@ export default function SchedulingPage() {
           {view === "week" && (
             <WeekView
               date={date}
-              appointments={appointments}
+              countsByDate={countsByDate}
               onOpenDay={(d) => goToDay(d)}
               onOpenAppointment={(a) => {
                 if (canBook && a.status === "scheduled") openReschedule(a);
@@ -106,12 +126,12 @@ export default function SchedulingPage() {
             />
           )}
           {view === "month" && (
-            <MonthView date={date} appointments={appointments} onOpenDay={(d) => goToDay(d)} />
+            <MonthView date={date} countsByDate={countsByDate} onOpenDay={(d) => goToDay(d)} />
           )}
           {view === "year" && (
             <YearView
               date={date}
-              appointments={appointments}
+              countsByDate={countsByDate}
               onOpenDay={(d) => goToDay(d)}
               onOpenMonth={(d) => goToMonth(d)}
             />
@@ -129,7 +149,7 @@ export default function SchedulingPage() {
           setConfirmCancel(a);
         }}
         onSaved={() => {
-          invalidate();
+          invalidateAll();
           // If creating from day view on a different date, jump to that appt's day.
           if (!dialog.initial) setDate(new Date(date));
         }}

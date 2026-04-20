@@ -1,5 +1,4 @@
-import { useMemo } from "react";
-import { groupByDay, isoDateKey, isToday, MONTH_LONG } from "./dateHelpers";
+import { isoDateKey, isToday, MONTH_LONG } from "./dateHelpers";
 
 const MINI_WEEKDAYS = ["M", "T", "W", "T", "F", "S", "S"];
 
@@ -11,18 +10,12 @@ function tintFor(count) {
 }
 
 /**
- * Year view — 12 mini-month grids.
- *
- * Each day is an individual button that opens Day view (Task 5). A density
- * tint (4 buckets) keeps the visual signal compact; the exact count is
- * available on hover via the native `title` tooltip.
- *
- * The month header itself is a separate button that opens Month view for
- * that month — avoiding nested-button invalid HTML.
+ * Year view — 12 mini-month grids. Consumes the pre-aggregated
+ * `countsByDate` map — counts-only (no samples) — which is the most
+ * efficient payload of all: one aggregation covers ~365 days.
  */
-export default function YearView({ date, appointments, onOpenDay, onOpenMonth }) {
+export default function YearView({ date, countsByDate, onOpenDay, onOpenMonth }) {
   const year = date.getFullYear();
-  const apptsByDay = useMemo(() => groupByDay(appointments), [appointments]);
 
   return (
     <div
@@ -40,7 +33,7 @@ export default function YearView({ date, appointments, onOpenDay, onOpenMonth })
         let totalMonth = 0;
         for (const d of cells) {
           if (!d) continue;
-          totalMonth += (apptsByDay.get(isoDateKey(d)) || []).length;
+          totalMonth += (countsByDate?.[isoDateKey(d)]?.count) || 0;
         }
 
         return (
@@ -74,12 +67,10 @@ export default function YearView({ date, appointments, onOpenDay, onOpenMonth })
               {cells.map((d, i) => {
                 if (!d) return <div key={`b-${mi}-${i}`} className="h-4" />;
                 const key = isoDateKey(d);
-                const count = (apptsByDay.get(key) || []).length;
+                const count = (countsByDate?.[key]?.count) || 0;
                 const tint = tintFor(count);
                 const label = `${d.toLocaleDateString("en-US", {
-                  weekday: "short",
-                  month: "short",
-                  day: "numeric",
+                  weekday: "short", month: "short", day: "numeric",
                 })} — ${count} appointment${count === 1 ? "" : "s"}`;
                 return (
                   <button

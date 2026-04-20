@@ -29,7 +29,18 @@ export function useScheduling(initial = {}) {
   const cacheRef = useRef(new Map());
   const reqIdRef = useRef(0);
 
+  // Only the Day view consumes full appointment detail; summary views use
+  // the counts aggregation endpoint (see `useAppointmentCounts`). Skipping
+  // the detail fetch for non-Day views is a real perf win for year-range
+  // loads on busy clinics.
+  const detailEnabled = view === "day";
+
   const fetchRange = useCallback(async () => {
+    if (!detailEnabled) {
+      setAppointments([]);
+      setLoading(false);
+      return;
+    }
     const key = `${view}|${range.start.toISOString()}|${range.end.toISOString()}|${providerId || "all"}`;
     if (cacheRef.current.has(key)) {
       setAppointments(cacheRef.current.get(key));
@@ -53,7 +64,7 @@ export function useScheduling(initial = {}) {
     } finally {
       if (myReq === reqIdRef.current) setLoading(false);
     }
-  }, [view, range.start, range.end, providerId]);
+  }, [view, range.start, range.end, providerId, detailEnabled]);
 
   useEffect(() => {
     fetchRange();

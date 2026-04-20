@@ -1,7 +1,6 @@
 import { useMemo } from "react";
 import {
   addDays,
-  groupByDay,
   isoDateKey,
   isToday,
   startOfWeek,
@@ -12,20 +11,14 @@ import { formatTime } from "../../utils/time";
 const PREVIEW_LIMIT = 3;
 
 /**
- * Week view.
- *
- * Grid of 7 days. Each cell shows:
- *  - weekday name + date
- *  - a prominent appointment-count badge (0 / N appointments)
- *  - up to PREVIEW_LIMIT appointment previews + "+N more"
- *  - empty state when 0 appointments
- *
- * Clicking the day header opens Day view for that date.
- * Clicking an appointment preview opens the reschedule dialog.
+ * Week view — renders 7 days. Now consumes a pre-aggregated `countsByDate`
+ * map instead of paging through every appointment in the range. Each cell
+ * shows the day count plus up to PREVIEW_LIMIT sample appointments from the
+ * backend aggregation's `samples[]`.
  */
 export default function WeekView({
   date,
-  appointments,
+  countsByDate,
   onOpenDay,
   onOpenAppointment,
 }) {
@@ -34,7 +27,6 @@ export default function WeekView({
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
     [weekStart]
   );
-  const apptsByDay = useMemo(() => groupByDay(appointments), [appointments]);
 
   return (
     <div data-testid="scheduling-week" className="overflow-hidden rounded-sm border border-border bg-card">
@@ -54,11 +46,13 @@ export default function WeekView({
       <div className="grid grid-cols-1 sm:grid-cols-7 divide-y divide-border sm:divide-x sm:divide-y-0">
         {days.map((d) => {
           const key = isoDateKey(d);
-          const list = apptsByDay.get(key) || [];
-          const count = list.length;
-          const preview = list.slice(0, PREVIEW_LIMIT);
+          const entry = countsByDate?.[key] || { count: 0, samples: [] };
+          const count = entry.count;
+          const preview = (entry.samples || []).slice(0, PREVIEW_LIMIT);
           const extra = Math.max(0, count - preview.length);
-          const dayLabel = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+          const dayLabel = d.toLocaleDateString("en-US", {
+            weekday: "short", month: "short", day: "numeric",
+          });
           return (
             <div
               key={key}
