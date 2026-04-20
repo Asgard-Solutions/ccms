@@ -6,9 +6,9 @@
 
 export const VIEWS = ["day", "week", "month", "year"];
 
-export const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+export const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 export const WEEKDAY_LONG = [
-  "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+  "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
 ];
 export const MONTH_LONG = [
   "January", "February", "March", "April", "May", "June",
@@ -27,10 +27,10 @@ export function endOfDay(d) {
   return x;
 }
 
-/** Start of ISO-week (Monday) at 00:00 local. */
+/** Start of week (Sunday) at 00:00 local. */
 export function startOfWeek(d) {
   const x = startOfDay(d);
-  const dayIdx = (x.getDay() + 6) % 7; // 0 = Monday
+  const dayIdx = x.getDay(); // 0 = Sunday ... 6 = Saturday
   x.setDate(x.getDate() - dayIdx);
   return x;
 }

@@ -1,6 +1,6 @@
 import { isoDateKey, isToday, MONTH_LONG } from "./dateHelpers";
 
-const MINI_WEEKDAYS = ["M", "T", "W", "T", "F", "S", "S"];
+const MINI_WEEKDAYS = ["S", "M", "T", "W", "T", "F", "S"];
 
 function tintFor(count) {
   if (count === 0) return "bg-muted text-muted-foreground/70 hover:bg-muted";
@@ -25,7 +25,7 @@ export default function YearView({ date, countsByDate, onOpenDay, onOpenMonth })
       {MONTH_LONG.map((name, mi) => {
         const first = new Date(year, mi, 1);
         const daysInMonth = new Date(year, mi + 1, 0).getDate();
-        const leading = (first.getDay() + 6) % 7; // Monday-first
+        const leading = first.getDay(); // 0 = Sunday; now matches Sunday-first header
         const cells = [
           ...Array.from({ length: leading }, () => null),
           ...Array.from({ length: daysInMonth }, (_, i) => new Date(year, mi, i + 1)),

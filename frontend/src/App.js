@@ -23,6 +23,7 @@ import RoleManagement from "./pages/RoleManagement";
 import AccessReview from "./pages/AccessReview";
 import Elevation from "./pages/Elevation";
 import ThemePreview from "./pages/ThemePreview";
+import ClinicSettings from "./pages/ClinicSettings";
 import "./App.css";
 
 function Shell({ children, roles }) {
@@ -47,6 +48,7 @@ export default function App() {
               <Route path="/patients" element={<Shell><Patients /></Shell>} />
               <Route path="/patients/:id" element={<Shell><PatientDetail /></Shell>} />
               <Route path="/scheduling" element={<Shell><Scheduling /></Shell>} />
+              <Route path="/settings/clinic" element={<Shell roles={["admin"]}><ClinicSettings /></Shell>} />
               <Route path="/appointments" element={<Navigate to="/scheduling" replace />} />
               <Route path="/calendar" element={<Navigate to="/scheduling" replace />} />
               <Route path="/notifications" element={<Shell roles={["admin", "staff"]}><Notifications /></Shell>} />

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
 import {
+  Building2,
   CalendarDays,
   LayoutDashboard,
   LogOut,
@@ -43,6 +44,7 @@ const NAV_ITEMS = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, roles: ["admin", "doctor", "staff", "patient"] },
   { to: "/patients", label: "Patients", icon: Users, roles: ["admin", "doctor", "staff", "patient"] },
   { to: "/scheduling", label: "Scheduling", icon: CalendarDays, roles: ["admin", "doctor", "staff", "patient"] },
+  { to: "/settings/clinic", label: "Clinic settings", icon: Building2, roles: ["admin"] },
   { to: "/notifications", label: "Notifications", icon: BellRing, roles: ["admin", "staff"] },
   { to: "/audit-log", label: "Audit log", icon: Shield, roles: ["admin"] },
   { to: "/compliance", label: "Compliance", icon: ClipboardCheck, roles: ["admin"] },

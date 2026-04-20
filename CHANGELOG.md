@@ -11,6 +11,36 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Calendar weeks now start on Sunday.** `dateHelpers.startOfWeek`
+  switched from ISO-week (Monday) to locale-common Sunday; the
+  `WEEKDAY_SHORT` / `WEEKDAY_LONG` constants reordered accordingly.
+  `YearView` mini-months: leading-pad calc updated to
+  `first.getDay()` (Sunday = 0) and `MINI_WEEKDAYS` reordered to
+  "S M T W T F S". Downstream effects are automatic: Week view,
+  Month view grid and YearView mini-months all now render
+  **Sun → Sat** columns. Backend `day_of_week` remains the ISO
+  0 = Monday convention (no data migration needed); the
+  `extractDaySpan` helper in `useClinicHours` already normalises
+  `JS Date.getDay()` to that scheme.
+- **Clinic Settings UI shipped** (`pages/ClinicSettings.jsx`, route
+  `/settings/clinic`, admin-only, sidebar entry "Clinic settings"
+  with a `Building2` icon). Unblocks Task 7 for non-engineers.
+  - Pre-fills existing profile from `GET /api/clinic-profiles/{loc}`;
+    on 404 renders an "unconfigured" notice with sensible defaults
+    (uses the location's name + timezone as starting points).
+  - Fields: name, address line 1/2, city, state, postal, primary +
+    secondary phone, email, website, timezone (12 IANA options), notes.
+  - Hours table rendered in **Sunday → Saturday** order (matches the
+    calendar views) with per-day open/closed toggle + 15-min step
+    time inputs. Display↔backend day_of_week mapping handled in the
+    page (Sun=backend 6; Mon=0; … Sat=5) so the ISO-week backend
+    contract is unchanged.
+  - Client-side validation mirrors the backend (HH:MM format,
+    close > open per interval) and surfaces structured Pydantic
+    errors in toast. `POST` on unconfigured location, `PUT` on
+    update. Location picker shown when the admin sees multiple
+    tenant locations.
+
 - **Scheduling automated test coverage (Task 13).**
   - New `backend/tests/test_scheduling_workflows.py` — 3 tests:
     create → range-list → counts reconcile (including reschedule +
