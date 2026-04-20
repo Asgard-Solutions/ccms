@@ -27,6 +27,7 @@ from typing import Any, Iterable
 
 from core.tenancy import TenantContext
 from core.tenant_scope import stamp_for_write
+from services.billing.denial_categories import derive_category
 
 # Aging buckets — (label, min_days_inclusive, max_days_inclusive)
 # The last bucket's upper bound is None -> open-ended 120+.
@@ -293,7 +294,7 @@ async def post_remittance(
                 "claim_id": claim["id"],
                 "claim_line_id": None,
                 "denial_code": item.denial_code or "UNSPECIFIED",
-                "denial_category": None,
+                "denial_category": derive_category(item.denial_code),
                 "amount_cents": int(item.denied_cents),
                 "status": "open",
                 "assigned_to_id": None,
@@ -329,7 +330,8 @@ async def post_remittance(
                     "claim_id": claim["id"],
                     "claim_line_id": ln.claim_line_id,
                     "denial_code": ln.denial_code or "UNSPECIFIED",
-                    "denial_category": ln.denial_category,
+                    "denial_category": (ln.denial_category
+                                        or derive_category(ln.denial_code)),
                     "amount_cents": int(ln.denied_cents),
                     "status": "open",
                     "assigned_to_id": None,

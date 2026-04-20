@@ -1012,3 +1012,36 @@ page into a single operational scheduling experience.
 - Patient-responsibility roll-forward currently stays implicit via
   invoice balance; if finance wants explicit audit lines, Phase 6
   can add `invoice_lines.type=patient_responsibility` behind a flag.
+
+## Iteration 29 — Denial taxonomy (2026-04-20)
+
+### Backend
+- `services/billing/denial_categories.py` — 6-category taxonomy
+  (coding / eligibility / authorization / timely_filing / duplicate /
+  other) + ANSI CARC lookup + `normalize_code()` helper.
+- Remittance posting auto-tags new denial work items with derived
+  category; operator can override via PUT.
+- `GET /denial-work-items` accepts `status_in` + `category` filters.
+- `GET /denial-work-items/category-summary` — rollup with stable
+  zero rows for empty categories; `include_closed` toggle.
+
+### Frontend
+- `DenialsQueue.jsx` — category summary strip (6 clickable filter
+  cards) + Category filter dropdown + Category column with
+  color-coded pills (`denialCategoryTone`) + Category override in
+  work dialog.
+- `useRemittance.js` — `useDenialWorkItems({status, category})`,
+  `useDenialCategorySummary()`, `DENIAL_CATEGORY_LABELS`, etc.
+
+### Tests
+- `backend/tests/test_billing_phase5_denial_taxonomy.py` — 14 passing
+  (derivation, normalization, auto-tagging, filter, override,
+  summary aggregation, include_closed toggle).
+- Combined Phase 3 + 4 + 5 + taxonomy: 69 passing.
+
+### Follow-ups open
+- Add category to the `RemittancePosting` UI so operators can
+  pre-tag denied rows during posting (currently derived from code).
+- Historical backfill — a one-time migration script to tag pre-
+  taxonomy denials based on `denial_code`. (Currently those rows
+  show as "Other / unmapped".)

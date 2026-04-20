@@ -14,6 +14,31 @@ export const DENIAL_STATUS_LABELS = {
   closed: "Closed",
 };
 
+export const DENIAL_CATEGORIES = [
+  "coding", "eligibility", "authorization",
+  "timely_filing", "duplicate", "other",
+];
+
+export const DENIAL_CATEGORY_LABELS = {
+  coding: "Coding / bundling",
+  eligibility: "Eligibility",
+  authorization: "Authorization",
+  timely_filing: "Timely filing",
+  duplicate: "Duplicate",
+  other: "Other / unmapped",
+};
+
+export function denialCategoryTone(cat) {
+  switch (cat) {
+    case "coding": return "bg-primary/15 text-primary";
+    case "eligibility": return "bg-warning/15 text-warning";
+    case "authorization": return "bg-accent/15 text-accent-foreground";
+    case "timely_filing": return "bg-destructive/15 text-destructive";
+    case "duplicate": return "bg-muted text-muted-foreground";
+    default: return "bg-muted text-foreground";
+  }
+}
+
 export function denialStatusTone(s) {
   switch (s) {
     case "open": return "bg-warning/15 text-warning";
@@ -49,18 +74,38 @@ export function useRemittances() {
   return { rows, loading, refresh: load };
 }
 
-export function useDenialWorkItems() {
+export function useDenialWorkItems({ status = null, category = null } = {}) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await api.get("/billing/denial-work-items");
+      const params = {};
+      if (status && status !== "all") params.status_in = status;
+      if (category && category !== "all") params.category = category;
+      const { data } = await api.get("/billing/denial-work-items", { params });
       setRows(data || []);
     } finally { setLoading(false); }
-  }, []);
+  }, [status, category]);
   useEffect(() => { load(); }, [load]);
   return { rows, loading, refresh: load };
+}
+
+export function useDenialCategorySummary(includeClosed = false) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get(
+        "/billing/denial-work-items/category-summary",
+        { params: includeClosed ? { include_closed: true } : {} },
+      );
+      setData(data);
+    } finally { setLoading(false); }
+  }, [includeClosed]);
+  useEffect(() => { load(); }, [load]);
+  return { data, loading, refresh: load };
 }
 
 export async function updateDenialWorkItem(id, body) {

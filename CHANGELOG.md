@@ -12,6 +12,44 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Billing Phase 5 follow-up — Denial taxonomy (iteration 29).**
+  - New `services/billing/denial_categories.py` mapping ANSI CARC
+    codes to six operational categories: `coding`, `eligibility`,
+    `authorization`, `timely_filing`, `duplicate`, `other` (with
+    stable labels + `normalize_code()` + `derive_category()`).
+  - Remittance posting auto-tags every newly-created denial work item
+    with the derived category. Line-level denials respect the
+    line's own `denial_category` if the payer provided one.
+  - `GET /api/billing/denial-work-items` now accepts `status_in` and
+    `category` filters (unknown category → 400).
+  - `PUT /api/billing/denial-work-items/{id}` accepts
+    `denial_category` for operator override. Unknown category → 400.
+  - `GET /api/billing/denial-work-items/category-summary` returns a
+    full row per category with `count` + `amount_cents`.
+    `include_closed=true` toggles between the active lens (default:
+    open/in_progress/escalated) and the full ledger.
+  - Frontend: `DenialsQueue.jsx` now renders six clickable category
+    summary cards (act as one-tap filters), a Category filter
+    dropdown, and a Category column with color-coded pills. The
+    work dialog gains a Category override field.
+  - Hooks: `useDenialWorkItems({status, category})` and
+    `useDenialCategorySummary()`.
+
+### Tests
+  - `backend/tests/test_billing_phase5_denial_taxonomy.py` —
+    14 passing:
+    - `derive_category` happy paths + normalization (`97`, `co97`,
+      `CO-97` all map to `coding`)
+    - Unknown & empty codes fall through to `other`
+    - Auto-tagging during remittance post (claim-level + line-level
+      + unspecified codes)
+    - List filter by category + unknown → 400
+    - Operator override via PUT + unknown → 400
+    - Category summary emits all categories with stable zeros;
+      increments on new denial; `include_closed` toggle.
+  - Combined Phase 3 + 4 + 5 + taxonomy pytest: **69 passing**.
+
+### Added
 - **Billing Phase 5 — Remittance posting, denials, AR aging, statements
   (iteration 28).**
   - New collections: `remittances`, `remittance_claims`,

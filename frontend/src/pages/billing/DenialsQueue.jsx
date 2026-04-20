@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowRight, Filter } from "lucide-react";
+import { ArrowRight, Filter, Tag } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
@@ -24,9 +24,13 @@ import {
 import { formatCents } from "../../utils/money";
 import { formatDateTime } from "../../utils/time";
 import {
+  DENIAL_CATEGORIES,
+  DENIAL_CATEGORY_LABELS,
   DENIAL_STATUS_LABELS,
+  denialCategoryTone,
   denialStatusTone,
   updateDenialWorkItem,
+  useDenialCategorySummary,
   useDenialWorkItems,
 } from "./useRemittance";
 
@@ -35,17 +39,27 @@ const STATUS_OPTIONS = [
   ...Object.entries(DENIAL_STATUS_LABELS).map(([v, l]) => ({ v, l })),
 ];
 
+const CATEGORY_OPTIONS = [
+  { v: "all", l: "All categories" },
+  ...DENIAL_CATEGORIES.map((v) => ({ v, l: DENIAL_CATEGORY_LABELS[v] })),
+];
+
 export default function DenialsQueue() {
-  const { rows, loading, refresh } = useDenialWorkItems();
   const [status, setStatus] = useState("all");
+  const [category, setCategory] = useState("all");
   const [ownerFilter, setOwnerFilter] = useState("");
   const [editItem, setEditItem] = useState(null);
 
+  const { rows, loading, refresh } = useDenialWorkItems({
+    status: status === "all" ? null : status,
+    category: category === "all" ? null : category,
+  });
+  const { data: summary } = useDenialCategorySummary(false);
+
   const filtered = useMemo(() => rows.filter((r) => {
-    if (status !== "all" && r.status !== status) return false;
     if (ownerFilter && (r.assigned_to_id || "").slice(0, 8) !== ownerFilter.slice(0, 8)) return false;
     return true;
-  }), [rows, status, ownerFilter]);
+  }), [rows, ownerFilter]);
 
   const totalAmount = useMemo(
     () => filtered.reduce((a, r) => a + (r.amount_cents || 0), 0),
@@ -68,11 +82,40 @@ export default function DenialsQueue() {
         </Button>
       </header>
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Stat label="Open items" value={rows.filter(r => r.status === "open").length} tone="warning" />
-        <Stat label="In progress" value={rows.filter(r => r.status === "in_progress").length} tone="primary" />
-        <Stat label="Amount in view" value={formatCents(totalAmount)} />
-      </div>
+      <section
+        data-testid="denials-category-summary"
+        className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6"
+      >
+        {(summary?.rows || DENIAL_CATEGORIES.map((c) => ({
+          category: c, label: DENIAL_CATEGORY_LABELS[c], count: 0, amount_cents: 0,
+        }))).map((row) => {
+          const active = category === row.category;
+          return (
+            <button
+              key={row.category}
+              type="button"
+              data-testid={`denial-cat-card-${row.category}`}
+              onClick={() => setCategory(active ? "all" : row.category)}
+              className={`rounded-sm border p-3 text-left transition-colors ${
+                active
+                  ? "border-primary bg-primary/5"
+                  : "border-border bg-card hover:bg-muted/40"
+              }`}
+            >
+              <div className="flex items-center justify-between text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
+                <span>{row.label}</span>
+                <Tag className="h-3 w-3" />
+              </div>
+              <div className="mt-1 font-display text-2xl font-medium tabular-nums">
+                {row.count}
+              </div>
+              <div className="text-xs text-muted-foreground tabular-nums">
+                {formatCents(row.amount_cents)}
+              </div>
+            </button>
+          );
+        })}
+      </section>
 
       <section
         data-testid="denials-filter-bar"
@@ -95,6 +138,21 @@ export default function DenialsQueue() {
         </div>
         <div className="flex flex-col gap-1">
           <Label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
+            Category
+          </Label>
+          <Select value={category} onValueChange={setCategory}>
+            <SelectTrigger className="w-56" data-testid="denials-category-filter">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CATEGORY_OPTIONS.map((o) => (
+                <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <Label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
             Owner
           </Label>
           <Input
@@ -104,6 +162,14 @@ export default function DenialsQueue() {
             className="w-48"
             data-testid="denials-owner-filter"
           />
+        </div>
+        <div className="ml-auto text-right">
+          <div className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
+            In view
+          </div>
+          <div className="font-display text-lg font-medium tabular-nums">
+            {filtered.length} · {formatCents(totalAmount)}
+          </div>
         </div>
       </section>
 
@@ -125,6 +191,7 @@ export default function DenialsQueue() {
                 <th className="px-4 py-2">Opened</th>
                 <th className="px-4 py-2">Claim</th>
                 <th className="px-4 py-2">Code</th>
+                <th className="px-4 py-2">Category</th>
                 <th className="px-4 py-2 text-right">Amount</th>
                 <th className="px-4 py-2">Status</th>
                 <th className="px-4 py-2">Owner</th>
@@ -148,6 +215,14 @@ export default function DenialsQueue() {
                   </td>
                   <td className="px-4 py-3 text-xs uppercase tracking-wider">
                     {r.denial_code}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      data-testid={`denial-category-${r.id}`}
+                      className={`inline-flex items-center rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${denialCategoryTone(r.denial_category || "other")}`}
+                    >
+                      {DENIAL_CATEGORY_LABELS[r.denial_category || "other"]}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums">
                     {formatCents(r.amount_cents)}
@@ -188,27 +263,12 @@ export default function DenialsQueue() {
   );
 }
 
-function Stat({ label, value, tone }) {
-  const toneClass = tone === "warning"
-    ? "text-warning"
-    : tone === "primary"
-      ? "text-primary"
-      : "text-foreground";
-  return (
-    <div className="rounded-sm border border-border bg-card p-5">
-      <div className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">{label}</div>
-      <div className={`mt-1 font-display text-3xl font-medium tabular-nums ${toneClass}`}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
 function EditDenialDialog({ item, onClose, onSaved }) {
   const open = !!item;
   const [status, setStatus] = useState("");
   const [assignee, setAssignee] = useState("");
   const [notes, setNotes] = useState("");
+  const [categoryEdit, setCategoryEdit] = useState("");
   const [saving, setSaving] = useState(false);
 
   useMemo(() => {
@@ -216,6 +276,7 @@ function EditDenialDialog({ item, onClose, onSaved }) {
       setStatus(item.status);
       setAssignee(item.assigned_to_id || "");
       setNotes(item.resolution_notes || "");
+      setCategoryEdit(item.denial_category || "other");
     }
   }, [item]);
 
@@ -229,6 +290,9 @@ function EditDenialDialog({ item, onClose, onSaved }) {
       }
       if ((notes || null) !== (item.resolution_notes || null)) {
         body.resolution_notes = notes;
+      }
+      if (categoryEdit && categoryEdit !== (item.denial_category || "other")) {
+        body.denial_category = categoryEdit;
       }
       if (Object.keys(body).length === 0) {
         toast.info("Nothing changed");
@@ -260,6 +324,19 @@ function EditDenialDialog({ item, onClose, onSaved }) {
               <SelectContent>
                 {Object.entries(DENIAL_STATUS_LABELS).map(([v, l]) => (
                   <SelectItem key={v} value={v}>{l}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
+            <Label>Category</Label>
+            <Select value={categoryEdit} onValueChange={setCategoryEdit}>
+              <SelectTrigger data-testid="denial-edit-category">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {DENIAL_CATEGORIES.map((v) => (
+                  <SelectItem key={v} value={v}>{DENIAL_CATEGORY_LABELS[v]}</SelectItem>
                 ))}
               </SelectContent>
             </Select>

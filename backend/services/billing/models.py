@@ -760,6 +760,7 @@ class DenialWorkItemUpdate(BaseModel):
     status: DenialWorkItemStatus | None = None
     assigned_to_id: str | None = None
     resolution_notes: str | None = Field(default=None, max_length=4000)
+    denial_category: str | None = Field(default=None, max_length=60)
 
 
 class StatementPublic(BaseModel):

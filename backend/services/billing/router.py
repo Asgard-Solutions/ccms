@@ -24,6 +24,10 @@ from core.tenant_scope import scoped_filter, stamp_for_write
 from services.authz.policy import require_permission
 from services.billing import transitions
 from services.billing.ledger import build_patient_ledger
+from services.billing.denial_categories import (
+    DENIAL_CATEGORIES,
+    DENIAL_CATEGORY_LABELS,
+)
 from services.billing.remittance import (
     compute_ar_buckets,
     post_remittance,
@@ -1211,6 +1215,8 @@ async def list_remittances(
             response_model=list[DenialWorkItemPublic])
 async def list_denial_work_items(
     request: Request,
+    status_in: str | None = Query(default=None, description="comma-separated statuses"),
+    category: str | None = Query(default=None, description="filter by denial_category"),
     user: dict = Depends(require_role("admin", "doctor", "staff")),
     ctx: TenantContext = Depends(require_tenant),
 ):
@@ -1218,6 +1224,17 @@ async def list_denial_work_items(
     q = scoped_filter({}, ctx, location_scoped=False)
     if q.get("__deny__"):
         return []
+    if status_in:
+        statuses = [s.strip() for s in status_in.split(",") if s.strip()]
+        if statuses:
+            q["status"] = {"$in": statuses}
+    if category:
+        if category not in DENIAL_CATEGORIES:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Unknown category '{category}'. Allowed: {DENIAL_CATEGORIES}",
+            )
+        q["denial_category"] = category
     cursor = db.denial_work_items.find(q, {"_id": 0}).sort([("opened_at", -1)])
     rows = [_public(d) async for d in cursor]
     await audit_success(
@@ -2919,6 +2936,14 @@ async def update_denial_work_item(
         set_fields["assigned_to_id"] = body.assigned_to_id
     if body.resolution_notes is not None:
         set_fields["resolution_notes"] = body.resolution_notes
+    if body.denial_category is not None:
+        if body.denial_category not in DENIAL_CATEGORIES:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Unknown denial_category '{body.denial_category}'. "
+                f"Allowed: {DENIAL_CATEGORIES}",
+            )
+        set_fields["denial_category"] = body.denial_category
 
     await db.denial_work_items.update_one(
         {"id": item_id, "tenant_id": ctx.tenant_id},
@@ -3093,4 +3118,56 @@ async def read_statement(
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Statement not found")
     return _public(row)
+
+
+
+@router.get("/denial-work-items/category-summary")
+async def read_denial_category_summary(
+    include_closed: bool = False,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Group denial work items by `denial_category` with counts and
+    amount totals. Open + in_progress + escalated are counted by
+    default; pass `include_closed=true` to include the full set.
+    """
+    db = tenant_db(ctx.tenant_id)
+    match: dict = {"tenant_id": ctx.tenant_id}
+    if not include_closed:
+        match["status"] = {"$in": ["open", "in_progress", "escalated"]}
+
+    pipeline = [
+        {"$match": match},
+        {"$group": {
+            "_id": {"$ifNull": ["$denial_category", "other"]},
+            "count": {"$sum": 1},
+            "amount_cents": {"$sum": "$amount_cents"},
+        }},
+    ]
+    by_cat: dict[str, dict] = {}
+    async for row in db.denial_work_items.aggregate(pipeline):
+        cat = row["_id"] or "other"
+        by_cat[cat] = {
+            "category": cat,
+            "label": DENIAL_CATEGORY_LABELS.get(cat, cat),
+            "count": int(row["count"]),
+            "amount_cents": int(row["amount_cents"] or 0),
+        }
+
+    # Emit every known category (zeroed if absent) for stable UI.
+    rows: list[dict] = []
+    for cat in DENIAL_CATEGORIES:
+        rows.append(by_cat.get(cat, {
+            "category": cat,
+            "label": DENIAL_CATEGORY_LABELS[cat],
+            "count": 0,
+            "amount_cents": 0,
+        }))
+    total_count = sum(r["count"] for r in rows)
+    total_amount = sum(r["amount_cents"] for r in rows)
+    return {
+        "rows": rows,
+        "total_count": total_count,
+        "total_amount_cents": total_amount,
+    }
 
