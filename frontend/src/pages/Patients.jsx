@@ -1303,7 +1303,7 @@ export default function Patients() {
           <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">Patient lookup</span>
           <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight text-strong">Find a patient</h1>
           <p className="mt-2 text-sm text-muted-strong">
-            Search by name, phone, address, or DOB. Use <code className="rounded-sm surface-muted px-1">%</code> as a wildcard (e.g., <code className="rounded-sm surface-muted px-1">Jaco%</code>). PHI is masked in results.
+            Search by name, phone, address, or DOB. Use <code className="rounded-sm surface-muted px-1">%</code> as a wildcard (e.g., <code className="rounded-sm surface-muted px-1">Test%</code>). PHI is masked in results.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -1354,7 +1354,7 @@ export default function Patients() {
               autoFocus
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Jacobsen · (555) 123-4567 · Jaco% · 01/15/1985"
+              placeholder="Test Patient · (555) 123-4567 · Test% · 01/15/1985"
               className="h-14 rounded-sm border-subtle pl-11 text-base"
             />
             {loading && (
@@ -1365,7 +1365,7 @@ export default function Patients() {
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
-            <AdvancedInput testid="search-name"    label="Name"    placeholder="Jacobsen / Jaco%" value={fields.name}    onChange={(v) => setFields((f) => ({ ...f, name: v }))} />
+            <AdvancedInput testid="search-name"    label="Name"    placeholder="Test Patient / Test%" value={fields.name}    onChange={(v) => setFields((f) => ({ ...f, name: v }))} />
             <AdvancedInput testid="search-phone"   label="Phone"   placeholder="5551234567"       value={fields.phone}   onChange={(v) => setFields((f) => ({ ...f, phone: v }))} />
             <AdvancedInput testid="search-address" label="Address" placeholder="Meadow / Portland"value={fields.address} onChange={(v) => setFields((f) => ({ ...f, address: v }))} />
             <AdvancedInput testid="search-dob"     label="DOB"     placeholder="01/15/1985"       value={fields.dob}     onChange={(v) => setFields((f) => ({ ...f, dob: v }))} />
@@ -1504,7 +1504,7 @@ function RecentPatients({ recent, onOpen, canCreate }) {
         <Search className="mx-auto h-10 w-10 text-soft" />
         <p className="mt-4 font-['Outfit'] text-lg text-strong">Search to find a patient</p>
         <p className="mt-1 text-sm text-muted-strong">
-          Try <code className="rounded-sm surface-muted px-1">Jacobsen</code>, <code className="rounded-sm surface-muted px-1">5551234567</code>, <code className="rounded-sm surface-muted px-1">01/15/1985</code>, or a wildcard like <code className="rounded-sm surface-muted px-1">Jaco%</code>.
+          Try <code className="rounded-sm surface-muted px-1">Test Patient</code>, <code className="rounded-sm surface-muted px-1">5551234567</code>, <code className="rounded-sm surface-muted px-1">01/15/1985</code>, or a wildcard like <code className="rounded-sm surface-muted px-1">Test%</code>.
           {canCreate && " New patient? Use the button above."}
         </p>
       </div>
