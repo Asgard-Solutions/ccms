@@ -429,3 +429,172 @@ def test_create_requires_name_from_either_source(admin_session):
     r = s.post(f"{API}/patients", json={"email": _unique_email()}, timeout=15)
     # Pydantic allows None top-level but router enforces after normalization.
     assert r.status_code in (400, 422), r.text
+
+
+# ---------------------------------------------------------------------------
+# 7. Phase 4 regression — detail response round-trips on both legacy and
+#    grouped records, and the backend never invents grouped sections that
+#    the client did not send.
+# ---------------------------------------------------------------------------
+
+def test_legacy_record_detail_has_no_fabricated_grouped_sections(admin_session):
+    """A patient created with only the flat legacy payload must round-trip
+    unchanged on GET — no grouped section should be fabricated server-side
+    because the detail page relies on the absence of those keys to avoid
+    rendering empty "Expanded intake" cards for legacy records."""
+    s = admin_session
+    r = s.post(
+        f"{API}/patients",
+        json={
+            "first_name": "Legacy",
+            "last_name": "Detail",
+            "email": _unique_email(),
+            "phone": "+1-555-0600",
+            "date_of_birth": "1980-11-11",
+            "address": "1 Legacy Way, Portland, OR 97201",
+            "emergency_contact": "Pat / +1-555-0601",
+            "notes": "existing longtime patient",
+        },
+        timeout=15,
+    )
+    assert r.status_code == 201, r.text
+    pid = r.json()["id"]
+
+    # Unmasked detail — grouped sections MUST be absent/None.
+    r = s.get(f"{API}/patients/{pid}?unmask=true", timeout=15)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    for grouped in (
+        "demographics", "contact", "address_details", "emergency_contact_details",
+        "admin", "guarantor", "insurance", "clinical_intake", "case_details", "consents",
+    ):
+        assert body.get(grouped) in (None, {}, []), f"legacy record must not synthesise `{grouped}` — got {body.get(grouped)!r}"
+
+    # Legacy scalars round-trip unchanged.
+    assert body["address"] == "1 Legacy Way, Portland, OR 97201"
+    assert body["emergency_contact"] == "Pat / +1-555-0601"
+    assert body["notes"] == "existing longtime patient"
+
+
+def test_grouped_record_detail_full_roundtrip(admin_session):
+    """A patient created with the full grouped payload must round-trip
+    every structured section on GET — this is what the PatientDetail page
+    renders inside its `patient-intake-sections` cards."""
+    s = admin_session
+    r = s.post(
+        f"{API}/patients",
+        json={
+            "demographics": {
+                "first_name": "Grouped",
+                "last_name": "Detail",
+                "preferred_name": "Groupy",
+                "date_of_birth": "1975-03-02",
+                "pronouns": "they/them",
+                "occupation": "Writer",
+                "employer": "Self",
+            },
+            "contact": {
+                "phone": "+1-555-0700",
+                "email": _unique_email(),
+                "preferred_contact_method": "email",
+                "sms_consent": True,
+            },
+            "address": {
+                "line1": "10 Structured Ave",
+                "city": "Austin",
+                "state": "TX",
+                "postal_code": "78701",
+            },
+            "emergency_contact": {
+                "name": "Taylor Doe",
+                "relationship": "sibling",
+                "phone": "+1-555-0702",
+            },
+            "insurance": {
+                "primary": {
+                    "carrier": "UnitedHealthcare",
+                    "plan_type": "PPO",
+                    "member_id": "UHC-DETAIL-1",
+                },
+            },
+            "clinical_intake": {
+                "chief_complaint": "Neck tension",
+                "pain_level": 4,
+                "pain_locations": ["Neck", "Upper back"],
+                "symptoms": ["Stiffness", "Headaches"],
+                "allergies": "none known",
+            },
+            "case_details": {"case_type": "personal_injury", "claim_number": "CLM-D1"},
+            "consents": {
+                "hipaa": {"type": "hipaa", "accepted": True, "signature_name": "Groupy"},
+                "additional": [
+                    {"type": "assignment_of_benefits", "accepted": True, "signature_name": "Groupy"},
+                ],
+            },
+        },
+        timeout=15,
+    )
+    assert r.status_code == 201, r.text
+    pid = r.json()["id"]
+
+    r = s.get(f"{API}/patients/{pid}?unmask=true", timeout=15)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["demographics"]["preferred_name"] == "Groupy"
+    assert body["contact"]["sms_consent"] is True
+    assert body["address_details"]["city"] == "Austin"
+    assert body["emergency_contact_details"]["relationship"] == "sibling"
+    assert body["insurance"]["primary"]["carrier"] == "UnitedHealthcare"
+    assert body["clinical_intake"]["pain_locations"] == ["Neck", "Upper back"]
+    assert body["clinical_intake"]["pain_level"] == 4
+    assert body["case_details"]["case_type"] == "personal_injury"
+    assert body["consents"]["hipaa"]["accepted"] is True
+    assert body["consents"]["additional"][0]["type"] == "assignment_of_benefits"
+
+    # Masked detail strips the grouped sections entirely — the UI relies on
+    # this to avoid rendering empty cards when PHI is masked.
+    r = s.get(f"{API}/patients/{pid}", timeout=15)
+    assert r.status_code == 200, r.text
+    masked = r.json()
+    for grouped in (
+        "demographics", "contact", "address_details", "emergency_contact_details",
+        "admin", "guarantor", "insurance", "clinical_intake", "case_details", "consents",
+    ):
+        assert masked.get(grouped) is None
+
+
+def test_upgrade_legacy_to_grouped_via_update_is_lossless(admin_session):
+    """Create legacy record → PUT a grouped upgrade → both old scalars AND
+    new grouped sections coexist on the detail response."""
+    s = admin_session
+    r = s.post(
+        f"{API}/patients",
+        json={
+            "first_name": "Upgrade",
+            "last_name": "Me",
+            "email": _unique_email(),
+            "phone": "+1-555-0800",
+            "address": "Old legacy address",
+        },
+        timeout=15,
+    )
+    assert r.status_code == 201, r.text
+    pid = r.json()["id"]
+
+    r = s.put(
+        f"{API}/patients/{pid}",
+        json={
+            "clinical_intake": {"chief_complaint": "upgraded visit", "pain_level": 3},
+            "insurance": {"primary": {"carrier": "Aetna", "member_id": "U-A1"}},
+        },
+        timeout=15,
+    )
+    assert r.status_code == 200, r.text
+
+    body = s.get(f"{API}/patients/{pid}?unmask=true", timeout=15).json()
+    # Legacy scalars survived.
+    assert body["first_name"] == "Upgrade"
+    assert body["address"] == "Old legacy address"
+    # Grouped sections applied.
+    assert body["clinical_intake"]["chief_complaint"] == "upgraded visit"
+    assert body["insurance"]["primary"]["carrier"] == "Aetna"

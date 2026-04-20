@@ -240,6 +240,39 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **Docs** — `/app/memory/COMPLIANCE_OPS_ARCHITECTURE.md` covers model, lifecycle, HIPAA 45-CFR mapping table, SOC 2 recurring activities, CCPA/CPRA flow linkage, evidence bundle export flow, "how to add a new control domain" cookbook.
 - **Verified (iteration_18)**: 10/10 new tests — dashboard fidelity, multi-framework mapping, framework filter, integrity hash + legal hold, tamper-resistant patch, tenant isolation, overdue access-review auto-flag, incident history append, unknown-type rejection, BAA-missing counted. Combined iteration_17+18 = 25/25 green.
 
+## 24. Iteration 20d — Patient intake Phase 4 (detail rendering + regressions, 2026-02-19)
+
+Downstream UI for the grouped intake payload. Legacy flat records keep rendering exactly as before; grouped records now get a dedicated "Intake sections" area.
+
+- **`frontend/src/pages/PatientDetail.jsx`** — added an `IntakeSections(patient)` component rendered after the existing 3-column (Address / Emergency contact / Intake notes) strip. Safe-by-default: every section is wrapped in a `hasValue(...)` gate so legacy records don't produce empty cards; if NO grouped data is present anywhere the entire `patient-intake-sections` block collapses to an `aria-hidden` empty placeholder. Helper primitives added: `hasValue` (deep — treats `{first_name: null, last_name: null, ...}` as empty), `Row` (renders key/value pair or null), `IntakeCard` (titled card shell), `InsurancePlanBlock`, `ConsentLine`. Cards:
+  * **Demographics** — legal name / DOB / preferred name / middle name / sex at birth / gender identity / pronouns / marital status / language / occupation / employer / employer phone / SSN-last-4 (masked `•••• 1234`).
+  * **Contact** — mobile / home / work phones / email (falls back to top-level legacy scalars for any missing grouped key) / preferred method / SMS / email / voicemail consent Yes/No.
+  * **Address** (structured line1/2, city, state, postal, country) with a line1+line2 fallback to `patient.address` scalar.
+  * **Emergency contact** — structured + legacy-scalar fallback Row.
+  * **Administrative** — primary provider, referral source, MRN, tags, internal flags.
+  * **Guarantor** — hides entirely when `same_as_patient=true` and no other guarantor keys are present; otherwise renders the full guarantor identity + billing fields.
+  * **Insurance** — `InsurancePlanBlock` sub-card per primary / secondary / tertiary plan; renders only plans that carry at least one populated field.
+  * **Clinical intake** — chief complaint, onset, pain score `n/10`, pain areas, symptoms, aggravating/relieving factors, prior treatments, meds, allergies, past/social/family history, provider notes.
+  * **Case details** — auto subset (date_of_injury / auto_carrier / adjuster / claim), WC subset (employer / carrier / claim), PI subset (attorney), with a friendly `case_type` hint.
+  * **Consents** — HIPAA / treatment / financial / telehealth / photo release + `consents.additional[]`, each with signature name + signed-at metadata.
+- **`backend/tests/test_patient_intake_phase1.py`** — extended with three Phase-4 regression tests:
+  * `test_legacy_record_detail_has_no_fabricated_grouped_sections` — creates a pure-legacy record and confirms GET `/patients/{id}?unmask=true` never injects grouped keys. This is the contract the frontend's `IntakeSections` relies on to collapse entirely for legacy patients.
+  * `test_grouped_record_detail_full_roundtrip` — creates a fully populated grouped payload and asserts every grouped section (demographics / contact / address_details / emergency_contact_details / insurance.primary / clinical_intake / case_details / consents + consents.additional) round-trips losslessly on both unmasked and masked GETs (masked response strips all grouped sections, keeping UI cards empty by default).
+  * `test_upgrade_legacy_to_grouped_via_update_is_lossless` — creates legacy, PUTs a grouped clinical_intake + insurance patch, and verifies legacy scalars (`first_name`, `address`) survive while the new grouped sections apply.
+  * Plus an encryption-at-rest probe from Phase 1 continues to verify sensitive grouped sections are stored as ENC_PREFIX-tagged ciphertext (raw Mongo probe — no plaintext PHI markers found in `clinical_intake`, `insurance`, `consents`, `date_of_birth`).
+- **Testing status**
+  * Backend pytest (`test_patient_intake_phase1.py`): **9/9 green** (6 Phase 1 + 3 new Phase 4).
+  * Frontend pure-JS (`patientWizardLogic.test.js`, Node `--test`): **31/31 green**.
+  * Playwright smoke: legacy record → `patient-intake-sections = 0`, `patient-intake-empty = 1`, no empty cards leak. Grouped record → 6 cards rendered (demographics / contact / address / emergency-contact / admin / guarantor) with real data; hidden cards for sections the patient doesn't carry.
+
+### Follow-ups / deferred gaps
+- **Insurance card uploads** — no object storage is wired to the insurance block yet; a future phase should accept front + back photos (via the `integration_playbook_expert_v2` object-storage playbook) and list them inside `InsurancePlanBlock`.
+- **Document attachments** — generic patient-document upload (ID, referral letters, imaging reports) is not implemented.
+- **Digital signatures** — `consents` currently stores a typed signature name + date; wet-ink / canvas signatures + signed PDFs are future work.
+- **Intake autosave drafts** — the wizard still discards state on accidental close. A `localStorage`-scoped draft keyed by staff user + tenant would be cheap to add.
+- **Edit-from-detail** — `IntakeSections` is read-only today; an "Edit" affordance that opens the wizard pre-filled with current grouped data would close the loop.
+- **Per-leaf masking** for grouped sections (vs. the current wholesale strip in masked responses) is still deferred.
+
 ## 23. Iteration 20c — Patient intake Phase 3 conditional logic (2026-02-19)
 
 Business logic & chiropractic UX layered on top of the Phase 2 wizard. All wiring lives in a new pure-JS module so it's directly testable under Node's built-in `--test` runner.

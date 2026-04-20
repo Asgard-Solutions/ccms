@@ -37,6 +37,344 @@ import {
 import BreakGlassDialog from "../components/BreakGlassDialog";
 import ReauthDialog from "../components/ReauthDialog";
 
+// ---------------------------------------------------------------------------
+// Expanded-intake section renderers (Phase 4).
+//
+// Each helper below is defensive: it never assumes a nested section exists
+// and short-circuits to `null` when the backend returns neither a legacy
+// scalar nor a grouped object for that slice of intake.
+// ---------------------------------------------------------------------------
+
+function hasValue(v) {
+  if (v === null || v === undefined) return false;
+  if (typeof v === "string") return v.trim() !== "";
+  if (Array.isArray(v)) return v.some(hasValue);
+  if (typeof v === "object") return Object.values(v).some(hasValue);
+  return true;
+}
+
+function Row({ label, children, testId }) {
+  if (!hasValue(children)) return null;
+  return (
+    <div className="grid grid-cols-1 gap-0.5 sm:grid-cols-[200px_1fr] sm:gap-4" data-testid={testId}>
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-[#5C6A61]">{label}</span>
+      <span className="text-sm leading-relaxed text-[#1F2924] break-words">
+        {Array.isArray(children) ? children.join(", ") : children}
+      </span>
+    </div>
+  );
+}
+
+function IntakeCard({ title, hint, testId, children }) {
+  return (
+    <div
+      data-testid={testId}
+      className="rounded-sm border border-stone-200 bg-white p-6"
+    >
+      <div className="mb-4 border-b border-stone-200 pb-2">
+        <h3 className="font-['Outfit'] text-lg font-medium text-[#1F2924]">{title}</h3>
+        {hint && <p className="mt-0.5 text-xs text-[#5C6A61]">{hint}</p>}
+      </div>
+      <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
+
+function formatAddressObj(a) {
+  if (!a || typeof a !== "object") return null;
+  const line = [
+    a.line1,
+    a.line2,
+    [a.city, a.state].filter(Boolean).join(", ") || null,
+    a.postal_code,
+    a.country,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return line || null;
+}
+
+function InsurancePlanBlock({ plan, label, testId }) {
+  if (!plan || typeof plan !== "object") return null;
+  const fields = [
+    ["Carrier", plan.carrier],
+    ["Plan name", plan.plan_name],
+    ["Plan type", plan.plan_type],
+    ["Member ID", plan.member_id],
+    ["Group #", plan.group_number],
+    ["Policy holder", plan.policy_holder_name],
+    ["Relationship", plan.policy_holder_relationship],
+    ["Policy holder DOB", plan.policy_holder_dob],
+    ["Effective", plan.effective_date],
+    ["Termination", plan.termination_date],
+    ["Copay", plan.copay],
+    ["Deductible", plan.deductible],
+  ].filter(([, v]) => hasValue(v));
+  if (!fields.length) return null;
+  return (
+    <div data-testid={testId} className="rounded-sm border border-stone-200 bg-[#FAF9F6] p-4">
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[#5C6A61]">
+        {label}
+      </div>
+      <div className="space-y-1.5">
+        {fields.map(([k, v]) => (
+          <div key={k} className="grid grid-cols-[140px_1fr] gap-3 text-sm">
+            <span className="text-[#5C6A61]">{k}</span>
+            <span className="text-[#1F2924]">{v}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ConsentLine({ label, consent }) {
+  if (!consent || !consent.accepted) return null;
+  const meta = [consent.signature_name, consent.signed_at].filter(Boolean).join(" · ");
+  return (
+    <div className="flex items-start justify-between gap-4 text-sm">
+      <span className="text-[#1F2924]">{label}</span>
+      <span className="text-right text-xs text-[#5C6A61]">{meta || "Accepted"}</span>
+    </div>
+  );
+}
+
+function IntakeSections({ patient }) {
+  const demo = patient.demographics || {};
+  const contact = patient.contact || {};
+  const addr = patient.address_details || {};
+  const ec = patient.emergency_contact_details || {};
+  const admin = patient.admin || {};
+  const guarantor = patient.guarantor || null;
+  const insurance = patient.insurance || null;
+  const clinical = patient.clinical_intake || {};
+  const caseDetails = patient.case_details || {};
+  const consents = patient.consents || {};
+
+  // Pre-compute whether the whole section would be empty. Works for both
+  // legacy records (grouped sections absent → every card returns null) and
+  // masked responses (backend strips grouped sections outright → same).
+  const anyGrouped =
+    hasValue(patient.demographics) ||
+    hasValue(patient.contact) ||
+    hasValue(patient.address_details) ||
+    hasValue(patient.emergency_contact_details) ||
+    hasValue(patient.admin) ||
+    hasValue(guarantor) ||
+    hasValue(insurance) ||
+    hasValue(clinical) ||
+    hasValue(caseDetails) ||
+    hasValue(consents);
+
+  if (!anyGrouped) {
+    return (
+      <section aria-hidden data-testid="patient-intake-empty" className="hidden" />
+    );
+  }
+
+  return (
+    <section data-testid="patient-intake-sections" className="space-y-6">
+      <div>
+        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+          Expanded intake
+        </span>
+        <h2 className="mt-1 font-['Outfit'] text-2xl font-medium tracking-tight">
+          Intake sections
+        </h2>
+        {!patient.unmasked && (
+          <p className="mt-1 text-xs text-[#5C6A61]">
+            Sections below are hidden by default — unmask above to reveal the structured intake data.
+          </p>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {hasValue(demo) && (
+          <IntakeCard title="Demographics" testId="intake-demographics">
+            <Row label="Legal first name">{demo.first_name}</Row>
+            <Row label="Legal last name">{demo.last_name}</Row>
+            <Row label="Date of birth">{demo.date_of_birth}</Row>
+            <Row label="Preferred name" testId="demo-preferred-name">{demo.preferred_name}</Row>
+            <Row label="Middle name" testId="demo-middle-name">{demo.middle_name}</Row>
+            <Row label="Sex at birth">{demo.sex_at_birth}</Row>
+            <Row label="Gender identity">{demo.gender || patient.gender}</Row>
+            <Row label="Pronouns">{demo.pronouns}</Row>
+            <Row label="Marital status">{demo.marital_status}</Row>
+            <Row label="Language">{demo.language}</Row>
+            <Row label="Occupation">{demo.occupation}</Row>
+            <Row label="Employer">{demo.employer}</Row>
+            <Row label="Employer phone">{demo.employer_phone}</Row>
+            <Row label="SSN (last 4)">{demo.ssn_last4 ? `•••• ${demo.ssn_last4}` : null}</Row>
+          </IntakeCard>
+        )}
+
+        {hasValue(contact) && (
+          <IntakeCard title="Contact" testId="intake-contact">
+            <Row label="Mobile phone">{contact.phone || patient.phone}</Row>
+            <Row label="Home phone">{contact.phone_alt}</Row>
+            <Row label="Work phone">{contact.phone_work}</Row>
+            <Row label="Email">{contact.email || patient.email}</Row>
+            <Row label="Preferred method">{contact.preferred_contact_method}</Row>
+            <Row label="SMS consent">
+              {contact.sms_consent === true ? "Yes" : contact.sms_consent === false ? "No" : null}
+            </Row>
+            <Row label="Email consent">
+              {contact.email_consent === true ? "Yes" : contact.email_consent === false ? "No" : null}
+            </Row>
+            <Row label="OK to leave voicemail">
+              {contact.voicemail_consent === true ? "Yes" : contact.voicemail_consent === false ? "No" : null}
+            </Row>
+          </IntakeCard>
+        )}
+
+        {hasValue(addr) && (
+          <IntakeCard title="Address" hint="Structured shipping / billing address on file." testId="intake-address">
+            <Row label="Street">
+              {[addr.line1, addr.line2].filter(Boolean).join(", ") || patient.address}
+            </Row>
+            <Row label="City">{addr.city}</Row>
+            <Row label="State">{addr.state}</Row>
+            <Row label="Postal code">{addr.postal_code}</Row>
+            <Row label="Country">{addr.country}</Row>
+          </IntakeCard>
+        )}
+
+        {(hasValue(ec) || hasValue(patient.emergency_contact)) && (
+          <IntakeCard title="Emergency contact" testId="intake-emergency-contact">
+            <Row label="Name">{ec.name}</Row>
+            <Row label="Relationship">{ec.relationship}</Row>
+            <Row label="Primary phone">{ec.phone}</Row>
+            <Row label="Alternate phone">{ec.phone_alt}</Row>
+            <Row label="Email">{ec.email}</Row>
+            <Row label="Address">{ec.address}</Row>
+            {/* Legacy fallback: when structured details are absent but the scalar is, show it. */}
+            {!hasValue(ec) && hasValue(patient.emergency_contact) && (
+              <Row label="Contact" testId="ec-legacy-scalar">{patient.emergency_contact}</Row>
+            )}
+          </IntakeCard>
+        )}
+
+        {hasValue(admin) && (
+          <IntakeCard title="Administrative" hint="Provider assignment & intake metadata." testId="intake-admin">
+            <Row label="Primary provider">{admin.primary_provider_id}</Row>
+            <Row label="Referred by">{admin.referred_by}</Row>
+            <Row label="Referral source">{admin.referral_source}</Row>
+            <Row label="MRN">{admin.mrn}</Row>
+            <Row label="Tags">{admin.tags}</Row>
+            <Row label="Internal flags">{admin.internal_flags}</Row>
+          </IntakeCard>
+        )}
+
+        {guarantor && !(guarantor.same_as_patient === true && Object.keys(guarantor).length === 1) && (
+          <IntakeCard
+            title="Responsible party / Guarantor"
+            hint={guarantor.same_as_patient ? "Same as patient" : "Billing responsibility"}
+            testId="intake-guarantor"
+          >
+            {guarantor.same_as_patient ? (
+              <Row label="Same as patient">Yes — no separate guarantor on file.</Row>
+            ) : (
+              <>
+                <Row label="Name">
+                  {[guarantor.first_name, guarantor.last_name].filter(Boolean).join(" ")}
+                </Row>
+                <Row label="Relationship">{guarantor.relationship}</Row>
+                <Row label="Date of birth">{guarantor.date_of_birth}</Row>
+                <Row label="Phone">{guarantor.phone}</Row>
+                <Row label="Email">{guarantor.email}</Row>
+                <Row label="Address">{guarantor.address}</Row>
+                <Row label="Employer">{guarantor.employer}</Row>
+                <Row label="Employer phone">{guarantor.employer_phone}</Row>
+              </>
+            )}
+          </IntakeCard>
+        )}
+
+        {hasValue(insurance) && (
+          <IntakeCard title="Insurance" testId="intake-insurance">
+            <InsurancePlanBlock plan={insurance.primary} label="Primary" testId="insurance-primary" />
+            <InsurancePlanBlock plan={insurance.secondary} label="Secondary" testId="insurance-secondary" />
+            <InsurancePlanBlock plan={insurance.tertiary} label="Tertiary" testId="insurance-tertiary" />
+          </IntakeCard>
+        )}
+
+        {hasValue(clinical) && (
+          <IntakeCard
+            title="Clinical intake"
+            hint="Self-reported at intake; provider visits are on the medical records timeline below."
+            testId="intake-clinical"
+          >
+            <Row label="Chief complaint">{clinical.chief_complaint}</Row>
+            <Row label="Symptom start">{clinical.complaint_onset}</Row>
+            <Row label="Onset type">{clinical.onset_type}</Row>
+            <Row label="Pain score">
+              {typeof clinical.pain_level === "number" ? `${clinical.pain_level}/10` : null}
+            </Row>
+            <Row label="Pain areas">{clinical.pain_locations}</Row>
+            <Row label="Symptoms">{clinical.symptoms}</Row>
+            <Row label="Aggravating factors">{clinical.aggravating_factors}</Row>
+            <Row label="Relieving factors">{clinical.relieving_factors}</Row>
+            <Row label="Prior treatments">{clinical.prior_treatments}</Row>
+            <Row label="Medications">{clinical.medications}</Row>
+            <Row label="Allergies">{clinical.allergies}</Row>
+            <Row label="Past medical">{clinical.past_medical_history}</Row>
+            <Row label="Past surgical">{clinical.past_surgical_history}</Row>
+            <Row label="Family history">{clinical.family_history}</Row>
+            <Row label="Social history">{clinical.social_history}</Row>
+            <Row label="Provider notes">{clinical.notes}</Row>
+          </IntakeCard>
+        )}
+
+        {hasValue(caseDetails) && (
+          <IntakeCard
+            title="Case details"
+            hint={caseDetails.case_type ? `Type: ${caseDetails.case_type.replace(/_/g, " ")}` : null}
+            testId="intake-case"
+          >
+            <Row label="Date of injury">{caseDetails.date_of_injury}</Row>
+            <Row label="Injury description">{caseDetails.injury_description}</Row>
+            <Row label="Accident location">{caseDetails.accident_location}</Row>
+            <Row label="Police report #">{caseDetails.police_report_number}</Row>
+            <Row label="Auto carrier">{caseDetails.auto_carrier}</Row>
+            <Row label="Claim #">{caseDetails.claim_number}</Row>
+            <Row label="Adjuster name">{caseDetails.adjuster_name}</Row>
+            <Row label="Adjuster phone">{caseDetails.adjuster_phone}</Row>
+            <Row label="Attorney name">{caseDetails.attorney_name}</Row>
+            <Row label="Attorney phone">{caseDetails.attorney_phone}</Row>
+            <Row label="Attorney email">{caseDetails.attorney_email}</Row>
+            <Row label="Employer for claim">{caseDetails.employer_for_claim}</Row>
+            <Row label="Workers' comp carrier">{caseDetails.work_comp_carrier}</Row>
+            <Row label="Return-to-work status">{caseDetails.return_to_work_status}</Row>
+            <Row label="Notes">{caseDetails.notes}</Row>
+          </IntakeCard>
+        )}
+
+        {hasValue(consents) && (
+          <IntakeCard
+            title="Consents"
+            hint="Every consent is versioned and audited."
+            testId="intake-consents"
+          >
+            <ConsentLine label="HIPAA privacy notice" consent={consents.hipaa} />
+            <ConsentLine label="Consent to treatment" consent={consents.treatment} />
+            <ConsentLine label="Financial policy" consent={consents.financial} />
+            <ConsentLine label="Telehealth" consent={consents.telehealth} />
+            <ConsentLine label="Photo release" consent={consents.photo_release} />
+            {Array.isArray(consents.additional) &&
+              consents.additional.map((c, i) => (
+                <ConsentLine
+                  key={`${c?.type || "extra"}-${i}`}
+                  label={(c?.type || "Consent").replace(/_/g, " ")}
+                  consent={c}
+                />
+              ))}
+          </IntakeCard>
+        )}
+      </div>
+    </section>
+  );
+}
+
 function RecordDialog({ open, onClose, patientId, onAdded, onReauthNeeded }) {
   const [form, setForm] = useState({
     record_type: "assessment", title: "", description: "", diagnosis: "", treatment: "",
@@ -306,6 +644,8 @@ export default function PatientDetail() {
           <p className="mt-3 text-sm leading-relaxed text-[#1F2924]">{patient.notes || "—"}</p>
         </div>
       </section>
+
+      <IntakeSections patient={patient} />
 
       <section>
         <div className="mb-4 flex items-end justify-between">
