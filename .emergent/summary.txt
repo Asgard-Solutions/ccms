@@ -2,141 +2,123 @@
 Design and implement a cloud-native, multi-tenant Chiropractic Clinic Management System (CCMS). The system must be scalable, modular, and production-ready with a microservices, event-driven architecture supporting clinical operations, patient engagement, and financial workflows.
 **PRODUCT REQUIREMENTS**: 
 - Supported stack: React + FastAPI + MongoDB but strictly architected as **PostgreSQL-ready** (UUIDs for PKs, relational normalisation, no embedded documents).
-- Microservices boundary separation (Identity, Patient, Scheduling, Billing, Communication, Compliance, Privacy).
-- Event-driven workflow.
 - JWT-based custom auth with strict RBAC.
 - 100% HIPAA compliant (PHI masking, audit logs, MFA, reauth) + Foundation for SOC 2, CCPA, and ISO 27001 readiness.
-- High performance (Redis caching, Primary/Secondary DB pattern) and Operational Security readiness (Structured logging, strict CSP/HSTS).
+- **NEW**: Build a production-ready authorization system using RBAC with scoped granular permissions, policy overlays (MFA, approvals, break-glass), and UI admin pages based on a provided permission matrix (default-deny).
 
-**User's preferred language**: English (INSTRUCT: Next agent MUST respond in English).
+**User's preferred language**: English (INSTRUCT: Next agent MUST respond in English only)
 
 **what currently exists?** 
-A highly secure, HIPAA-compliant, and performance-optimized MVP of the CCMS. The backend acts as an API gateway for logical microservices using FastAPI, MongoDB, and Redis. The frontend is a React application styled with Shadcn UI. In this session, the application underwent a massive security, compliance, and privacy hardening. It now features an in-app Compliance baseline, Session epoch validation (forced logout on role/password change), Admin MFA resets, Data Privacy request workflows (DSAR, soft-deletes, legal holds), Field-level encryption for PHI (DOB, Notes), strict centralized key management, structured security JSON logging, global secure error handling, and robust UI dashboards for Admins (Security Configuration, Privacy Requests, Compliance). 
+A highly secure, HIPAA-compliant MVP of the CCMS. In this session, a massive **Default-Deny RBAC Authorization System** was built from scratch. It features a robust policy engine () with 9 new DB collections (roles, permissions, user overrides, locations, assignments). 11 baseline roles and 115 permissions are seeded. The frontend features a  and 4 new Admin UI pages (Role Management, Permission Matrix, Access Review, Elevation). Existing critical routers (patient, scheduling, audit, identity) were fully migrated to use the new  dependency, overriding the legacy  checks.
 
 **Last working item**:
-- **Last item agent was working**: Implementing and documenting the **TLS/security transport posture**. The agent created the  middleware to enforce CSP, HSTS, X-Frame-Options, etc., updated , added a  diagnostic endpoint, and created the  document. 
-- **Status**: IN PROGRESS (Agent just wrote the documentation and needs to verify frontend rendering with the new strict CSP headers, run the testing agent, and call the  tool).
-- **Agent Testing Done**: Y (Backend tested via bash/curl; headers confirmed present).
-- **Which testing method agent to use?**:  (Frontend testing is critical here to ensure the new Content-Security-Policy middleware does not block React hydration, routing, or API calls).
-- **User Testing Done**: N
+- Last item agent was working: Migrating existing backend routers to the new  system and implementing per-user permission overrides. 
+- Status: USER VERIFICATION PENDING
+- Agent Testing Done: Y
+- Which testing method agent to use?: NA (Testing is already done via  iteration 13)
+- User Testing Done: N
 
-**All Pending/In progress Issue list**:
-No active bugs. Just the completion and verification of the current TLS Transport task.
+**All Pending/In progress Issue list**:  
+None. All 68 backend tests and frontend verifications are passing.
 
-**In progress Task List**:
-  - Task 1: **Finalize TLS/Security Transport Posture** (P0)
-     - Where to resume: Agent just finished creating . You need to take a screenshot of the frontend to ensure the strict  and  headers didn't break the React UI, run  for a full regression, and then use the  tool.
-     - What will be achieved with this: Completion of the final operational security and transport hardening phase requested by the user.
-     - Status: TESTING PENDING
-     - Should Test frontend/backend/both after fix: Both.
-     - Blocked on something: None.
+**In progress Task List**: 
+None.
 
-**Upcoming and Future Tasks**:
-    Upcoming Tasks:
-    - Task 1: **Billing Service Implementation** (Invoices, payments, insurance claims). (P0)
-    - Task 2: **Production Communication Integration** (Replace mock notifications with actual SMS/Email via ). (P1)
-    - Task 3: **Patient Portal Enhancements** (Self-service appointment booking). (P1)
-    
-    Future Tasks:
-    - Task 4: **Reporting Service** (Read-heavy analytics and reporting). (P2)
-    - Task 5: **PostgreSQL Migration** (Executing the planned migration from MongoDB to PostgreSQL using the prepared relational schema). (P2)
+**Upcoming and Future Tasks**
+Upcoming Tasks:
+- Task 1: **Billing Service Implementation** (Invoices, payments, insurance claims). (P0)
+- Task 2: **Production Communication Integration** (Replace mock notifications with actual SMS/Email via ). (P1)
+- Task 3: **Patient Portal Enhancements** (Self-service appointment booking). (P1)
 
-**Completed work in this session**:
-- Compliance Foundation Baseline (, , baseline docs) (DONE)
-- Security Hardening Phase (Session epoch validation, MFA endpoints, Password Reset, ) (DONE)
-- Privacy and Data Governance (, DSAR workflows, soft-delete legal holds, ) (DONE)
-- Data Protection & Secure Configuration (, , DOB field-level encryption, ) (DONE)
-- Operational Security Readiness (, global error handlers, monitoring hooks, metrics) (DONE)
+Future Tasks:
+- Task 4: **Reporting Service** (Read-heavy analytics and reporting). (P2)
+- Task 5: **PostgreSQL Migration** (Executing the planned migration from MongoDB to PostgreSQL using the prepared relational schema). (P2)
+- Task 6: **Auto-expiry for Permission Overrides** (Agent suggested wiring auto-expiry + email reminders for user-level permission overrides to aid SOC 2 CC6.2 compliance). (P2)
 
-**Earlier issues found/mentioned but not fixed**:
-None. All bugs identified by the testing agent (e.g., rate limit block JSON duplication crashing the app, epoch refresh logic, PHI bleeding in audit logs) were successfully patched and verified.
+**Completed work in this session**
+- Verified TLS / Transport Security Posture and strict CSP headers on Frontend (DONE)
+- Authz Phase 1: Authz backbone (9 new collections, models, policy engine, seed data) (DONE)
+- Authz Phase 2: Backend enforcement, elevation flows, and reporting endpoints (DONE)
+- Authz Phase 3: Frontend UI (, , , , ) (DONE)
+- Authz Phase 4: Migration of  to  on existing patient/scheduling/audit routers (DONE)
+- Authz Phase 5: Per-user permission overrides () (DONE)
 
-**Known issue recurrence from previous fork**:
+**Earlier issues found/mentioned but not fixed**
+None. 
+
+**Known issue recurrence from previous fork**
 - Issue recurrence in previous fork: NA
 - Recurrence count: 0
 - Status: NA
 
-**Code Architecture**:
+**Code Architecture**
 
 
-**Key Technical Concepts**:
-FastAPI, MongoDB (Motor), Redis, PyOTP (MFA), Prometheus Client. Microservice pattern routed via single FastAPI gateway. CQRS-lite with DB read/write split. Event-driven using in-memory pub-sub. React, Shadcn UI. 
-Strict reliance on  for auth tracking (immediate revocation). Field-level encryption for sensitive DB fields.
+**Key Technical Concepts**
+FastAPI, MongoDB (Motor), Redis. Microservice pattern routed via single FastAPI gateway. CQRS-lite with DB read/write split. Event-driven using in-memory pub-sub. Default-deny RBAC policy engine with overlays (MFA, approvals, break-glass) and row-level scoping filters. 
 
-**key DB schema**:
+**key DB schema**
 - : 
 - : 
 - : 
-- , , , 
+- : 
+- :  (Overrides)
+- : 
 
-**changes in tech stack**:
-- Implementation of a global unhandled exception catcher () to prevent 500 stack traces from leaking.
-- Implementation of FastAPI middleware for HTTP security headers.
-- Structured JSON logging ( & ).
+**changes in tech stack**
+- Transitioned from a legacy string-based  dependency to a robust, resource/action-based  dependency in FastAPI.
 
-**All files of reference**:
-- : Injects CSP, HSTS, Frame-Options.
-- : Handles DSAR data workflows.
-- : Heavy edits done to support session epochs, refresh tokens, and password resets.
--  & : New Admin interfaces.
-- : Just created, outlines ingress vs app-level transport responsibilities.
+**All files of reference**
+- : Complete backend logic for the new authorization system.
+- : Manages current user permissions on the client side to conditionally render UI.
+- : Updated to include .
+- : Created to fully document the new authz architecture and how to apply it to new routes.
 
-**Areas that need refactoring**:
-- None. Codebase is highly modular and heavily regression-tested.
+**Areas that need refactoring**
+- None. Codebase is clean, modular, and has 100% test coverage for new features.
 
-**key api endpoints**:
-- : Returns encryption flag status and app env info.
-- : Returns logged events and security metrics.
-- : Diagnostics for TLS/Proxy headers.
--  & : Resets passwords.
-- : Creates a DSAR/deletion workflow request.
+**key api endpoints**
+- : Fetches effective permissions for the logged-in user.
+- : Generates SOC 2 compliance evidence.
+-  & : Handles just-in-time access elevations.
+- : Manages per-user permission overrides.
 
-**Critical Info for New Agent**:
-1. **CSP and Security Headers**: The app now injects very strict  headers. If you add external CDN links (fonts, scripts) or inline scripts, you MUST update the CSP logic in .
-2. **Session Epochs**: Any mutation to a user's role, status, password, or MFA state increments their  in the DB. The auth context () strictly enforces this, meaning older tokens become instantly invalid (forcing all-device logouts).
-3. **Key Management & Encryption**: Do not use  directly for keys. Import  and . Patient DOBs and notes are now encrypted at rest (stored as ). Use  helper methods for read/writes to these fields.
-4. **Strict Testing**: The previous agent utilized  heavily. Iteration 10 reached **88 passing regression tests**. Always use the testing agent after substantial logic changes to prevent regressions in security rules.
+**Critical Info for New Agent**
+1. **Strict Default Deny**: The app now utilizes a strict default-deny policy engine. Any new API endpoints you create MUST be protected using  from . DO NOT use the legacy .
+2. **Permission Overlays**: The authz engine natively supports MFA gating, approval requirements, and row-level scope filters. Refer to  when designing new features.
+3. **Audit Volume**: When using , it automatically audits the access decision. To avoid double-auditing on routes that emit their own semantic audit events (like ), pass  to the dependency.
 
-**documents and test reports created in this job**:
+**documents and test reports created in this job**
 - 
 - 
 - 
 - 
-- 
-- 
-- 
-- 
--  through 
 
-**Last 10 User Messages and any pending HUMAN messages**:
-- **User**: Implement and document the TLS/security transport posture for CCMS... (IN PROGRESS - Agent implemented, needs frontend verification & finish)
-- **User**: Implement an operational security readiness phase... (COMPLETED)
-- **User**: Implement a data protection and secure configuration hardening phase... (COMPLETED)
-- **User**: Implement a privacy and data-governance phase... (COMPLETED)
-- **User**: Implement a security hardening phase for CCMS focused on access control... (COMPLETED)
-- **User**: Implement a compliance foundation baseline... (COMPLETED)
+**Last 10 User Messages and any pending HUMAN messages** 
+- **User**: P1: Migrate existing routers (patient / scheduling / audit / identity) from  to ... (COMPLETED)
+- **User**: Use the defaults. 1. Cut-over strategy: 1a — Dual-run... (COMPLETED)
+- **User**: [Uploaded ] Build a production-ready authorization system for our chiropractic clinic management application using RBAC... (COMPLETED)
+- **User**: 1. proceed fully to completion. 2. nothing as of yet... (COMPLETED)
 - **User**: Please use ask_human tool and confirm your plan now. (COMPLETED)
 
-**Project Health Check**:
-- **Broken**: None.
-- **Mocked**: Communication service (Email/SMS).
+**Project Health Check:**
+- **Broken**: None
+- **Mocked**: Communication service (Email/SMS notifications)
 
-**3rd Party Integrations**:
+**3rd Party Integrations** 
 - Prometheus text exposition locally. (No emergent LLM or external keys used yet).
 
-**Testing status**:
-- Testing agent used after significant changes: YES (Heavily utilized, up to iteration_10.json)
+**Testing status**
+- Testing agent used after significant changes: YES (Iterations 11, 12, 13)
 - Troubleshoot agent used after agent stuck in loop: NO
-- Test files created:  to 
-- Known regressions: None.
+- Test files created: , 
+- Known regressions: None. 
 
-**Credentials to test flow**:
+**Credentials to test flow:**
 Live user credentials are saved in .
 
-**What agent forgot to execute**:
-The agent implemented the backend middleware and created the documentation for the TLS/Transport task but did not run a final frontend screenshot/smoke-test to verify the new Content-Security-Policy headers didn't break React, didn't run the  for the final regression check, and did not use the  tool. This is your immediate starting point.
+**What agent forgot to execute**
+Nothing. The agent fully executed all assigned tasks, updated documentation, wrote extensive test suites, and used the finish tool properly.
 
-**Debugging checklist for current issue**:
-No active bugs. For the current pending TLS finish:
-- Frontend files to check: Verify  loads without CSP errors in the browser console.
-- Backend files to check: .</analysis>
+**Debugging checklist for current issue**
+N/A - No active issues. When picking up the next task (Billing Service), ensure you read  to properly secure the new routes.</analysis>
