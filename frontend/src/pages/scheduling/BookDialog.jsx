@@ -31,7 +31,7 @@ import {
  *   - initial: appointment | null  — when provided, acts as "reschedule"
  *   - defaultStart: Date | null   — pre-fill start/end in "create" mode
  */
-export default function BookDialog({ open, onClose, onSaved, initial = null, defaultStart = null }) {
+export default function BookDialog({ open, onClose, onSaved, onCancelAppointment, initial = null, defaultStart = null }) {
   const mode = initial ? "reschedule" : "create";
   const [patients, setPatients] = useState([]);
   const [providers, setProviders] = useState([]);
@@ -216,18 +216,33 @@ export default function BookDialog({ open, onClose, onSaved, initial = null, def
               className="rounded-sm"
             />
           </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose} className="rounded-sm">
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              disabled={submitting || !form.patient_id || !form.provider_id}
-              data-testid="appt-submit-btn"
-              className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
-            >
-              {submitting ? "Saving…" : mode === "reschedule" ? "Save changes" : "Book"}
-            </Button>
+          <DialogFooter className="flex-wrap gap-2 sm:justify-between">
+            {mode === "reschedule" && initial?.status === "scheduled" && onCancelAppointment ? (
+              <Button
+                type="button"
+                variant="ghost"
+                data-testid="appt-cancel-appointment-btn"
+                onClick={() => onCancelAppointment(initial)}
+                className="rounded-sm text-destructive hover:bg-destructive-soft"
+              >
+                Cancel appointment
+              </Button>
+            ) : (
+              <span />
+            )}
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" onClick={onClose} className="rounded-sm">
+                Close
+              </Button>
+              <Button
+                type="submit"
+                disabled={submitting || !form.patient_id || !form.provider_id}
+                data-testid="appt-submit-btn"
+                className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
+              >
+                {submitting ? "Saving…" : mode === "reschedule" ? "Save changes" : "Book"}
+              </Button>
+            </div>
           </DialogFooter>
         </form>
       </DialogContent>

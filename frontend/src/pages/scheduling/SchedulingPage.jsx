@@ -45,6 +45,7 @@ export default function SchedulingPage() {
   const [confirmCancel, setConfirmCancel] = useState(null);
 
   const openNew = () => setDialog({ open: true, initial: null, defaultStart: null });
+  const openNewAt = (d) => setDialog({ open: true, initial: null, defaultStart: d });
   const openReschedule = (a) => setDialog({ open: true, initial: a, defaultStart: null });
 
   async function doCancel(a) {
@@ -81,8 +82,10 @@ export default function SchedulingPage() {
               date={date}
               appointments={appointments}
               canBook={canBook}
-              onReschedule={openReschedule}
-              onCancel={(a) => setConfirmCancel(a)}
+              onOpenAppointment={(a) => {
+                if (canBook && a.status === "scheduled") openReschedule(a);
+              }}
+              onCreateAt={(d) => openNewAt(d)}
             />
           )}
           {view === "week" && (
@@ -115,6 +118,10 @@ export default function SchedulingPage() {
         initial={dialog.initial}
         defaultStart={dialog.defaultStart}
         onClose={() => setDialog({ open: false, initial: null, defaultStart: null })}
+        onCancelAppointment={(a) => {
+          setDialog({ open: false, initial: null, defaultStart: null });
+          setConfirmCancel(a);
+        }}
         onSaved={() => {
           invalidate();
           // If creating from day view on a different date, jump to that appt's day.

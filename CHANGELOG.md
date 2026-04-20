@@ -11,6 +11,42 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Scheduling Day view rebuilt as a 15-minute timeline (Task 6).**
+  The table-based DayView is replaced by a vertical timeline from
+  07:00–20:00 (placeholder clinic hours; 52 slots × 16 px). Each slot
+  is a focusable `<button>` — clicking opens the booking dialog
+  pre-filled with that slot's start time (via the new `defaultStart`
+  prop on `BookDialog`). Hour boundaries carry a darker 2 px border,
+  half-hour marks are dashed, quarter-hour marks are subtle — so
+  operators can read slot density at a glance.
+  - Appointment blocks are absolutely positioned by
+    `(start - dayStart) * slotHeight / 15` with a side-by-side column
+    layout for overlapping clusters (classic interval scheduling on
+    first-free column). Height respects duration with a
+    `SLOT_HEIGHT - 2` minimum.
+  - Blocks show **patient name, patient phone, start time**, and —
+    when the block is tall enough — provider and reason. Cancelled
+    appointments render in the destructive-soft palette with a
+    line-through. Clicking a block opens the reschedule dialog.
+  - **"Cancel appointment"** affordance reintroduced inside
+    `BookDialog` in reschedule mode as a ghost-destructive footer
+    button; clicking it closes the dialog and raises the existing
+    `AlertDialog` confirmation. No new API.
+  - A live **current-time indicator** (destructive pill + 2 px bar)
+    overlays the timeline when viewing today and the clock is inside
+    the visible window; updates every 60 seconds.
+  - Timeline auto-scrolls to "now" on mount (or 08:00 on non-today
+    days). An out-of-window banner surfaces any appointments that
+    fall outside the default 07:00–20:00 window so they're never
+    silently hidden.
+- **`patient_phone` added to `AppointmentPublic`** (scheduling
+  service). The hydration helper now pulls the patient's `phone`
+  scalar alongside `first_name`/`last_name` in one Mongo read. Legacy
+  records carry `phone` directly; grouped-intake records get it
+  back-filled at write time (see PRD §21), so no new decryption path
+  is needed. Only staff/doctor/admin + the patient themselves can
+  reach the appointments endpoint, so no new audit surface either.
+
 - **Scheduling Month view polish (Task 4)** — `MonthView` cells now
   show up to 2 compact appointment previews (time + patient) and a
   `+N more` hint when the day has more. Count badge remains in the

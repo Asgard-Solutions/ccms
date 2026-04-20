@@ -53,15 +53,20 @@ async def _hydrate(apps: list[dict]) -> list[dict]:
         )
     }
     patients = {
-        p["id"]: f"{p['first_name']} {p['last_name']}"
+        p["id"]: {
+            "name": f"{p['first_name']} {p['last_name']}",
+            "phone": p.get("phone"),
+        }
         async for p in db.patients.find(
             {"id": {"$in": patient_ids}},
-            {"_id": 0, "id": 1, "first_name": 1, "last_name": 1},
+            {"_id": 0, "id": 1, "first_name": 1, "last_name": 1, "phone": 1},
         )
     }
     for a in apps:
         a["provider_name"] = providers.get(a["provider_id"])
-        a["patient_name"] = patients.get(a["patient_id"])
+        info = patients.get(a["patient_id"]) or {}
+        a["patient_name"] = info.get("name")
+        a["patient_phone"] = info.get("phone")
     return apps
 
 
