@@ -11,6 +11,28 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Scheduling migration completed (Task 12).** Final sweep
+  confirming no stale entry points or broken links survived the
+  Appointments → Scheduling collapse:
+  - Left-nav exposes a single **Scheduling** item for every role
+    (admin / doctor / staff / patient); no "Appointments" or
+    "Calendar" leftovers.
+  - Legacy `/appointments` and `/calendar` routes redirect with a
+    React-Router `<Navigate replace>` to `/scheduling`; query
+    strings survive the redirect. Verified via Playwright.
+  - Dashboard's "view all" and "book first appointment" CTAs both
+    point at `/scheduling`.
+  - Legacy `pages/Appointments.jsx` and `pages/Calendar.jsx` files
+    were already deleted in the original migration (Task 1); grep
+    confirms zero remaining imports or JSX references.
+  - Deliberately preserved: the "Appointments" section heading on
+    **PatientDetail** (per-patient appointment history is a
+    legitimate data entity label, not a route) and the shadcn
+    `components/ui/calendar.jsx` primitive (internal date-picker
+    used by dialogs, unrelated to the former Calendar page).
+  - Copy / tooltip / empty-state sweep: zero "appointments page" /
+    "calendar page" phrases anywhere in frontend or backend.
+
 - **Scheduling — direct actions from calendar cells (Task 11).**
   - **Week & Month cells** now expose a compact hover-reveal `+`
     quick-add button (`data-testid="scheduling-week-add-{date}"` /
