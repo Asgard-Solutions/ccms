@@ -31,6 +31,7 @@ from services.communication.subscribers import register as register_comm_subscri
 from services.exports import router as exports_router, cleanup_expired_exports  # noqa: E402
 from services.identity.router import router as identity_router  # noqa: E402
 from services.identity.seed import seed as seed_identity  # noqa: E402
+from services.infra import router as infra_router  # noqa: E402
 from services.patient.router import router as patient_router  # noqa: E402
 from services.perf.router import router as perf_router, metrics_router  # noqa: E402
 from services.privacy.router import router as privacy_router  # noqa: E402
@@ -74,6 +75,7 @@ api_router.include_router(audit_router)
 api_router.include_router(perf_router)
 api_router.include_router(reports_router)
 api_router.include_router(exports_router)
+api_router.include_router(infra_router)
 api_router.include_router(metrics_router)  # GET /api/metrics
 
 app.include_router(api_router)
@@ -136,6 +138,12 @@ async def on_startup():
     for warning in transport_warnings():
         logger.warning("Transport posture: %s", warning)
     await create_indexes()
+    # Validate every required secret is present. Fail fast at startup.
+    from core import secrets as _secrets
+    missing = _secrets.validate_startup()
+    if missing:
+        logger.error("CCMS refusing to start — missing secrets: %s", missing)
+        raise RuntimeError(f"Missing required secrets: {missing}")
     register_comm_subscribers()
     await seed_tenancy()      # must run BEFORE seed_identity so tenant rows exist
     await seed_identity()

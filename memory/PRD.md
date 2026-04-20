@@ -206,7 +206,16 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **Indexes** added for `jobs`, `exports` (tenant_id, status, expires_at).
 - **Verified (iteration_16)**: 10/10 new tests pass. Combined iteration_15 + iteration_16 16/16 green. Lint clean.
 
-## 18. Deferred (still)
+## 18. Iteration 17 — Infrastructure & platform security backbone (2026-02-21)
+- **`core/db_routing.py`** — `ReadPurpose` classification (`WRITES_ONLY`, `READ_AFTER_WRITE`, `REPLICA_OK`, `REPLICA_PREFERRED`), `PRIMARY_ONLY_COLLECTIONS` allow-list (users, audit_logs, jobs, tenants, authz tables, …) that `safe_read()` refuses to route to replicas. Replica circuit-breaker: 3 bad probes disables the replica for 60s. Operator lever `force_disable_replica(seconds)`.
+- **`core/storage.py`** — `StorageBackend` protocol (`LocalStorage` today, `S3Storage` stub), `TenantStorage` wrapper enforcing tenant-prefixed paths (`<category>/<tenant_id>/<uuid>`), path-traversal + control-char blocking, UUID-only keys (no PHI in filenames), signed download tokens (TTL ≤ 3600s) carrying `tid+path`, `StorageCategory` (`PERMANENT`, `EXPORTS`, `UPLOAD_STAGING`, `REPORTS`).
+- **`core/secrets.py`** — provider abstraction (`env`, stub `aws`), `require()`, `validate_startup()` (server refuses to serve if any of `MONGO_URL`, `DB_NAME`, `JWT_SECRET`, `DATA_ENCRYPTION_KEY` missing), `redact()` masks Mongo URIs, JWTs, Bearer tokens, AWS keys, Stripe keys, password values, and live secret values.
+- **Cache categories** — `CacheCategory` enum + `DEFAULT_TTL` mapping (session-authz 120s, reference 300s, schedule/report 300s, utility 60s); wrapper already bounds TTLs to (0, 86400].
+- **Diagnostics** — `/api/infra/replica` runs a live probe, `/api/infra/secrets` returns presence + length (never values). Platform admin only.
+- **Docs** — `/app/memory/INFRASTRUCTURE_ARCHITECTURE.md` covers topology, DB routing rules, cache/redis hardening, object storage with S3 Terraform snippet, secrets provider swap + rotation runbooks, TLS 1.3 posture, backup/DR (including tenant-logical-restore limits), PromQL alerts for tenant-isolation detections, environment separation + CI policy gates.
+- **Verified (iteration_17)**: 15/15 new tests pass — primary-only refusal, replica-disable fallback, replica-health shape, storage path traversal, tenant-prefixed paths, missing tenant refusal, unsafe suffix, TTL bounds, token tenant claim, required-secrets present, `require` raises for missing, 4 redaction format cases + live value match, cache-category TTL bounds. Combined iteration_16 + iteration_17 25/25 green.
+
+## 19. Deferred (still)
 - `privacy`, `communication`, and `elevation` routers rely on the `tenant_id` backfill but do not yet pass queries through `scoped_filter` — safe because we're still single-tenant-per-user but a P1 to harden before onboarding the second paying tenant.
 - Multi-tenant user support (one user across N tenants) — P2; requires `user_tenant_roles` table + tenant-switcher UI.
 - Subdomain-based tenant routing (`acme.ccms.app → tid=acme`) — P2; ingress + middleware work.

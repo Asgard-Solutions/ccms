@@ -40,6 +40,7 @@ import asyncio
 import hashlib
 import json
 import logging
+from enum import Enum
 from typing import Any, Awaitable, Callable
 
 from core import cache as _underlying_cache   # existing Redis-or-in-memory cache
@@ -48,6 +49,29 @@ logger = logging.getLogger("ccms.tenant_cache")
 
 PLATFORM_NAMESPACE = "pa"
 TENANT_NAMESPACE = "t"
+
+
+class CacheCategory(str, Enum):
+    """Segmented cache use-cases with bounded TTL defaults.
+
+    Each category corresponds to a class of data with a specific lifecycle:
+      * `SESSION_AUTHZ` — user's effective permissions, session epoch; invalidated on epoch bump.
+      * `REFERENCE`      — role catalog, location list, provider list.
+      * `SCHEDULE_REPORT` — appointment lists, report results.
+      * `UTILITY`        — rate-limits, locks, job control.
+    """
+    SESSION_AUTHZ = "sa"
+    REFERENCE = "ref"
+    SCHEDULE_REPORT = "sr"
+    UTILITY = "ut"
+
+
+DEFAULT_TTL: dict[CacheCategory, int] = {
+    CacheCategory.SESSION_AUTHZ: 120,
+    CacheCategory.REFERENCE: 300,
+    CacheCategory.SCHEDULE_REPORT: 300,
+    CacheCategory.UTILITY: 60,
+}
 
 
 def filters_hash(d: dict) -> str:
