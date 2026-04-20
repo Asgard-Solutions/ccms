@@ -40,6 +40,8 @@ import BreakGlassDialog from "../components/BreakGlassDialog";
 import ReauthDialog from "../components/ReauthDialog";
 import PatientDocumentsCard from "../components/PatientDocumentsCard";
 import PatientLedgerCard from "./billing/PatientLedgerCard";
+import PatientInsuranceManager from "./billing/PatientInsuranceManager";
+import ChargeCaptureDialog from "./billing/ChargeCaptureDialog";
 
 // ---------------------------------------------------------------------------
 // Expanded-intake section renderers (Phase 4).
@@ -497,6 +499,7 @@ export default function PatientDetail() {
   const [deleteReason, setDeleteReason] = useState("");
   const [editWizardOpen, setEditWizardOpen] = useState(false);
   const [intakeWizardOpen, setIntakeWizardOpen] = useState(false);
+  const [chargeRecord, setChargeRecord] = useState(null);
 
   const load = useCallback(
     async ({ withUnmask = false, breakGlassReason = null } = {}) => {
@@ -788,10 +791,29 @@ export default function PatientDetail() {
                     <span className="rounded-sm bg-muted px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                       {r.record_type}
                     </span>
+                    {r.signed_at && (
+                      <span className="ml-2 rounded-sm bg-success-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-success">
+                        Signed
+                      </span>
+                    )}
+                    {r.charge_status === "captured" && (
+                      <span className="ml-2 rounded-sm bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
+                        Charges captured
+                      </span>
+                    )}
                     <h3 className="mt-2 font-display text-lg font-medium text-foreground">{r.title}</h3>
                   </div>
-                  <div className="text-xs text-muted-foreground">
-                    {formatDateTime(r.recorded_at)} · {r.recorded_by_name || "—"}
+                  <div className="flex flex-col items-end gap-2">
+                    <div className="text-xs text-muted-foreground">
+                      {formatDateTime(r.recorded_at)} · {r.recorded_by_name || "—"}
+                    </div>
+                    <Button
+                      size="sm" variant="outline"
+                      onClick={() => setChargeRecord(r)}
+                      data-testid={`record-charge-capture-${r.id}`}
+                    >
+                      {r.charge_status === "captured" ? "View captured" : "Code & capture"}
+                    </Button>
                   </div>
                 </div>
                 {r.description && <p className="mt-3 text-sm leading-relaxed text-foreground">{r.description}</p>}
@@ -845,7 +867,8 @@ export default function PatientDetail() {
       </section>
 
       {/* Billing & ledger — embedded card; full-page view at /billing/patients/:id/ledger */}
-      <section data-testid="patient-billing-section">
+      <section data-testid="patient-billing-section" className="space-y-4">
+        <PatientInsuranceManager patientId={id} />
         <PatientLedgerCard patientId={id} />
       </section>
 
@@ -862,6 +885,14 @@ export default function PatientDetail() {
           }}
         />
       )}
+
+      <ChargeCaptureDialog
+        open={!!chargeRecord}
+        onOpenChange={(v) => !v && setChargeRecord(null)}
+        record={chargeRecord}
+        patientId={id}
+        onUpdated={() => load({ reason, unmask })}
+      />
 
       <ReauthDialog
         open={reauthOpen}

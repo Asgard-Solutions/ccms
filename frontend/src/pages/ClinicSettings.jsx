@@ -16,6 +16,8 @@ import {
 } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
 import AppointmentTypesManager from "./AppointmentTypesManager";
+import PayersManager from "./billing/PayersManager";
+import FeeSchedulesManager from "./billing/FeeSchedulesManager";
 
 // Display order is Sunday→Saturday to match the calendar views.
 // Backend day_of_week is 0=Monday; `BACKEND_DOW[i]` maps row i to the
@@ -441,6 +443,8 @@ export default function ClinicSettings() {
       </form>
 
       <AppointmentTypesManager />
+      <PayersManager />
+      <FeeSchedulesManager />
     </div>
   );
 }

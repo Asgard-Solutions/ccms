@@ -320,6 +320,7 @@ ROLE_GRANTS: dict[str, list[dict]] = {
         g("billing", "void", "all_org", "MFA"),
         g("insurance", "create"),
         g("insurance", "update"),
+        g("coding", "update"),
         g("claim", "read"),
         g("claim", "create"),
         g("claim", "submit"),

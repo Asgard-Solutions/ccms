@@ -301,6 +301,34 @@ class PatientPublic(BaseModel):
     updated_at: str
 
 
+class RecordProcedure(BaseModel):
+    """A billable procedure attached to a medical record (for charge capture)."""
+    model_config = ConfigDict(extra="forbid")
+    code_type: Literal["cpt", "hcpcs", "custom"] = "cpt"
+    code: str = Field(min_length=1, max_length=20)
+    units: int = Field(default=1, ge=1, le=99)
+    modifiers: list[str] = Field(default_factory=list, max_length=4)
+
+
+class RecordDiagnosis(BaseModel):
+    """An ICD-10 diagnosis attached to a medical record."""
+    model_config = ConfigDict(extra="forbid")
+    sequence: int = Field(ge=1, le=12)
+    code: str = Field(min_length=1, max_length=12)
+
+
+ResponsibilityMode = Literal["self_pay", "insurance", "mixed"]
+ChargeStatus = Literal["not_captured", "pending_capture", "captured", "voided"]
+
+
+class MedicalRecordCoding(BaseModel):
+    """Updatable coding payload for a medical record."""
+    model_config = ConfigDict(extra="forbid")
+    procedures: list[RecordProcedure] = Field(default_factory=list, max_length=20)
+    diagnoses: list[RecordDiagnosis] = Field(default_factory=list, max_length=12)
+    responsibility: ResponsibilityMode = "self_pay"
+
+
 class MedicalRecordCreate(BaseModel):
     record_type: RecordType
     title: str = Field(min_length=1, max_length=200)
@@ -321,3 +349,12 @@ class MedicalRecordPublic(BaseModel):
     recorded_by: str
     recorded_by_name: str | None = None
     recorded_at: str
+    # Charge-capture fields (iteration 25 — Phase 2). All optional so
+    # legacy records render unchanged.
+    procedures: list[RecordProcedure] = Field(default_factory=list)
+    diagnoses: list[RecordDiagnosis] = Field(default_factory=list)
+    responsibility: ResponsibilityMode | None = None
+    signed_at: str | None = None
+    signed_by: str | None = None
+    charge_status: ChargeStatus | None = None
+    charge_captured_invoice_id: str | None = None

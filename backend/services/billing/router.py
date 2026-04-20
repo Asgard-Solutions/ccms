@@ -1356,3 +1356,439 @@ async def void_invoice(
         metadata={"from": inv["status"], "reason": reason},
     )
     return _public(fresh)
+
+
+# ===========================================================================
+# PHASE 2 — Insurance policies, fee schedules, encounter charge capture
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# INSURANCE POLICIES — update (create already lives above)
+# ---------------------------------------------------------------------------
+@router.put("/insurance-policies/{policy_id}",
+            response_model=PatientInsurancePolicyPublic)
+async def update_insurance_policy(
+    policy_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("insurance", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Partial-update an active patient insurance policy. Accepts the
+    same fields as create, all optional."""
+    body = await request.json()
+    allowed_keys = {
+        "payer_id", "rank", "subscriber_name", "relationship_to_subscriber",
+        "member_id", "group_number", "effective_date", "termination_date",
+        "status", "notes",
+    }
+    updates = {k: v for k, v in (body or {}).items() if k in allowed_keys}
+    if not updates:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "No valid fields")
+
+    db = tenant_db(ctx.tenant_id)
+    current = await _scoped_one(
+        db.patient_insurance_policies, {"id": policy_id}, ctx,
+    )
+    if not current:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Policy not found")
+
+    if "payer_id" in updates:
+        payer = await _scoped_one(
+            db.billing_payers, {"id": updates["payer_id"]}, ctx,
+        )
+        if not payer:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Payer not found")
+
+    now = _now()
+    updates["updated_at"] = now
+    updates["updated_by"] = user["id"]
+    await db.patient_insurance_policies.update_one(
+        {"id": policy_id, "tenant_id": ctx.tenant_id},
+        {"$set": updates,
+         "$push": {"history": _history_entry(
+             user, "updated", fields=sorted(list(updates.keys())),
+         )}},
+    )
+    fresh = await db.patient_insurance_policies.find_one(
+        {"id": policy_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    await audit_success(
+        user, "billing.insurance_policy.updated", request,
+        entity_type="patient_insurance_policy", entity_id=policy_id,
+        metadata={"fields": sorted(list(updates.keys()))},
+    )
+    return _public(fresh)
+
+
+@router.delete("/insurance-policies/{policy_id}")
+async def deactivate_insurance_policy(
+    policy_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("insurance", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Soft-deactivate a policy (status → 'inactive')."""
+    db = tenant_db(ctx.tenant_id)
+    current = await _scoped_one(
+        db.patient_insurance_policies, {"id": policy_id}, ctx,
+    )
+    if not current:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Policy not found")
+    await db.patient_insurance_policies.update_one(
+        {"id": policy_id, "tenant_id": ctx.tenant_id},
+        {"$set": {"status": "inactive", "updated_at": _now(),
+                  "updated_by": user["id"]},
+         "$push": {"history": _history_entry(user, "deactivated")}},
+    )
+    await audit_success(
+        user, "billing.insurance_policy.deactivated", request,
+        entity_type="patient_insurance_policy", entity_id=policy_id,
+    )
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# FEE SCHEDULES  —  /api/billing/fee-schedules
+# ---------------------------------------------------------------------------
+@router.get("/fee-schedules")
+async def list_fee_schedules(
+    request: Request,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    q = scoped_filter({}, ctx, location_scoped=False)
+    if q.get("__deny__"):
+        return []
+    schedules = [d async for d in db.fee_schedules.find(q, {"_id": 0})
+                 .sort([("kind", 1), ("name", 1)])]
+    # Attach line counts so the UI can render "X codes" at a glance.
+    for s in schedules:
+        s["line_count"] = await db.fee_schedule_lines.count_documents(
+            {"tenant_id": ctx.tenant_id, "fee_schedule_id": s["id"]},
+        )
+    await audit_success(
+        user, "billing.fee_schedule.list_viewed", request,
+        metadata={"count": len(schedules)},
+    )
+    return schedules
+
+
+@router.post("/fee-schedules", status_code=201)
+async def create_fee_schedule(
+    request: Request,
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    if not ctx.tenant_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Tenant required")
+    db = tenant_db(ctx.tenant_id)
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if len(name) < 2 or len(name) > 120:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "name must be 2..120 chars")
+    kind = body.get("kind")
+    if kind not in ("self_pay", "payer"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "kind must be 'self_pay' or 'payer'")
+    payer_id = body.get("payer_id")
+    if kind == "payer":
+        if not payer_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "payer schedule requires payer_id")
+        payer = await _scoped_one(db.billing_payers, {"id": payer_id}, ctx)
+        if not payer:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Payer not found")
+    else:
+        payer_id = None
+
+    # Exactly one active self_pay schedule per tenant at a time.
+    if kind == "self_pay":
+        existing = await db.fee_schedules.find_one(
+            {"tenant_id": ctx.tenant_id, "kind": "self_pay", "active": True},
+            {"_id": 0, "id": 1},
+        )
+        if existing:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Tenant already has an active self_pay schedule — "
+                "deactivate it first",
+            )
+
+    now = _now()
+    sid = str(uuid.uuid4())
+    doc = stamp_for_write({
+        "id": sid,
+        "name": name,
+        "kind": kind,
+        "payer_id": payer_id,
+        "active": True,
+        "effective_date": body.get("effective_date"),
+        "notes": body.get("notes"),
+        "created_at": now,
+        "updated_at": now,
+        "created_by": user["id"],
+        "updated_by": user["id"],
+        "history": [_history_entry(user, "created")],
+    }, ctx, location_id=None)
+    await db.fee_schedules.insert_one(doc)
+    await audit_success(
+        user, "billing.fee_schedule.created", request,
+        entity_type="fee_schedule", entity_id=sid,
+        metadata={"name": name, "kind": kind, "payer_id": payer_id},
+    )
+    return _public(doc) | {"line_count": 0}
+
+
+@router.put("/fee-schedules/{schedule_id}/lines")
+async def upsert_fee_schedule_lines(
+    schedule_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Upsert a batch of `{code_type, code, allowed_cents}` rows."""
+    db = tenant_db(ctx.tenant_id)
+    schedule = await _scoped_one(db.fee_schedules, {"id": schedule_id}, ctx)
+    if not schedule:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fee schedule not found")
+
+    body = await request.json()
+    rows = body if isinstance(body, list) else body.get("lines")
+    if not isinstance(rows, list) or not rows:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "body must be a list of lines")
+
+    now = _now()
+    written = 0
+    for r in rows:
+        code = (r.get("code") or "").strip()
+        allowed = int(r.get("allowed_cents", 0))
+        if not code or allowed < 0:
+            continue
+        code_type = r.get("code_type", "cpt")
+        await db.fee_schedule_lines.update_one(
+            {"tenant_id": ctx.tenant_id, "fee_schedule_id": schedule_id,
+             "code_type": code_type, "code": code},
+            {"$setOnInsert": {
+                "id": str(uuid.uuid4()),
+                "tenant_id": ctx.tenant_id,
+                "fee_schedule_id": schedule_id,
+                "code_type": code_type, "code": code,
+                "created_at": now,
+             },
+             "$set": {
+                "allowed_cents": allowed,
+                "updated_at": now,
+                "updated_by": user["id"],
+             }},
+            upsert=True,
+        )
+        written += 1
+
+    await db.fee_schedules.update_one(
+        {"id": schedule_id, "tenant_id": ctx.tenant_id},
+        {"$set": {"updated_at": now, "updated_by": user["id"]},
+         "$push": {"history": _history_entry(
+             user, "lines_upserted", count=written,
+         )}},
+    )
+    await audit_success(
+        user, "billing.fee_schedule.lines_upserted", request,
+        entity_type="fee_schedule", entity_id=schedule_id,
+        metadata={"lines": written},
+    )
+    count = await db.fee_schedule_lines.count_documents(
+        {"tenant_id": ctx.tenant_id, "fee_schedule_id": schedule_id},
+    )
+    return {"ok": True, "upserted": written, "line_count": count}
+
+
+@router.get("/fee-schedules/{schedule_id}/lines")
+async def list_fee_schedule_lines(
+    schedule_id: str,
+    request: Request,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    schedule = await _scoped_one(db.fee_schedules, {"id": schedule_id}, ctx)
+    if not schedule:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Fee schedule not found")
+    rows = [d async for d in db.fee_schedule_lines.find(
+        {"tenant_id": ctx.tenant_id, "fee_schedule_id": schedule_id},
+        {"_id": 0},
+    ).sort([("code", 1)])]
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# ENCOUNTER CHARGE CAPTURE  —  /api/billing/encounters/{record_id}/...
+# ---------------------------------------------------------------------------
+from services.billing.charge_capture import build_charge_candidates  # noqa: E402
+
+
+async def _load_record_in_tenant(db, ctx: TenantContext, record_id: str):
+    """Load a medical record with STRICT tenant match.
+
+    We intentionally do NOT honour `tenant_scope_all` here — charge
+    capture must always operate on the caller's active tenant so that
+    a platform admin who's scoped to Sunrise doesn't accidentally
+    generate Default's invoices.
+    """
+    if not ctx.tenant_id:
+        return None
+    return await db.medical_records.find_one(
+        {"id": record_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+
+
+@router.get("/encounters/{record_id}/charge-candidates")
+async def preview_charge_candidates(
+    record_id: str,
+    request: Request,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Dry-run: what would the invoice look like if we captured this
+    encounter right now? Honours coding + responsibility + primary
+    policy + fee schedule precedence. Does NOT mutate state."""
+    db = tenant_db(ctx.tenant_id)
+    record = await _load_record_in_tenant(db, ctx, record_id)
+    if not record:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Record not found")
+
+    preview = await build_charge_candidates(
+        db, tenant_id=ctx.tenant_id, record=record,
+    )
+    await audit_success(
+        user, "billing.charge_capture.previewed", request,
+        entity_type="medical_record", entity_id=record_id,
+        metadata={"lines": len(preview["lines"]),
+                  "total_cents": preview["total_cents"],
+                  "warnings": len(preview["warnings"])},
+    )
+    return preview
+
+
+@router.post("/encounters/{record_id}/capture",
+             response_model=InvoicePublic, status_code=201)
+async def capture_encounter(
+    record_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("charge", "create")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Commit charge capture: turn a signed record's procedures into a
+    `draft` invoice. Record transitions to `charge_status=captured`.
+
+    Validations:
+      * record must be signed (`signed_at` present)
+      * not already captured
+      * must have at least one procedure
+      * if responsibility = insurance/mixed → active primary policy required
+    """
+    db = tenant_db(ctx.tenant_id)
+    record = await _load_record_in_tenant(db, ctx, record_id)
+    if not record:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Record not found")
+    if not record.get("signed_at"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Only signed records can have charges captured",
+        )
+    if record.get("charge_status") == "captured":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Record already captured",
+        )
+
+    preview = await build_charge_candidates(
+        db, tenant_id=ctx.tenant_id, record=record,
+    )
+    if not preview["lines"]:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Record has no procedures to capture",
+        )
+    if not preview["can_capture"]:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "; ".join(preview["warnings"]) or "Capture blocked",
+        )
+
+    now = _now()
+    invoice_id = str(uuid.uuid4())
+    line_docs: list[dict] = []
+    for i, ln in enumerate(preview["lines"], start=1):
+        line_docs.append(stamp_for_write({
+            "id": str(uuid.uuid4()),
+            "invoice_id": invoice_id,
+            "sequence": i,
+            "code_type": ln["code_type"],
+            "code": ln["code"],
+            "description": ln["description"],
+            "service_date": ln["service_date"],
+            "quantity": ln["quantity"],
+            "unit_price_cents": ln["unit_price_cents"],
+            "total_cents": ln["total_cents"],
+            "modifiers": ln["modifiers"],
+            "provider_id": record.get("recorded_by"),
+            "source_encounter_id": record_id,
+            "source_fee_schedule_id": ln.get("fee_schedule_id"),
+            "price_source": ln["price_source"],
+            "created_at": now,
+        }, ctx, location_id=record.get("location_id")))
+
+    total_cents = preview["total_cents"]
+    invoice_doc = stamp_for_write({
+        "id": invoice_id,
+        "location_id": record.get("location_id"),
+        "patient_id": record["patient_id"],
+        "appointment_id": record.get("appointment_id"),
+        "source_encounter_id": record_id,
+        "responsibility": preview["responsibility"],
+        "payer_id": preview.get("payer_id"),
+        "policy_id": preview.get("policy_id"),
+        "status": "draft",
+        "issued_at": None,
+        "due_date": None,
+        "currency": DEFAULT_CURRENCY,
+        "subtotal_cents": total_cents,
+        "tax_cents": 0,
+        "adjustment_cents": 0,
+        "total_cents": total_cents,
+        "balance_cents": total_cents,
+        "notes": None,
+        "created_at": now,
+        "updated_at": now,
+        "created_by": user["id"],
+        "updated_by": user["id"],
+        "history": [_history_entry(
+            user, "captured_from_encounter",
+            record_id=record_id, lines=len(line_docs),
+            total_cents=total_cents,
+        )],
+    }, ctx, location_id=record.get("location_id"))
+
+    if line_docs:
+        await db.invoice_lines.insert_many(line_docs)
+    await db.invoices.insert_one(invoice_doc)
+    await db.medical_records.update_one(
+        {"id": record_id, "tenant_id": ctx.tenant_id},
+        {"$set": {"charge_status": "captured",
+                  "charge_captured_invoice_id": invoice_id}},
+    )
+
+    await audit_success(
+        user, "billing.charge_capture.committed", request,
+        entity_type="medical_record", entity_id=record_id,
+        metadata={"invoice_id": invoice_id,
+                  "lines": len(line_docs),
+                  "total_cents": total_cents,
+                  "responsibility": preview["responsibility"]},
+    )
+    return _public(invoice_doc)
+

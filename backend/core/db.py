@@ -234,3 +234,12 @@ async def create_indexes() -> None:
     await db.billing_modifier_catalog.create_index(
         [("tenant_id", 1), ("code", 1)], unique=True,
     )
+    # Fee schedules (iteration 25 — Phase 2)
+    await db.fee_schedules.create_index([("tenant_id", 1), ("kind", 1), ("active", 1)])
+    await db.fee_schedules.create_index([("tenant_id", 1), ("payer_id", 1)])
+    await db.fee_schedule_lines.create_index(
+        [("tenant_id", 1), ("fee_schedule_id", 1), ("code_type", 1), ("code", 1)],
+        unique=True,
+    )
+    await db.medical_records.create_index([("tenant_id", 1), ("patient_id", 1), ("recorded_at", -1)])
+    await db.medical_records.create_index([("tenant_id", 1), ("charge_status", 1)])

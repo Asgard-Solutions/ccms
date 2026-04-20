@@ -810,3 +810,53 @@ page into a single operational scheduling experience.
 - Post-payment dialog → submit → ReauthGate fires → enter password →
   request replayed → toast "Posted $10.00 payment" → invoice status
   flips ISSUED → PARTIALLY PAID, balance $55.00 → $45.00. ✅
+
+
+---
+
+## [2026-04-20] Billing Phase 2 — Insurance + Encounter Charge Capture (iteration 25)
+
+### Backend
+- New module `services/billing/charge_capture.py` with
+  `resolve_charge_price()` (payer schedule → self-pay schedule →
+  catalog → zero) and `build_charge_candidates()` (dry-run preview).
+- New collections `fee_schedules` and `fee_schedule_lines` with
+  per-tenant unique self-pay constraint + upsert-by-code line writes.
+- New endpoints:
+  - `PUT/DELETE /api/billing/insurance-policies/{id}` (update / soft-deactivate)
+  - `GET/POST /api/billing/fee-schedules`
+  - `GET/PUT /api/billing/fee-schedules/{id}/lines`
+  - `GET /api/billing/encounters/{record_id}/charge-candidates` (preview)
+  - `POST /api/billing/encounters/{record_id}/capture` (commit)
+  - `PUT /api/patients/{pid}/records/{rid}/coding` (procedures + diagnoses + responsibility)
+  - `POST /api/patients/{pid}/records/{rid}/sign` (one-way)
+- Medical record model extended (additively) with `procedures`,
+  `diagnoses`, `responsibility`, `signed_at`, `signed_by`,
+  `charge_status`, `charge_captured_invoice_id`.
+- RBAC: super_admin picks up `coding.update` bootstrap grant. Charge
+  capture uses `charge.create`; fee-schedule CRUD uses
+  `clinic_settings.update`; insurance policy mutations use
+  `insurance.create` / `insurance.update`.
+- **Strict tenant match** on encounter lookups so platform-admin
+  accounts scoped to a tenant cannot capture cross-tenant encounters.
+
+### Frontend
+- `PatientInsuranceManager` (on `PatientDetail` above the ledger).
+- `ChargeCaptureDialog` launched from each medical record row.
+- `PayersManager` + `FeeSchedulesManager` in `ClinicSettings`.
+- Record rows display **Signed** and **Charges captured** status chips.
+
+### Tests
+- `backend/tests/test_billing_phase2.py` — **13 passing** (fee
+  schedule uniqueness, line upsert idempotency, policy update +
+  deactivate, coding locked after sign, idempotent sign, self-pay
+  preview & capture, insurance-missing-policy blocks capture,
+  payer schedule overrides self-pay, tenant isolation, audit).
+- Combined billing suite: **53 passing**.
+
+### Verified visually
+- PatientDetail renders Insurance card + Ledger card + records with
+  "Code & capture" buttons.
+- ClinicSettings shows Payers + Fee schedules sections with
+  functional dialogs.
+- Captures stream chronologically into the patient ledger.

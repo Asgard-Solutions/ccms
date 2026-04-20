@@ -45,6 +45,7 @@ from services.patient.consent_pdf_router import router as consent_pdf_router
 from services.patient.documents_router import router as documents_router
 from services.patient.search_router import router as search_router
 from services.patient.models import (
+    MedicalRecordCoding,
     MedicalRecordCreate,
     MedicalRecordPublic,
     PatientCreate,
@@ -627,6 +628,130 @@ async def add_record(
     hydrated["recorded_by_name"] = user["name"]
     return hydrated
 
+
+
+# ---------------------------------------------------------------------------
+# Charge-capture coding + signing (iteration 25 — Phase 2)
+# ---------------------------------------------------------------------------
+@router.put(
+    "/{patient_id}/records/{record_id}/coding",
+    response_model=MedicalRecordPublic,
+)
+async def update_record_coding(
+    patient_id: str,
+    record_id: str,
+    payload: MedicalRecordCoding,
+    request: Request,
+    user: dict = Depends(require_permission("coding", "update", audit_allow=False)),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Attach / replace structured procedures + diagnoses + responsibility.
+
+    Does **not** mark the record as signed. A signed record cannot have
+    its coding edited — use `POST .../sign` only after the coding is
+    final. Captured records are also immutable at the coding layer.
+    """
+    db = get_db_write()
+    patient_q = scoped_filter({"id": patient_id}, ctx, location_scoped=True)
+    if patient_q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    patient = await db.patients.find_one(patient_q, {"_id": 0, "id": 1})
+    if not patient:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+
+    rec_q: dict = {"id": record_id, "patient_id": patient_id}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        rec_q["tenant_id"] = ctx.tenant_id
+    record = await db.medical_records.find_one(rec_q, {"_id": 0})
+    if not record:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Record not found")
+    if record.get("signed_at"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Signed records are locked — unsign before editing coding",
+        )
+    if record.get("charge_status") == "captured":
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Captured records cannot be re-coded",
+        )
+
+    procedures = [p.model_dump() for p in payload.procedures]
+    diagnoses = [d.model_dump() for d in payload.diagnoses]
+
+    await db.medical_records.update_one(
+        rec_q,
+        {"$set": {
+            "procedures": procedures,
+            "diagnoses": diagnoses,
+            "responsibility": payload.responsibility,
+            "charge_status": record.get("charge_status") or "not_captured",
+        }},
+    )
+    fresh = await db.medical_records.find_one(rec_q, {"_id": 0})
+    hydrated = decrypt_fields(fresh, RECORD_ENCRYPTED)
+    hydrated["recorded_by_name"] = user.get("name")
+    await audit_success(
+        user, "medical_record.coding_updated", request,
+        entity_type="medical_record", entity_id=record_id,
+        metadata={"patient_id": patient_id,
+                  "procedures": len(procedures),
+                  "diagnoses": len(diagnoses),
+                  "responsibility": payload.responsibility},
+    )
+    return hydrated
+
+
+@router.post(
+    "/{patient_id}/records/{record_id}/sign",
+    response_model=MedicalRecordPublic,
+)
+async def sign_record(
+    patient_id: str,
+    record_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("patient_chart", "update", audit_allow=False)),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Sign a medical record. Signed records are immutable and eligible
+    for charge capture. Requires `patient_chart.update` permission (same
+    as record creation) and does NOT automatically generate charges —
+    that is a separate operator action in billing."""
+    require_reauth(request, user)
+
+    db = get_db_write()
+    patient_q = scoped_filter({"id": patient_id}, ctx, location_scoped=True)
+    if patient_q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    patient = await db.patients.find_one(patient_q, {"_id": 0, "id": 1})
+    if not patient:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+
+    rec_q: dict = {"id": record_id, "patient_id": patient_id}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        rec_q["tenant_id"] = ctx.tenant_id
+    record = await db.medical_records.find_one(rec_q, {"_id": 0})
+    if not record:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Record not found")
+    if record.get("signed_at"):
+        return decrypt_fields(record, RECORD_ENCRYPTED)  # idempotent
+
+    now = _now()
+    await db.medical_records.update_one(
+        rec_q,
+        {"$set": {"signed_at": now, "signed_by": user["id"]}},
+    )
+    fresh = await db.medical_records.find_one(rec_q, {"_id": 0})
+    hydrated = decrypt_fields(fresh, RECORD_ENCRYPTED)
+    hydrated["recorded_by_name"] = user.get("name")
+    await audit_success(
+        user, "medical_record.signed", request,
+        entity_type="medical_record", entity_id=record_id,
+        metadata={"patient_id": patient_id,
+                  "procedures": len(record.get("procedures") or []),
+                  "responsibility": record.get("responsibility")},
+    )
+    return hydrated
 
 
 # ---------------------------------------------------------------------------

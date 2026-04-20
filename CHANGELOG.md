@@ -12,6 +12,73 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Billing Phase 2 — Insurance setup & encounter charge capture
+  (iteration 25).** Bridges clinical encounters to billable artifacts.
+  - **Fee schedules**: new collections `fee_schedules` (tenant-scoped,
+    `kind=self_pay|payer`, only one active self-pay per tenant) and
+    `fee_schedule_lines` (upsert-by-`(code_type, code)`). Endpoints
+    `GET/POST /api/billing/fee-schedules`,
+    `GET/PUT /api/billing/fee-schedules/{id}/lines`.
+  - **Price resolution precedence** (in `services/billing/charge_capture.py`):
+    payer-specific schedule (when insurance + payer) → active self-pay
+    schedule → `billing_code_catalog.default_price_cents` → zero
+    (surfaced as a warning).
+  - **Medical record coding + signing**:
+    `PUT /api/patients/{pid}/records/{rid}/coding` accepts
+    `{procedures[], diagnoses[], responsibility}` (coding.update
+    permission). `POST .../sign` is one-way (idempotent, signed
+    records are immutable; captured records cannot be re-coded).
+    Super_admin now carries `coding.update` as a bootstrap grant.
+  - **Charge capture**:
+    `GET /api/billing/encounters/{record_id}/charge-candidates` — dry
+    run returns `{lines, warnings, total_cents, can_capture,
+    responsibility, payer_id, policy_id}` without side-effects.
+    `POST /api/billing/encounters/{record_id}/capture` — commits:
+    validates record is signed, has procedures, insurance responsibility
+    has an active primary policy. Creates a `draft` invoice with
+    `source_encounter_id`, `responsibility`, `payer_id`, `policy_id`
+    metadata; each line carries `source_fee_schedule_id` +
+    `price_source`. Record transitions to
+    `charge_status=captured` with `charge_captured_invoice_id` link.
+    **Strict tenant match** even for super_admin (platform admins
+    scoped to a tenant cannot accidentally capture another tenant's
+    encounters).
+  - **Insurance policy lifecycle**: added
+    `PUT /api/billing/insurance-policies/{id}` and
+    `DELETE .../{id}` (soft-deactivate to `status=inactive`).
+
+- **Billing Phase 2 UI**.
+  - `PatientInsuranceManager` — embedded on `PatientDetail` above the
+    ledger. Add / edit / deactivate policies, rank picker,
+    subscriber relationship, effective & termination dates, warning
+    pill when no active primary policy exists.
+  - `ChargeCaptureDialog` — launched from each medical-record row via
+    a new "Code & capture" button. Procedures editor (CPT code,
+    units, modifier), diagnoses editor (ICD-10), responsibility
+    selector, live charge preview with price-source attribution per
+    line, Save coding → Sign record → Capture charges flow. Shows
+    status chips (Signed / Captured).
+  - `PayersManager` in Clinic Settings — CRUD on payers
+    (commercial / Medicare / Medicaid / workers comp / auto / self-pay
+    / other), payer code, electronic payer ID, remit method.
+  - `FeeSchedulesManager` in Clinic Settings — create + edit rates.
+    Lines editor upserts by code, rate in dollars (stored cents).
+
+### Tests
+- `backend/tests/test_billing_phase2.py` — **13/13 passing**. Covers
+  fee schedule uniqueness + line upsert idempotency, insurance policy
+  update + deactivate, coding locked on signed records, idempotent
+  sign, preview using self-pay schedule, insurance missing-policy
+  warning & capture block, unsigned record 409, self-pay happy path
+  (incl. recapture 409), payer schedule wins over self-pay for
+  insurance responsibility, Sunrise admin cannot preview a Default
+  encounter (strict tenant match), audit row emitted on capture.
+- All previous billing tests remain green: **53/53 passing**
+  (`test_billing.py` 40 + `test_billing_phase2.py` 13).
+
+### Dependencies
+- None.
+
 - **Billing Phase 1 — Invoices, Patient Ledger, Payments (iteration 24).**
   User-facing billing core on top of the foundation shipped in iteration
   23:
