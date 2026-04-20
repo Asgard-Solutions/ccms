@@ -35,6 +35,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "../components/ui/dialog";
+import {
+  PAIN_AREA_OPTIONS,
+  SYMPTOM_OPTIONS,
+  ONSET_TYPE_OPTIONS,
+  buildPayload,
+  validateStep,
+  validateAll,
+  visibilityForForm,
+} from "./patientWizardLogic";
 
 const STAFF_ROLES = ["admin", "doctor", "staff"];
 
@@ -44,6 +53,8 @@ const STEPS = [
   { id: 3, label: "Clinical Intake", sub: "Chief complaint & history" },
   { id: 4, label: "Case & Consents", sub: "Case details & signatures" },
 ];
+
+const TODAY_ISO = new Date().toISOString().slice(0, 10);
 
 const EMPTY_FORM = {
   // Step 1 — Patient Info
@@ -118,9 +129,11 @@ const EMPTY_FORM = {
   accidentRelated: false,
   workComp: false,
   personalInjury: false,
-  painAreas: "",
+  painAreas: [],
+  painAreasOther: "",
   painScore: "",
-  symptoms: "",
+  symptoms: [],
+  symptomsOther: "",
   priorTreatment: "",
   medications: "",
   allergies: "",
@@ -148,7 +161,7 @@ const EMPTY_FORM = {
 };
 
 // -----------------------------------------------------------------------
-// Shared tiny input helpers (keep the wizard dense without over-abstracting)
+// Small field helpers
 // -----------------------------------------------------------------------
 
 function Field({ label, htmlFor, required, error, children, className = "" }) {
@@ -156,19 +169,17 @@ function Field({ label, htmlFor, required, error, children, className = "" }) {
     <div className={`space-y-1.5 ${className}`}>
       <Label htmlFor={htmlFor} className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-[#5C6A61]">
         {label}
-        {required && <span className="text-[#C76D54]">*</span>}
+        {required && <span className="text-[#C76D54]" aria-label="required">*</span>}
       </Label>
       {children}
       {error && (
-        <p className="text-xs text-[#C76D54]" data-testid={`${htmlFor}-error`}>
-          {error}
-        </p>
+        <p className="text-xs text-[#C76D54]" data-testid={`${htmlFor}-error`}>{error}</p>
       )}
     </div>
   );
 }
 
-function TextInput({ id, value, onChange, type = "text", placeholder, testId, autoComplete }) {
+function TextInput({ id, value, onChange, type = "text", placeholder, testId, autoComplete, max, min }) {
   return (
     <Input
       id={id}
@@ -177,6 +188,8 @@ function TextInput({ id, value, onChange, type = "text", placeholder, testId, au
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
       autoComplete={autoComplete}
+      max={max}
+      min={min}
       data-testid={testId}
       className="h-10 rounded-sm border-stone-300 bg-white text-sm"
     />
@@ -202,15 +215,21 @@ function SelectField({ id, value, onChange, options, placeholder = "Select…", 
   );
 }
 
-function CheckboxField({ id, checked, onChange, label, testId }) {
+function CheckboxField({ id, checked, onChange, label, testId, disabled }) {
   return (
     <label
       htmlFor={id}
-      className="flex items-start gap-3 rounded-sm border border-stone-200 bg-white px-3 py-2.5 text-sm text-[#1F2924] hover:border-[#7B9A82] cursor-pointer"
+      className={
+        "flex items-start gap-3 rounded-sm border border-stone-200 bg-white px-3 py-2.5 text-sm " +
+        (disabled
+          ? "cursor-not-allowed text-[#A3AFA7]"
+          : "cursor-pointer text-[#1F2924] hover:border-[#7B9A82]")
+      }
     >
       <Checkbox
         id={id}
         checked={checked}
+        disabled={disabled}
         onCheckedChange={(v) => onChange(Boolean(v))}
         data-testid={testId}
         className="mt-0.5 border-stone-400 data-[state=checked]:border-[#7B9A82] data-[state=checked]:bg-[#7B9A82]"
@@ -229,239 +248,37 @@ function SectionTitle({ children, hint }) {
   );
 }
 
-// -----------------------------------------------------------------------
-// Wizard → backend grouped payload mapper
-// -----------------------------------------------------------------------
-
-function cleanStr(v) {
-  if (v === undefined || v === null) return undefined;
-  const s = String(v).trim();
-  return s === "" ? undefined : s;
-}
-
-function compactObj(obj) {
-  const out = {};
-  Object.entries(obj).forEach(([k, v]) => {
-    if (v === undefined) return;
-    if (typeof v === "string" && v.trim() === "") return;
-    out[k] = v;
-  });
-  return Object.keys(out).length ? out : undefined;
-}
-
-function splitName(full) {
-  const parts = cleanStr(full)?.split(/\s+/) || [];
-  if (!parts.length) return { first_name: undefined, last_name: undefined };
-  if (parts.length === 1) return { first_name: parts[0], last_name: undefined };
-  return { first_name: parts[0], last_name: parts.slice(1).join(" ") };
-}
-
-function toCsvList(v) {
-  const s = cleanStr(v);
-  if (!s) return undefined;
-  return s.split(",").map((x) => x.trim()).filter(Boolean);
-}
-
-function deriveCaseType(f) {
-  if (f.personalInjury) return "personal_injury";
-  if (f.workComp) return "workers_comp";
-  if (f.accidentRelated) return "auto_accident";
-  return undefined;
-}
-
-function buildPayload(f) {
-  const demographics = compactObj({
-    first_name: cleanStr(f.firstName),
-    middle_name: cleanStr(f.middleName),
-    last_name: cleanStr(f.lastName),
-    preferred_name: cleanStr(f.preferredName),
-    date_of_birth: cleanStr(f.dateOfBirth),
-    gender: cleanStr(f.genderIdentity),
-    sex_at_birth: cleanStr(f.sexAtBirth),
-    pronouns: cleanStr(f.pronouns),
-    marital_status: cleanStr(f.maritalStatus),
-    language: cleanStr(f.preferredLanguage),
-    occupation: cleanStr(f.occupation),
-    employer: cleanStr(f.employerName),
-    employer_phone: cleanStr(f.employerPhone),
-  });
-
-  const contact = compactObj({
-    phone: cleanStr(f.mobilePhone),
-    phone_alt: cleanStr(f.homePhone),
-    phone_work: cleanStr(f.workPhone),
-    email: cleanStr(f.email),
-    preferred_contact_method: cleanStr(f.preferredContactMethod),
-    sms_consent: f.smsConsent || undefined,
-    email_consent: f.emailConsent || undefined,
-    voicemail_consent: f.voicemailConsent || undefined,
-  });
-
-  const address = compactObj({
-    line1: cleanStr(f.addressLine1),
-    line2: cleanStr(f.addressLine2),
-    city: cleanStr(f.city),
-    state: cleanStr(f.state),
-    postal_code: cleanStr(f.postalCode),
-    country: cleanStr(f.country),
-  });
-
-  const emergencyContact = compactObj({
-    name: cleanStr(f.emergencyContactName),
-    relationship: cleanStr(f.emergencyContactRelationship),
-    phone: cleanStr(f.emergencyContactPhone),
-    phone_alt: cleanStr(f.emergencyContactAltPhone),
-    email: cleanStr(f.emergencyContactEmail),
-  });
-
-  const admin = compactObj({
-    primary_provider_id: cleanStr(f.assignedProviderId),
-    referral_source: cleanStr(f.referralSource),
-  });
-
-  const gName = splitName(f.guarantorFullName);
-  const guarantor = f.responsiblePartySameAsPatient
-    ? { same_as_patient: true }
-    : compactObj({
-        same_as_patient: false,
-        first_name: gName.first_name,
-        last_name: gName.last_name,
-        relationship: cleanStr(f.guarantorRelationship),
-        date_of_birth: cleanStr(f.guarantorDateOfBirth),
-        phone: cleanStr(f.guarantorPhone),
-        email: cleanStr(f.guarantorEmail),
-        address: cleanStr(f.guarantorAddress),
-        employer: cleanStr(f.guarantorEmployerName),
-        employer_phone: cleanStr(f.guarantorEmployerPhone),
-      });
-
-  const primary = compactObj({
-    carrier: cleanStr(f.primaryCarrier),
-    plan_name: cleanStr(f.primaryPlanName),
-    plan_type: cleanStr(f.primaryPlanType),
-    member_id: cleanStr(f.primaryMemberId),
-    group_number: cleanStr(f.primaryGroupNumber),
-    policy_holder_name: cleanStr(f.primaryPolicyHolderName),
-    policy_holder_relationship: cleanStr(f.primaryPolicyHolderRelationship),
-    policy_holder_dob: cleanStr(f.primaryPolicyHolderDob),
-    effective_date: cleanStr(f.primaryEffectiveDate),
-    copay: cleanStr(f.primaryCopay),
-    deductible: cleanStr(f.primaryDeductible),
-  });
-  const secondary = compactObj({
-    carrier: cleanStr(f.secondaryCarrier),
-    plan_name: cleanStr(f.secondaryPlanName),
-    plan_type: cleanStr(f.secondaryPlanType),
-    member_id: cleanStr(f.secondaryMemberId),
-    group_number: cleanStr(f.secondaryGroupNumber),
-    policy_holder_name: cleanStr(f.secondaryPolicyHolderName),
-    policy_holder_relationship: cleanStr(f.secondaryPolicyHolderRelationship),
-  });
-  const insurance = f.hasInsurance
-    ? compactObj({ primary, secondary })
-    : undefined;
-
-  const clinical_intake = compactObj({
-    chief_complaint: cleanStr(f.chiefComplaint),
-    complaint_onset: cleanStr(f.symptomStartDate),
-    onset_type: cleanStr(f.onsetType),
-    pain_level:
-      cleanStr(f.painScore) !== undefined && !Number.isNaN(Number(f.painScore))
-        ? Math.max(0, Math.min(10, Number(f.painScore)))
-        : undefined,
-    pain_locations: toCsvList(f.painAreas),
-    symptoms: toCsvList(f.symptoms),
-    prior_treatments: cleanStr(f.priorTreatment),
-    medications: cleanStr(f.medications),
-    allergies: cleanStr(f.allergies),
-    past_surgical_history: cleanStr(f.surgeries),
-    past_medical_history: cleanStr(f.medicalHistory),
-    notes: cleanStr(f.providerNotes),
-  });
-
-  const caseType = deriveCaseType(f);
-  const case_details = compactObj({
-    case_type: caseType,
-    date_of_injury: cleanStr(f.accidentDate),
-    claim_number: cleanStr(f.claimNumber),
-    auto_carrier: cleanStr(f.autoCarrier),
-    work_comp_carrier: cleanStr(f.workCompCarrier),
-    adjuster_name: cleanStr(f.adjusterName),
-    adjuster_phone: cleanStr(f.adjusterPhone),
-    attorney_name: cleanStr(f.attorneyName),
-    attorney_phone: cleanStr(f.attorneyPhone),
-    attorney_email: cleanStr(f.attorneyEmail),
-    employer_for_claim: cleanStr(f.employerAtInjury),
-  });
-
-  const sigName = cleanStr(f.signatureName);
-  const sigDate = cleanStr(f.signatureDate);
-  const mkConsent = (type, accepted) =>
-    accepted
-      ? compactObj({
-          type,
-          accepted: true,
-          signature_name: sigName,
-          signed_at: sigDate,
-        })
-      : undefined;
-  const additional = [
-    f.assignmentOfBenefits ? mkConsent("assignment_of_benefits", true) : null,
-    f.releaseOfInformation ? mkConsent("release_of_information", true) : null,
-  ].filter(Boolean);
-  const consents = compactObj({
-    hipaa: mkConsent("hipaa", f.hipaaAcknowledged),
-    treatment: mkConsent("treatment", f.consentToTreat),
-    financial: mkConsent("financial", f.financialPolicyAccepted),
-    additional: additional.length ? additional : undefined,
-  });
-
-  const payload = {
-    location_id: cleanStr(f.preferredLocationId),
-    demographics,
-    contact,
-    address,
-    emergency_contact: emergencyContact,
-    admin,
-    guarantor,
-    insurance,
-    clinical_intake,
-    case_details,
-    consents,
+function CheckboxGroup({ options, selected, onChange, testId }) {
+  const toggle = (value) => {
+    const next = selected.includes(value)
+      ? selected.filter((v) => v !== value)
+      : [...selected, value];
+    onChange(next);
   };
-  // Strip undefined top-level keys.
-  Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
-  return payload;
-}
-
-// -----------------------------------------------------------------------
-// Per-step validation — step-level only.
-// -----------------------------------------------------------------------
-
-const STEP1_REQUIRED = {
-  firstName: "First name is required",
-  lastName: "Last name is required",
-  dateOfBirth: "Date of birth is required",
-  mobilePhone: "Mobile phone is required",
-  addressLine1: "Street address is required",
-  city: "City is required",
-  state: "State is required",
-  postalCode: "Postal code is required",
-  emergencyContactName: "Emergency contact name is required",
-  emergencyContactRelationship: "Relationship is required",
-  emergencyContactPhone: "Emergency contact phone is required",
-};
-const STEP2_REQUIRED = {
-  assignedProviderId: "Assigned provider is required",
-};
-
-function validateStep(step, form) {
-  const errors = {};
-  const required = step === 1 ? STEP1_REQUIRED : step === 2 ? STEP2_REQUIRED : {};
-  Object.entries(required).forEach(([k, msg]) => {
-    if (!cleanStr(form[k])) errors[k] = msg;
-  });
-  return errors;
+  return (
+    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3 lg:grid-cols-4" data-testid={testId}>
+      {options.map((opt) => {
+        const checked = selected.includes(opt);
+        const id = `${testId}-${opt.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`;
+        return (
+          <label
+            key={opt}
+            htmlFor={id}
+            className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-sm text-[#1F2924] hover:bg-[#EDF2EE]"
+          >
+            <Checkbox
+              id={id}
+              checked={checked}
+              onCheckedChange={() => toggle(opt)}
+              data-testid={`${testId}-opt-${opt.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`}
+              className="border-stone-400 data-[state=checked]:border-[#7B9A82] data-[state=checked]:bg-[#7B9A82]"
+            />
+            <span>{opt}</span>
+          </label>
+        );
+      })}
+    </div>
+  );
 }
 
 // -----------------------------------------------------------------------
@@ -485,7 +302,7 @@ function StepPatientInfo({ form, set, errors }) {
         <TextInput id="preferredName" testId="w-preferred-name" value={form.preferredName} onChange={set("preferredName")} />
       </Field>
       <Field label="Date of birth" htmlFor="dob" required error={errors.dateOfBirth}>
-        <TextInput id="dob" type="date" testId="w-dob" value={form.dateOfBirth} onChange={set("dateOfBirth")} />
+        <TextInput id="dob" type="date" testId="w-dob" value={form.dateOfBirth} onChange={set("dateOfBirth")} max={TODAY_ISO} />
       </Field>
       <Field label="Sex at birth" htmlFor="sexAtBirth">
         <SelectField id="sexAtBirth" testId="w-sex-at-birth" value={form.sexAtBirth} onChange={set("sexAtBirth")}
@@ -516,13 +333,13 @@ function StepPatientInfo({ form, set, errors }) {
       <Field label="Mobile phone" htmlFor="mobilePhone" required error={errors.mobilePhone}>
         <TextInput id="mobilePhone" testId="w-mobile" value={form.mobilePhone} onChange={set("mobilePhone")} autoComplete="tel" />
       </Field>
-      <Field label="Home phone" htmlFor="homePhone">
+      <Field label="Home phone" htmlFor="homePhone" error={errors.homePhone}>
         <TextInput id="homePhone" testId="w-home-phone" value={form.homePhone} onChange={set("homePhone")} />
       </Field>
-      <Field label="Work phone" htmlFor="workPhone">
+      <Field label="Work phone" htmlFor="workPhone" error={errors.workPhone}>
         <TextInput id="workPhone" testId="w-work-phone" value={form.workPhone} onChange={set("workPhone")} />
       </Field>
-      <Field label="Email" htmlFor="email">
+      <Field label="Email" htmlFor="email" error={errors.email}>
         <TextInput id="email" type="email" testId="w-email" value={form.email} onChange={set("email")} autoComplete="email" />
       </Field>
       <Field label="Preferred contact method" htmlFor="preferredContactMethod">
@@ -573,17 +390,19 @@ function StepPatientInfo({ form, set, errors }) {
       <Field label="Primary phone" htmlFor="ecPhone" required error={errors.emergencyContactPhone}>
         <TextInput id="ecPhone" testId="w-ec-phone" value={form.emergencyContactPhone} onChange={set("emergencyContactPhone")} />
       </Field>
-      <Field label="Alternate phone" htmlFor="ecAlt">
+      <Field label="Alternate phone" htmlFor="ecAlt" error={errors.emergencyContactAltPhone}>
         <TextInput id="ecAlt" testId="w-ec-alt" value={form.emergencyContactAltPhone} onChange={set("emergencyContactAltPhone")} />
       </Field>
-      <Field label="Email" htmlFor="ecEmail">
+      <Field label="Email" htmlFor="ecEmail" error={errors.emergencyContactEmail}>
         <TextInput id="ecEmail" type="email" testId="w-ec-email" value={form.emergencyContactEmail} onChange={set("emergencyContactEmail")} />
       </Field>
     </div>
   );
 }
 
-function StepBillingInsurance({ form, set, errors, providers, locations }) {
+function StepBillingInsurance({ form, set, errors, providers, locations, visibility }) {
+  const { showGuarantor, requireGuarantor, showInsurance, isMinor: minor } = visibility;
+
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <SectionTitle>Care assignment</SectionTitle>
@@ -610,28 +429,35 @@ function StepBillingInsurance({ form, set, errors, providers, locations }) {
         <TextInput id="employerPhone" testId="w-employer-phone" value={form.employerPhone} onChange={set("employerPhone")} />
       </Field>
 
-      <SectionTitle hint="Person financially responsible for this account.">Responsible party / Guarantor</SectionTitle>
+      <SectionTitle hint={minor
+        ? "Patient is under 18 — a guarantor (parent/legal guardian) is required."
+        : "Person financially responsible for this account."}>
+        Responsible party / Guarantor
+      </SectionTitle>
       <div className="col-span-full">
         <CheckboxField id="guarantorSame" testId="w-guarantor-same"
-          checked={form.responsiblePartySameAsPatient}
-          onChange={set("responsiblePartySameAsPatient")}
-          label="Responsible party is the same as the patient" />
+          checked={form.responsiblePartySameAsPatient && !minor}
+          disabled={minor}
+          onChange={(v) => set("responsiblePartySameAsPatient")(minor ? false : v)}
+          label={minor
+            ? "Minors cannot be their own responsible party — guarantor details required below."
+            : "Responsible party is the same as the patient"} />
       </div>
-      {!form.responsiblePartySameAsPatient && (
-        <>
-          <Field label="Full name" htmlFor="gName">
+      {showGuarantor && (
+        <div data-testid="w-guarantor-block" className="col-span-full grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Field label="Full name" htmlFor="gName" required={requireGuarantor} error={errors.guarantorFullName}>
             <TextInput id="gName" testId="w-g-name" value={form.guarantorFullName} onChange={set("guarantorFullName")} />
           </Field>
-          <Field label="Relationship" htmlFor="gRel">
+          <Field label="Relationship" htmlFor="gRel" required={requireGuarantor} error={errors.guarantorRelationship}>
             <TextInput id="gRel" testId="w-g-rel" value={form.guarantorRelationship} onChange={set("guarantorRelationship")} />
           </Field>
           <Field label="Date of birth" htmlFor="gDob">
-            <TextInput id="gDob" type="date" testId="w-g-dob" value={form.guarantorDateOfBirth} onChange={set("guarantorDateOfBirth")} />
+            <TextInput id="gDob" type="date" testId="w-g-dob" value={form.guarantorDateOfBirth} onChange={set("guarantorDateOfBirth")} max={TODAY_ISO} />
           </Field>
-          <Field label="Phone" htmlFor="gPhone">
+          <Field label="Phone" htmlFor="gPhone" required={requireGuarantor} error={errors.guarantorPhone}>
             <TextInput id="gPhone" testId="w-g-phone" value={form.guarantorPhone} onChange={set("guarantorPhone")} />
           </Field>
-          <Field label="Email" htmlFor="gEmail">
+          <Field label="Email" htmlFor="gEmail" error={errors.guarantorEmail}>
             <TextInput id="gEmail" type="email" testId="w-g-email" value={form.guarantorEmail} onChange={set("guarantorEmail")} />
           </Field>
           <Field label="Address" htmlFor="gAddr">
@@ -643,7 +469,7 @@ function StepBillingInsurance({ form, set, errors, providers, locations }) {
           <Field label="Employer phone" htmlFor="gEmployerPhone">
             <TextInput id="gEmployerPhone" testId="w-g-employer-phone" value={form.guarantorEmployerPhone} onChange={set("guarantorEmployerPhone")} />
           </Field>
-        </>
+        </div>
       )}
 
       <SectionTitle>Insurance</SectionTitle>
@@ -653,8 +479,8 @@ function StepBillingInsurance({ form, set, errors, providers, locations }) {
           onChange={set("hasInsurance")}
           label="Patient has insurance coverage to record" />
       </div>
-      {form.hasInsurance && (
-        <>
+      {showInsurance && (
+        <div data-testid="w-insurance-block" className="col-span-full grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <div className="col-span-full -mb-1 mt-2 text-xs font-semibold uppercase tracking-wider text-[#5C6A61]">
             Primary insurance
           </div>
@@ -682,7 +508,7 @@ function StepBillingInsurance({ form, set, errors, providers, locations }) {
               options={["self", "spouse", "parent", "child", "other"]} />
           </Field>
           <Field label="Policy holder DOB" htmlFor="pHolderDob">
-            <TextInput id="pHolderDob" type="date" testId="w-pi-holder-dob" value={form.primaryPolicyHolderDob} onChange={set("primaryPolicyHolderDob")} />
+            <TextInput id="pHolderDob" type="date" testId="w-pi-holder-dob" value={form.primaryPolicyHolderDob} onChange={set("primaryPolicyHolderDob")} max={TODAY_ISO} />
           </Field>
           <Field label="Effective date" htmlFor="pEff">
             <TextInput id="pEff" type="date" testId="w-pi-eff" value={form.primaryEffectiveDate} onChange={set("primaryEffectiveDate")} />
@@ -720,7 +546,7 @@ function StepBillingInsurance({ form, set, errors, providers, locations }) {
             <SelectField id="sHolderRel" testId="w-si-holder-rel" value={form.secondaryPolicyHolderRelationship} onChange={set("secondaryPolicyHolderRelationship")}
               options={["self", "spouse", "parent", "child", "other"]} />
           </Field>
-        </>
+        </div>
       )}
     </div>
   );
@@ -736,14 +562,14 @@ function StepClinicalIntake({ form, set }) {
           value={form.chiefComplaint} onChange={(e) => set("chiefComplaint")(e.target.value)} />
       </Field>
       <Field label="Symptom start date" htmlFor="symStart">
-        <TextInput id="symStart" type="date" testId="w-sym-start" value={form.symptomStartDate} onChange={set("symptomStartDate")} />
+        <TextInput id="symStart" type="date" testId="w-sym-start" value={form.symptomStartDate} onChange={set("symptomStartDate")} max={TODAY_ISO} />
       </Field>
       <Field label="Onset type" htmlFor="onsetType">
         <SelectField id="onsetType" testId="w-onset-type" value={form.onsetType} onChange={set("onsetType")}
-          options={["sudden", "gradual", "acute", "chronic", "recurring", "unknown"]} />
+          options={ONSET_TYPE_OPTIONS} />
       </Field>
       <Field label="Pain score (0–10)" htmlFor="painScore">
-        <TextInput id="painScore" type="number" testId="w-pain-score" value={form.painScore} onChange={set("painScore")} placeholder="0–10" />
+        <TextInput id="painScore" type="number" testId="w-pain-score" value={form.painScore} onChange={set("painScore")} placeholder="0–10" min="0" max="10" />
       </Field>
 
       <div className="col-span-full grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -756,13 +582,35 @@ function StepClinicalIntake({ form, set }) {
           checked={form.personalInjury} onChange={set("personalInjury")} label="Personal injury case" />
       </div>
 
-      <SectionTitle hint="Comma-separate multiple entries where noted.">Symptoms & history</SectionTitle>
-      <Field label="Pain areas (comma-separated)" htmlFor="painAreas" className="sm:col-span-2 lg:col-span-3">
-        <TextInput id="painAreas" testId="w-pain-areas" value={form.painAreas} onChange={set("painAreas")} placeholder="lumbar, left glute, left calf" />
+      <SectionTitle hint="Check every area the patient is currently experiencing pain. Add free-text for anything else.">
+        Pain areas
+      </SectionTitle>
+      <div className="col-span-full">
+        <CheckboxGroup
+          testId="w-pain-areas"
+          options={PAIN_AREA_OPTIONS}
+          selected={form.painAreas}
+          onChange={set("painAreas")}
+        />
+      </div>
+      <Field label="Other pain area(s) (comma-separated)" htmlFor="painOther" className="col-span-full">
+        <TextInput id="painOther" testId="w-pain-other" value={form.painAreasOther} onChange={set("painAreasOther")} placeholder="abdomen, ribs…" />
       </Field>
-      <Field label="Associated symptoms (comma-separated)" htmlFor="symptoms" className="sm:col-span-2 lg:col-span-3">
-        <TextInput id="symptoms" testId="w-symptoms" value={form.symptoms} onChange={set("symptoms")} placeholder="numbness, tingling, weakness" />
+
+      <SectionTitle>Associated symptoms</SectionTitle>
+      <div className="col-span-full">
+        <CheckboxGroup
+          testId="w-symptoms"
+          options={SYMPTOM_OPTIONS}
+          selected={form.symptoms}
+          onChange={set("symptoms")}
+        />
+      </div>
+      <Field label="Other symptom(s) (comma-separated)" htmlFor="symOther" className="col-span-full">
+        <TextInput id="symOther" testId="w-symptoms-other" value={form.symptomsOther} onChange={set("symptomsOther")} placeholder="blurred vision, tinnitus…" />
       </Field>
+
+      <SectionTitle>History</SectionTitle>
       <Field label="Prior treatment tried" htmlFor="priorTreatment" className="col-span-full">
         <Textarea id="priorTreatment" data-testid="w-prior-treatment"
           className="min-h-[70px] rounded-sm border-stone-300 bg-white text-sm"
@@ -795,40 +643,89 @@ function StepClinicalIntake({ form, set }) {
   );
 }
 
-function StepCaseConsents({ form, set }) {
+function StepCaseConsents({ form, set, visibility }) {
+  const { showAccident, showWorkComp, showPersonalInjury } = visibility;
+  const anyCase = showAccident || showWorkComp || showPersonalInjury;
+
   return (
     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-      <SectionTitle hint="Only complete when this case is accident-, work- or injury-related.">Case details</SectionTitle>
-      <Field label="Date of accident / injury" htmlFor="accidentDate">
-        <TextInput id="accidentDate" type="date" testId="w-accident-date" value={form.accidentDate} onChange={set("accidentDate")} />
-      </Field>
-      <Field label="Claim #" htmlFor="claimNumber">
-        <TextInput id="claimNumber" testId="w-claim-number" value={form.claimNumber} onChange={set("claimNumber")} />
-      </Field>
-      <Field label="Auto insurance carrier" htmlFor="autoCarrier">
-        <TextInput id="autoCarrier" testId="w-auto-carrier" value={form.autoCarrier} onChange={set("autoCarrier")} />
-      </Field>
-      <Field label="Adjuster name" htmlFor="adjusterName">
-        <TextInput id="adjusterName" testId="w-adjuster-name" value={form.adjusterName} onChange={set("adjusterName")} />
-      </Field>
-      <Field label="Adjuster phone" htmlFor="adjusterPhone">
-        <TextInput id="adjusterPhone" testId="w-adjuster-phone" value={form.adjusterPhone} onChange={set("adjusterPhone")} />
-      </Field>
-      <Field label="Attorney name" htmlFor="attorneyName">
-        <TextInput id="attorneyName" testId="w-attorney-name" value={form.attorneyName} onChange={set("attorneyName")} />
-      </Field>
-      <Field label="Attorney phone" htmlFor="attorneyPhone">
-        <TextInput id="attorneyPhone" testId="w-attorney-phone" value={form.attorneyPhone} onChange={set("attorneyPhone")} />
-      </Field>
-      <Field label="Attorney email" htmlFor="attorneyEmail">
-        <TextInput id="attorneyEmail" type="email" testId="w-attorney-email" value={form.attorneyEmail} onChange={set("attorneyEmail")} />
-      </Field>
-      <Field label="Employer at time of injury" htmlFor="employerAtInjury">
-        <TextInput id="employerAtInjury" testId="w-employer-injury" value={form.employerAtInjury} onChange={set("employerAtInjury")} />
-      </Field>
-      <Field label="Workers' comp carrier" htmlFor="workCompCarrier">
-        <TextInput id="workCompCarrier" testId="w-wc-carrier" value={form.workCompCarrier} onChange={set("workCompCarrier")} />
-      </Field>
+      {!anyCase && (
+        <div
+          data-testid="w-case-empty-state"
+          className="col-span-full rounded-sm border border-dashed border-stone-300 bg-white px-5 py-6 text-sm text-[#5C6A61]"
+        >
+          No case-type flags selected on the Clinical Intake step. Accident, workers&apos; compensation
+          and personal-injury detail fields will appear here when you mark the matching check-box on Step 3.
+        </div>
+      )}
+
+      {showAccident && (
+        <>
+          <SectionTitle hint="Auto accident, slip-and-fall, sports injury, etc.">
+            Accident details
+          </SectionTitle>
+          <Field label="Date of accident" htmlFor="accidentDate">
+            <TextInput id="accidentDate" type="date" testId="w-accident-date" value={form.accidentDate} onChange={set("accidentDate")} max={TODAY_ISO} />
+          </Field>
+          <Field label="Auto insurance carrier" htmlFor="autoCarrier">
+            <TextInput id="autoCarrier" testId="w-auto-carrier" value={form.autoCarrier} onChange={set("autoCarrier")} />
+          </Field>
+          <Field label="Claim #" htmlFor="claimNumberA">
+            <TextInput id="claimNumberA" testId="w-claim-number" value={form.claimNumber} onChange={set("claimNumber")} />
+          </Field>
+          <Field label="Adjuster name" htmlFor="adjusterName">
+            <TextInput id="adjusterName" testId="w-adjuster-name" value={form.adjusterName} onChange={set("adjusterName")} />
+          </Field>
+          <Field label="Adjuster phone" htmlFor="adjusterPhone">
+            <TextInput id="adjusterPhone" testId="w-adjuster-phone" value={form.adjusterPhone} onChange={set("adjusterPhone")} />
+          </Field>
+        </>
+      )}
+
+      {showWorkComp && (
+        <div data-testid="w-workcomp-block" className="col-span-full grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <SectionTitle hint="Employer details active at the time of injury.">Workers&apos; compensation</SectionTitle>
+          <Field label="Employer at time of injury" htmlFor="employerAtInjury">
+            <TextInput id="employerAtInjury" testId="w-employer-injury" value={form.employerAtInjury} onChange={set("employerAtInjury")} />
+          </Field>
+          <Field label="Workers' comp carrier" htmlFor="workCompCarrier">
+            <TextInput id="workCompCarrier" testId="w-wc-carrier" value={form.workCompCarrier} onChange={set("workCompCarrier")} />
+          </Field>
+          <Field label="Claim #" htmlFor="claimNumberW">
+            <TextInput id="claimNumberW" testId="w-claim-number-wc" value={form.claimNumber} onChange={set("claimNumber")} />
+          </Field>
+          {!showAccident && (
+            <>
+              <Field label="Adjuster name" htmlFor="adjusterNameW">
+                <TextInput id="adjusterNameW" testId="w-adjuster-name-wc" value={form.adjusterName} onChange={set("adjusterName")} />
+              </Field>
+              <Field label="Adjuster phone" htmlFor="adjusterPhoneW">
+                <TextInput id="adjusterPhoneW" testId="w-adjuster-phone-wc" value={form.adjusterPhone} onChange={set("adjusterPhone")} />
+              </Field>
+            </>
+          )}
+        </div>
+      )}
+
+      {showPersonalInjury && (
+        <div data-testid="w-pi-block" className="col-span-full grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <SectionTitle hint="Attorney representation for this injury claim.">Personal injury</SectionTitle>
+          <Field label="Attorney name" htmlFor="attorneyName">
+            <TextInput id="attorneyName" testId="w-attorney-name" value={form.attorneyName} onChange={set("attorneyName")} />
+          </Field>
+          <Field label="Attorney phone" htmlFor="attorneyPhone">
+            <TextInput id="attorneyPhone" testId="w-attorney-phone" value={form.attorneyPhone} onChange={set("attorneyPhone")} />
+          </Field>
+          <Field label="Attorney email" htmlFor="attorneyEmail">
+            <TextInput id="attorneyEmail" type="email" testId="w-attorney-email" value={form.attorneyEmail} onChange={set("attorneyEmail")} />
+          </Field>
+          {!showAccident && !showWorkComp && (
+            <Field label="Claim #" htmlFor="claimNumberP">
+              <TextInput id="claimNumberP" testId="w-claim-number-pi" value={form.claimNumber} onChange={set("claimNumber")} />
+            </Field>
+          )}
+        </div>
+      )}
 
       <SectionTitle hint="All consents are versioned and audited.">Consents & signature</SectionTitle>
       <div className="col-span-full grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -847,7 +744,7 @@ function StepCaseConsents({ form, set }) {
         <TextInput id="sigName" testId="w-sig-name" value={form.signatureName} onChange={set("signatureName")} />
       </Field>
       <Field label="Signature date" htmlFor="sigDate">
-        <TextInput id="sigDate" type="date" testId="w-sig-date" value={form.signatureDate} onChange={set("signatureDate")} />
+        <TextInput id="sigDate" type="date" testId="w-sig-date" value={form.signatureDate} onChange={set("signatureDate")} max={TODAY_ISO} />
       </Field>
     </div>
   );
@@ -865,8 +762,19 @@ function PatientWizardDialog({ open, onClose, onCreated }) {
   const [providers, setProviders] = useState([]);
   const [locations, setLocations] = useState([]);
 
+  const visibility = useMemo(() => visibilityForForm(form), [form]);
+
   const set = (k) => (v) => {
-    setForm((f) => ({ ...f, [k]: v }));
+    setForm((prev) => {
+      const next = { ...prev, [k]: v };
+      // If the patient DOB just flipped them into minor status, force the
+      // "same as patient" toggle off so the guarantor block is required.
+      if (k === "dateOfBirth") {
+        const willBeMinor = visibilityForForm(next).isMinor;
+        if (willBeMinor) next.responsiblePartySameAsPatient = false;
+      }
+      return next;
+    });
     if (errors[k]) setErrors((e) => ({ ...e, [k]: undefined }));
   };
 
@@ -906,18 +814,11 @@ function PatientWizardDialog({ open, onClose, onCreated }) {
   };
 
   async function submit() {
-    // Re-run full required validation across steps.
-    const allRequired = { ...STEP1_REQUIRED, ...STEP2_REQUIRED };
-    const errs = {};
-    Object.entries(allRequired).forEach(([k, msg]) => {
-      if (!cleanStr(form[k])) errs[k] = msg;
-    });
+    const errs = validateAll(form);
     if (Object.keys(errs).length) {
       setErrors(errs);
-      const firstMissingStep = Object.keys(errs).some((k) => STEP2_REQUIRED[k]) && !Object.keys(errs).some((k) => STEP1_REQUIRED[k])
-        ? 2
-        : 1;
-      setStep(firstMissingStep);
+      const hasStep1 = Object.keys(errs).some((k) => validateStep(1, form)[k]);
+      setStep(hasStep1 ? 1 : 2);
       toast.error("Some required fields are missing.");
       return;
     }
@@ -952,7 +853,6 @@ function PatientWizardDialog({ open, onClose, onCreated }) {
             Step {step} of 4 — {current.label}. All PHI is encrypted at rest and every save is audited.
           </DialogDescription>
 
-          {/* Step indicator */}
           <ol className="mt-4 grid grid-cols-4 gap-2" data-testid="wizard-steps">
             {STEPS.map((s) => {
               const state = s.id < step ? "done" : s.id === step ? "active" : "todo";
@@ -999,10 +899,11 @@ function PatientWizardDialog({ open, onClose, onCreated }) {
               errors={errors}
               providers={providers}
               locations={locations}
+              visibility={visibility}
             />
           )}
           {step === 3 && <StepClinicalIntake form={form} set={set} />}
-          {step === 4 && <StepCaseConsents form={form} set={set} />}
+          {step === 4 && <StepCaseConsents form={form} set={set} visibility={visibility} />}
         </div>
 
         <DialogFooter className="flex flex-row items-center justify-between border-t border-stone-200 bg-white px-8 py-4 sm:justify-between">

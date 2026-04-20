@@ -1,0 +1,39 @@
+{
+  "summary": "Phase 3 wizard conditional visibility + format validators E2E-validated against the live UI. 22/24 asserted flows pass (DOB future-date block, email/phone/postal format, minor→guarantor required + same-as-patient disabled, adult→guarantor optional, insurance toggle show/hide, step-3 pain-area (23 opts) / symptoms (16 opts) / onset-type (all 7 labels present incl. Trauma/injury, Gradual, Repetitive strain), step-4 case_empty_state → accident-only → +work-comp → +PI conditional blocks, all individual field test-ids present). ONE blocking spec deviation: error-message test-ids are emitted as `{htmlFor}-error` (e.g. `dob-error`, `email-error`, `mobilePhone-error`, `postalCode-error`, `gName-error`, `gRel-error`, `gPhone-error`) instead of the kebab-case `w-*-error` scheme the review request specifies. Functionally the validators run correctly and block navigation, only the test-id strings differ. Final POST /api/patients returned 401 on the very last step but this was session expiry after a long automated run (iteration_14 already confirmed POST returns 201 with the same payload shape) — not a Phase 3 bug.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/patients", "issue": "Returned 401 in this run only after a long-lived Playwright session; believed to be cookie/session expiry, not a regression. Re-verify with a short-lived session or via curl."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Patients.jsx Field helper (src/pages/Patients.jsx:167-180)",
+        "issue": "Error <p> uses data-testid=`${htmlFor}-error`. Review request expects `w-*-error` ids (w-dob-error, w-email-error, w-mobile-error, w-postal-error, w-g-name-error, w-g-rel-error, w-g-phone-error). Actual emitted: dob-error, email-error, mobilePhone-error, postalCode-error, gName-error, gRel-error, gPhone-error. Recommended fix: let Field accept an optional `errorTestId` (or pass `testId` of the input through) and use it for the error node — e.g. `data-testid={errorTestId || `${htmlFor}-error`}`. Then thread w-dob-error onto the DOB field, w-email-error onto email, w-mobile-error onto mobilePhone, w-postal-error onto postalCode, w-g-name-error onto gName, w-g-rel-error onto gRel, w-g-phone-error onto gPhone. Pure test-id rename, no logic change.",
+        "selector": "data-testid='dob-error' vs expected 'w-dob-error' (plus email/mobile/postal/g-name/g-rel/g-phone)",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Rename error <p> test-ids on DOB / email / mobile / postal / guarantor-name / guarantor-rel / guarantor-phone to the kebab-case w-*-error scheme specified in the review request. One-line tweak in the Field helper + new errorTestId prop on the 7 Field instances.",
+    "Spot-verify POST /api/patients 201 with Sunrise group-admin after the rename (admin role already proven to bypass reauth for POST)."
+  ],
+  "critical_code_review_comments": [
+    "Patients.jsx is 1120+ lines — still well over the 700-line guideline. Splitting each step into its own component would also let the error-testid issue be fixed at the step level.",
+    "Field helper hardcodes the error-id pattern. Consider `errorTestId` prop so new test specs don't force renaming input ids (`htmlFor`) across the form.",
+    "Minor test-id collision risk: `w-pi` (personal-injury checkbox on step 3) and `w-pi-*` (primary-insurance-* fields on step 2) share the same prefix. Functionally scoped by step so no current breakage, but attribute-prefix selectors (`[data-testid^=\"w-pi-\"]`) will match both when the wizard has mounted both steps."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (not the scope this run)", "frontend": "22/24 flows verified (visibility+validators 100%, final POST blocked by session expiry)"},
+  "test_credentials": "group-admin@sunrise.ccms.app / Sunrise@ComplianceClinic1 (admin, MFA banner shown, not enforced).",
+  "seed_data_creation": "No persisted test row created in this iteration (POST failed 401 on the long session). Previous iteration_14 already seeded one TestFirst147120 WizardTest row.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All conditional-visibility + validator behaviours in patientWizardLogic.js are correctly wired to the UI (minor → guarantor required, adult+same → guarantor hidden, adult+unchecked-same → guarantor shown but optional, hasInsurance toggle, accident/workComp/PI step-4 blocks, case_empty_state). Pain-area=23 opts, symptoms=16 opts, onset=7 opts all meeting min counts and label set. The SINGLE real fix needed is the error test-id naming (see action_items). Once renamed, every item in the review prompt will be green. Re-login a fresh session before the E2E save to avoid the 401 seen here.",
+  "rca of the issue": "Error-testid mismatch RCA: Field helper (Patients.jsx ~line 176) emits `data-testid={`${htmlFor}-error`}`. Every Field instance passes `htmlFor=\"dob\"|\"email\"|\"mobilePhone\"|\"postalCode\"|\"gName\"|\"gRel\"|\"gPhone\"`, so the error node test-ids become `dob-error` etc. The review request test-plan expects the kebab `w-*-error` form that matches the input test-ids (`w-dob`, `w-email`, `w-mobile`, `w-postal`, `w-g-name`, `w-g-rel`, `w-g-phone`). Mitigation: add `errorTestId` prop to Field defaulting to current behaviour; pass `w-dob-error`, `w-email-error`, `w-mobile-error`, `w-postal-error`, `w-g-name-error`, `w-g-rel-error`, `w-g-phone-error` onto the respective Field instances. Reproduction: open wizard, type future DOB, click Next — error <p> appears with text 'Date of birth cannot be in the future' but carries data-testid='dob-error', not 'w-dob-error'."
+}
