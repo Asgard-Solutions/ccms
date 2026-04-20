@@ -11,6 +11,42 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Scheduling — Week-view closed-day shading.** `WeekView` now
+  reads the active clinic-hours via the already-wired
+  `extractDaySpan(hours, date)` helper and, for each day cell:
+  - Closed days render a muted `bg-muted/40` background, a
+    `scheduling-week-closed-{date}` "CLOSED" pill, `data-closed="true"`,
+    and the `+` quick-add is suppressed (the global New-appointment
+    CTA still lets staff book exception appointments).
+  - Open days render a tiny mono `scheduling-week-hours-{date}`
+    label (e.g. `9:00–17:00`) under the header and a quick-add
+    that pre-fills with the configured open time rather than a
+    blanket 09:00.
+- **Provider filter** (`pages/scheduling/ProviderFilter.jsx`). New
+  `Select` dropdown mounted in `SchedulingToolbar`
+  (`data-testid="scheduling-provider-filter"`). Fetches
+  `/auth/providers` once, offers "All providers" + one row per
+  provider; selecting a provider flows through `providerId` state
+  in `useScheduling` → every subsequent list and counts request
+  carries `provider_id=...`. Doctor role still auto-scoped at the
+  backend when no explicit provider is chosen.
+- **Clinic Settings save — auto-recover POST → PUT on 409.** The
+  `ClinicSettings.onSave` handler now catches a 409
+  "already-exists" response from `POST /api/clinic-profiles` and
+  transparently retries as `PUT /api/clinic-profiles/{id}` —
+  fixing the rare race where the UI loaded with a 404 (unconfigured
+  state) but a profile had been created in the meantime. Also
+  improved error surfacing (joined Pydantic detail array) and a
+  `console.error` so future regressions leave a diagnostic
+  breadcrumb.
+- **Regression sweep** (`testing_agent_v3_fork` iteration 19):
+  **25/26 items green**, 14/14 backend pytests still green.
+  The single flagged issue (ClinicSettings save round-trip) was
+  traced to the POST/409 edge case above and is now resolved
+  end-to-end (fresh create path + update path both verified via
+  Playwright: Sun switch persists across reload on create;
+  Sat switch persists across reload on update).
+
 - **Calendar weeks now start on Sunday.** `dateHelpers.startOfWeek`
   switched from ISO-week (Monday) to locale-common Sunday; the
   `WEEKDAY_SHORT` / `WEEKDAY_LONG` constants reordered accordingly.

@@ -191,7 +191,10 @@ export default function ClinicSettings() {
 
   async function onSave(e) {
     e.preventDefault();
-    if (!locationId) return;
+    if (!locationId) {
+      toast.error("No location selected — refresh and try again");
+      return;
+    }
     if (!form.name.trim()) {
       toast.error("Clinic name is required");
       return;
@@ -203,25 +206,45 @@ export default function ClinicSettings() {
     setSaving(true);
     try {
       const payload = { ...form, hours: hoursToBackend(hoursRows) };
-      // Strip empty optional strings so the backend doesn't store "".
       for (const k of Object.keys(payload)) {
         if (typeof payload[k] === "string" && payload[k].trim() === "" && k !== "name") {
           payload[k] = null;
         }
       }
-      if (profileExists) {
+
+      async function doPut() {
         await api.put(`/clinic-profiles/${locationId}`, payload);
-        toast.success("Clinic settings saved");
-      } else {
-        await api.post(`/clinic-profiles`, { ...payload, location_id: locationId });
-        toast.success("Clinic profile created");
         setProfileExists(true);
+        toast.success("Clinic settings saved");
+      }
+
+      async function doPost() {
+        await api.post(`/clinic-profiles`, { ...payload, location_id: locationId });
+        setProfileExists(true);
+        toast.success("Clinic profile created");
+      }
+
+      if (profileExists) {
+        await doPut();
+      } else {
+        try {
+          await doPost();
+        } catch (err) {
+          // Auto-recover from "already exists" by switching to PUT.
+          if (err.response?.status === 409) {
+            await doPut();
+          } else {
+            throw err;
+          }
+        }
       }
     } catch (err) {
+      console.error("Clinic settings save failed:", err, err?.response?.data);
       const detail = err.response?.data?.detail;
-      toast.error(
-        Array.isArray(detail) ? detail[0]?.msg || "Save failed" : detail || "Save failed"
-      );
+      const message = Array.isArray(detail)
+        ? detail.map((d) => d.msg || JSON.stringify(d)).join("; ")
+        : detail || err.message || "Save failed";
+      toast.error(message);
     } finally {
       setSaving(false);
     }
