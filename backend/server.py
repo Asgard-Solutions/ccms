@@ -17,6 +17,8 @@ from starlette.middleware.cors import CORSMiddleware  # noqa: E402
 from core import metrics  # noqa: E402
 from core.config import ensure_required as ensure_config  # noqa: E402
 from core.db import close_client, create_indexes  # noqa: E402
+from core.error_handlers import install as install_error_handler  # noqa: E402
+from core.logging_setup import configure as configure_logging  # noqa: E402
 from core.redis_client import close as close_redis, ping as redis_ping  # noqa: E402
 from services.audit.router import router as audit_router  # noqa: E402
 from services.communication.router import router as communication_router  # noqa: E402
@@ -63,6 +65,9 @@ api_router.include_router(metrics_router)  # GET /api/metrics
 
 app.include_router(api_router)
 
+# Sanitised 500 responses + structured error logging.
+install_error_handler(app)
+
 
 # ---------- HTTP request timing middleware (Prometheus histogram) ----------
 @app.middleware("http")
@@ -108,6 +113,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def on_startup():
+    configure_logging()
     ensure_config()  # fail-fast on missing MONGO_URL / DB_NAME / JWT_SECRET / DATA_ENCRYPTION_KEY
     await create_indexes()
     register_comm_subscribers()

@@ -324,3 +324,115 @@ async def security_config(_admin: dict = Depends(require_role("admin"))):
             if not present
         ],
     }
+
+
+# ---------- Monitoring hooks catalogue ----------
+
+_SECURITY_EVENTS = [
+    # component, event, when, outcome, notes
+    ("auth", "auth.login", "successful login", "success",
+     "carries session_started_at metadata; base rate for anomaly detection"),
+    ("auth", "auth.login", "failed login", "failure",
+     "reason ∈ {invalid_credentials, account_disabled, password_expired}"),
+    ("auth", "auth.mfa_verified", "MFA completed", "success", ""),
+    ("auth", "auth.mfa_verify", "MFA bad code", "failure", "reason=bad_code"),
+    ("auth", "auth.reauth", "step-up reauth", "success|failure", ""),
+    ("auth", "auth.password_reset_requested", "reset-link request", "success|failure",
+     "failure with reason=unknown_email_or_disabled is anti-enumeration signal"),
+    ("auth", "auth.password_reset_completed", "reset-link consumed", "success", ""),
+    ("auth", "auth.password_changed", "self password change", "success",
+     "metadata.other_sessions_revoked=true"),
+    ("privileged", "user.created", "admin creates user", "success", ""),
+    ("privileged", "user.disabled", "admin disables user", "success",
+     "metadata.sessions_revoked=true"),
+    ("privileged", "user.enabled", "admin re-enables user", "success", ""),
+    ("privileged", "user.updated", "admin role/status patch", "success",
+     "metadata.fields lists mutated fields"),
+    ("privileged", "user.mfa_reset", "admin MFA recovery", "success", ""),
+    ("privileged", "user.mfa_policy_updated", "admin toggles mfa_policy_required", "success", ""),
+    ("phi", "patient.unmasked", "admin unmask of patient data", "success",
+     "phi_accessed=true; carries reason"),
+    ("phi", "patient.exported", "clinical export download", "success",
+     "phi_accessed=true"),
+    ("phi", "patient.emergency_access", "break-glass access", "success",
+     "metadata.emergency_access=true"),
+    ("privacy", "privacy_request.created", "DSAR intake", "success", ""),
+    ("privacy", "privacy_request.updated", "DSAR status change", "success", ""),
+    ("privacy", "privacy_request.fulfilled", "DSAR fulfilment", "success", ""),
+    ("privacy", "privacy.consent_recorded", "consent accepted/withdrawn", "success", ""),
+    ("audit", "audit_log.viewed", "admin reads audit log", "success", ""),
+    ("audit", "audit_log.exported", "admin CSV export", "success",
+     "metadata.rows_exported"),
+    ("rate_limit", "rate_limit.block", "IP rate-limit triggered", "warning",
+     "ALERT if sustained > 5/min from single source"),
+    ("system", "system.unhandled_error", "500 response emitted", "failure",
+     "carries correlation_id — match to /api/compliance/security-config logs"),
+]
+
+_METRIC_CATALOG = [
+    ("ccms_auth_failures_total", "Counter", "labels: reason",
+     "ALERT on >= 20 failures in 5 min per reason=invalid_credentials"),
+    ("ccms_phi_access_total", "Counter", "labels: action",
+     "Track weekly baseline; page on >3× baseline spike"),
+    ("ccms_privileged_actions_total", "Counter", "labels: action",
+     "Audit weekly; any user.disabled or user.updated outside change-window is investigate-worthy"),
+    ("ccms_privacy_requests_total", "Counter", "labels: type, status",
+     "Backlog signal — rising received minus fulfilled ratio should page the Privacy Officer"),
+    ("ccms_breakglass_total", "Counter", "no labels",
+     "ALWAYS notify Security Officer — every row deserves review"),
+    ("ccms_exports_total", "Counter", "labels: kind (patient|account|audit_csv)",
+     "Daily digest; bulk > 5 patient exports/day per admin is anomalous"),
+    ("ccms_rate_limit_blocks_total", "Counter", "labels: source (redis|local)",
+     "High-signal auth-brute detector"),
+    ("ccms_secure_endpoint_errors_total", "Counter", "labels: path_prefix",
+     "Page on any sustained >0/min — indicates broken deploy or attack surface"),
+    ("ccms_cache_*", "Counter", "hits / misses / sets / invalidations / errors",
+     "Operational only; no security threshold"),
+    ("ccms_http_request_duration_seconds", "Histogram", "labels: method, path_prefix, status_class",
+     "Latency SLO; surge in 5xx class points to stability incident"),
+    ("ccms_redis_up", "Gauge", "0 or 1",
+     "Redis down degrades rate-limit + cache → degraded but safe"),
+]
+
+
+@router.get("/monitoring-hooks")
+async def monitoring_hooks(_admin: dict = Depends(require_role("admin"))):
+    """Catalogue of security-relevant events + Prometheus metrics with
+    alerting recommendations. Admin-only. Designed to be the artefact an
+    auditor asks for first ('what do you log, what do you alert on?')."""
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "disclaimer": (
+            "Application emits these signals. Real alerting, correlation, "
+            "and on-call paging belong in your SIEM/Observability stack."
+        ),
+        "structured_logger": "python logging.getLogger('security') — JSON line per event",
+        "events": [
+            {
+                "component": c,
+                "event": e,
+                "when": w,
+                "outcome": o,
+                "notes": n,
+            }
+            for (c, e, w, o, n) in _SECURITY_EVENTS
+        ],
+        "metrics": [
+            {
+                "name": n,
+                "kind": k,
+                "labels": lab,
+                "alert_guidance": a,
+            }
+            for (n, k, lab, a) in _METRIC_CATALOG
+        ],
+        "incident_evidence_surfaces": [
+            "GET /api/audit-logs (filters + date range)",
+            "GET /api/audit-logs/export.csv (admin CSV export)",
+            "GET /api/auth/sessions (per-user sign-in history)",
+            "GET /api/compliance/overview",
+            "GET /api/compliance/security-config",
+            "GET /api/privacy/requests (DSAR register)",
+            "GET /api/metrics (Prometheus text exposition)",
+        ],
+    }

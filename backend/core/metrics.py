@@ -64,6 +64,49 @@ rate_limit_blocks_total = Counter(
     registry=registry,
 )
 
+# ---------- Security events ----------
+auth_failures_total = Counter(
+    "ccms_auth_failures_total",
+    "Authentication failures by reason",
+    labelnames=("reason",),
+    registry=registry,
+)
+phi_access_total = Counter(
+    "ccms_phi_access_total",
+    "PHI access events (reads, exports, unmasks)",
+    labelnames=("action",),
+    registry=registry,
+)
+privileged_actions_total = Counter(
+    "ccms_privileged_actions_total",
+    "Admin / privileged actions (user create/disable/patch, role change)",
+    labelnames=("action",),
+    registry=registry,
+)
+privacy_requests_total = Counter(
+    "ccms_privacy_requests_total",
+    "Privacy (DSAR) requests by type and terminal/current status",
+    labelnames=("type", "status"),
+    registry=registry,
+)
+breakglass_total = Counter(
+    "ccms_breakglass_total",
+    "Break-glass PHI access events",
+    registry=registry,
+)
+exports_total = Counter(
+    "ccms_exports_total",
+    "Data exports (self account, patient PHI, audit CSV)",
+    labelnames=("kind",),
+    registry=registry,
+)
+secure_endpoint_errors_total = Counter(
+    "ccms_secure_endpoint_errors_total",
+    "Unhandled errors on sensitive endpoints (5xx after global handler)",
+    labelnames=("path_prefix",),
+    registry=registry,
+)
+
 # ---------- Redis health ----------
 redis_up = Gauge(
     "ccms_redis_up",

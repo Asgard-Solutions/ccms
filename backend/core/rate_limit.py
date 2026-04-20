@@ -5,7 +5,7 @@ import logging
 import time
 from collections import defaultdict, deque
 
-from core import metrics
+from core import metrics, security_logger
 from core.redis_client import get_redis, safe_call
 
 logger = logging.getLogger("ccms.rate_limit")
@@ -39,6 +39,14 @@ async def is_allowed(key: str, *, limit: int, window_seconds: int) -> bool:
                     metrics.rate_limit_blocks_total.labels(source="redis").inc()
                 except Exception:
                     pass
+                security_logger.suspicious(
+                    "rate_limit.block",
+                    component="rate_limit",
+                    key=key,
+                    window_seconds=window_seconds,
+                    limit=limit,
+                    source="redis",
+                )
             return allowed
 
     return _local_check(key, limit, window_seconds)
@@ -57,6 +65,14 @@ def _local_check(key: str, limit: int, window_seconds: int) -> bool:
             metrics.rate_limit_blocks_total.labels(source="local").inc()
         except Exception:
             pass
+        security_logger.suspicious(
+            "rate_limit.block",
+            component="rate_limit",
+            key=key,
+            window_seconds=window_seconds,
+            limit=limit,
+            source="local",
+        )
         return False
     q.append(now)
     return True
