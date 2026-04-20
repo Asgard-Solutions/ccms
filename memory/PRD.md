@@ -187,7 +187,17 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **Docs**: `/app/memory/MULTI_TENANCY_ARCHITECTURE.md` — decision record, ERD, request pipeline, hybrid-DB runbook, non-goals.
 - **Tests (iteration_14)**: 19/19 new tests pass — tenant isolation across patient/appointment/audit, location scoping inside a tenant (group-admin/single-loc/floater/staff matrix), platform admin CRUD, tenant-admin denial for tenant-create, public registration assigns default tenant. Regression 9/9 (iteration_13), 15/15 (iteration_12) with correct preview URL.
 
-## 16. Out of scope / deferred
+## 16. Iteration 15 — repository enforcement, cross-tenant audit, bg-context (2026-02-21)
+- **`core/repository.py::TenantScopedRepository`** — fail-closed wrapper over Motor collections (find/find_one/find_one_by_id/count/insert_one/update_one/update_many/delete_one/delete_many). Raises `MissingTenantContext` without a context; raises `UnsafeQueryError` on empty-filter bulk ops. Pre-built subclasses: `PatientRepository`, `AppointmentRepository`, `MedicalRecordRepository`, `NotificationRepository`, `AuditLogRepository`.
+- **Cross-tenant id probe audit**: `find_one_by_id` issues one unscoped lookup on a 404; if the row exists in a DIFFERENT tenant, emits `security.cross_tenant_attempt` (outcome=failure) with actor/target tenant_ids. Caller still gets 404 — no enumeration leak.
+- **`TenantContext.for_background(tenant_id, actor=...)`** — synthetic context for async jobs/workers. Never platform admin; always tenant-bound; tenant-wide by default.
+- **Request-state stash**: `get_tenant_context()` caches the resolved context on `request.state.tenant_context`; `request_id`, `ip`, `user_agent` populated on every context.
+- **Sunrise demo data seeded**: 2 patients × 3 locations with encrypted PHI, 1 medical record + 1 scheduled appointment per patient.
+- **Patient router migrated to repository**: `GET /patients/{id}` uses `PatientRepository.find_one_by_id` (exercises cross-tenant audit). Other patient/scheduling/audit routes continue on `scoped_filter` and remain safe; progressive migration is P1, not a correctness blocker.
+- **Developer cookbook added** in `MULTI_TENANCY_ARCHITECTURE.md` §14 with copy-paste-safe patterns and clearly flagged anti-patterns.
+- **Verified (iteration_15)**: 6/6 new tests — demo-data visibility, location-scoping for downtown-doc, cross-tenant probe audit, repository fail-closed, unsafe empty-filter rejection, background context acceptance. Regression 19/19 (iteration_14) still green.
+
+## 17. Deferred (still)
 - `privacy`, `communication`, and `elevation` routers rely on the `tenant_id` backfill but do not yet pass queries through `scoped_filter` — safe because we're still single-tenant-per-user but a P1 to harden before onboarding the second paying tenant.
 - Multi-tenant user support (one user across N tenants) — P2; requires `user_tenant_roles` table + tenant-switcher UI.
 - Subdomain-based tenant routing (`acme.ccms.app → tid=acme`) — P2; ingress + middleware work.

@@ -291,6 +291,110 @@ async def _upsert_platform_admin() -> None:
         await db.users.update_one({"id": existing["id"]}, {"$set": updates})
 
 
+async def _seed_group_sample_data(group_tenant_id: str, location_name_to_id: dict[str, str]) -> None:
+    """Create 2 patients + 1 appointment + 1 note per Sunrise location
+    (idempotent — only runs when the location has zero existing patients).
+    This gives iteration_15 tests and live demos something to show without
+    forcing the operator to click around."""
+    from core.crypto import encrypt_text
+
+    db = get_db_write()
+    now = _now()
+
+    # Find the doctors.
+    downtown_doc = await db.users.find_one(
+        {"email": "downtown-doc@sunrise.ccms.app"}, {"_id": 0, "id": 1, "name": 1},
+    )
+    floater_doc = await db.users.find_one(
+        {"email": "floater-doc@sunrise.ccms.app"}, {"_id": 0, "id": 1, "name": 1},
+    )
+    if not (downtown_doc and floater_doc):
+        return
+
+    doctor_per_location = {
+        "Downtown Clinic": downtown_doc["id"],
+        "Uptown Clinic": floater_doc["id"],
+        "Eastside Clinic": floater_doc["id"],
+    }
+
+    patient_samples = [
+        ("Downtown Clinic", "Avery", "Bennett", "1985-06-14"),
+        ("Downtown Clinic", "Sam",   "Calder",  "1979-11-02"),
+        ("Uptown Clinic",   "Drew",  "Patel",   "1992-03-21"),
+        ("Uptown Clinic",   "Quinn", "Vasquez", "1988-08-09"),
+        ("Eastside Clinic", "Robin", "Harper",  "1975-12-30"),
+        ("Eastside Clinic", "Jordan","Okafor",  "1996-05-17"),
+    ]
+
+    for loc_name, first, last, dob in patient_samples:
+        loc_id = location_name_to_id.get(loc_name)
+        if not loc_id:
+            continue
+        existing = await db.patients.find_one(
+            {"tenant_id": group_tenant_id, "location_id": loc_id,
+             "first_name": first, "last_name": last},
+            {"_id": 0, "id": 1},
+        )
+        if existing:
+            continue
+        patient_id = str(uuid.uuid4())
+        await db.patients.insert_one({
+            "id": patient_id,
+            "tenant_id": group_tenant_id,
+            "location_id": loc_id,
+            "user_id": None,
+            "first_name": first,
+            "last_name": last,
+            "date_of_birth": encrypt_text(dob),
+            "gender": "prefer-not-to-say",
+            "phone": "+1-555-0" + str(abs(hash(first + last)) % 10000).zfill(4),
+            "email": f"{first.lower()}.{last.lower()}@sunrise.ccms.app",
+            "address": encrypt_text(f"100 {loc_name}, OR"),
+            "emergency_contact": encrypt_text(f"{last} family +1-555-9999"),
+            "notes": encrypt_text("Initial intake — sample demo data."),
+            "status": "active",
+            "created_at": now,
+            "updated_at": now,
+        })
+
+        # Sample medical record (note) — encrypts PHI fields.
+        doctor_id = doctor_per_location[loc_name]
+        await db.medical_records.insert_one({
+            "id": str(uuid.uuid4()),
+            "tenant_id": group_tenant_id,
+            "location_id": loc_id,
+            "patient_id": patient_id,
+            "record_type": "assessment",
+            "title": "Initial spinal assessment",
+            "description": encrypt_text("Range of motion 80%. Mild scoliosis."),
+            "diagnosis": encrypt_text("Chronic lumbar strain."),
+            "treatment": encrypt_text("12-visit adjustment plan."),
+            "recorded_by": doctor_id,
+            "recorded_at": now,
+        })
+
+        # Sample appointment 30 days out.
+        from datetime import timedelta
+        start = (datetime.now(timezone.utc) + timedelta(days=30 + abs(hash(patient_id)) % 14))
+        start = start.replace(hour=10, minute=0, second=0, microsecond=0)
+        end = start + timedelta(minutes=30)
+        await db.appointments.insert_one({
+            "id": str(uuid.uuid4()),
+            "tenant_id": group_tenant_id,
+            "location_id": loc_id,
+            "patient_id": patient_id,
+            "provider_id": doctor_id,
+            "start_time": start.isoformat(),
+            "end_time": end.isoformat(),
+            "reason": "Follow-up adjustment",
+            "notes": encrypt_text("Demo seed"),
+            "status": "scheduled",
+            "created_by": doctor_id,
+            "created_at": now,
+            "updated_at": now,
+        })
+
+
 async def seed_tenancy() -> None:
     """Idempotent — runs on every boot."""
     # 1. Default tenant for legacy data
@@ -324,6 +428,7 @@ async def seed_tenancy() -> None:
         )
         location_name_to_id[spec["name"]] = loc_id
     await _upsert_group_demo(group_tenant_id, location_name_to_id)
+    await _seed_group_sample_data(group_tenant_id, location_name_to_id)
 
     # 5. Platform admin.
     await _upsert_platform_admin()

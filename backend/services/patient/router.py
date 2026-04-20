@@ -24,9 +24,12 @@ from core.db import get_db, get_db_read, get_db_write, read_after_write_db
 from core.deps import get_current_user, require_role
 from core.masking import mask_patient
 from core.reauth import require_reauth
+from core.repository import PatientRepository
 from core.tenancy import TenantContext, get_tenant_context
 from core.tenant_scope import scoped_filter, stamp_for_write
 from services.authz.policy import require_permission
+
+_patient_repo = PatientRepository()
 from services.patient.models import (
     MedicalRecordCreate,
     MedicalRecordPublic,
@@ -215,12 +218,8 @@ async def get_patient(
     user: dict = Depends(get_current_user),
     ctx: TenantContext = Depends(get_tenant_context),
 ):
-    db = get_db_read()
-    # Always filter by tenant to prevent cross-tenant id guessing.
-    q = scoped_filter({"id": patient_id}, ctx, location_scoped=True)
-    if q.get("__deny__"):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
-    p = await db.patients.find_one(q, {"_id": 0})
+    # Repository performs scoped lookup AND audits cross-tenant id probes.
+    p = await _patient_repo.find_one_by_id(patient_id, ctx)
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
 

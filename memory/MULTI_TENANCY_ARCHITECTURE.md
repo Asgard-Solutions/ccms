@@ -162,3 +162,115 @@ Located at `/app/backend/tests/test_iteration14_tenancy.py`:
 - **Reporting** — group-admin sees patients aggregated across all three locations; location-restricted users see their subset only.
 - **Platform admin** — can list every tenant, can create a new tenant (with an auto-created primary location); tenant admins cannot create tenants.
 - **Public registration** — assigns the new patient to the default tenant.
+
+## 14. How to add a new tenant-owned feature safely (developer cookbook)
+
+This is the canonical recipe. Deviating from it is the most reliable way to ship a data-leak bug, so please don't.
+
+### 14.1 Define a repository
+
+```python
+# backend/services/billing/models.py
+from core.repository import TenantScopedRepository
+
+class InvoiceRepository(TenantScopedRepository):
+    collection_name = "invoices"
+    location_scoped = True   # invoices belong to a specific clinic location
+```
+
+Subclassing `TenantScopedRepository` is the one and only way tenant-owned data may be accessed. It is guaranteed to:
+
+- fail closed with `MissingTenantContext` if a `TenantContext` is not supplied,
+- inject `tenant_id` (and optional `location_id`) into every query,
+- stamp `tenant_id` on every insert,
+- audit cross-tenant id probes (`security.cross_tenant_attempt`),
+- refuse the empty-filter bulk footgun (`UnsafeQueryError`).
+
+### 14.2 Declare permissions and grant them to roles
+
+Edit `services/authz/constants.py`. Add `PERMISSIONS` entries for `invoice.create/read/update/void` and grant them to the appropriate roles via `ROLE_GRANTS`.
+
+### 14.3 Wire the route
+
+```python
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from core.audit import audit_success
+from core.tenancy import TenantContext, get_tenant_context
+from services.authz.policy import require_permission
+from services.billing.models import InvoiceRepository
+
+router = APIRouter(prefix="/invoices", tags=["billing"])
+_invoices = InvoiceRepository()
+
+@router.post("", status_code=201)
+async def create_invoice(
+    payload: InvoiceCreate,
+    request: Request,
+    user: dict = Depends(require_permission("invoice", "create", audit_allow=False)),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    ctx.assert_tenant_bound()
+    doc = await _invoices.insert_one(payload.model_dump(), ctx,
+                                     location_id=payload.location_id)
+    await audit_success(user, "invoice.created", request,
+                        entity_type="invoice", entity_id=doc["id"])
+    return doc
+
+
+@router.get("/{invoice_id}")
+async def get_invoice(
+    invoice_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("invoice", "read", audit_allow=False)),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    inv = await _invoices.find_one_by_id(invoice_id, ctx)
+    if not inv:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Invoice not found")
+    return inv
+```
+
+That is it. No direct `db.invoices.find(...)` anywhere in the new service.
+
+### 14.4 Background jobs / async workers
+
+```python
+from core.tenancy import TenantContext
+from services.billing.models import InvoiceRepository
+
+async def dunning_worker(tenant_id: str):
+    ctx = TenantContext.for_background(tenant_id=tenant_id, actor="dunning")
+    repo = InvoiceRepository()
+    overdue = await repo.find({"status": "overdue"}, ctx, limit=500)
+    ...
+```
+
+Never call a repository method from a worker without `for_background()` — without it, `MissingTenantContext` fires immediately.
+
+### 14.5 What NOT to do
+
+- **Never** call `get_db().invoices.find_one({"id": x})` in a route. There is no way to make that safe after the fact.
+- **Never** pass user input straight into a Motor filter without `scoped_filter()` or `repo.find()`.
+- **Never** skip `ctx.assert_tenant_bound()` on write paths — a platform admin without `X-Tenant-Id` has `tenant_id=None`, and we refuse to blindly write such rows.
+- **Never** add an admin-only bypass that reads a raw collection. If a legitimate platform need exists (migration, forensics), build it behind `is_platform_admin` and audit with `platform_admin_access=True`.
+
+### 14.6 Row-level security vs application-level enforcement
+
+MongoDB does not support row-level security policies (Postgres does). Our current enforcement is therefore purely application-layer — but it is:
+
+- **Centralised** in `TenantScopedRepository` and `scoped_filter()`, so a one-line audit of those two files is sufficient to assess the tenant-isolation posture.
+- **Defence-in-depth** — the policy engine (`require_permission`) runs *before* the repository filter; the repository filter runs *before* the driver sees the query; `find_one_by_id` emits a security audit on cross-tenant id probes; `update_many({})` raises before touching the DB.
+- **PostgreSQL-ready** — when we migrate to Postgres, each `TenantScopedRepository` subclass maps 1:1 to a table whose RLS policy is `tenant_id = current_setting('app.tenant_id')`. The repository becomes a compatibility shim until every call-site is migrated to raw SQL; in the meantime application-level enforcement continues to apply.
+
+## 15. Iteration 15 — repository enforcement + cross-tenant audit (2026-02-21)
+
+- **`core/repository.py::TenantScopedRepository`** — fail-closed wrapper over Motor collections. Methods: `find`, `find_one`, `find_one_by_id`, `count`, `insert_one`, `update_one`, `update_many`, `delete_one`, `delete_many`. Raises `MissingTenantContext` when called without a context; raises `UnsafeQueryError` on empty-filter bulk ops.
+- **Pre-built subclasses**: `PatientRepository`, `AppointmentRepository`, `MedicalRecordRepository`, `NotificationRepository`, `AuditLogRepository`.
+- **Cross-tenant id probe audit**: `find_one_by_id` performs one unscoped lookup on a 404; if the row exists in a DIFFERENT tenant, emits `security.cross_tenant_attempt` (outcome=failure) with actor_tenant_id + target_tenant_id metadata. Caller still gets 404 — no enumeration leak.
+- **`TenantContext.for_background(tenant_id, actor=...)`** — synthetic context for async jobs / schedulers / retention sweeper. Forbidden-to-be-platform-admin; tenant-bound; tenant-wide (no location restriction) by default.
+- **Request-state stash**: `get_tenant_context()` caches the resolved context on `request.state.tenant_context` so low-level exception handlers and audit middlewares can read it without re-running auth. `request_id`, `ip`, and `user_agent` are populated on every context.
+- **Sunrise demo data seeded** — 2 patients × 3 locations = 6 patients, plus a medical record and a 30-day-out appointment each. The `get-started-in-30-seconds` demo now has something to click.
+- **Patient router migrated to repository** — `GET /patients/{id}` now goes through `PatientRepository.find_one_by_id` (exercising the cross-tenant audit). Remaining patient/scheduling/audit routes continue on `scoped_filter` and are safe; migration to the repository pattern is a P1 but not a correctness blocker.
+- **Verified (iteration_15)**: 6/6 new tests — demo-data visibility, location-scoping for downtown-doc, cross-tenant probe audit, repository fail-closed, unsafe empty-filter rejection, background context acceptance. Regression 19/19 (iteration_14).
+
+

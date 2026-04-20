@@ -69,6 +69,34 @@ class TenantContext:
     # caller has `tenant_scope_all` (set True when they're a tenant-wide user).
     allowed_location_ids: list[str] = field(default_factory=list)
     tenant_scope_all: bool = False   # True = can see every location in tenant
+    # Request-scoped observability metadata (IP, user-agent, request id).
+    # Populated by `get_tenant_context()`. Background contexts leave these None.
+    request_id: str | None = None
+    ip: str | None = None
+    user_agent: str | None = None
+
+    @classmethod
+    def for_background(
+        cls,
+        tenant_id: str,
+        *,
+        actor: str = "system",
+        tenant_scope_all: bool = True,
+    ) -> "TenantContext":
+        """Build a TenantContext for a background job / async worker.
+
+        Explicitly NEVER a platform admin. The `actor` string shows up in
+        audit rows so the operator can tell which worker touched a row."""
+        if not tenant_id:
+            raise ValueError("for_background() requires an explicit tenant_id")
+        synth_user = {"id": f"worker:{actor}", "email": actor, "role": "worker"}
+        return cls(
+            user=synth_user,
+            tenant_id=tenant_id,
+            is_platform_admin=False,
+            tenant_scope_all=tenant_scope_all,
+            allowed_location_ids=[],
+        )
 
     def assert_tenant_bound(self) -> None:
         if self.is_platform_admin:
@@ -191,7 +219,16 @@ async def get_tenant_context(request: Request) -> TenantContext:
     Platform admins may override the active tenant for a cross-tenant read
     by sending an `X-Tenant-Id` header; every such override is flagged on
     the returned context so the router can audit it.
+
+    The resolved context is stashed on `request.state.tenant_context` so
+    middleware, exception handlers, and low-level audit hooks can access
+    it without re-running auth.
     """
+    # Cache on request.state so repeated deps on the same request share work.
+    cached = getattr(request.state, "tenant_context", None)
+    if cached is not None:
+        return cached
+
     from core.deps import get_current_user  # lazy — avoid import cycle
 
     user = await get_current_user(request)
@@ -205,10 +242,22 @@ async def get_tenant_context(request: Request) -> TenantContext:
         if override:
             tenant_id = override
 
+    # Request observability metadata.
+    xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    ip = xff or (request.client.host if request.client else "unknown")
+    request_id = (
+        request.headers.get("x-request-id")
+        or request.headers.get("x-correlation-id")
+        or None
+    )
+
     ctx = TenantContext(
         user=user,
         tenant_id=tenant_id,
         is_platform_admin=is_platform,
+        request_id=request_id,
+        ip=ip,
+        user_agent=request.headers.get("user-agent"),
     )
 
     # Resolve allowed locations from `user_location_assignments`.
@@ -220,7 +269,7 @@ async def get_tenant_context(request: Request) -> TenantContext:
         # they are location-restricted.
         assignments = [
             a async for a in db.user_location_assignments.find(
-                {"user_id": user["id"], "status": "active"},
+                {"user_id": user["id"], "status": "active", "tenant_id": tenant_id},
                 {"_id": 0, "location_id": 1},
             )
         ]
@@ -230,6 +279,7 @@ async def get_tenant_context(request: Request) -> TenantContext:
         if user.get("tenant_scope_all") is True or user.get("role") in ("admin", "super_admin"):
             ctx.tenant_scope_all = True
 
+    request.state.tenant_context = ctx
     return ctx
 
 
