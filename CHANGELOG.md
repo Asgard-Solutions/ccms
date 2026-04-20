@@ -58,6 +58,41 @@ public release yet — we're pre-1.0).
   `Patients`, `Register`, `Dashboard`, `PermissionMatrix`, `toast`.
 
 ### Added (theme guardrail)
+- **Theme Preview page (`/settings/theme-preview`)** — a one-screen
+  regression canary that renders every Shadcn primitive in its
+  default / hover / focus / disabled / error states alongside the
+  full semantic token palette and the typography specimen (Outfit
+  display · Manrope body · JetBrains Mono technical). Light · Dark ·
+  System parity can be confirmed from a single URL. Source:
+  `frontend/src/pages/ThemePreview.jsx`; wired into `App.js` behind
+  the standard AppShell.
+- **Card primitive density pass** — `CardHeader`, `CardContent`,
+  `CardFooter` default padding tightened from 24px (`p-6`) to 20px
+  (`p-5`) per spec §6 compact operational density. No visual
+  regression on Dashboard / Appointments / Compliance KPI tiles.
+- **Compat alias deletion** — removed the now-unreferenced backwards-
+  compat layer from `index.css`:
+    - all legacy utility classes (`.surface-app`, `.surface-raised`,
+      `.surface-muted`, `.surface-sage`, `.surface-sage-soft`,
+      `.surface-warning`, `.surface-danger-soft`, `.surface-topbar`,
+      `.text-strong`, `.text-muted-strong`, `.text-soft`, `.text-sage`,
+      `.text-sage-deep`, `.text-danger*`, `.text-warning`, `.bg-sage`,
+      `.bg-danger`, `.hover\:bg-sage-hover`, `.hover\:bg-danger-hover`,
+      `.border-subtle`, `.border-strong`);
+    - all legacy CSS variables (`--surface-app`, `--surface-raised`,
+      `--surface-muted`, `--surface-sage*`, `--warning-surface`,
+      `--surface-danger-soft`, `--sage-accent*`, `--danger-accent`,
+      `--warning-accent`, `--text-strong`, `--text-muted`,
+      `--text-soft`, `--text-danger*`, `--border-subtle`,
+      `--border-strong`, `--chrome-topbar-bg`).
+  - Re-pointed internal alias tokens (`--sidebar-fg`,
+    `--sidebar-active-fg`, `--table-header-fg`) and the `::selection`
+    color to the canonical `hsl(var(--foreground))` /
+    `hsl(var(--muted-foreground))` references.
+  - Result: `index.css` is ~40% smaller and speaks exactly one
+    vocabulary — foundation primitives → semantic tokens → component
+    aliases → three essential utilities (`font-display`, `font-body`,
+    `font-mono`, `focus-ring`, `tabular-nums`).
 - **Phase 3 — legacy alias retirement (2026-04-20)** — migrated every
   backwards-compat utility class across `frontend/src/**` to direct
   semantic Tailwind utilities. 762 instances swept in one atomic

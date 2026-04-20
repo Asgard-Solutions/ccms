@@ -113,8 +113,7 @@
    -------------------------------------------------------------------------
    Two formats are exposed:
      - HSL-channel tokens for the shadcn Tailwind pattern: hsl(var(--x))
-     - Hex tokens for bespoke utility classes (surface-app, text-strong, etc.)
-   Both layers share a single palette definition.
+     - Hex tokens for bespoke utility classes (surface-2, border-strong, …)
    ------------------------------------------------------------------------- */
 @layer base {
     :root {
@@ -138,11 +137,11 @@
         --border: 205 21% 88%;                /* #D7E0E7 slate-200 */
         --input: 205 21% 88%;
         --ring: 184 72% 33%;                  /* #1A8A91 teal-600 */
-        --chart-1: 184 72% 28%;               /* teal-700 */
-        --chart-2: 184 40% 44%;               /* teal-500 soft */
-        --chart-3: 22 43% 53%;                /* copper-600 */
-        --chart-4: 202 55% 43%;               /* info-600 */
-        --chart-5: 210 34% 30%;               /* slate-700 */
+        --chart-1: 184 72% 28%;
+        --chart-2: 184 40% 44%;
+        --chart-3: 22 43% 53%;
+        --chart-4: 202 55% 43%;
+        --chart-5: 210 34% 30%;
         --radius: 0.5rem;                     /* 8px base (spec §7) */
 
         /* ---- Extended hex semantic tokens (direct CSS consumption) ---- */
@@ -150,7 +149,6 @@
         --surface-2: #F1F6F9;
         --surface-3: #EAF1F5;
         --border-strong-color: #B8C6D1;
-        --input-bg: #FFFFFF;
         --focus: #23A1A8;
         --selection: rgba(35, 161, 168, 0.16);
 
@@ -171,34 +169,6 @@
         --info-soft: #DDECF7;
         --destructive-hex: #C54A56;
         --destructive-soft: #F9E1E4;
-
-        /* ---- Backward-compat aliases (legacy sage/stone class names) ----
-           The codebase still uses classes such as `text-sage`, `bg-sage`,
-           `surface-raised`, `text-strong`, etc. These are re-pointed to
-           the new slate+teal+copper palette so existing pages inherit the
-           new brand without a file-by-file rewrite. Phase 2 will migrate
-           those class names to `bg-primary`, `bg-surface`, `text-foreground`,
-           etc., per the engineering spec. */
-        --surface-app:            #F6FAFC;
-        --surface-raised:         #FFFFFF;
-        --surface-muted:          #F1F6F9;
-        --surface-sage:           #D8F0F1;     /* teal-100 — brand-tinted cells */
-        --surface-sage-soft:      #EAF6F7;     /* subtle teal hover */
-        --border-subtle:          #D7E0E7;
-        --border-strong:          #B8C6D1;
-        --text-strong:            #15202B;
-        --text-muted:             #53697A;
-        --text-soft:              #93A8B8;
-        --sage-accent:            #14757C;     /* -> primary teal */
-        --sage-accent-deep:       #0F4E52;     /* -> teal-900 */
-        --sage-accent-hover:      #116168;     /* -> teal-800 */
-        --danger-accent:          #C54A56;
-        --warning-accent:         #B27A14;
-        --warning-surface:        #F8EBCB;
-        --surface-danger-soft:    #F9E1E4;
-        --text-danger-strong:     #7A2932;
-        --text-danger-soft:       #B8505A;
-        --chrome-topbar-bg:       rgba(255, 255, 255, 0.92);
     }
 }
 
@@ -229,8 +199,8 @@
         --ring: 183 40% 55%;
         --chart-1: 183 40% 51%;
         --chart-2: 183 28% 63%;
-        --chart-3: 22 53% 69%;                /* copper-400 */
-        --chart-4: 207 52% 63%;               /* info-dark */
+        --chart-3: 22 53% 69%;
+        --chart-4: 207 52% 63%;
         --chart-5: 202 24% 80%;
 
         /* ---- Extended hex semantic tokens ---- */
@@ -238,7 +208,6 @@
         --surface-2: #1B2834;
         --surface-3: #223241;
         --border-strong-color: #3A5063;
-        --input-bg: #1B2834;
         --focus: #7ACACE;
         --selection: rgba(122, 202, 206, 0.20);
 
@@ -259,28 +228,6 @@
         --info-soft: rgba(106, 169, 212, 0.18);
         --destructive-hex: #DE6A76;
         --destructive-soft: rgba(222, 106, 118, 0.18);
-
-        /* ---- Backward-compat aliases ---- */
-        --surface-app:            #111A22;
-        --surface-raised:         #16202B;
-        --surface-muted:          #1B2834;
-        --surface-sage:           #1F3A3F;
-        --surface-sage-soft:      #1A2F33;
-        --border-subtle:          #2B3B4A;
-        --border-strong:          #3A5063;
-        --text-strong:            #EAF1F5;
-        --text-muted:             #AFC0CC;
-        --text-soft:              #6A8599;
-        --sage-accent:            #4CB5BA;
-        --sage-accent-deep:       #A9DEE0;
-        --sage-accent-hover:      #7ACACE;
-        --danger-accent:          #DE6A76;
-        --warning-accent:         #D4A34A;
-        --warning-surface:        #352A1E;
-        --surface-danger-soft:    #3B241E;
-        --text-danger-strong:     #F4B6A4;
-        --text-danger-soft:       #DE6A76;
-        --chrome-topbar-bg:       rgba(22, 32, 43, 0.88);
     }
 }
 
@@ -289,16 +236,16 @@
    ------------------------------------------------------------------------- */
 @layer base {
     :root {
-        --sidebar-bg:                  var(--surface);
-        --sidebar-fg:                  var(--text-strong);
-        --sidebar-active-bg:           var(--muted);
-        --sidebar-active-fg:           var(--text-strong);
+        --sidebar-bg:                  hsl(var(--card));
+        --sidebar-fg:                  hsl(var(--foreground));
+        --sidebar-active-bg:           hsl(var(--muted));
+        --sidebar-active-fg:           hsl(var(--foreground));
         --sidebar-active-indicator:    var(--primary-hex);
 
         --table-row-hover:             var(--surface-2);
         --table-row-selected:          #D8F0F1;
         --table-header-bg:             var(--surface-2);
-        --table-header-fg:             var(--text-muted);
+        --table-header-fg:             hsl(var(--muted-foreground));
 
         --input-placeholder:           #6A8599;
         --dialog-overlay:              rgba(15, 23, 32, 0.5);
@@ -309,16 +256,16 @@
     }
 
     .dark {
-        --sidebar-bg:                  var(--surface);
-        --sidebar-fg:                  var(--text-strong);
+        --sidebar-bg:                  hsl(var(--card));
+        --sidebar-fg:                  hsl(var(--foreground));
         --sidebar-active-bg:           var(--surface-2);
-        --sidebar-active-fg:           var(--text-strong);
+        --sidebar-active-fg:           hsl(var(--foreground));
         --sidebar-active-indicator:    var(--primary-hex);
 
         --table-row-hover:             var(--surface-2);
         --table-row-selected:          #1F3A3F;
         --table-header-bg:             var(--surface-2);
-        --table-header-fg:             var(--text-muted);
+        --table-header-fg:             hsl(var(--muted-foreground));
 
         --input-placeholder:           #93A8B8;
         --dialog-overlay:              rgba(5, 10, 14, 0.65);
@@ -359,7 +306,7 @@ code, kbd, samp, pre {
     }
     ::selection {
         background: var(--selection);
-        color: var(--text-strong);
+        color: hsl(var(--foreground));
     }
     h1, h2, h3, h4, h5, h6 {
         font-family: var(--font-display);
@@ -373,39 +320,12 @@ code, kbd, samp, pre {
 
 /* -------------------------------------------------------------------------
    7. Shared utilities
+   -------------------------------------------------------------------------
+   Only utilities that cannot be expressed through the semantic Tailwind
+   mapping live here. Everything else goes through `bg-primary`,
+   `text-foreground`, `border-border`, `bg-success-soft`, etc.
    ------------------------------------------------------------------------- */
 @layer utilities {
-    /* Surfaces */
-    .surface-app        { background-color: var(--surface-app); }
-    .surface-raised     { background-color: var(--surface-raised); }
-    .surface-muted      { background-color: var(--surface-muted); }
-    .surface-sage       { background-color: var(--surface-sage); }
-    .surface-sage-soft  { background-color: var(--surface-sage-soft); }
-    .surface-warning    { background-color: var(--warning-surface); }
-    .surface-danger-soft{ background-color: var(--surface-danger-soft); }
-    .surface-topbar     { background-color: var(--chrome-topbar-bg); }
-
-    /* Text */
-    .text-strong        { color: var(--text-strong); }
-    .text-muted-strong  { color: var(--text-muted); }
-    .text-soft          { color: var(--text-soft); }
-    .text-sage          { color: var(--sage-accent); }
-    .text-sage-deep     { color: var(--sage-accent-deep); }
-    .text-danger        { color: var(--danger-accent); }
-    .text-danger-strong { color: var(--text-danger-strong); }
-    .text-danger-soft   { color: var(--text-danger-soft); }
-    .text-warning       { color: var(--warning-accent); }
-
-    /* Backgrounds */
-    .bg-danger          { background-color: var(--danger-accent); }
-    .hover\:bg-danger-hover:hover { background-color: var(--danger-accent); filter: brightness(0.92); }
-    .bg-sage            { background-color: var(--sage-accent); }
-    .hover\:bg-sage-hover:hover { background-color: var(--sage-accent-hover); }
-
-    /* Borders */
-    .border-subtle      { border-color: var(--border-subtle); }
-    .border-strong      { border-color: var(--border-strong); }
-
     /* Typography helpers (spec §5) */
     .font-display       { font-family: var(--font-display); }
     .font-body          { font-family: var(--font-body); }

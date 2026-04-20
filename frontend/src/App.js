@@ -23,6 +23,7 @@ import PermissionMatrix from "./pages/PermissionMatrix";
 import RoleManagement from "./pages/RoleManagement";
 import AccessReview from "./pages/AccessReview";
 import Elevation from "./pages/Elevation";
+import ThemePreview from "./pages/ThemePreview";
 import "./App.css";
 
 function Shell({ children, roles }) {
@@ -58,6 +59,7 @@ export default function App() {
               <Route path="/access-review" element={<Shell roles={["admin"]}><AccessReview /></Shell>} />
               <Route path="/elevation" element={<Shell><Elevation /></Shell>} />
               <Route path="/security" element={<Shell><Security /></Shell>} />
+              <Route path="/settings/theme-preview" element={<Shell><ThemePreview /></Shell>} />
             </Routes>
           </BrowserRouter>
           <Toaster richColors position="top-right" />
