@@ -450,7 +450,7 @@ function HeaderEditDialog({ open, onOpenChange, claim, onSaved }) {
         <div className="grid gap-4 sm:grid-cols-2">
           <div>
             <Label htmlFor="ch-type">Claim type</Label>
-            <Select value={form.claim_type} onValueChange={(v) => patch("claim_type", v)}>
+            <Select value={form.claim_type || "professional"} onValueChange={(v) => patch("claim_type", v)}>
               <SelectTrigger id="ch-type"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="professional">Professional</SelectItem>
