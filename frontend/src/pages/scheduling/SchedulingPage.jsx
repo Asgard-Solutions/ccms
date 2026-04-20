@@ -35,6 +35,8 @@ export default function SchedulingPage() {
     setDate,
     appointments,
     loading,
+    providerId,
+    setProviderId,
     prev,
     next,
     today,
@@ -51,7 +53,7 @@ export default function SchedulingPage() {
   } = useAppointmentCounts({
     view,
     date,
-    providerId: null,
+    providerId,
     enabled: view !== "day",
   });
 
@@ -88,6 +90,8 @@ export default function SchedulingPage() {
       <SchedulingToolbar
         view={view}
         date={date}
+        providerId={providerId}
+        onProviderChange={setProviderId}
         onViewChange={setView}
         onPrev={prev}
         onNext={next}
@@ -119,6 +123,7 @@ export default function SchedulingPage() {
               date={date}
               countsByDate={countsByDate}
               canBook={canBook}
+              hours={clinicHours}
               onOpenDay={(d) => goToDay(d)}
               onOpenAppointment={(a) => {
                 if (canBook && a.status === "scheduled") openReschedule(a);

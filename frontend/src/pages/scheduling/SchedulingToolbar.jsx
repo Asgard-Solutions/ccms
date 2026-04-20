@@ -1,6 +1,7 @@
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { rangeLabel, VIEWS } from "./dateHelpers";
+import ProviderFilter from "./ProviderFilter";
 
 const VIEW_LABEL = {
   day: "Day",
@@ -12,6 +13,8 @@ const VIEW_LABEL = {
 export default function SchedulingToolbar({
   view,
   date,
+  providerId,
+  onProviderChange,
   onViewChange,
   onPrev,
   onNext,
@@ -34,6 +37,8 @@ export default function SchedulingToolbar({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
+        <ProviderFilter value={providerId} onChange={onProviderChange} />
+
         <div
           data-testid="scheduling-view-toggle"
           className="inline-flex rounded-sm border border-border bg-card p-0.5"

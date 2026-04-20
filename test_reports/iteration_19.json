@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 19 sweep covering the three new Scheduling deliverables (Sunday-first calendars, Clinic Settings page at /settings/clinic, week-view closed-day shading) PLUS provider filter + RBAC + legacy redirects. Backend regression: 14/14 prior pytest tests still GREEN (test_clinic_profile.py 6 + test_appointment_counts.py 5 + test_scheduling_workflows.py 3). Frontend UI sweep: 25/26 review items PASS. The single failure is Clinic Settings save round-trip — toggling the Sunday switch open then clicking Save and reloading reverts the switch to closed (state did not persist). Toast area was empty after the save click, so the POST appears to silently fail or the error toast disappeared too quickly. This matches the iteration_18 outstanding issue (POST /api/clinic-profiles returning 422 with empty body for the admin@ccms.app tenant). All other clinic-settings UI plumbing (testids, row order Sun→Sat with backend dow 6,0,1,2,3,4,5, all 12 form field testids, reauth cookie endpoint returning 200) is correct. Importantly the WEEK VIEW SHADING feature works correctly regardless: Sun + Sat cells render data-testid=scheduling-week-closed-{date} pill, have data-closed='true', bg-muted/40 class, and NO scheduling-week-add-{date}; Mon shows scheduling-week-hours-{date} reading '9:00–17:00' and the quick-add button. Provider filter dropdown shows 22 providers + 'All providers' option, and selecting one fires /api/appointments/counts?...&provider_id=<id> correctly.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/clinic-profiles (or PUT /{location_id})", "issue": "Frontend save round-trip from Clinic Settings page does not persist (Sun switch revert after reload, empty toast). Reauth cookie was issued (200). Likely the same 422-empty-body issue flagged in iteration_18. UI cannot self-correct payload because the validation detail is not surfaced. NOTE: 14/14 backend pytests for test_clinic_profile.py still pass against the test fixtures, so the schema is correct in isolation — the failure is specifically when the ClinicSettings page POSTs against the admin@ccms.app tenant context (perhaps locations[] is empty for that tenant, or location_id mismatch)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ClinicSettings (/settings/clinic)", "issue": "Save click on a fresh (unconfigured) profile silently appears to no-op: Sun switch toggled true → Save → reload → Sun switch back to false. No success or error toast surfaced within 3.5s. Either the request 4xx'd and the toast was suppressed, or the location_id resolution failed.", "selector": "[data-testid=clinic-settings-save-btn]", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "ClinicSettings → POST /api/clinic-profiles round-trip", "issue": "Persistence failure as above; everything else round-trips fine (reauth 200, GET /api/clinic-profiles/{id} either 200 or 404 with sensible-default fallback)", "affected_selectors": ["[data-testid=clinic-settings-save-btn]", "[data-testid=clinic-hours-open-6]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_clinic_profile.py",
+    "/app/backend/tests/test_appointment_counts.py",
+    "/app/backend/tests/test_scheduling_workflows.py",
+    "/app/test_reports/pytest/iter19_scheduling.xml"
+  ],
+  "action_items": [
+    "Investigate why ClinicSettings save does not persist for admin@ccms.app — capture network response in browser devtools, or have ClinicSettings.onSave() console.error the full err.response. Likely candidates: (a) /tenancy/me/context returns empty locations[] for admin tenant so location_id is null and the POST 422s, (b) the POST payload's `country` or `timezone` field is rejected by a stricter validator that the pytest fixture happens to satisfy, (c) error-toast handler swallows a non-array detail.",
+    "(Repeat from iteration_18) Surface the FastAPI validation detail on 422 in the save handler so test agents can self-correct payload shape.",
+    "(Polish) The toast-success text 'Clinic settings saved' was not observed even when GET happily round-trips an existing profile — verify sonner is mounted & that `richColors` is actually rendering toasts."
+  ],
+  "critical_code_review_comments": [
+    "ClinicSettings.jsx onSave() catches the error and shows toast.error, but if `err.response` itself is undefined (e.g. network/CORS layer abort) the toast becomes 'Save failed' with no detail — consider also `console.error(err)` so future test agents see something in the console log.",
+    "The `country: 'US'` default in the form is hard-coded but never editable in the UI. If the backend whitelists country codes that's fine; otherwise consider exposing as a Select.",
+    "ProviderFilter.jsx silently swallows /auth/providers errors (returns empty list and component renders null). This means a network blip during page load makes the filter disappear without any user-visible feedback.",
+    "AppShell NAV_ITEMS adds 'Clinic settings' for admins only, which is correct. /settings/clinic route also gates with roles=['admin'] in App.js — defence in depth verified for downtown-doc@sunrise.ccms.app: nav item hidden, direct URL redirected to / (not 403, but UX-equivalent).",
+    "WeekView extractDaySpan integration is clean — when hours is undefined/null the cells default to closed=false which keeps the previous behaviour. Sun=closed pill + bg-muted/40 + no add-btn render correctly. 9:00–17:00 hours label format is consistent with backend HH:mm."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "14/14 prior pytests (100%)",
+    "frontend": "25/26 review checks (96%)"
+  },
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (works, reauth 200). downtown-doc@sunrise.ccms.app / Sunrise@ComplianceClinic1 (works, RBAC negative confirmed for /settings/clinic).",
+  "seed_data_creation": "None persisted. Attempted to create/update a clinic profile for admin@ccms.app tenant — POST/PUT silently failed (no DB row created/changed). No appointments created.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All UI plumbing for the 3 new tasks is in place and verified. The only outstanding bug is the same one flagged in iteration_18 — POST /api/clinic-profiles from the admin@ccms.app session does not persist. Once main agent surfaces the 422 detail (or fixes the location_id resolution in /tenancy/me/context for the admin tenant), the round-trip should pass. Week-view shading does NOT depend on this fix being applied — it works correctly with both an existing profile and the no-profile fallback.",
+  "rca of the issue": "Save round-trip failure: the most likely RCA based on prior iteration_18 evidence is that admin@ccms.app's tenancy context returns either no locations[] (so locationId is null and the save effectively no-ops) or a location whose tenant scoping fails the backend's POST /api/clinic-profiles validator. Reproduction: login as admin → /settings/clinic → toggle clinic-hours-open-6 (Sun) ON → click clinic-settings-save-btn → reload page → Sun switch is back to OFF. Mitigation for now: use group-admin@sunrise.ccms.app (multi-location admin) which has explicit Sunrise tenant locations."
+}

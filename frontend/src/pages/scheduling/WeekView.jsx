@@ -8,6 +8,7 @@ import {
   WEEKDAY_SHORT,
 } from "./dateHelpers";
 import { formatTime } from "../../utils/time";
+import { extractDaySpan } from "./useClinicHours";
 
 const PREVIEW_LIMIT = 3;
 
@@ -16,11 +17,19 @@ const PREVIEW_LIMIT = 3;
  * map instead of paging through every appointment in the range. Each cell
  * shows the day count plus up to PREVIEW_LIMIT sample appointments from the
  * backend aggregation's `samples[]`.
+ *
+ * Clinic-hours awareness (Task 14):
+ *   - Closed days get a subtle muted background + "Closed" pill and the
+ *     quick-add "+" is suppressed on those days (book flow still available
+ *     from the global New-appointment CTA for exceptions).
+ *   - Open-day cells show the configured open/close range under the header
+ *     so staff can see the business window at a glance.
  */
 export default function WeekView({
   date,
   countsByDate,
   canBook,
+  hours,
   onOpenDay,
   onOpenAppointment,
   onCreateAt,
@@ -56,11 +65,30 @@ export default function WeekView({
           const dayLabel = d.toLocaleDateString("en-US", {
             weekday: "short", month: "short", day: "numeric",
           });
+          const span = extractDaySpan(hours, d);
+          const isClosed = span.isClosed;
+          const hoursLabel = !hours || isClosed || span.openMinutes == null
+            ? null
+            : (() => {
+                const fmt = (m) => {
+                  const h = Math.floor(m / 60);
+                  const mm = String(m % 60).padStart(2, "0");
+                  return `${h}:${mm}`;
+                };
+                return `${fmt(span.openMinutes)}–${fmt(span.closeMinutes)}`;
+              })();
           return (
             <div
               key={key}
               data-testid={`scheduling-week-cell-${key}`}
-              className={`group relative flex min-h-[180px] flex-col gap-2 p-3 ${isToday(d) ? "bg-background" : "bg-card"}`}
+              data-closed={isClosed ? "true" : "false"}
+              className={`group relative flex min-h-[180px] flex-col gap-2 p-3 ${
+                isClosed
+                  ? "bg-muted/40"
+                  : isToday(d)
+                  ? "bg-background"
+                  : "bg-card"
+              }`}
             >
               <div className="flex items-center gap-2">
                 <button
@@ -84,13 +112,19 @@ export default function WeekView({
                     {count === 0 ? "0" : `${count} appt${count === 1 ? "" : "s"}`}
                   </span>
                 </button>
-                {canBook && (
+                {canBook && !isClosed && (
                   <button
                     type="button"
                     data-testid={`scheduling-week-add-${key}`}
                     onClick={() => {
                       const slot = new Date(d);
-                      slot.setHours(9, 0, 0, 0);
+                      const startH = span.openMinutes != null
+                        ? Math.floor(span.openMinutes / 60)
+                        : 9;
+                      const startMin = span.openMinutes != null
+                        ? span.openMinutes % 60
+                        : 0;
+                      slot.setHours(startH, startMin, 0, 0);
                       onCreateAt?.(slot);
                     }}
                     aria-label={`Book a new appointment on ${dayLabel}`}
@@ -100,6 +134,22 @@ export default function WeekView({
                   </button>
                 )}
               </div>
+
+              {isClosed ? (
+                <span
+                  data-testid={`scheduling-week-closed-${key}`}
+                  className="self-start rounded-sm bg-warning-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning"
+                >
+                  Closed
+                </span>
+              ) : hoursLabel ? (
+                <span
+                  data-testid={`scheduling-week-hours-${key}`}
+                  className="self-start text-[10px] font-mono text-muted-foreground/80"
+                >
+                  {hoursLabel}
+                </span>
+              ) : null}
 
               {count === 0 ? (
                 <div
