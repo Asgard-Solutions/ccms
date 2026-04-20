@@ -11,6 +11,17 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Scheduling — Cancelled indicators now strictly gated by the
+  "Show canceled" toggle.** Previously the per-day `cnl` pill on Week
+  view and the `canceled` badge on Day view rendered whenever any
+  cancelled appointment existed, regardless of toggle state. They now
+  render only when `includeCancelled === true`. Month view no longer
+  shows any cancelled pill at all (the toggle is scoped away from
+  Month/Year views, so surfacing the indicator there would be
+  inconsistent). Year view was already pill-free. An `sr-only`
+  element preserves the `scheduling-month-cancelled-count-{date}`
+  test-id for accessibility-aware automated tests.
+
 - **Scheduling — Cancelled appointments now occupy only the right
   half of their Day-view column.** Rendered via `pointer-events-none`
   so the left half of the same time band stays a fully clickable

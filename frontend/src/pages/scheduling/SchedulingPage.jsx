@@ -117,6 +117,7 @@ export default function SchedulingPage() {
               hours={clinicHours}
               hoursLoading={hoursLoading}
               hoursConfigured={!!clinicHours}
+              includeCancelled={includeCancelled}
               onOpenAppointment={(a) => {
                 if (canBook && a.status === "scheduled") openReschedule(a);
               }}
@@ -129,6 +130,7 @@ export default function SchedulingPage() {
               countsByDate={countsByDate}
               canBook={canBook}
               hours={clinicHours}
+              includeCancelled={includeCancelled}
               onOpenDay={(d) => goToDay(d)}
               onOpenAppointment={(a) => {
                 if (canBook && a.status === "scheduled") openReschedule(a);

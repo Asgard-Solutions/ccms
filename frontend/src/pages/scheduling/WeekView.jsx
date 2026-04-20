@@ -30,6 +30,7 @@ export default function WeekView({
   countsByDate,
   canBook,
   hours,
+  includeCancelled = false,
   onOpenDay,
   onOpenAppointment,
   onCreateAt,
@@ -111,7 +112,7 @@ export default function WeekView({
                   >
                     {count === 0 ? "0" : `${count} appt${count === 1 ? "" : "s"}`}
                   </span>
-                  {entry.cancelled_count > 0 && (
+                  {includeCancelled && entry.cancelled_count > 0 && (
                     <span
                       data-testid={`scheduling-week-cancelled-count-${key}`}
                       className="rounded-sm bg-destructive-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-destructive"

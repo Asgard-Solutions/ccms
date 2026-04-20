@@ -136,6 +136,7 @@ export default function DayView({
   hours,
   hoursLoading,
   hoursConfigured,
+  includeCancelled = false,
   onOpenAppointment,
   onCreateAt,
 }) {
@@ -251,7 +252,7 @@ export default function DayView({
           >
             {activeCount} {activeCount === 1 ? "appointment" : "appointments"}
           </span>
-          {cancelledCount > 0 && (
+          {cancelledCount > 0 && includeCancelled && (
             <span
               data-testid="scheduling-day-cancelled-count"
               className="rounded-sm bg-destructive-soft px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-destructive"
