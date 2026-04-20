@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isoDateKey, sameDay } from "./dateHelpers";
+import { extractDaySpan } from "./useClinicHours";
+import { Button } from "../../components/ui/button";
 
 /**
  * Day view — vertical timeline with 15-minute slots.
  *
- * Visible hours are a placeholder (07:00 – 20:00) until clinic hours land.
+ * Visible hours are driven by the clinic's configured hours for that
+ * weekday (Task 9): open − 2h through close + 2h. Falls back to 07:00–20:00
+ * when clinic hours haven't been configured.
+ *
  * Per-appointment block shows patient name, phone, time, provider, reason.
  * Overlapping appointments are laid out side-by-side in computed columns.
  * Clicking an appointment opens reschedule; clicking an empty slot opens the
@@ -13,9 +18,12 @@ import { isoDateKey, sameDay } from "./dateHelpers";
 
 const SLOT_MINUTES = 15;
 const SLOT_HEIGHT = 16; // px per 15-minute slot
-const DEFAULT_START_HOUR = 7;
-const DEFAULT_END_HOUR = 20;
 const GUTTER_W = 72; // px
+const BUFFER_MINUTES = 120; // 2 hours before/after clinic hours
+const FALLBACK_OPEN = 7 * 60; // 07:00
+const FALLBACK_CLOSE = 20 * 60; // 20:00 (so fallback window = same 07:00–20:00)
+const CLOSED_DAY_OPEN = 7 * 60;
+const CLOSED_DAY_CLOSE = 19 * 60; // nominal window for exception viewing
 
 function formatHHMM(d) {
   return d.toLocaleTimeString("en-US", {
@@ -28,19 +36,11 @@ function minutesSince(dayStart, iso) {
   return (new Date(iso).getTime() - dayStart.getTime()) / 60000;
 }
 
-/**
- * Assign each appointment a column so that overlapping appointments sit
- * side-by-side. Classic interval scheduling: sort by start, place in first
- * free column whose previous occupant ended at or before our start.
- * Returns [{appt, col, totalCols}] preserving input identity.
- */
 function layoutColumns(appts) {
   if (!appts.length) return [];
   const sorted = [...appts].sort(
     (a, b) => new Date(a.start_time) - new Date(b.start_time)
   );
-
-  // Group into overlap clusters (each cluster shares a totalCols width).
   const clusters = [];
   let cluster = [];
   let clusterEnd = 0;
@@ -59,8 +59,7 @@ function layoutColumns(appts) {
 
   const out = [];
   for (const group of clusters) {
-    // Column assignment within this cluster.
-    const cols = []; // array of end timestamps
+    const cols = [];
     const assigned = group.map((a) => {
       const s = new Date(a.start_time).getTime();
       const e = new Date(a.end_time).getTime();
@@ -84,39 +83,92 @@ function layoutColumns(appts) {
   return out;
 }
 
+/**
+ * Compute the default window in minutes-since-midnight for the selected day.
+ * Honors `expanded`: when true the window is widened to enclose every
+ * appointment on that day (ensuring nothing is silently hidden).
+ */
+function computeWindow({ hours, date, expanded, inDayAppts }) {
+  const span = extractDaySpan(hours, date);
+  let startM;
+  let endM;
+  let isClosed = span.isClosed;
+
+  if (!hours) {
+    startM = FALLBACK_OPEN;
+    endM = FALLBACK_CLOSE;
+  } else if (isClosed) {
+    startM = CLOSED_DAY_OPEN;
+    endM = CLOSED_DAY_CLOSE;
+  } else if (span.openMinutes != null && span.closeMinutes != null) {
+    startM = Math.max(0, span.openMinutes - BUFFER_MINUTES);
+    endM = Math.min(24 * 60, span.closeMinutes + BUFFER_MINUTES);
+  } else {
+    startM = FALLBACK_OPEN;
+    endM = FALLBACK_CLOSE;
+  }
+
+  // Expansion: if user opted in OR the day is closed and has appointments
+  // outside the nominal view, widen to cover every in-day appt.
+  if (expanded && inDayAppts.length) {
+    const dayStart = new Date(date);
+    dayStart.setHours(0, 0, 0, 0);
+    const minsFromMidnight = (iso) =>
+      (new Date(iso).getTime() - dayStart.getTime()) / 60000;
+    const earliest = Math.min(...inDayAppts.map((a) => minsFromMidnight(a.start_time)));
+    const latest = Math.max(...inDayAppts.map((a) => minsFromMidnight(a.end_time)));
+    startM = Math.max(0, Math.floor(Math.min(startM, earliest) / 15) * 15);
+    endM = Math.min(24 * 60, Math.ceil(Math.max(endM, latest) / 15) * 15);
+  }
+
+  // Snap to 15-minute bounds and enforce a 15-minute minimum window.
+  startM = Math.floor(startM / 15) * 15;
+  endM = Math.ceil(endM / 15) * 15;
+  if (endM <= startM) endM = startM + 15;
+
+  return { startM, endM, isClosed };
+}
+
 export default function DayView({
   date,
   appointments,
   canBook,
+  hours,
+  hoursLoading,
+  hoursConfigured,
   onOpenAppointment,
   onCreateAt,
 }) {
-  const startHour = DEFAULT_START_HOUR;
-  const endHour = DEFAULT_END_HOUR;
-  const totalSlots = (endHour - startHour) * (60 / SLOT_MINUTES);
-  const totalHeight = totalSlots * SLOT_HEIGHT;
-  const dayStart = useMemo(() => {
-    const d = new Date(date);
-    d.setHours(startHour, 0, 0, 0);
-    return d;
-  }, [date, startHour]);
-  const dayEnd = useMemo(() => {
-    const d = new Date(date);
-    d.setHours(endHour, 0, 0, 0);
-    return d;
-  }, [date, endHour]);
+  const [expanded, setExpanded] = useState(false);
 
   const key = isoDateKey(date);
   const visible = useMemo(
     () =>
-      (appointments || []).filter((a) => {
-        const s = new Date(a.start_time);
-        return sameDay(s, date);
-      }),
+      (appointments || []).filter((a) => sameDay(new Date(a.start_time), date)),
     [appointments, date]
   );
 
-  // Appointments that overlap the visible window at all.
+  const { startM, endM, isClosed } = useMemo(
+    () => computeWindow({ hours, date, expanded, inDayAppts: visible }),
+    [hours, date, expanded, visible]
+  );
+
+  const dayStart = useMemo(() => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    d.setMinutes(startM);
+    return d;
+  }, [date, startM]);
+  const dayEnd = useMemo(() => {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    d.setMinutes(endM);
+    return d;
+  }, [date, endM]);
+
+  const totalSlots = (endM - startM) / SLOT_MINUTES;
+  const totalHeight = totalSlots * SLOT_HEIGHT;
+
   const inWindow = useMemo(
     () =>
       visible.filter((a) => {
@@ -127,14 +179,11 @@ export default function DayView({
     [visible, dayStart, dayEnd]
   );
 
-  const outsideWindow = useMemo(
-    () => visible.length - inWindow.length,
-    [visible, inWindow]
-  );
+  const outsideWindow = visible.length - inWindow.length;
 
   const laid = useMemo(() => layoutColumns(inWindow), [inWindow]);
 
-  // Current time indicator
+  // Current-time indicator
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60_000);
@@ -148,15 +197,15 @@ export default function DayView({
     ? ((now.getTime() - dayStart.getTime()) / 60_000) * (SLOT_HEIGHT / SLOT_MINUTES)
     : 0;
 
-  // Auto-scroll to bring "now" (or 08:00) into view once on mount.
+  // Auto-scroll to "now" (or a reasonable anchor) once per selected day.
   const scrollRef = useRef(null);
   useEffect(() => {
     if (!scrollRef.current) return;
     const el = scrollRef.current;
-    const target = showNow ? Math.max(0, nowTop - 160) : SLOT_HEIGHT * 4;
+    const target = showNow ? Math.max(0, nowTop - 160) : 0;
     el.scrollTop = target;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [key, startM, endM]);
 
   function slotStartAt(slotIdx) {
     const d = new Date(dayStart);
@@ -164,9 +213,12 @@ export default function DayView({
     return d;
   }
 
+  const startH = Math.floor(startM / 60);
+  const endH = Math.ceil(endM / 60);
+
   return (
     <div data-testid={`scheduling-day-${key}`} className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             {date.toLocaleDateString("en-US", { weekday: "long" })}
@@ -179,22 +231,90 @@ export default function DayView({
             })}
           </div>
         </div>
-        <div
-          data-testid="scheduling-day-count"
-          className="rounded-sm bg-primary/10 px-3 py-1 text-sm font-semibold text-primary"
-        >
-          {visible.length} {visible.length === 1 ? "appointment" : "appointments"}
+        <div className="flex items-center gap-2">
+          {isClosed && (
+            <span
+              data-testid="scheduling-day-closed-badge"
+              className="rounded-sm bg-warning-soft px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-warning"
+            >
+              Clinic closed
+            </span>
+          )}
+          <span
+            data-testid="scheduling-day-count"
+            className="rounded-sm bg-primary/10 px-3 py-1 text-sm font-semibold text-primary"
+          >
+            {visible.length} {visible.length === 1 ? "appointment" : "appointments"}
+          </span>
         </div>
       </div>
 
-      {outsideWindow > 0 && (
+      {!hoursLoading && !hoursConfigured && (
+        <div
+          data-testid="scheduling-day-no-hours-notice"
+          className="rounded-sm border border-border bg-muted px-3 py-2 text-xs text-muted-foreground"
+        >
+          Clinic hours not configured — showing default 07:00–20:00 window. Admins
+          can set hours in Clinic settings.
+        </div>
+      )}
+
+      {isClosed && !expanded && (
+        <div
+          data-testid="scheduling-day-closed-banner"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-sm border border-border bg-warning-soft px-3 py-2 text-xs text-warning"
+        >
+          <span>
+            Clinic is marked closed on {date.toLocaleDateString("en-US", { weekday: "long" })}.
+            {outsideWindow > 0
+              ? ` ${outsideWindow} appointment${outsideWindow === 1 ? "" : "s"} still booked — expand to view.`
+              : " Showing a limited window for exceptions."}
+          </span>
+          {outsideWindow > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="scheduling-day-expand-btn"
+              onClick={() => setExpanded(true)}
+              className="rounded-sm"
+            >
+              Show all appointments
+            </Button>
+          )}
+        </div>
+      )}
+
+      {!isClosed && outsideWindow > 0 && !expanded && (
         <div
           data-testid="scheduling-day-outside-window"
-          className="rounded-sm border border-border bg-warning-soft px-3 py-2 text-xs text-warning"
+          className="flex flex-wrap items-center justify-between gap-2 rounded-sm border border-border bg-warning-soft px-3 py-2 text-xs text-warning"
         >
-          {outsideWindow} appointment{outsideWindow === 1 ? "" : "s"} outside the
-          default {startHour}:00–{endHour}:00 window are not shown.
+          <span>
+            {outsideWindow} appointment{outsideWindow === 1 ? "" : "s"} outside the
+            configured {String(startH).padStart(2, "0")}:00–{String(endH).padStart(2, "0")}:00
+            window are hidden.
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="scheduling-day-expand-btn"
+            onClick={() => setExpanded(true)}
+            className="rounded-sm"
+          >
+            Show all appointments
+          </Button>
         </div>
+      )}
+
+      {expanded && (
+        <button
+          type="button"
+          data-testid="scheduling-day-collapse-btn"
+          onClick={() => setExpanded(false)}
+          className="text-xs font-semibold uppercase tracking-wider text-muted-foreground hover:text-foreground"
+        >
+          Collapse to clinic hours
+        </button>
       )}
 
       <div
@@ -204,9 +324,12 @@ export default function DayView({
       >
         <div className="relative" style={{ height: `${totalHeight}px` }}>
           {/* Time gutter: hour labels */}
-          {Array.from({ length: endHour - startHour + 1 }, (_, i) => {
-            const hour = startHour + i;
-            const top = i * (60 / SLOT_MINUTES) * SLOT_HEIGHT;
+          {Array.from({ length: endH - startH + 1 }, (_, i) => {
+            const hour = startH + i;
+            // Position of this hour label, in minutes from window start:
+            const posMin = hour * 60 - startM;
+            if (posMin < 0 || posMin > endM - startM) return null;
+            const top = posMin * (SLOT_HEIGHT / SLOT_MINUTES);
             return (
               <div
                 key={`hr-${hour}`}
@@ -225,21 +348,22 @@ export default function DayView({
             );
           })}
 
-          {/* Slot grid background with clickable empty slots */}
+          {/* Slot grid (buttons for booking) */}
           <div
             className="absolute inset-y-0 right-0"
             style={{ left: `${GUTTER_W}px` }}
           >
             {Array.from({ length: totalSlots }, (_, i) => {
               const slotStart = slotStartAt(i);
-              const isHourBoundary = i % 4 === 0;
-              const isHalfHour = i % 4 === 2;
+              const minuteOfHour = slotStart.getMinutes();
+              const isHourBoundary = minuteOfHour === 0;
+              const isHalfHour = minuteOfHour === 30;
               const label = formatHHMM(slotStart);
               return (
                 <button
                   key={`slot-${i}`}
                   type="button"
-                  data-testid={`scheduling-day-slot-${isoDateKey(date)}-${String(slotStart.getHours()).padStart(2, "0")}-${String(slotStart.getMinutes()).padStart(2, "0")}`}
+                  data-testid={`scheduling-day-slot-${key}-${String(slotStart.getHours()).padStart(2, "0")}-${String(slotStart.getMinutes()).padStart(2, "0")}`}
                   aria-label={`Book appointment at ${label}`}
                   disabled={!canBook}
                   onClick={() => canBook && onCreateAt?.(slotStart)}

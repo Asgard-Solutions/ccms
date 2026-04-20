@@ -11,6 +11,33 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Scheduling Day view now respects clinic hours (Task 9).** A new
+  `useClinicHours` hook resolves the caller's active location via
+  `/api/tenancy/me/context` → then pulls `hours[]` from
+  `/api/clinic-profiles/{locationId}`. `DayView` uses this to compute
+  its visible window as **(open − 2h) → (close + 2h)**, snapped to
+  15-minute boundaries.
+  - Examples: Wednesday 08:00–18:00 → timeline 06:00–20:00. Saturday
+    09:00–13:00 → timeline 07:00–15:00.
+  - **Closed days** render a `Clinic closed` pill in the header plus a
+    warning banner; the timeline still shows a nominal 07:00–19:00
+    window for exception viewing, and any appointments that exist on
+    that day are never silently hidden — the banner reveals a
+    "Show all appointments" button that expands the window to
+    enclose every appointment present.
+  - **Outside-window appointments** on open days trigger the same
+    expand button (previously just a passive banner). A "Collapse to
+    clinic hours" link returns to the configured window.
+  - **Missing profile**: when a location has no clinic profile, the
+    Day view falls back to 07:00–20:00 and surfaces a subtle
+    "Clinic hours not configured" notice pointing admins at the
+    upcoming Clinic Settings page.
+  - Implementation details: window snapping to 15-min boundaries +
+    minimum 15-min window; per-hour labels drawn via computed offsets
+    so arbitrary open/close minutes (e.g. 08:30–17:45) render
+    correctly; auto-scroll now respects `startM`/`endM` changes when
+    the user jumps days.
+
 - **Clinic Profile service** (new `services/clinic_profile/`). Stores
   one profile per location (1:1 with `locations.id`) carrying clinic
   name, address line 1 / 2, city, state, postal code, country,

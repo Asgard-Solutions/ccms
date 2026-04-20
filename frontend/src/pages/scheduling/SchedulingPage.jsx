@@ -20,6 +20,7 @@ import MonthView from "./MonthView";
 import YearView from "./YearView";
 import BookDialog from "./BookDialog";
 import { useScheduling } from "./useScheduling";
+import { useClinicHours } from "./useClinicHours";
 
 const STAFF_ROLES = ["admin", "doctor", "staff"];
 
@@ -40,6 +41,8 @@ export default function SchedulingPage() {
     goToDay,
     goToMonth,
   } = useScheduling({ view: "week" });
+
+  const { hours: clinicHours, loading: hoursLoading } = useClinicHours();
 
   const [dialog, setDialog] = useState({ open: false, initial: null, defaultStart: null });
   const [confirmCancel, setConfirmCancel] = useState(null);
@@ -82,6 +85,9 @@ export default function SchedulingPage() {
               date={date}
               appointments={appointments}
               canBook={canBook}
+              hours={clinicHours}
+              hoursLoading={hoursLoading}
+              hoursConfigured={!!clinicHours}
               onOpenAppointment={(a) => {
                 if (canBook && a.status === "scheduled") openReschedule(a);
               }}
