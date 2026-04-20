@@ -1,6 +1,6 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-04-20 (Chiro Software theme system adopted)
+**Last updated:** 2026-04-20 (Unified Scheduling module)
 
 ## 0. Design system (binding)
 The Chiro Software design system is authoritative for every UI surface.
@@ -544,8 +544,58 @@ Backend-only expansion of the patient domain to support richer chiropractic inta
 - Subdomain-based tenant routing (`acme.ccms.app → tid=acme`) — P2; ingress + middleware work.
 - Unique-per-tenant `location.code` (currently globally unique sparse) — P2.
 
-## 15. Key reference docs
-- `/app/memory/HIPAA_COMPLIANCE.md` — full safeguard inventory (implemented vs. external)
-- `/app/memory/AUTHORIZATION_GUIDE.md` — RBAC + scopes + policy overlays (2026-02-20)
-- `/app/memory/test_credentials.md` — demo accounts
-- `/app/test_reports/iteration_2.json` — testing agent report (24/24)
+## 26. Iteration 20f — Unified Scheduling module (2026-04-20)
+
+Collapses the previous separate `Appointments` table page and `Calendar`
+page into a single operational scheduling experience.
+
+- **Routing & nav**: `/scheduling` is now the sole scheduling route;
+  `/appointments` and `/calendar` redirect to it. `AppShell` sidebar
+  shows one **Scheduling** item (icon `CalendarDays`) for all roles
+  including patient (previously `Calendar` was staff-only).
+- **Shared framework** under `frontend/src/pages/scheduling/`:
+  * `dateHelpers.js` — pure, dep-free: `startOf/endOf{Day,Week,Month,Year}`,
+    `stepDate(view, d, +/-1)`, `visibleRange(view, d)`, `buildMonthGrid`,
+    `groupByDay`, `rangeLabel` (view-aware: "Monday, April 20, 2026" for
+    day, "Apr 20 – 26, 2026" for week, "April 2026" for month, "2026"
+    for year). Monday-first to match the previous Calendar UX.
+  * `useScheduling.js` — centralised state (view / date / visibleRange /
+    providerId filter placeholder) with cancel-on-stale fetching,
+    in-memory cache keyed by
+    `${view}|${rangeStart}|${rangeEnd}|${providerId}`, and an
+    `invalidate()` call that writes issue on the backend must trigger.
+  * `SchedulingToolbar` — title + view toggle (Day/Week/Month/Year) +
+    prev / today / next + primary `+ New appointment` CTA.
+  * `DayView` — table rows with reschedule/cancel affordances
+    (replacing the old `Appointments.jsx` table semantics).
+  * `WeekView` — **Task 3 focus**: 7 columns, each with weekday+date
+    header, prominent count badge (`0` / `N appts`), up to 3 previews,
+    and a `+N more` control that jumps to Day view. Clicking the day
+    header also jumps to Day view; clicking a preview opens the
+    reschedule dialog (`BookDialog`).
+  * `MonthView` — Monday-first grid, per-day count badge, today ring,
+    click-to-open-day.
+  * `YearView` — 12 mini-month grids, per-day density tint
+    (`bg-primary/{15,35}` → `bg-primary`), per-month totals,
+    click-to-open-month.
+  * `BookDialog` — extracted verbatim from the deleted
+    `Appointments.jsx` so behaviour, audit events, and
+    permission prompts are unchanged.
+- **No backend changes.** Range fetching piggy-backs on the existing
+  `GET /api/appointments?from=&to=` endpoint. Auth, tenant scope, RBAC,
+  and audit rows on create/reschedule/cancel all unchanged.
+- **Deleted**: `frontend/src/pages/Appointments.jsx`,
+  `frontend/src/pages/Calendar.jsx`. Dashboard "view all appointments"
+  and "book first" CTAs now point at `/scheduling`.
+- **Verified**: Playwright smoke — login → `/scheduling`, every view
+  toggle works, prev/today/next functional, sidebar nav contains only
+  "Scheduling" (no "Appointments", no "Calendar"), legacy routes
+  redirect correctly, week view renders 7 count badges, clicking a week
+  day opens Day view, `+ New appointment` dialog opens successfully.
+  Lint clean. Theme CI guard (`scripts/check_theme.py`) clean.
+
+### Follow-up / deferred
+- Provider filter UI (state is wired, no dropdown yet).
+- Keyboard navigation across the week/month grids (arrow keys).
+- Drag-to-reschedule in Week/Day views.
+- Dedicated testing-agent sweep for the new module.

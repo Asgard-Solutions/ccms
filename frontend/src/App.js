@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster } from "./components/ui/sonner";
 import { AuthProvider } from "./contexts/AuthContext";
 import { PermissionsProvider } from "./contexts/PermissionsContext";
@@ -10,8 +10,7 @@ import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
 import Patients from "./pages/Patients";
 import PatientDetail from "./pages/PatientDetail";
-import Appointments from "./pages/Appointments";
-import CalendarPage from "./pages/Calendar";
+import Scheduling from "./pages/Scheduling";
 import Notifications from "./pages/Notifications";
 import Security from "./pages/Security";
 import AuditLog from "./pages/AuditLog";
@@ -47,8 +46,9 @@ export default function App() {
               <Route path="/" element={<Shell><Dashboard /></Shell>} />
               <Route path="/patients" element={<Shell><Patients /></Shell>} />
               <Route path="/patients/:id" element={<Shell><PatientDetail /></Shell>} />
-              <Route path="/appointments" element={<Shell><Appointments /></Shell>} />
-              <Route path="/calendar" element={<Shell roles={["admin", "doctor", "staff"]}><CalendarPage /></Shell>} />
+              <Route path="/scheduling" element={<Shell><Scheduling /></Shell>} />
+              <Route path="/appointments" element={<Navigate to="/scheduling" replace />} />
+              <Route path="/calendar" element={<Navigate to="/scheduling" replace />} />
               <Route path="/notifications" element={<Shell roles={["admin", "staff"]}><Notifications /></Shell>} />
               <Route path="/audit-log" element={<Shell roles={["admin"]}><AuditLog /></Shell>} />
               <Route path="/compliance" element={<Shell roles={["admin"]}><Compliance /></Shell>} />

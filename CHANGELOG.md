@@ -11,6 +11,35 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Unified Scheduling module** — the separate `Appointments` table page
+  and `Calendar` page are merged into a single `/scheduling` experience
+  with Day / Week / Month / Year view toggles, shared date-navigation
+  (`prev` / `today` / `next`), and a primary `+ New appointment` CTA.
+  - Left-nav now shows one **Scheduling** item (icon `CalendarDays`)
+    replacing the previous **Appointments** + **Calendar** entries.
+  - Legacy routes `/appointments` and `/calendar` now redirect to
+    `/scheduling` so bookmarks and deep links keep working.
+  - Shared framework: `pages/scheduling/useScheduling.js` (view,
+    date, visible range, provider filter placeholder, range-based
+    appointment fetch with in-memory cache keyed by view/range,
+    cache invalidation on write) + `pages/scheduling/dateHelpers.js`
+    (Monday-first week math, month-grid expansion, label formatter)
+    + `SchedulingToolbar`, `DayView`, `WeekView`, `MonthView`,
+    `YearView`, `BookDialog`.
+  - **Week view** renders a 7-day grid. Each cell shows weekday +
+    date, a prominent count badge (`0` or `N appts`), up to three
+    appointment previews, and a `+N more` link. Clicking the day
+    header opens Day view for that date; clicking an appointment
+    preview opens the reschedule dialog. Empty days render a dashed
+    "No appointments" placeholder.
+  - Month view is a Monday-first 6-row grid with per-day appointment
+    count badges; clicking a cell opens Day view. Year view shows
+    12 mini-month grids with per-day heat tint + per-month totals;
+    clicking a month jumps to Month view.
+  - Existing auth, permissions, audit, tenant scoping and appointment
+    CRUD endpoints are untouched — the new views consume
+    `GET /api/appointments?from=&to=` for range-based loading.
+
 ### Changed
 - **Split patient wizard into two focused flows.** The previous
   4-step wizard mixed demographics, billing, clinical intake, and

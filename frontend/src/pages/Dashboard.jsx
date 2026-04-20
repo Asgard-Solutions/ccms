@@ -164,7 +164,7 @@ export default function Dashboard() {
             </h2>
           </div>
           <Button variant="ghost" asChild className="text-primary">
-            <Link to="/appointments" data-testid="dashboard-view-all-appts">
+            <Link to="/scheduling" data-testid="dashboard-view-all-appts">
               View all <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
           </Button>
@@ -175,7 +175,7 @@ export default function Dashboard() {
             <p className="text-sm text-muted-foreground">No upcoming appointments.</p>
             {user.role !== "patient" && (
               <Button asChild className="mt-4 rounded-sm bg-primary hover:bg-[var(--primary-hover)]">
-                <Link to="/appointments" data-testid="dashboard-book-first">
+                <Link to="/scheduling" data-testid="dashboard-book-first">
                   Book one
                 </Link>
               </Button>
