@@ -240,6 +240,58 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **Docs** — `/app/memory/COMPLIANCE_OPS_ARCHITECTURE.md` covers model, lifecycle, HIPAA 45-CFR mapping table, SOC 2 recurring activities, CCPA/CPRA flow linkage, evidence bundle export flow, "how to add a new control domain" cookbook.
 - **Verified (iteration_18)**: 10/10 new tests — dashboard fidelity, multi-framework mapping, framework filter, integrity hash + legal hold, tamper-resistant patch, tenant isolation, overdue access-review auto-flag, incident history append, unknown-type rejection, BAA-missing counted. Combined iteration_17+18 = 25/25 green.
 
+## 25. Iteration 20e — Patient intake Phase 5 polish + Iteration 19 workforce backend sweep (2026-02-19)
+
+Two items shipped in one iteration: (1) autosave drafts + edit-from-detail for the intake wizard, (2) the long-pending formal `testing_agent_v3_fork` sweep of the Iteration 19 workforce module.
+
+### Phase 5 — autosave drafts + edit-from-detail
+- **`frontend/src/pages/patientWizardLogic.js`** — four new exports:
+  * `EMPTY_FORM` — canonical clean wizard state (shared with `Patients.jsx`).
+  * `payloadToForm(patient)` — reverse of `buildPayload`. Defensive: accepts legacy flat records (falls back to top-level scalars), null input, and fully-grouped records. Splits guarantor first/last back into `guarantorFullName`; recovers `assignmentOfBenefits`/`releaseOfInformation` from `consents.additional[]`; derives case-type flags from `case_details.case_type` + field presence; extracts a signature from any populated consent block.
+  * `draftStorageKey(userId, tenantId)` — returns `ccms.intake-draft.{tenantId||default}.{userId||anon}` so drafts can never leak across staff users on a shared kiosk.
+  * `isDraftFresh(savedAtIso)` — 7-day TTL.
+  * `formHasAnyInput(form)` — prevents empty-draft prompts from appearing when the wizard is merely opened-and-closed.
+- **`frontend/src/pages/Patients.jsx`** — `PatientWizardDialog` promoted to a named export and taught `mode: "create" | "edit"`, `patientId`, `initialForm`, `onSaved`, `userId`, `tenantId` props:
+  * Autosave effect writes to `localStorage[draftStorageKey(...)]` on every form change (skipped in edit mode). A small aria-live `wizard-draft-autosave-indicator` fades in for ~1.2s after each save.
+  * On open in create mode, if `localStorage` has a fresh draft with `formHasAnyInput(form)`, a yellow `wizard-draft-prompt` banner appears with `wizard-draft-resume` / `wizard-draft-discard` buttons.
+  * Successful create clears the draft; Discard also clears it; stale (>7 day) drafts are silently purged on open.
+  * Save button label flips to "Save changes" in edit mode; submit calls `PUT /api/patients/{id}` and fires the new `onSaved` callback.
+- **`frontend/src/pages/PatientDetail.jsx`** — new `patient-edit-intake-btn` (admin/doctor/staff). Clicking it while masked surfaces a `sonner` toast "Unmask first to edit intake" and blocks the open. When unmasked, the wizard opens pre-populated via `payloadToForm(patient)`; on save the page reloads the patient with the current mask/break-glass context.
+- **Tests** — `frontend/src/pages/patientWizardLogic.test.js` extended with 8 Phase-5 cases:
+  * `payloadToForm` handles undefined/null, legacy-only scalars, full grouped round-trip through `buildPayload`, guarantor name splitting, consents.additional[] recovery.
+  * `draftStorageKey` tenant/user scoping.
+  * `isDraftFresh` 7-day TTL boundary.
+  * `formHasAnyInput` — empty rejection, single-field acceptance, array acceptance, flag acceptance.
+  * **39/39 green** under `node --test`.
+- **Self-smoke (Playwright)** — all five Phase-5 surfaces verified live: autosave indicator flashes on typing; resume banner appears on reopen with the staff user's own draft; "Resume draft" restores the form; edit intake button is visible on detail page; masked edit shows the unmask-first toast; unmasked edit opens the wizard pre-filled with "Save changes" button.
+
+### Iteration 19 — formal `testing_agent_v3_fork` sweep
+- Testing agent reported 11/14 pass on first run and flagged two "backend gaps": (b) GET /api/workforce/invitations returning 200 after step_up_required=True, and (c) GET /api/workforce/sessions/me missing the `step_up_required` key. Both turned out to be **test-tooling artefacts**, not real backend gaps — the backend `require_permission` + `/sessions/me` handler were working correctly.
+- Root causes:
+  * The refactored `_login` helper lifts the access_token into an `Authorization: Bearer` header (because Python `requests` can't traverse `Secure` cookies over plain HTTP). Subsequent reauth did the same for `x-reauth-token`. The break-glass sweep test was popping only the cookie, not the header, so reauth was still present and the step-up gate correctly didn't fire.
+  * The suspicious-login test still used a raw `requests.Session()` for the "new IP" login, which never received a usable cookie — so `/sessions/me` returned `{"detail": "Not authenticated"}` and `me["step_up_required"]` raised KeyError.
+  * Raw-DB probes relied on `os.environ.get("MONGO_URL")` but pytest ran without `.env` loaded.
+- **Fixes (test-only, zero backend change):**
+  * `tests/test_iteration19_workforce.py`: `load_dotenv("/app/backend/.env")` at module init.
+  * Break-glass sweep test pops BOTH `cookies["reauth_token"]` AND `headers["x-reauth-token"]` before asserting 401.
+  * Suspicious-login test lifts access_token from Set-Cookie into Bearer header on the "new IP" session before calling `/sessions/me`.
+  * Admin-revoke-target-user test applies the same Bearer lift on the target's session so `/auth/me` works pre-revoke.
+- **Result — 23/23 backend tests green:** full Iteration 19 workforce suite (14 cases) + Phase 1/4 patient intake (9 cases) under `pytest`.
+
+### Files changed
+- `frontend/src/pages/patientWizardLogic.js` (added Phase 5 helpers)
+- `frontend/src/pages/patientWizardLogic.test.js` (+ 8 Phase 5 tests, now 39/39)
+- `frontend/src/pages/Patients.jsx` (export wizard + edit/create mode + autosave)
+- `frontend/src/pages/PatientDetail.jsx` (edit-intake button + wizard mount)
+- `backend/tests/test_iteration19_workforce.py` (dotenv + Bearer-header test-tooling fixes)
+- `memory/PRD.md` (iteration 20e entry)
+
+### Follow-ups still open
+- Insurance card uploads + generic document attachments (object-storage playbook).
+- Wet-ink/canvas digital signatures + signed-PDF generation.
+- Edit-from-detail currently requires the user to manually unmask first; a "Request unmask for edit" inline flow would smooth the UX.
+- Workforce login rate-limiter can false-positive during rapid end-to-end tests (not a user-facing bug); tune the `/api/auth/login` bucket if back-to-back automation runs continue to drip 429s.
+
 ## 24. Iteration 20d — Patient intake Phase 4 (detail rendering + regressions, 2026-02-19)
 
 Downstream UI for the grouped intake payload. Legacy flat records keep rendering exactly as before; grouped records now get a dedicated "Intake sections" area.

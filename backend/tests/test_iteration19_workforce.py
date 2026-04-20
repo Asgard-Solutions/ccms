@@ -20,6 +20,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 import requests
+from dotenv import load_dotenv
+
+# Load backend .env so MONGO_URL + DB_NAME are available for raw-DB probes
+# further down (e.g. break-glass sweep + suspicious-login tests).
+load_dotenv("/app/backend/.env")
 
 API = os.environ.get("CCMS_BASE_URL", "http://localhost:8001/api")
 
@@ -245,8 +250,12 @@ def test_admin_revoke_target_user_sessions_kills_old_tokens():
         "token": inv["dev_token"], "password": "Strong@Pass2026!!",
     }, timeout=10)
     target = requests.Session()
-    target.post(f"{API}/auth/login",
-                json={"email": email, "password": "Strong@Pass2026!!"}, timeout=10)
+    target_login = target.post(f"{API}/auth/login",
+                               json={"email": email, "password": "Strong@Pass2026!!"}, timeout=10)
+    assert target_login.status_code == 200, target_login.text
+    tok = target_login.cookies.get("access_token")
+    if tok:
+        target.headers["Authorization"] = f"Bearer {tok}"
     me_before = target.get(f"{API}/auth/me", timeout=10)
     assert me_before.status_code == 200
 
@@ -256,7 +265,7 @@ def test_admin_revoke_target_user_sessions_kills_old_tokens():
                    timeout=10)
     assert r.status_code == 200
 
-    # Target's old cookie is now invalid.
+    # Target's old token is now invalid — revoke-all kills ALL sessions.
     me_after = target.get(f"{API}/auth/me", timeout=10)
     assert me_after.status_code == 401
 
@@ -469,8 +478,9 @@ def test_break_glass_sweep_marks_overdue_and_sets_step_up():
     assert user_after["suspicious_flag"] is True
 
     # Any non-trivial action without reauth must now 401 for step_up.
-    # (Reauth cookie is still set from earlier reauth — clear it first.)
+    # (Reauth cookie AND reauth header are set from earlier — clear both.)
     admin.cookies.pop("reauth_token", None)
+    admin.headers.pop("x-reauth-token", None)
     r2 = admin.get(f"{API}/workforce/break-glass", timeout=10)
     # break_glass.activate is MFA in matrix already, so this would 401 either
     # way. Verify the specific new-IP / step-up denial on a NON-MFA endpoint:
@@ -533,10 +543,16 @@ def test_suspicious_login_new_ip_sets_step_up_flag():
                    json={"email": email, "password": "Strong@Pass2026!!"},
                    timeout=10)
     assert r.status_code == 200, r.text
+    # Plain HTTP strips Secure cookies from python-requests' jar; lift the
+    # access_token into an Authorization Bearer header so downstream calls
+    # are actually authenticated.
+    _access = r.cookies.get("access_token")
+    assert _access, f"expected access_token cookie in login response; got {dict(r.cookies)}"
+    s_new.headers["Authorization"] = f"Bearer {_access}"
 
     # step_up_required should now be True.
     me = s_new.get(f"{API}/workforce/sessions/me", timeout=10).json()
-    assert me["step_up_required"] is True, me
+    assert me.get("step_up_required") is True, me
 
     # An audit row is present.
     row = db.audit_logs.find_one({
