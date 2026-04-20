@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, CreditCard, FileText, Wallet } from "lucide-react";
+import { ArrowRight, CreditCard, FileStack, FileText, Wallet } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
 import { formatCents } from "../../utils/money";
@@ -55,11 +55,18 @@ export default function BillingDashboard() {
             Billing
           </h1>
         </div>
-        <Button asChild className="rounded-sm" data-testid="billing-view-invoices">
-          <Link to="/billing/invoices">
-            View invoices <ArrowRight className="ml-1 h-4 w-4" />
-          </Link>
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" className="rounded-sm" data-testid="billing-view-claims">
+            <Link to="/billing/claims">
+              <FileStack className="mr-1 h-4 w-4" /> Claims queue
+            </Link>
+          </Button>
+          <Button asChild className="rounded-sm" data-testid="billing-view-invoices">
+            <Link to="/billing/invoices">
+              View invoices <ArrowRight className="ml-1 h-4 w-4" />
+            </Link>
+          </Button>
+        </div>
       </header>
 
       <div className="grid gap-4 sm:grid-cols-3">

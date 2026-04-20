@@ -6,6 +6,7 @@ import {
   Ban,
   CreditCard,
   FileMinus2,
+  FileStack,
   Send,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
@@ -39,6 +40,7 @@ import {
   transitionInvoiceStatus,
   voidInvoice,
 } from "./useBilling";
+import { createClaimFromInvoice } from "./useClaims";
 import PostPaymentDialog from "./PostPaymentDialog";
 
 export default function InvoiceDetail() {
@@ -51,6 +53,7 @@ export default function InvoiceDetail() {
   const [payOpen, setPayOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [voidOpen, setVoidOpen] = useState(false);
+  const [generatingClaim, setGeneratingClaim] = useState(false);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -77,6 +80,19 @@ export default function InvoiceDetail() {
       await refresh();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not issue invoice");
+    }
+  }
+
+  async function onGenerateClaim() {
+    setGeneratingClaim(true);
+    try {
+      const claim = await createClaimFromInvoice(id);
+      toast.success("Claim drafted from invoice");
+      navigate(`/billing/claims/${claim.id}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not generate claim");
+    } finally {
+      setGeneratingClaim(false);
     }
   }
 
@@ -147,6 +163,16 @@ export default function InvoiceDetail() {
             className="rounded-sm"
           >
             <FileMinus2 className="mr-2 h-4 w-4" /> Adjust / writeoff
+          </Button>
+          <Button
+            variant="outline"
+            onClick={onGenerateClaim}
+            disabled={isTerminal || generatingClaim}
+            data-testid="invoice-generate-claim-btn"
+            className="rounded-sm"
+          >
+            <FileStack className="mr-2 h-4 w-4" />
+            {generatingClaim ? "Generating…" : "Generate claim"}
           </Button>
           <Button
             variant="ghost"

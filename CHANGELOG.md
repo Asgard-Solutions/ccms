@@ -12,6 +12,22 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Billing Phase 3 — Claims UI wired into app (iteration 26).**
+  - New routes `GET /billing/claims` (queue) and `GET /billing/claims/:id`
+    (detail) registered in `App.js` under `admin|doctor|staff` RBAC.
+  - Sidebar nav entry **Claims** (`FileStack` icon) added in `AppShell.jsx`.
+  - `BillingDashboard` header now exposes a secondary "Claims queue"
+    button alongside "View invoices".
+  - `InvoiceDetail` gains a **Generate claim** action
+    (`invoice-generate-claim-btn`) that calls
+    `POST /api/billing/claims/from-invoice/{id}` and navigates to the
+    resulting claim detail. Disabled on terminal invoices; server
+    rejects self-pay/no-payer invoices with a descriptive 409.
+  - Orphaned pages `ClaimsQueue.jsx` and `ClaimDetail.jsx` (authored in
+    iteration 25) are now fully reachable and themed via the semantic
+    `claimStatusTone` tokens in `useClaims.js`.
+
+### Added
 - **Billing Phase 2 — Insurance setup & encounter charge capture
   (iteration 25).** Bridges clinical encounters to billable artifacts.
   - **Fee schedules**: new collections `fee_schedules` (tenant-scoped,
