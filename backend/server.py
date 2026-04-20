@@ -22,6 +22,9 @@ from core.logging_setup import configure as configure_logging  # noqa: E402
 from core.security_headers import install as install_security_headers  # noqa: E402
 from core.redis_client import close as close_redis, ping as redis_ping  # noqa: E402
 from services.audit.router import router as audit_router  # noqa: E402
+from services.authz.router import router as authz_router  # noqa: E402
+from services.authz.reporting import router as authz_reports_router  # noqa: E402
+from services.authz.seed import seed_authz  # noqa: E402
 from services.communication.router import router as communication_router  # noqa: E402
 from services.compliance.router import router as compliance_router  # noqa: E402
 from services.communication.subscribers import register as register_comm_subscribers  # noqa: E402
@@ -59,6 +62,8 @@ api_router.include_router(patient_router)
 api_router.include_router(scheduling_router)
 api_router.include_router(communication_router)
 api_router.include_router(audit_router)
+api_router.include_router(authz_router)
+api_router.include_router(authz_reports_router)
 api_router.include_router(compliance_router)
 api_router.include_router(privacy_router)
 api_router.include_router(perf_router)
@@ -126,6 +131,7 @@ async def on_startup():
     await create_indexes()
     register_comm_subscribers()
     await seed_identity()
+    await seed_authz()
     redis_alive = await redis_ping()
     logger.info(
         "CCMS startup complete (HIPAA-hardened, redis_alive=%s).", redis_alive

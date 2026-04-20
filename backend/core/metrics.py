@@ -106,6 +106,25 @@ secure_endpoint_errors_total = Counter(
     labelnames=("path_prefix",),
     registry=registry,
 )
+# ---------- Authorization (policy engine) ----------
+authz_allows_total = Counter(
+    "ccms_authz_allows_total",
+    "Authorization decisions allowed (by resource + action)",
+    labelnames=("resource", "action"),
+    registry=registry,
+)
+authz_denials_total = Counter(
+    "ccms_authz_denials_total",
+    "Authorization decisions denied (by resource + action)",
+    labelnames=("resource", "action"),
+    registry=registry,
+)
+elevation_requests_total = Counter(
+    "ccms_elevation_requests_total",
+    "Elevation requests by status transition",
+    labelnames=("status",),
+    registry=registry,
+)
 
 # ---------- Redis health ----------
 redis_up = Gauge(

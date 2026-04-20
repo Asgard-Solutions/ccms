@@ -150,7 +150,24 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **Docs**: `/app/memory/TLS_AND_TRANSPORT_SECURITY.md` — ingress vs app responsibilities, what is/isn't in scope, production checklist.
 - **Verified** (iteration_11): 17/17 new tests + 102/102 regression in isolation. Frontend renders with strict CSP, admin login lands on dashboard, all admin pages (Patients / Compliance / Security / SecurityConfig / Privacy) load with **zero CSP violations**.
 
-## 13. Key reference docs
+## 13. Authorization system — RBAC + scopes + policy overlays (2026-02-20)
+- **Data model** (9 new collections, PG-migration ready): `roles` (11), `permissions` (115), `role_permissions` (grants w/ scope + MFA/APR/BG flags), `user_roles` (n:m), `locations` (+ `user_location_assignments`), `patient_assignments`, `elevation_requests`.
+- **Policy engine** (`services/authz/policy.py`): default-deny `evaluate()`, `scope_filter()` for row-level, `require_permission()` FastAPI dependency, MFA gate via reauth cookie, approval gate via consumed elevations, break-glass signalling. Dual-run legacy shim auto-maps existing `users.role` strings → baseline roles + back-fills `user_roles` rows on seed.
+- **Endpoints**:
+  - `/api/authz/me/permissions`, `/api/authz/check`
+  - `/api/authz/roles`, `/api/authz/permissions`, `/api/authz/matrix`
+  - `POST|DELETE /api/authz/users/{id}/roles`, `/api/authz/users/{id}/locations`, `/api/authz/patient-assignments`
+  - `POST /api/authz/locations`
+  - Elevation: `POST /request`, `GET /`, `POST /{id}/decision`, `DELETE /{id}` — separation-of-duties enforced (approver ≠ requester)
+  - 8 compliance reports under `/api/access/reports/*` (users-by-role, permissions-by-role, privileged-users, recent-role-changes, phi-access-history, export-history, break-glass-history, failed-authz, access-review summary)
+- **Admin UI** (4 new pages): `/roles`, `/permissions` (matrix), `/access-review`, `/elevation`. Sidebar nav added. `PermissionsContext` + `<Can>` helper for frontend.
+- **Prometheus counters**: `ccms_authz_allows_total`, `ccms_authz_denials_total`, `ccms_elevation_requests_total{status}`.
+- **Audit coverage**: every authz decision (`authz.allow`, `authz.denied`, `authz.mfa_required`, `authz.approval_required`, `authz.role_assigned`, `authz.role_revoked`, `elevation.*`) mirrored into the immutable `audit_logs` collection.
+- **Verified (iteration_12)**: 15/15 new tests pass (matrix shape, legacy-role shim, default-deny, MFA gate, full elevation lifecycle + separation-of-duties, role assign/revoke with session-epoch bump, all 9 reports, scope containment for patient portal, denial audit rows).
+- **Pragmatic exception** (documented in `AUTHORIZATION_GUIDE.md` §7): super_admin grants stripped of APR flag on governance actions (role.assign/create/update, user.disable/reset_mfa, api_key.*, integration.*, etc.) to break the chicken-and-egg for initial bootstrap. OO/CO/other approver roles retain the full MFA+APR posture. Production with multiple admins can re-tighten via custom `role_permissions` rows.
+
+## 14. Key reference docs
 - `/app/memory/HIPAA_COMPLIANCE.md` — full safeguard inventory (implemented vs. external)
+- `/app/memory/AUTHORIZATION_GUIDE.md` — RBAC + scopes + policy overlays (2026-02-20)
 - `/app/memory/test_credentials.md` — demo accounts
 - `/app/test_reports/iteration_2.json` — testing agent report (24/24)

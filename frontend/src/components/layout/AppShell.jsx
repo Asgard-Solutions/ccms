@@ -14,6 +14,10 @@ import {
   ClipboardCheck,
   Scale,
   KeyRound,
+  UserCog,
+  Table2,
+  FileBarChart,
+  Unlock,
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { Button } from "../ui/button";
@@ -44,6 +48,10 @@ const NAV_ITEMS = [
   { to: "/audit-log", label: "Audit log", icon: Shield, roles: ["admin"] },
   { to: "/compliance", label: "Compliance", icon: ClipboardCheck, roles: ["admin"] },
   { to: "/privacy", label: "Privacy", icon: Scale, roles: ["admin"] },
+  { to: "/roles", label: "Roles", icon: UserCog, roles: ["admin"] },
+  { to: "/permissions", label: "Permission matrix", icon: Table2, roles: ["admin"] },
+  { to: "/access-review", label: "Access review", icon: FileBarChart, roles: ["admin"] },
+  { to: "/elevation", label: "Elevation", icon: Unlock, roles: ["admin", "doctor", "staff"] },
   { to: "/security-config", label: "Security config", icon: KeyRound, roles: ["admin"] },
   { to: "/security", label: "Security", icon: ShieldCheck, roles: ["admin", "doctor", "staff", "patient"] },
 ];
