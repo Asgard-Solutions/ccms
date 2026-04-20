@@ -1,0 +1,38 @@
+name: Docs guard
+
+on:
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  docs-matrix-guard:
+    name: Docs update matrix is satisfied
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install PyYAML
+        run: pip install pyyaml
+
+      - name: Make guard script executable
+        run: chmod +x scripts/check_docs.py
+
+      - name: Run docs matrix guard
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          FORCE_COLOR: "1"
+        run: ./scripts/check_docs.py
+
+      - name: Post policy pointer on failure
+        if: ${{ failure() }}
+        run: |
+          echo "::error title=Docs matrix violated::See docs/DOC_UPDATE_POLICY.md for which documents must be updated alongside your code change."
+          echo "::notice title=Rule file::docs/doc_rules.yml is the machine-readable rule source; DOC_UPDATE_POLICY.md is the human-readable projection."

@@ -11,6 +11,25 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+### Changed
+- **Docs** — Added comprehensive project documentation: `README.md`,
+  `CONTRIBUTING.md`, `SECURITY.md`, `docs/DOC_UPDATE_POLICY.md`, and a PR
+  template. Existing long-form docs in `memory/` are now linked from
+  `README.md`'s Documentation map.
+- **CI — matrix-aware docs guard** — New `scripts/check_docs.py` driven
+  by `docs/doc_rules.yml` enforces 9 declarative rules (code needs
+  CHANGELOG, RBAC changes need AUTHORIZATION_GUIDE, tenancy changes need
+  MULTI_TENANCY_ARCHITECTURE, auth changes need test_credentials, and so
+  on). Wired into `.github/workflows/docs-guard.yml` for PRs and
+  `.githooks/pre-commit` for local commits (opt-in via
+  `git config core.hooksPath .githooks`). Supports `--json` for CI
+  tooling. Supersedes the earlier `scripts/check_changelog.sh`.
+- **CI — changelog stub helper** — `scripts/check_docs.py
+  --emit-changelog-stub [--title …] [--category …] [--write]` drafts a
+  well-formed bullet from the current diff, auto-categorises it
+  (Added/Changed/Fixed/Security/Dependencies), and can prepend it under
+  `## [Unreleased]`. Idempotent — reruns won't duplicate bullets.
+
 ## [2026-04-20] Phase 5 — Intake polish, uploads, signed consents + hardening
 ### Added
 - **Wet-ink signature capture** (`frontend/src/components/SignaturePad.jsx`)

@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook — activated via:
+#     git config core.hooksPath .githooks
+#
+# Runs the matrix-aware documentation guard locally before every commit.
+# Skip with: git commit --no-verify (not recommended).
+#
+set -e
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+GUARD="${REPO_ROOT}/scripts/check_docs.py"
+
+if [[ ! -x "$GUARD" ]]; then
+  echo "pre-commit: scripts/check_docs.py missing or not executable — skipping."
+  exit 0
+fi
+
+"$GUARD"

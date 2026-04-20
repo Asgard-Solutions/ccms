@@ -62,6 +62,56 @@ Add the entry to the **[Unreleased]** section at the top of `CHANGELOG.md`.
 When we cut a date-stamped release, move the unreleased block under a new
 `## [YYYY-MM-DD]` heading.
 
+## Automated guards
+The repository ships a matrix-aware documentation guard that fails any PR
+which changes code or config without updating the docs listed in
+[`docs/doc_rules.yml`](./docs/doc_rules.yml). Activate the local pre-commit
+hook once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+After this, every `git commit` runs `scripts/check_docs.py`. The same
+script runs on every pull request via the `Docs guard` GitHub Actions
+workflow (`.github/workflows/docs-guard.yml`).
+
+To run the guard manually:
+```bash
+scripts/check_docs.py origin/main          # verbose text report
+scripts/check_docs.py origin/main --json   # CI-friendly JSON output
+```
+
+Need a starting point for your CHANGELOG entry? Let the tool draft one:
+```bash
+# Preview — prints the bullet without writing
+scripts/check_docs.py --emit-changelog-stub origin/main
+
+# Write — prepend the bullet into CHANGELOG.md's [Unreleased] block
+scripts/check_docs.py --emit-changelog-stub origin/main --write
+
+# Override auto-detected title + category
+scripts/check_docs.py --emit-changelog-stub origin/main \
+    --title "Fix MFA cookie race on slow networks" \
+    --category Fixed --write
+```
+
+Category heuristics: files under `backend/core/{audit,crypto,masking,
+reauth,security,mfa,password_policy}.py` or `backend/services/authz/**`
+→ **Security**. `requirements.txt` / `package.json` → **Dependencies**.
+Commit subjects starting with `fix:` / `bug` / `patch` → **Fixed**.
+Everything else → **Added**. Always review the suggestion before pushing.
+
+Bypass (not recommended, only for emergency hotfixes where a follow-up
+doc PR is filed immediately):
+```bash
+git commit --no-verify
+```
+
+To add or tighten a rule, edit `docs/doc_rules.yml` and update the
+human-readable matrix in `docs/DOC_UPDATE_POLICY.md` in the same PR (the
+`doc-rules-self-update` rule enforces this).
+
 ## Commit & PR conventions
 - **Imperative mood**, present tense. Example: `Add magic-byte sniff to patient doc uploads`.
 - Reference issues or the PRD backlog item in the PR body.

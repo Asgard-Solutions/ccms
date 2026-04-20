@@ -93,11 +93,25 @@ When you create a new doc:
 ## Automation hooks
 Today the policy is enforced by:
 - `.github/pull_request_template.md` checkbox list.
+- **`scripts/check_docs.py` + `docs/doc_rules.yml`** — matrix-aware guard
+  that inspects the PR diff and fails when any rule's `when` patterns
+  match a changed file without the corresponding `require` docs being
+  updated in the same PR. The ruleset is declarative and easy to extend.
+- **`.github/workflows/docs-guard.yml`** — runs the matrix guard on every
+  pull request and posts GitHub annotations pointing back to this file.
+- **`.githooks/pre-commit`** — opt-in local mirror of the CI guard.
+  Enable once per clone with `git config core.hooksPath .githooks`.
 - The testing agent's `test_credentials.md` freshness check.
 - The main agent's `finish` tool, which updates `memory/PRD.md` on every
   successful feature completion.
 
 Future automation (tracked in `memory/COMPLIANCE_BACKLOG.md`):
-- Pre-commit hook that grep-checks the diff against this matrix.
-- CI job that diffs `CHANGELOG.md`'s `[Unreleased]` block and fails if no
-  entry was added when code in `backend/` or `frontend/` changed.
+- Auto-label PRs with the doc-categories their diff affects.
+- Verification that CHANGELOG additions land under `## [Unreleased]`
+  (not under an older dated heading).
+
+Already shipped:
+- `scripts/check_docs.py --emit-changelog-stub [--title …] [--category …] [--write]`
+  drafts a bullet for the current diff and prepends it under
+  `## [Unreleased]` → `### <category>`, creating scaffolding when missing
+  and staying idempotent on repeated runs.
