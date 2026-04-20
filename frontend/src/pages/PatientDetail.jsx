@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft, Download, Eye, EyeOff, FileText, Pencil, Plus, Stethoscope, Trash2 } from "lucide-react";
@@ -9,6 +9,13 @@ import { PatientWizardDialog } from "./Patients";
 import { payloadToForm } from "./patientWizardLogic";
 import { Button } from "../components/ui/button";
 import { Skeleton } from "../components/ui/skeleton";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "../components/ui/tabs";
+import DateRangeFilter, { isInRange } from "../components/DateRangeFilter";
 import {
   Dialog,
   DialogContent,
@@ -500,6 +507,17 @@ export default function PatientDetail() {
   const [editWizardOpen, setEditWizardOpen] = useState(false);
   const [intakeWizardOpen, setIntakeWizardOpen] = useState(false);
   const [chargeRecord, setChargeRecord] = useState(null);
+  const [recordsRange, setRecordsRange] = useState(null);
+  const [appointmentsRange, setAppointmentsRange] = useState(null);
+
+  const filteredRecords = useMemo(
+    () => (records || []).filter((r) => isInRange(r.recorded_at, recordsRange)),
+    [records, recordsRange],
+  );
+  const filteredAppointments = useMemo(
+    () => (appointments || []).filter((a) => isInRange(a.start_time, appointmentsRange)),
+    [appointments, appointmentsRange],
+  );
 
   const load = useCallback(
     async ({ withUnmask = false, breakGlassReason = null } = {}) => {
@@ -737,140 +755,178 @@ export default function PatientDetail() {
         </div>
       </header>
 
-      <section className="grid grid-cols-1 gap-6 md:grid-cols-3">
-        <div className="rounded-sm border border-border bg-card p-6">
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Address</span>
-          <p className="mt-3 text-sm leading-relaxed text-foreground">{patient.address || "—"}</p>
-        </div>
-        <div className="rounded-sm border border-border bg-card p-6">
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Emergency contact</span>
-          <p className="mt-3 text-sm leading-relaxed text-foreground">{patient.emergency_contact || "—"}</p>
-        </div>
-        <div className="rounded-sm border border-border bg-card p-6">
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Intake notes</span>
-          <p className="mt-3 text-sm leading-relaxed text-foreground">{patient.notes || "—"}</p>
-        </div>
-      </section>
+      <Tabs defaultValue="overview" data-testid="patient-detail-tabs">
+        <TabsList
+          data-testid="patient-detail-tablist"
+          className="flex h-auto w-full flex-wrap justify-start gap-1 rounded-sm bg-muted/60 p-1"
+        >
+          <TabsTrigger value="overview" data-testid="tab-overview" className="rounded-sm">Overview</TabsTrigger>
+          <TabsTrigger value="intake" data-testid="tab-intake" className="rounded-sm">Intake</TabsTrigger>
+          <TabsTrigger value="records" data-testid="tab-records" className="rounded-sm">Medical Records</TabsTrigger>
+          <TabsTrigger value="appointments" data-testid="tab-appointments" className="rounded-sm">Appointments</TabsTrigger>
+          <TabsTrigger value="insurance" data-testid="tab-insurance" className="rounded-sm">Insurance</TabsTrigger>
+          <TabsTrigger value="billing" data-testid="tab-billing" className="rounded-sm">Billing &amp; Ledger</TabsTrigger>
+        </TabsList>
 
-      <IntakeSections patient={patient} onDownloadConsent={downloadConsentPdf} />
+        <TabsContent value="overview" className="mt-6">
+          <section className="grid grid-cols-1 gap-6 md:grid-cols-3">
+            <div className="rounded-sm border border-border bg-card p-6">
+              <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Address</span>
+              <p className="mt-3 text-sm leading-relaxed text-foreground">{patient.address || "—"}</p>
+            </div>
+            <div className="rounded-sm border border-border bg-card p-6">
+              <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Emergency contact</span>
+              <p className="mt-3 text-sm leading-relaxed text-foreground">{patient.emergency_contact || "—"}</p>
+            </div>
+            <div className="rounded-sm border border-border bg-card p-6">
+              <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Intake notes</span>
+              <p className="mt-3 text-sm leading-relaxed text-foreground">{patient.notes || "—"}</p>
+            </div>
+          </section>
+        </TabsContent>
 
-      <PatientDocumentsCard patientId={id} canEdit={canEditIntake} />
+        <TabsContent value="intake" className="mt-6 space-y-6">
+          <IntakeSections patient={patient} onDownloadConsent={downloadConsentPdf} />
+          <PatientDocumentsCard patientId={id} canEdit={canEditIntake} />
+        </TabsContent>
 
-      <section>
-        <div className="mb-4 flex items-end justify-between">
-          <div>
-            <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Clinical history</span>
-            <h2 className="mt-1 font-display text-2xl font-medium tracking-tight">Medical records</h2>
-          </div>
-          {canAddRecord && (
-            <Button
-              onClick={() => setRecDialog(true)}
-              data-testid="record-new-btn"
-              className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
-            >
-              <Plus className="mr-2 h-4 w-4" /> Add record
-            </Button>
-          )}
-        </div>
+        <TabsContent value="records" className="mt-6">
+          <section>
+            <div className="mb-4 flex items-end justify-between gap-4">
+              <div>
+                <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Clinical history</span>
+                <h2 className="mt-1 font-display text-2xl font-medium tracking-tight">Medical records</h2>
+              </div>
+              {canAddRecord && (
+                <Button
+                  onClick={() => setRecDialog(true)}
+                  data-testid="record-new-btn"
+                  className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
+                >
+                  <Plus className="mr-2 h-4 w-4" /> Add record
+                </Button>
+              )}
+            </div>
 
-        {records === null ? (
-          <Skeleton className="h-32" />
-        ) : records.length === 0 ? (
-          <div className="rounded-sm border border-dashed border-border bg-card p-12 text-center text-sm text-muted-foreground">
-            No medical records yet.
-          </div>
-        ) : (
-          <ol className="relative space-y-4 border-l border-border pl-6">
-            {records.map((r) => (
-              <li key={r.id} data-testid={`record-${r.id}`} className="relative rounded-sm border border-border bg-card p-5">
-                <span className="absolute -left-[33px] top-5 flex h-5 w-5 items-center justify-center rounded-sm bg-primary/10 text-primary">
-                  <FileText className="h-3 w-3" />
-                </span>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <span className="rounded-sm bg-muted px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      {r.record_type}
+            <DateRangeFilter
+              testId="records-date-range"
+              onChange={setRecordsRange}
+              className="mb-4"
+            />
+
+            {records === null ? (
+              <Skeleton className="h-32" />
+            ) : filteredRecords.length === 0 ? (
+              <div className="rounded-sm border border-dashed border-border bg-card p-12 text-center text-sm text-muted-foreground">
+                {records.length === 0
+                  ? "No medical records yet."
+                  : "No medical records in the selected range."}
+              </div>
+            ) : (
+              <ol className="relative space-y-4 border-l border-border pl-6">
+                {filteredRecords.map((r) => (
+                  <li key={r.id} data-testid={`record-${r.id}`} className="relative rounded-sm border border-border bg-card p-5">
+                    <span className="absolute -left-[33px] top-5 flex h-5 w-5 items-center justify-center rounded-sm bg-primary/10 text-primary">
+                      <FileText className="h-3 w-3" />
                     </span>
-                    {r.signed_at && (
-                      <span className="ml-2 rounded-sm bg-success-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-success">
-                        Signed
-                      </span>
-                    )}
-                    {r.charge_status === "captured" && (
-                      <span className="ml-2 rounded-sm bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
-                        Charges captured
-                      </span>
-                    )}
-                    <h3 className="mt-2 font-display text-lg font-medium text-foreground">{r.title}</h3>
-                  </div>
-                  <div className="flex flex-col items-end gap-2">
-                    <div className="text-xs text-muted-foreground">
-                      {formatDateTime(r.recorded_at)} · {r.recorded_by_name || "—"}
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <span className="rounded-sm bg-muted px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          {r.record_type}
+                        </span>
+                        {r.signed_at && (
+                          <span className="ml-2 rounded-sm bg-success-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-success">
+                            Signed
+                          </span>
+                        )}
+                        {r.charge_status === "captured" && (
+                          <span className="ml-2 rounded-sm bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
+                            Charges captured
+                          </span>
+                        )}
+                        <h3 className="mt-2 font-display text-lg font-medium text-foreground">{r.title}</h3>
+                      </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <div className="text-xs text-muted-foreground">
+                          {formatDateTime(r.recorded_at)} · {r.recorded_by_name || "—"}
+                        </div>
+                        <Button
+                          size="sm" variant="outline"
+                          onClick={() => setChargeRecord(r)}
+                          data-testid={`record-charge-capture-${r.id}`}
+                        >
+                          {r.charge_status === "captured" ? "View captured" : "Code & capture"}
+                        </Button>
+                      </div>
                     </div>
-                    <Button
-                      size="sm" variant="outline"
-                      onClick={() => setChargeRecord(r)}
-                      data-testid={`record-charge-capture-${r.id}`}
-                    >
-                      {r.charge_status === "captured" ? "View captured" : "Code & capture"}
-                    </Button>
-                  </div>
-                </div>
-                {r.description && <p className="mt-3 text-sm leading-relaxed text-foreground">{r.description}</p>}
-                <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
-                  {r.diagnosis && (
-                    <div><span className="text-[11px] uppercase tracking-wider text-muted-foreground">Diagnosis</span>
-                      <div className="text-foreground">{r.diagnosis}</div></div>
-                  )}
-                  {r.treatment && (
-                    <div><span className="text-[11px] uppercase tracking-wider text-muted-foreground">Treatment</span>
-                      <div className="text-foreground">{r.treatment}</div></div>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
+                    {r.description && <p className="mt-3 text-sm leading-relaxed text-foreground">{r.description}</p>}
+                    <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
+                      {r.diagnosis && (
+                        <div><span className="text-[11px] uppercase tracking-wider text-muted-foreground">Diagnosis</span>
+                          <div className="text-foreground">{r.diagnosis}</div></div>
+                      )}
+                      {r.treatment && (
+                        <div><span className="text-[11px] uppercase tracking-wider text-muted-foreground">Treatment</span>
+                          <div className="text-foreground">{r.treatment}</div></div>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+        </TabsContent>
 
-      <section>
-        <div className="mb-4">
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Scheduling</span>
-          <h2 className="mt-1 font-display text-2xl font-medium tracking-tight">Appointments</h2>
-        </div>
-        {appointments === null ? (
-          <Skeleton className="h-24" />
-        ) : appointments.length === 0 ? (
-          <div className="rounded-sm border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
-            No appointments for this patient.
-          </div>
-        ) : (
-          <ul className="space-y-2">
-            {appointments.map((a) => (
-              <li key={a.id} className="flex items-center justify-between rounded-sm border border-border bg-card px-5 py-4 text-sm">
-                <div>
-                  <div className="font-medium text-foreground">{formatDateTime(a.start_time)}</div>
-                  <div className="text-xs text-muted-foreground">
-                    with {a.provider_name} · {relativeFromNow(a.start_time)}
-                  </div>
-                </div>
-                <span className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
-                  a.status === "cancelled" ? "bg-destructive-soft text-destructive"
-                    : a.status === "completed" ? "bg-muted text-muted-foreground"
-                    : "bg-primary/10 text-primary"}`}>
-                  {a.status}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+        <TabsContent value="appointments" className="mt-6">
+          <section>
+            <div className="mb-4">
+              <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Scheduling</span>
+              <h2 className="mt-1 font-display text-2xl font-medium tracking-tight">Appointments</h2>
+            </div>
+            <DateRangeFilter
+              testId="appointments-date-range"
+              onChange={setAppointmentsRange}
+              className="mb-4"
+            />
+            {appointments === null ? (
+              <Skeleton className="h-24" />
+            ) : filteredAppointments.length === 0 ? (
+              <div className="rounded-sm border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
+                {appointments.length === 0
+                  ? "No appointments for this patient."
+                  : "No appointments in the selected range."}
+              </div>
+            ) : (
+              <ul className="space-y-2">
+                {filteredAppointments.map((a) => (
+                  <li key={a.id} className="flex items-center justify-between rounded-sm border border-border bg-card px-5 py-4 text-sm">
+                    <div>
+                      <div className="font-medium text-foreground">{formatDateTime(a.start_time)}</div>
+                      <div className="text-xs text-muted-foreground">
+                        with {a.provider_name} · {relativeFromNow(a.start_time)}
+                      </div>
+                    </div>
+                    <span className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
+                      a.status === "cancelled" ? "bg-destructive-soft text-destructive"
+                        : a.status === "completed" ? "bg-muted text-muted-foreground"
+                        : "bg-primary/10 text-primary"}`}>
+                      {a.status}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </TabsContent>
 
-      {/* Billing & ledger — embedded card; full-page view at /billing/patients/:id/ledger */}
-      <section data-testid="patient-billing-section" className="space-y-4">
-        <PatientInsuranceManager patientId={id} />
-        <PatientLedgerCard patientId={id} />
-      </section>
+        <TabsContent value="insurance" className="mt-6">
+          <PatientInsuranceManager patientId={id} />
+        </TabsContent>
+
+        <TabsContent value="billing" className="mt-6">
+          <PatientLedgerCard patientId={id} />
+        </TabsContent>
+      </Tabs>
 
       {canAddRecord && (
         <RecordDialog

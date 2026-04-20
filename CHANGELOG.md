@@ -12,6 +12,27 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Changed
+- **Patient Detail IA refactor — tabs + date-range filter (2026-02-20).**
+  - `PatientDetail.jsx` no longer renders every section in one long
+    vertical scroll. The header + meta row stay on top; below that,
+    the page is split into six tabs: **Overview**, **Intake**,
+    **Medical Records**, **Appointments**, **Insurance**,
+    **Billing & Ledger**. All existing actions (Mask, Edit patient,
+    Edit intake, Export JSON, Soft-delete) remain in the top-right
+    toolbar exactly as before.
+  - New reusable `components/DateRangeFilter.jsx` with quick picks
+    (last 30 / 60 / 90 / 180 / 365 days, Today, All time, Custom
+    start/end). Default is Last 30 days. Wired into the Medical
+    Records tab (filters by `recorded_at`) and Appointments tab
+    (filters by `start_time`). Filtering is client-side so no API
+    changes are required.
+  - All previous `data-testid`s preserved (`record-new-btn`,
+    `record-{id}`, `record-charge-capture-{id}`, etc). New testids:
+    `patient-detail-tabs`, `tab-overview|intake|records|appointments|insurance|billing`,
+    `records-date-range`, `appointments-date-range`,
+    `{range}-preset-30|60|90|180|365|today|all|custom`,
+    `{range}-from`, `{range}-to`.
+
 - **Sidebar IA refactor (2026-02-20).** Left navigation regrouped into
   four semantic sections — **Operations**, **Financial**, **Settings**,
   **Governance** — driven by a new config module
