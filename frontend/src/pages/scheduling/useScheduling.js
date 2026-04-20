@@ -33,6 +33,7 @@ export function useScheduling(initial = {}) {
   // the counts aggregation endpoint (see `useAppointmentCounts`). Skipping
   // the detail fetch for non-Day views is a real perf win for year-range
   // loads on busy clinics.
+  const [includeCancelled, setIncludeCancelled] = useState(!!initial.includeCancelled);
   const detailEnabled = view === "day";
 
   const fetchRange = useCallback(async () => {
@@ -41,7 +42,7 @@ export function useScheduling(initial = {}) {
       setLoading(false);
       return;
     }
-    const key = `${view}|${range.start.toISOString()}|${range.end.toISOString()}|${providerId || "all"}`;
+    const key = `${view}|${range.start.toISOString()}|${range.end.toISOString()}|${providerId || "all"}|${includeCancelled}`;
     if (cacheRef.current.has(key)) {
       setAppointments(cacheRef.current.get(key));
       return;
@@ -52,6 +53,7 @@ export function useScheduling(initial = {}) {
     try {
       const params = { from: range.start.toISOString(), to: range.end.toISOString() };
       if (providerId) params.provider_id = providerId;
+      params.include_cancelled = includeCancelled;
       const { data } = await api.get("/appointments", { params });
       if (myReq !== reqIdRef.current) return; // stale
       cacheRef.current.set(key, data);
@@ -64,7 +66,7 @@ export function useScheduling(initial = {}) {
     } finally {
       if (myReq === reqIdRef.current) setLoading(false);
     }
-  }, [view, range.start, range.end, providerId, detailEnabled]);
+  }, [view, range.start, range.end, providerId, detailEnabled, includeCancelled]);
 
   useEffect(() => {
     fetchRange();
@@ -100,6 +102,8 @@ export function useScheduling(initial = {}) {
     error,
     providerId,
     setProviderId,
+    includeCancelled,
+    setIncludeCancelled,
     prev,
     next,
     today,

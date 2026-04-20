@@ -37,6 +37,8 @@ export default function SchedulingPage() {
     loading,
     providerId,
     setProviderId,
+    includeCancelled,
+    setIncludeCancelled,
     prev,
     next,
     today,
@@ -54,6 +56,7 @@ export default function SchedulingPage() {
     view,
     date,
     providerId,
+    includeCancelled,
     enabled: view !== "day",
   });
 
@@ -92,6 +95,8 @@ export default function SchedulingPage() {
         date={date}
         providerId={providerId}
         onProviderChange={setProviderId}
+        includeCancelled={includeCancelled}
+        onIncludeCancelledChange={setIncludeCancelled}
         onViewChange={setView}
         onPrev={prev}
         onNext={next}

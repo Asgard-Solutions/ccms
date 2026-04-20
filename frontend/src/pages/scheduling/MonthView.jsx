@@ -90,6 +90,15 @@ export default function MonthView({
                         {count} appt{count === 1 ? "" : "s"}
                       </button>
                     )}
+                    {entry.cancelled_count > 0 && (
+                      <span
+                        data-testid={`scheduling-month-cancelled-count-${key}`}
+                        className="rounded-sm bg-destructive-soft px-1.5 py-0.5 text-[10px] font-semibold text-destructive"
+                        title={`${entry.cancelled_count} cancelled`}
+                      >
+                        {entry.cancelled_count} cnl
+                      </span>
+                    )}
                     {canBook && (
                       <button
                         type="button"

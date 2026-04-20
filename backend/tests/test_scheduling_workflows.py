@@ -140,7 +140,8 @@ def test_create_list_range_and_counts_reconcile():
         assert hit is not None
         assert hit["status"] == "cancelled"
 
-        # Cancelled appts still counted (by design — clinic ops want to see them)
+        # Cancelled appts now tracked separately (task 15: counts split
+        # active vs cancelled so daily operational load isn't inflated).
         counts_after = admin.get(f"{API}/appointments/counts",
                                  params={"from": frm, "to": to_, "tz": "UTC"},
                                  timeout=10).json()
@@ -150,7 +151,7 @@ def test_create_list_range_and_counts_reconcile():
             None,
         )
         assert bucket_after is not None
-        assert bucket_after["count"] >= 1
+        assert bucket_after["cancelled_count"] >= 1
     finally:
         # No hard delete endpoint; cancellation is cleanup enough.
         pass
@@ -193,3 +194,84 @@ def test_patient_counts_never_leak_other_tenants():
         for s in row.get("samples", []):
             # Counts endpoint defaulted samples=0 so this should be an empty loop
             assert s["id"] in own_ids
+
+
+def test_cancelled_slot_is_rebookable():
+    """Task 15 — cancelling an appointment must free the slot for rebooking."""
+    admin = _login(*DEFAULT_ADMIN)
+    _reauth(admin, DEFAULT_ADMIN[1])
+    patient_id, provider_id = _seed_patient_and_provider(admin)
+
+    slot_start = datetime.now(timezone.utc).replace(
+        hour=14, minute=0, second=0, microsecond=0
+    ) + timedelta(days=120)
+    slot_end = slot_start + timedelta(minutes=30)
+
+    # 1. Book the slot.
+    r1 = admin.post(f"{API}/appointments", json={
+        "patient_id": patient_id,
+        "provider_id": provider_id,
+        "start_time": _iso(slot_start),
+        "end_time": _iso(slot_end),
+        "reason": "initial",
+    }, timeout=10)
+    assert r1.status_code in (200, 201), r1.text
+    first_id = r1.json()["id"]
+
+    # 2. Double-book on the SAME slot must fail.
+    r2 = admin.post(f"{API}/appointments", json={
+        "patient_id": patient_id,
+        "provider_id": provider_id,
+        "start_time": _iso(slot_start),
+        "end_time": _iso(slot_end),
+        "reason": "double-book attempt",
+    }, timeout=10)
+    assert r2.status_code == 409, (r2.status_code, r2.text)
+
+    # 3. Cancel the first appointment.
+    rc = admin.post(f"{API}/appointments/{first_id}/cancel", timeout=10)
+    assert rc.status_code in (200, 204), rc.text
+
+    # 4. Rebook must succeed now.
+    r3 = admin.post(f"{API}/appointments", json={
+        "patient_id": patient_id,
+        "provider_id": provider_id,
+        "start_time": _iso(slot_start),
+        "end_time": _iso(slot_end),
+        "reason": "after cancellation",
+    }, timeout=10)
+    assert r3.status_code in (200, 201), (r3.status_code, r3.text)
+    assert r3.json()["id"] != first_id
+
+    # 5. Counts: active=1, cancelled=1 for that date.
+    frm = _iso(slot_start - timedelta(hours=1))
+    to_ = _iso(slot_start + timedelta(hours=1))
+    counts = admin.get(f"{API}/appointments/counts",
+                       params={"from": frm, "to": to_, "tz": "UTC"},
+                       timeout=10).json()
+    bucket = next(
+        (row for row in counts if row["date"] == slot_start.strftime("%Y-%m-%d")),
+        None,
+    )
+    assert bucket is not None
+    assert bucket["count"] >= 1
+    assert bucket["cancelled_count"] >= 1
+
+
+def test_include_cancelled_flag_on_list():
+    """list endpoint filters cancelled when include_cancelled=false."""
+    admin = _login(*DEFAULT_ADMIN)
+    frm = "2000-01-01T00:00:00Z"
+    to_ = "2040-01-01T00:00:00Z"
+    all_rows = admin.get(f"{API}/appointments",
+                         params={"from": frm, "to": to_,
+                                 "include_cancelled": "true"},
+                         timeout=10).json()
+    active_rows = admin.get(f"{API}/appointments",
+                            params={"from": frm, "to": to_,
+                                    "include_cancelled": "false"},
+                            timeout=10).json()
+    assert len(active_rows) <= len(all_rows)
+    for a in active_rows:
+        assert a["status"] != "cancelled"
+

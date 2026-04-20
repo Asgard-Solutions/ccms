@@ -38,25 +38,26 @@ def test_counts_shape_and_totals_match_list():
     list_total = len(r.json())
 
     r = s.get(f"{API}/appointments/counts",
-              params={"from": frm, "to": to, "include_samples": 3}, timeout=10)
+              params={"from": frm, "to": to, "include_samples": 3,
+                      "include_cancelled": "true"}, timeout=10)
     assert r.status_code == 200, r.text
     rows = r.json()
 
     # Shape
     for row in rows:
-        assert set(row.keys()) >= {"date", "count", "samples"}
-        assert isinstance(row["count"], int) and row["count"] >= 1
+        assert set(row.keys()) >= {"date", "count", "cancelled_count", "samples"}
+        assert isinstance(row["count"], int)
+        assert isinstance(row["cancelled_count"], int)
         assert isinstance(row["samples"], list)
         assert len(row["samples"]) <= 3
         for sample in row["samples"]:
-            # Lightweight preview only — no PHI beyond list response.
             assert "id" in sample
             assert "start_time" in sample
             assert "status" in sample
-            assert "notes" not in sample  # notes are encrypted / omitted
+            assert "notes" not in sample
 
-    # Totals reconciled
-    counts_total = sum(row["count"] for row in rows)
+    # Totals reconciled — `count` is active only, add cancelled_count.
+    counts_total = sum(row["count"] + row["cancelled_count"] for row in rows)
     assert counts_total == list_total, (counts_total, list_total)
 
 

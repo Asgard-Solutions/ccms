@@ -22,6 +22,7 @@ export function useAppointmentCounts({
   date,
   providerId = null,
   tz = null,
+  includeCancelled = false,
   enabled = true,
 } = {}) {
   const samples = view === "week" ? 3 : view === "month" ? 2 : 0;
@@ -40,7 +41,7 @@ export function useAppointmentCounts({
       setMap({});
       return;
     }
-    const key = `${view}|${range.start.toISOString()}|${range.end.toISOString()}|${effectiveTz}|${samples}|${providerId || "all"}`;
+    const key = `${view}|${range.start.toISOString()}|${range.end.toISOString()}|${effectiveTz}|${samples}|${providerId || "all"}|${includeCancelled}`;
     if (cacheRef.current.has(key)) {
       setMap(cacheRef.current.get(key));
       return;
@@ -54,13 +55,18 @@ export function useAppointmentCounts({
         to: range.end.toISOString(),
         tz: effectiveTz,
         include_samples: samples,
+        include_cancelled: includeCancelled,
       };
       if (providerId) params.provider_id = providerId;
       const { data } = await api.get("/appointments/counts", { params });
       if (myReq !== reqIdRef.current) return;
       const next = {};
       for (const row of data || []) {
-        next[row.date] = { count: row.count, samples: row.samples || [] };
+        next[row.date] = {
+          count: row.count,
+          cancelled_count: row.cancelled_count || 0,
+          samples: row.samples || [],
+        };
       }
       cacheRef.current.set(key, next);
       setMap(next);
@@ -72,7 +78,7 @@ export function useAppointmentCounts({
     } finally {
       if (myReq === reqIdRef.current) setLoading(false);
     }
-  }, [enabled, view, range.start, range.end, effectiveTz, samples, providerId]);
+  }, [enabled, view, range.start, range.end, effectiveTz, samples, providerId, includeCancelled]);
 
   useEffect(() => {
     fetchCounts();

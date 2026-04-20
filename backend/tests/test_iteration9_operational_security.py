@@ -29,7 +29,7 @@ import requests
 
 BASE_URL = (
     os.environ.get("REACT_APP_BACKEND_URL")
-    or "https://clinic-ops-portal.preview.emergentagent.com"
+    or "https://booking-hub-423.preview.emergentagent.com"
 ).rstrip("/")
 API = f"{BASE_URL}/api"
 

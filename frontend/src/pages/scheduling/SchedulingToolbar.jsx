@@ -1,5 +1,7 @@
 import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button } from "../../components/ui/button";
+import { Switch } from "../../components/ui/switch";
+import { Label } from "../../components/ui/label";
 import { rangeLabel, VIEWS } from "./dateHelpers";
 import ProviderFilter from "./ProviderFilter";
 
@@ -15,6 +17,8 @@ export default function SchedulingToolbar({
   date,
   providerId,
   onProviderChange,
+  includeCancelled,
+  onIncludeCancelledChange,
   onViewChange,
   onPrev,
   onNext,
@@ -37,6 +41,22 @@ export default function SchedulingToolbar({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
+        {(view === "day" || view === "week") && (
+          <div className="flex items-center gap-2 rounded-sm border border-border bg-card px-2.5 py-1.5">
+            <Switch
+              id="show-cancelled"
+              data-testid="scheduling-show-cancelled-toggle"
+              checked={!!includeCancelled}
+              onCheckedChange={onIncludeCancelledChange}
+            />
+            <Label
+              htmlFor="show-cancelled"
+              className="cursor-pointer text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+            >
+              Show canceled
+            </Label>
+          </div>
+        )}
         <ProviderFilter value={providerId} onChange={onProviderChange} />
 
         <div

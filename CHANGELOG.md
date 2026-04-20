@@ -11,6 +11,18 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Scheduling — Cancelled appointments now occupy only the right
+  half of their Day-view column.** Rendered via `pointer-events-none`
+  so the left half of the same time band stays a fully clickable
+  booking surface — staff can rebook the exact same slot without
+  visually losing the cancelled history. Active (scheduled) blocks
+  continue to occupy the full column width.
+- **Scheduling — "Show canceled" toggle is now scoped to Day and
+  Week views only.** The toggle is hidden in Month and Year views
+  where cancelled appointments are already summarised via the
+  dedicated `cnl` pill on each cell. The underlying
+  `includeCancelled` state still persists across view switches.
+
 - **Scheduling — Week-view closed-day shading.** `WeekView` now
   reads the active clinic-hours via the already-wired
   `extractDaySpan(hours, date)` helper and, for each day cell:

@@ -599,3 +599,27 @@ page into a single operational scheduling experience.
 - Keyboard navigation across the week/month grids (arrow keys).
 - Drag-to-reschedule in Week/Day views.
 - Dedicated testing-agent sweep for the new module.
+
+
+---
+
+## [2026-04-20] Scheduling polish — cancelled half-column + scoped toggle
+
+### Changes
+- `DayView.jsx`: cancelled appointments now occupy **only the right
+  half** of their column (still `pointer-events-none`), so the left
+  half of the same time band remains a fully clickable booking
+  surface. Active (scheduled) blocks still occupy the full column.
+- `SchedulingToolbar.jsx`: the "Show canceled" toggle is now rendered
+  **only on Day and Week views**. Month and Year already surface
+  cancellations via the per-cell `cnl` pill, so the toggle is not
+  needed there; the underlying `includeCancelled` state still
+  persists across view switches.
+
+### Verified
+- Playwright smoke:
+  - Day-view cancelled block bbox confirms `left ≈ 50%`, `width ≈ 50%`.
+  - Toggle count: `1` on Day & Week, `0` on Month & Year.
+- CI guards: `scripts/check_theme.py` and `scripts/check_docs.py` OK.
+- `CHANGELOG.md` updated under `[Unreleased]`.
+

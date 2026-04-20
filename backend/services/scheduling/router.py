@@ -185,6 +185,10 @@ async def list_appointments(
     appt_status: str | None = Query(default=None, alias="status"),
     from_date: str | None = Query(default=None, alias="from"),
     to_date: str | None = Query(default=None, alias="to"),
+    include_cancelled: bool = Query(
+        default=True,
+        description="When False, cancelled appointments are excluded from the results.",
+    ),
 ):
     db = get_db_read()
     q: dict = {}
@@ -208,6 +212,8 @@ async def list_appointments(
         q["location_id"] = location_id
     if appt_status:
         q["status"] = appt_status
+    elif not include_cancelled:
+        q["status"] = {"$ne": "cancelled"}
     if from_date or to_date:
         range_q: dict = {}
         if from_date:
@@ -233,6 +239,7 @@ async def list_appointments(
             "patient_id": patient_id,
             "location_id": location_id,
             "status": appt_status,
+            "include_cancelled": include_cancelled,
             "from": from_date,
             "to": to_date,
             "tenant": ctx.tenant_id or "platform",
@@ -258,17 +265,27 @@ async def appointment_counts(
     tz: str = Query(default="UTC", description="IANA timezone for local-day bucketing"),
     include_samples: int = Query(default=0, ge=0, le=10,
                                  description="Sample appointments per date (0..10)"),
+    include_cancelled: bool = Query(
+        default=False,
+        description="When True, samples include cancelled appts. `count` is always "
+                    "active-only; `cancelled_count` is always returned.",
+    ),
 ):
     """Return appointment counts grouped by local date.
 
-    - Tenant + location + role scoping mirrors the list endpoint.
-    - Buckets `start_time` into `tz`-local dates via `$dateToString`.
-    - When `include_samples > 0` each date carries the N earliest
-      appointments as lightweight sample objects (no notes, no PHI beyond
-      what the list endpoint already returns): id, start_time, end_time,
-      patient_id, provider_id, status. Patient/provider names are hydrated
-      in one extra read (same pattern as the list endpoint).
-    - Cached 30s — same TTL as the list endpoint.
+    Response shape per row:
+      {
+        "date": "YYYY-MM-DD",
+        "count": <active-only count>,             # scheduled + completed
+        "cancelled_count": <cancelled count>,     # always returned for UX
+        "samples": [<N earliest appointments>]    # respects include_cancelled
+      }
+
+    `count` never includes cancelled appointments because the operational
+    day-to-day question ("how busy are we?") shouldn't inflate with history.
+    The frontend can combine `count` + `cancelled_count` into a
+    "5 scheduled, 2 canceled" secondary indicator when the user has the
+    Show-canceled toggle on.
     """
     db = get_db_read()
     q: dict = {}
@@ -318,10 +335,12 @@ async def appointment_counts(
                     "date": "$_parsed_start",
                     "timezone": tz,
                 }},
+                "_is_cancelled": {"$eq": ["$status", "cancelled"]},
             }},
             {"$group": {
                 "_id": "$_local_date",
-                "count": {"$sum": 1},
+                "count": {"$sum": {"$cond": ["$_is_cancelled", 0, 1]}},
+                "cancelled_count": {"$sum": {"$cond": ["$_is_cancelled", 1, 0]}},
                 "samples": {"$push": {
                     "id": "$id",
                     "start_time": "$start_time",
@@ -335,8 +354,15 @@ async def appointment_counts(
                 "_id": 0,
                 "date": "$_id",
                 "count": 1,
-                "samples": ({"$slice": ["$samples", include_samples]}
-                            if include_samples > 0 else {"$literal": []}),
+                "cancelled_count": 1,
+                "samples": ({"$slice": [
+                    ({"$filter": {
+                        "input": "$samples",
+                        "as": "s",
+                        "cond": {"$ne": ["$$s.status", "cancelled"]},
+                    }} if not include_cancelled else "$samples"),
+                    include_samples,
+                ]} if include_samples > 0 else {"$literal": []}),
             }},
             {"$sort": {"date": 1}},
         ]
@@ -381,6 +407,7 @@ async def appointment_counts(
             "to": to_date,
             "tz": tz,
             "samples": include_samples,
+            "include_cancelled": include_cancelled,
             "tenant": ctx.tenant_id or "platform",
             "doctor_self": user["id"] if (user["role"] == "doctor" and not provider_id and not patient_id) else None,
             "patient_self": user["id"] if user["role"] == "patient" else None,

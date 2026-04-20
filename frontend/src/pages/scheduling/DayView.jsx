@@ -147,6 +147,11 @@ export default function DayView({
       (appointments || []).filter((a) => sameDay(new Date(a.start_time), date)),
     [appointments, date]
   );
+  const activeCount = useMemo(
+    () => visible.filter((a) => a.status !== "cancelled").length,
+    [visible]
+  );
+  const cancelledCount = visible.length - activeCount;
 
   const { startM, endM, isClosed } = useMemo(
     () => computeWindow({ hours, date, expanded, inDayAppts: visible }),
@@ -179,7 +184,7 @@ export default function DayView({
     [visible, dayStart, dayEnd]
   );
 
-  const outsideWindow = visible.length - inWindow.length;
+  const outsideWindow = visible.filter((a) => a.status !== "cancelled").length - inWindow.filter((a) => a.status !== "cancelled").length;
 
   const laid = useMemo(() => layoutColumns(inWindow), [inWindow]);
 
@@ -244,8 +249,17 @@ export default function DayView({
             data-testid="scheduling-day-count"
             className="rounded-sm bg-primary/10 px-3 py-1 text-sm font-semibold text-primary"
           >
-            {visible.length} {visible.length === 1 ? "appointment" : "appointments"}
+            {activeCount} {activeCount === 1 ? "appointment" : "appointments"}
           </span>
+          {cancelledCount > 0 && (
+            <span
+              data-testid="scheduling-day-cancelled-count"
+              className="rounded-sm bg-destructive-soft px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-destructive"
+              title={`${cancelledCount} cancelled`}
+            >
+              {cancelledCount} canceled
+            </span>
+          )}
         </div>
       </div>
 
@@ -396,23 +410,63 @@ export default function DayView({
               const widthPct = 100 / totalCols;
               const leftPct = col * widthPct;
               const cancelled = appt.status === "cancelled";
+              // Cancelled appointments occupy only the right half of their
+              // column so the left half of the same time band remains a
+              // fully clickable booking surface. Active blocks still take
+              // the full column width.
+              const commonStyle = cancelled
+                ? {
+                    top: `${top}px`,
+                    height: `${Math.max(height - 2, SLOT_HEIGHT - 2)}px`,
+                    left: `calc(${leftPct + widthPct / 2}% + 2px)`,
+                    width: `calc(${widthPct / 2}% - 4px)`,
+                  }
+                : {
+                    top: `${top}px`,
+                    height: `${Math.max(height - 2, SLOT_HEIGHT - 2)}px`,
+                    left: `calc(${leftPct}% + 2px)`,
+                    width: `calc(${widthPct}% - 4px)`,
+                  };
+              if (cancelled) {
+                // Cancelled blocks MUST NOT block slot clicks (the slot is
+                // bookable again). Render as a pointer-events:none overlay
+                // with a thin dashed border, strikethrough patient name,
+                // and a "Canceled" pill. Full details are surfaced via the
+                // `title` tooltip so operators get the history context.
+                return (
+                  <div
+                    key={appt.id}
+                    data-testid={`scheduling-day-appt-${appt.id}`}
+                    data-cancelled="true"
+                    role="presentation"
+                    aria-label={`Cancelled appointment for ${appt.patient_name} at ${formatHHMM(new Date(appt.start_time))} — slot is bookable`}
+                    title={`Canceled • ${appt.patient_name || "Unknown"} • ${formatHHMM(new Date(appt.start_time))}${appt.reason ? ` • ${appt.reason}` : ""}`}
+                    className="pointer-events-none absolute flex flex-col gap-0.5 overflow-hidden rounded-sm border-2 border-dashed border-destructive/60 bg-destructive-soft/70 p-2 text-left text-xs"
+                    style={commonStyle}
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="truncate font-medium text-destructive line-through">
+                        {appt.patient_name || "Unknown patient"}
+                      </span>
+                      <span className="shrink-0 rounded-sm bg-destructive/15 px-1 py-[1px] text-[9px] font-semibold uppercase tracking-wider text-destructive">
+                        Canceled
+                      </span>
+                    </div>
+                    <div className="truncate text-[11px] text-destructive/80">
+                      {formatHHMM(new Date(appt.start_time))}
+                      {appt.reason ? ` · ${appt.reason}` : ""}
+                    </div>
+                  </div>
+                );
+              }
               return (
                 <button
                   key={appt.id}
                   type="button"
                   data-testid={`scheduling-day-appt-${appt.id}`}
                   onClick={() => onOpenAppointment?.(appt)}
-                  className={`pointer-events-auto absolute overflow-hidden rounded-sm border-l-2 p-2 text-left text-xs shadow-sm transition-colors ${
-                    cancelled
-                      ? "border-destructive bg-destructive-soft text-destructive line-through"
-                      : "border-primary bg-primary/15 text-foreground hover:bg-primary/25"
-                  }`}
-                  style={{
-                    top: `${top}px`,
-                    height: `${Math.max(height - 2, SLOT_HEIGHT - 2)}px`,
-                    left: `calc(${leftPct}% + 2px)`,
-                    width: `calc(${widthPct}% - 4px)`,
-                  }}
+                  className="pointer-events-auto absolute overflow-hidden rounded-sm border-l-2 border-primary bg-primary/15 p-2 text-left text-xs text-foreground shadow-sm transition-colors hover:bg-primary/25"
+                  style={commonStyle}
                   aria-label={`Appointment for ${appt.patient_name} at ${formatHHMM(new Date(appt.start_time))}`}
                 >
                   <div className="flex items-baseline justify-between gap-2">
