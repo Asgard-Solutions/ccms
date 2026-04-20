@@ -11,6 +11,31 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Scheduling + Clinic Settings — Appointment types.** Introduces a
+  tenant-scoped catalog of bookable visit types with a per-type default
+  duration (minutes). Backend: new service at
+  `services/appointment_types/` with admin-only CRUD, soft-delete
+  (`is_active=false`) + reactivate. Endpoints mounted at
+  `/api/appointment-types` (list | create | update | deactivate |
+  reactivate). Case-insensitive name uniqueness per tenant; 422 on
+  duration outside 5–480 minutes.
+  Frontend:
+  - `ClinicSettings` now embeds `AppointmentTypesManager` — inline
+    table with create / edit / deactivate / reactivate.
+  - `BookDialog` gains an **Appointment type** dropdown (sources
+    active types only). Selecting a type fills the Reason field with
+    the type name and recomputes End = Start + default duration.
+    Subsequent Start edits keep recomputing End until the user
+    manually edits End — after which the manual override is preserved.
+    "Custom (free text)" keeps the legacy 30-min behavior. Reschedule
+    mode treats the saved end-time as already manually set.
+  - New `useAppointmentTypes` hook for the modal (fetches only while
+    the dialog is open, `active_only=true`).
+  Backend tests: `tests/test_appointment_types.py` — 7/7 passing
+  covering CRUD lifecycle, duration bounds, blank-name, case-insensitive
+  uniqueness, RBAC (doctor & staff read-only), tenant isolation, and
+  `active_only` filter.
+
 - **Scheduling — Cancelled indicators now strictly gated by the
   "Show canceled" toggle.** Previously the per-day `cnl` pill on Week
   view and the `canceled` badge on Day view rendered whenever any

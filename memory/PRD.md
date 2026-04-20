@@ -623,3 +623,51 @@ page into a single operational scheduling experience.
 - CI guards: `scripts/check_theme.py` and `scripts/check_docs.py` OK.
 - `CHANGELOG.md` updated under `[Unreleased]`.
 
+
+
+---
+
+## [2026-04-20] Appointment Types + context-aware Book dialog
+
+### Backend
+- **New service** `services/appointment_types/` (tenant-scoped).
+- **Endpoints** under `/api/appointment-types`:
+  - `GET` — list (supports `?active_only=true`)
+  - `POST` — create (admin only)
+  - `PUT /{id}` — update (admin only)
+  - `DELETE /{id}` — soft-delete, sets `is_active=false` (admin only)
+  - `POST /{id}/reactivate` — admin only
+- Case-insensitive uniqueness per tenant on `name`. Duration bounded
+  5–480 minutes. All mutations audit-logged
+  (`appointment_type.created|updated|deactivated|reactivated`).
+- `tests/test_appointment_types.py` — 7/7 passing (CRUD lifecycle,
+  duration bounds, blank-name, uniqueness, RBAC, tenant isolation,
+  `active_only` filter). Regression: all 23 backend scheduling tests
+  still pass.
+
+### Frontend
+- **`useAppointmentTypes`** hook — fetches active types only while
+  the Book dialog is open.
+- **`BookDialog`** — new "Appointment type" dropdown above Reason.
+  Selecting a type: fills Reason with type name + recomputes
+  End = Start + default duration. Start edits keep recomputing End
+  until the user manually edits End (tracked via ref), after which
+  the manual override is preserved across further Start edits.
+  "Custom (free text)" option retains the legacy 30-min behavior.
+  Reschedule mode pre-marks end as manually-set so it never gets
+  overwritten by an accidental type pick.
+- **`AppointmentTypesManager`** — new inline table embedded at the
+  bottom of `ClinicSettings`. Admin can create, edit, deactivate,
+  and reactivate types. Empty-state hint for first-time setup.
+- Context-aware defaults already flow through `defaultStart` on all
+  three views: Day view passes the exact clicked slot, Week view
+  passes the configured clinic-open time for that date, Month view
+  passes 9:00 AM on the clicked date.
+
+### Verified
+- Playwright smoke: creating a 45-min type → opening Book dialog →
+  picking the type set reason to the type name + end to start+45m.
+  Changing start shifted end by the same delta. After manual end
+  edit, further start changes left end untouched. ✅
+- `scripts/check_theme.py` OK. `CHANGELOG.md` updated.
+
