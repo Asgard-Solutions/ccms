@@ -132,7 +132,17 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **Docs**: `/app/memory/DATA_PROTECTION_AND_KEYS.md` — full inventory, what is / isn't encrypted, KMS migration plan, infra boundaries.
 - **Verified**: 15/15 new tests pass + 27/27 iteration_7 + 13/13 iteration_6 regression. 0 issues. Masked secret rendering confirmed — no plaintext secret in the /security-config response or DOM.
 
-## 11. Key reference docs
+## 11. Operational security readiness (2026-02-18)
+- **Structured security logger** (`core/security_logger.py`): JSON-line `event(name, outcome, component, **meta)` + WARNING-level `suspicious(...)`. Banned-key scrubber prevents passwords / tokens / secrets reaching logs. Every audit row now mirrors to the `security` logger so SIEM tooling gets real-time parity with the durable audit DB.
+- **Logging config** (`core/logging_setup.py`): JSON formatter; in `APP_ENV=production` the root logger also emits JSON; in dev root stays human-readable but the `security` logger is always JSON so SIEM wiring is identical in every env.
+- **Global error handler** (`core/error_handlers.py`): installs an `Exception` handler on the FastAPI app — returns `{detail, correlation_id}` only, full traceback goes to server logs under `system.unhandled_error`, and `ccms_secure_endpoint_errors_total{path_prefix}` is bumped. No stack or internal paths reach the client.
+- **New Prometheus counters**: `ccms_auth_failures_total{reason}`, `ccms_phi_access_total{action}`, `ccms_privileged_actions_total{action}`, `ccms_privacy_requests_total{type,status}`, `ccms_breakglass_total`, `ccms_exports_total{kind}`, `ccms_secure_endpoint_errors_total{path_prefix}`.
+- **Rate-limit telemetry**: every block emits a WARNING `rate_limit.block` event and bumps `ccms_rate_limit_blocks_total{source}`.
+- **Admin monitoring-hooks endpoint**: `GET /api/compliance/monitoring-hooks` — machine-readable event catalogue + metric catalogue + incident-evidence surfaces with recommended alert thresholds.
+- **Docs**: `/app/memory/OPERATIONAL_SECURITY_READINESS.md` — event catalogue, metric catalogue, incident triage recipes, external tooling gaps, test checklist.
+- **Verified**: 17/17 new tests + 88/88 regression tests pass (iter_5/6/7/8). One critical bug caught + fixed (suspicious() signature kwarg clash) then re-verified green in iteration_10.
+
+## 12. Key reference docs
 - `/app/memory/HIPAA_COMPLIANCE.md` — full safeguard inventory (implemented vs. external)
 - `/app/memory/test_credentials.md` — demo accounts
 - `/app/test_reports/iteration_2.json` — testing agent report (24/24)
