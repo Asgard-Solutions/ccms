@@ -261,6 +261,9 @@ export default function Elevation() {
             <Button
               data-testid="elevation-submit"
               onClick={createRequest}
+              disabled={
+                !form.permission_key || form.reason.trim().length < 10
+              }
               className="bg-[#7B9A82] hover:bg-[#65826C]"
             >
               Submit

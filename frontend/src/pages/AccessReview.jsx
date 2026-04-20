@@ -4,7 +4,16 @@ import { api } from "../api/client";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
-import { AlertCircle, Download, FileBarChart, ShieldCheck, Users, History } from "lucide-react";
+import { Input } from "../components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
+import { AlertCircle, Download, FileBarChart, ShieldCheck, Users, History, Lock } from "lucide-react";
 
 function StatCard({ icon: Icon, label, value, sub, testId }) {
   return (
@@ -66,47 +75,81 @@ export default function AccessReview() {
   const [exports, setExports] = useState([]);
   const [breakGlass, setBreakGlass] = useState([]);
   const [failed, setFailed] = useState([]);
+  const [reauthOpen, setReauthOpen] = useState(false);
+  const [reauthPassword, setReauthPassword] = useState("");
+  const [reauthBusy, setReauthBusy] = useState(false);
+
+  const loadAll = async () => {
+    try {
+      const [s, p, r, ph, ex, bg, f] = await Promise.all([
+        api.get("/access/reports/access-review"),
+        api.get("/access/reports/privileged-users"),
+        api.get("/access/reports/recent-role-changes?days=30"),
+        api.get("/access/reports/phi-access-history?days=7"),
+        api.get("/access/reports/export-history?days=30"),
+        api.get("/access/reports/break-glass-history?days=90"),
+        api.get("/access/reports/failed-authz?days=7"),
+      ]);
+      setSummary(s.data);
+      setPrivileged(p.data.users);
+      setRoleChanges(r.data.events);
+      setPhiHistory(ph.data.events);
+      setExports(ex.data.events);
+      setBreakGlass(bg.data.events);
+      setFailed(f.data.events);
+      return true;
+    } catch (err) {
+      if (err?.response?.status === 401) {
+        setReauthOpen(true);
+      } else {
+        toast.error("Unable to load access review data");
+      }
+      return false;
+    }
+  };
 
   useEffect(() => {
-    (async () => {
-      try {
-        const [s, p, r, ph, ex, bg, f] = await Promise.all([
-          api.get("/access/reports/access-review"),
-          api.get("/access/reports/privileged-users"),
-          api.get("/access/reports/recent-role-changes?days=30"),
-          api.get("/access/reports/phi-access-history?days=7"),
-          api.get("/access/reports/export-history?days=30"),
-          api.get("/access/reports/break-glass-history?days=90"),
-          api.get("/access/reports/failed-authz?days=7"),
-        ]);
-        setSummary(s.data);
-        setPrivileged(p.data.users);
-        setRoleChanges(r.data.events);
-        setPhiHistory(ph.data.events);
-        setExports(ex.data.events);
-        setBreakGlass(bg.data.events);
-        setFailed(f.data.events);
-      } catch (err) {
-        toast.error(
-          err?.response?.status === 401
-            ? "Re-authentication required — please confirm your password on the Security page."
-            : "Unable to load access review data"
-        );
-      }
-    })();
+    loadAll();
   }, []);
+
+  const submitReauth = async () => {
+    if (!reauthPassword) return;
+    setReauthBusy(true);
+    try {
+      await api.post("/auth/reauth", { password: reauthPassword });
+      setReauthOpen(false);
+      setReauthPassword("");
+      toast.success("Re-authenticated — loading reports…");
+      await loadAll();
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Re-authentication failed");
+    } finally {
+      setReauthBusy(false);
+    }
+  };
 
   return (
     <div data-testid="access-review-page" className="space-y-6">
-      <header>
-        <h1 className="font-['Outfit'] text-3xl font-medium text-[#1F2924]">
-          Access review
-        </h1>
-        <p className="mt-1 max-w-2xl text-sm text-[#5C6A61]">
-          Compliance evidence snapshot. Highlights privileged users, recent
-          role changes, PHI access, exports, break-glass events and failed
-          authorizations. Back-end reports require MFA re-auth.
-        </p>
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-['Outfit'] text-3xl font-medium text-[#1F2924]">
+            Access review
+          </h1>
+          <p className="mt-1 max-w-2xl text-sm text-[#5C6A61]">
+            Compliance evidence snapshot. Highlights privileged users, recent
+            role changes, PHI access, exports, break-glass events and failed
+            authorizations. Back-end reports require MFA re-auth.
+          </p>
+        </div>
+        <Button
+          data-testid="access-review-reauth-btn"
+          variant="outline"
+          onClick={() => setReauthOpen(true)}
+          className="rounded-sm"
+        >
+          <Lock className="mr-2 h-4 w-4" />
+          Re-authenticate
+        </Button>
       </header>
 
       {summary && (
@@ -209,6 +252,47 @@ export default function AccessReview() {
           emptyText="No authz failures — 🙌"
         />
       </div>
+
+      <Dialog open={reauthOpen} onOpenChange={setReauthOpen}>
+        <DialogContent data-testid="access-review-reauth-dialog" className="rounded-sm">
+          <DialogHeader>
+            <DialogTitle>Re-authenticate</DialogTitle>
+            <DialogDescription>
+              The compliance reports on this page require you to confirm your
+              password before they load.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            data-testid="access-review-reauth-password"
+            type="password"
+            value={reauthPassword}
+            autoFocus
+            onChange={(e) => setReauthPassword(e.target.value)}
+            placeholder="Your password"
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitReauth();
+            }}
+          />
+          <DialogFooter>
+            <Button
+              variant="ghost"
+              onClick={() => setReauthOpen(false)}
+              disabled={reauthBusy}
+            >
+              Cancel
+            </Button>
+            <Button
+              data-testid="access-review-reauth-submit"
+              onClick={submitReauth}
+              disabled={!reauthPassword || reauthBusy}
+              className="bg-[#7B9A82] hover:bg-[#65826C]"
+            >
+              <Lock className="mr-2 h-4 w-4" />
+              Confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
