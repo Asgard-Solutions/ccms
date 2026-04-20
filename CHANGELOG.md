@@ -12,6 +12,23 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Changed
+- **Patient Overview — full read-only patient info (2026-02-20).**
+  The Overview tab used to show only Address / Emergency contact /
+  Intake notes, which felt disjointed from the Edit Patient wizard.
+  It now mirrors the wizard sections end-to-end: **Identity**
+  (first/middle/last/preferred name, DOB, sex at birth, gender,
+  pronouns, marital status, preferred language), **Contact** (mobile
+  /home/work phone, email, preferred contact method, comms
+  consents), **Address**, **Emergency contact**, **Care
+  assignment** (assigned provider resolved via `/auth/providers`,
+  preferred location, referral source), **Employment**,
+  **Responsible party / Guarantor** (auto-collapses to "Same as
+  patient" when applicable), and an **Insurance** summary (primary
+  + secondary). An "Edit patient info" CTA on the Overview tab
+  opens the same wizard used by the toolbar button and handles
+  break-glass/unmask flow. All fields gracefully fall back to "—"
+  when empty or masked.
+
 - **Patient Detail IA refactor — tabs + date-range filter (2026-02-20).**
   - `PatientDetail.jsx` no longer renders every section in one long
     vertical scroll. The header + meta row stay on top; below that,

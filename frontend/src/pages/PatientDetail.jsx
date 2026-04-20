@@ -107,6 +107,264 @@ function formatAddressObj(a) {
   return line || null;
 }
 
+// ---------------------------------------------------------------------------
+// PatientOverview — read-only mirror of the Edit Patient wizard. Renders the
+// same section hierarchy (Identity → Contact → Address → Emergency → Care
+// assignment → Employment → Responsible party → Insurance) so the Overview
+// tab and the Edit modal feel like two views of the same object.
+// ---------------------------------------------------------------------------
+
+function OverviewField({ label, value, testId, full = false }) {
+  return (
+    <div
+      data-testid={testId}
+      className={full ? "sm:col-span-3" : ""}
+    >
+      <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 text-sm text-foreground">
+        {hasValue(value) ? value : <span className="text-muted-foreground">—</span>}
+      </div>
+    </div>
+  );
+}
+
+function OverviewSection({ title, hint, children, testId }) {
+  return (
+    <section
+      data-testid={testId}
+      className="rounded-sm border border-border bg-card p-6"
+    >
+      <header className="mb-4 border-b border-border pb-2">
+        <h3 className="font-display text-lg font-medium text-foreground">{title}</h3>
+        {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
+      </header>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function InsuranceRow({ label, carrier, plan, memberId, planType, testId }) {
+  if (!hasValue(carrier) && !hasValue(plan) && !hasValue(memberId)) return null;
+  const badge = planType ? (
+    <span className="ml-2 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      {planType}
+    </span>
+  ) : null;
+  return (
+    <div
+      data-testid={testId}
+      className="rounded-sm border border-border bg-background p-3"
+    >
+      <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-foreground">
+        <span className="font-medium">{carrier || "—"}</span>
+        {hasValue(plan) && <span className="text-muted-foreground">· {plan}</span>}
+        {badge}
+      </div>
+      {hasValue(memberId) && (
+        <div className="mt-0.5 text-xs text-muted-foreground">
+          Member ID <span className="text-foreground">{memberId}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PatientOverview({ patient, providers, onEdit, canEdit }) {
+  const demo = patient.demographics || {};
+  const contact = patient.contact || {};
+  const addr = patient.address_details || {};
+  const ec = patient.emergency_contact_details || {};
+  const admin = patient.admin || {};
+  const g = patient.guarantor || {};
+  const ins = patient.insurance || {};
+  const primary = ins.primary || {};
+  const secondary = ins.secondary || {};
+
+  const providerId = admin.primary_provider_id;
+  const providerLabel =
+    (providers || []).find((p) => p.id === providerId)?.name || providerId || null;
+
+  const consentSummary = [
+    contact.sms_consent && "SMS",
+    contact.email_consent && "Email",
+    contact.voicemail_consent && "Voicemail",
+  ].filter(Boolean).join(" · ") || null;
+
+  const addressLine = formatAddressObj(addr) || patient.address || null;
+  const guarantorSame = g && (g.same_as_patient === true ||
+    (Object.keys(g).length === 0 && !patient.guarantor));
+  const guarantorName = [g.first_name, g.last_name].filter(Boolean).join(" ");
+
+  return (
+    <div data-testid="patient-overview" className="space-y-6">
+      {canEdit && (
+        <div className="flex items-center justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onEdit}
+            data-testid="overview-edit-patient-btn"
+            className="rounded-sm"
+          >
+            <Pencil className="mr-2 h-3.5 w-3.5" /> Edit patient info
+          </Button>
+        </div>
+      )}
+
+      <OverviewSection
+        title="Identity"
+        hint="Legal name first; preferred name appears in the patient portal."
+        testId="overview-identity"
+      >
+        <OverviewField label="First name" value={demo.first_name || patient.first_name} testId="ov-first-name" />
+        <OverviewField label="Middle name" value={demo.middle_name} testId="ov-middle-name" />
+        <OverviewField label="Last name" value={demo.last_name || patient.last_name} testId="ov-last-name" />
+        <OverviewField label="Preferred name" value={demo.preferred_name} testId="ov-preferred-name" />
+        <OverviewField
+          label="Date of birth"
+          value={demo.date_of_birth || patient.date_of_birth
+            ? (patient.unmasked ? formatDate(demo.date_of_birth || patient.date_of_birth) : (demo.date_of_birth || patient.date_of_birth))
+            : null}
+          testId="ov-dob"
+        />
+        <OverviewField label="Sex at birth" value={demo.sex_at_birth} testId="ov-sex" />
+        <OverviewField label="Gender identity" value={demo.gender || patient.gender} testId="ov-gender" />
+        <OverviewField label="Pronouns" value={demo.pronouns} testId="ov-pronouns" />
+        <OverviewField label="Marital status" value={demo.marital_status} testId="ov-marital" />
+        <OverviewField label="Preferred language" value={demo.language} testId="ov-language" />
+      </OverviewSection>
+
+      <OverviewSection
+        title="Contact"
+        hint="Default contact details — patients may update these in the portal."
+        testId="overview-contact"
+      >
+        <OverviewField label="Mobile phone" value={contact.phone || patient.phone} testId="ov-mobile" />
+        <OverviewField label="Home phone" value={contact.phone_alt} testId="ov-home" />
+        <OverviewField label="Work phone" value={contact.phone_work} testId="ov-work" />
+        <OverviewField label="Email" value={contact.email || patient.email} testId="ov-email" />
+        <OverviewField label="Preferred contact method" value={contact.preferred_contact_method} testId="ov-pcm" />
+        <OverviewField label="Communication consents" value={consentSummary} testId="ov-comm-consents" />
+      </OverviewSection>
+
+      <OverviewSection title="Address" testId="overview-address">
+        <OverviewField label="Address" value={addressLine} testId="ov-address" full />
+      </OverviewSection>
+
+      <OverviewSection
+        title="Emergency contact"
+        hint="Someone we can reach if the patient is unresponsive."
+        testId="overview-emergency"
+      >
+        <OverviewField label="Name" value={ec.name || patient.emergency_contact} testId="ov-ec-name" />
+        <OverviewField label="Relationship" value={ec.relationship} testId="ov-ec-rel" />
+        <OverviewField label="Phone" value={ec.phone} testId="ov-ec-phone" />
+        <OverviewField label="Alt phone" value={ec.phone_alt} testId="ov-ec-alt" />
+        <OverviewField label="Email" value={ec.email} testId="ov-ec-email" />
+      </OverviewSection>
+
+      <OverviewSection
+        title="Care assignment"
+        hint="Who sees this patient and where."
+        testId="overview-care"
+      >
+        <OverviewField label="Assigned provider" value={providerLabel} testId="ov-provider" />
+        <OverviewField label="Preferred location" value={patient.location_id} testId="ov-location" />
+        <OverviewField label="Referral source" value={admin.referral_source} testId="ov-referral" />
+      </OverviewSection>
+
+      <OverviewSection title="Employment" testId="overview-employment">
+        <OverviewField label="Occupation" value={demo.occupation} testId="ov-occupation" />
+        <OverviewField label="Employer" value={demo.employer} testId="ov-employer" />
+        <OverviewField label="Employer phone" value={demo.employer_phone} testId="ov-employer-phone" />
+      </OverviewSection>
+
+      <OverviewSection
+        title="Responsible party / Guarantor"
+        hint="Person financially responsible for this account."
+        testId="overview-guarantor"
+      >
+        {guarantorSame ? (
+          <OverviewField
+            label="Status"
+            value="Same as patient"
+            testId="ov-guarantor-same"
+            full
+          />
+        ) : (
+          <>
+            <OverviewField label="Name" value={guarantorName || null} testId="ov-g-name" />
+            <OverviewField label="Relationship" value={g.relationship} testId="ov-g-rel" />
+            <OverviewField label="Date of birth" value={g.date_of_birth} testId="ov-g-dob" />
+            <OverviewField label="Phone" value={g.phone} testId="ov-g-phone" />
+            <OverviewField label="Email" value={g.email} testId="ov-g-email" />
+            <OverviewField label="Address" value={g.address} testId="ov-g-addr" />
+            <OverviewField label="Employer" value={g.employer} testId="ov-g-employer" />
+            <OverviewField label="Employer phone" value={g.employer_phone} testId="ov-g-employer-phone" />
+          </>
+        )}
+      </OverviewSection>
+
+      <section
+        data-testid="overview-insurance-summary"
+        className="rounded-sm border border-border bg-card p-6"
+      >
+        <header className="mb-4 border-b border-border pb-2 flex items-center justify-between">
+          <div>
+            <h3 className="font-display text-lg font-medium text-foreground">Insurance</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Summary only — full plan management lives on the Insurance tab.
+            </p>
+          </div>
+        </header>
+        {(!hasValue(primary.carrier) && !hasValue(secondary.carrier)) ? (
+          <p className="text-sm text-muted-foreground">No insurance on file.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <InsuranceRow
+              label="Primary"
+              carrier={primary.carrier}
+              plan={primary.plan_name}
+              memberId={primary.member_id}
+              planType={primary.plan_type}
+              testId="ov-insurance-primary"
+            />
+            <InsuranceRow
+              label="Secondary"
+              carrier={secondary.carrier}
+              plan={secondary.plan_name}
+              memberId={secondary.member_id}
+              planType={secondary.plan_type}
+              testId="ov-insurance-secondary"
+            />
+          </div>
+        )}
+      </section>
+
+      {hasValue(patient.notes) && (
+        <section
+          data-testid="overview-intake-notes"
+          className="rounded-sm border border-border bg-card p-6"
+        >
+          <header className="mb-3 border-b border-border pb-2">
+            <h3 className="font-display text-lg font-medium text-foreground">Intake notes</h3>
+          </header>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+            {patient.notes}
+          </p>
+        </section>
+      )}
+    </div>
+  );
+}
+
 function InsurancePlanBlock({ plan, label, testId }) {
   if (!plan || typeof plan !== "object") return null;
   const fields = [
@@ -507,6 +765,7 @@ export default function PatientDetail() {
   const [editWizardOpen, setEditWizardOpen] = useState(false);
   const [intakeWizardOpen, setIntakeWizardOpen] = useState(false);
   const [chargeRecord, setChargeRecord] = useState(null);
+  const [providers, setProviders] = useState([]);
   const [recordsRange, setRecordsRange] = useState(null);
   const [appointmentsRange, setAppointmentsRange] = useState(null);
 
@@ -546,6 +805,14 @@ export default function PatientDetail() {
     }
     // If reasonRequired, wait for break-glass submit.
   }, [load, reasonRequired]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/auth/providers")
+      .then((r) => { if (!cancelled) setProviders(r.data || []); })
+      .catch(() => { /* providers list is best-effort for display names */ });
+    return () => { cancelled = true; };
+  }, []);
 
   async function exportPatient() {
     try {
@@ -769,20 +1036,31 @@ export default function PatientDetail() {
         </TabsList>
 
         <TabsContent value="overview" className="mt-6">
-          <section className="grid grid-cols-1 gap-6 md:grid-cols-3">
-            <div className="rounded-sm border border-border bg-card p-6">
-              <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Address</span>
-              <p className="mt-3 text-sm leading-relaxed text-foreground">{patient.address || "—"}</p>
-            </div>
-            <div className="rounded-sm border border-border bg-card p-6">
-              <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Emergency contact</span>
-              <p className="mt-3 text-sm leading-relaxed text-foreground">{patient.emergency_contact || "—"}</p>
-            </div>
-            <div className="rounded-sm border border-border bg-card p-6">
-              <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Intake notes</span>
-              <p className="mt-3 text-sm leading-relaxed text-foreground">{patient.notes || "—"}</p>
-            </div>
-          </section>
+          <PatientOverview
+            patient={patient}
+            providers={providers}
+            canEdit={canEditIntake}
+            onEdit={async () => {
+              if (patient.unmasked) {
+                setEditWizardOpen(true);
+                return;
+              }
+              if (canUnmask) {
+                try {
+                  setUnmask(true);
+                  await load({ withUnmask: true, breakGlassReason: reason });
+                  setEditWizardOpen(true);
+                } catch (err) {
+                  setUnmask(false);
+                  toast.error(formatApiError(err));
+                }
+                return;
+              }
+              toast.message("Break-glass required to edit patient", {
+                description: "Enter a reason above to unmask this record before editing.",
+              });
+            }}
+          />
         </TabsContent>
 
         <TabsContent value="intake" className="mt-6 space-y-6">
