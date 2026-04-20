@@ -32,6 +32,8 @@ from fastapi.responses import StreamingResponse
 from core.audit import audit_success
 from core.db import get_db_read
 from core.deps import require_role
+from core.tenancy import TenantContext, get_tenant_context
+from core.tenant_scope import scoped_filter
 from services.authz.policy import require_permission
 
 router = APIRouter(prefix="/audit-logs", tags=["audit"])
@@ -77,6 +79,7 @@ def _build_query(
 async def list_audit_logs(
     request: Request,
     user: dict = Depends(require_permission("audit_log", "read", audit_allow=False)),
+    ctx: TenantContext = Depends(get_tenant_context),
     actor_id: str | None = None,
     actor_email: str | None = None,
     entity_type: str | None = None,
@@ -93,6 +96,11 @@ async def list_audit_logs(
         actor_id, actor_email, entity_type, entity_id, action, outcome,
         phi_accessed, date_from, date_to,
     )
+    # Tenant isolation — audit_logs are tenant-scoped but NOT location-scoped;
+    # tenant admins see all audit rows across their whole organisation.
+    q = scoped_filter(q, ctx)
+    if q.get("__deny__"):
+        return []
     cursor = db.audit_logs.find(q, {"_id": 0}).sort("created_at", -1).limit(limit)
     rows = [r async for r in cursor]
 
@@ -109,6 +117,7 @@ async def list_audit_logs(
 async def export_audit_logs_csv(
     request: Request,
     user: dict = Depends(require_permission("audit_log", "export", audit_allow=False)),
+    ctx: TenantContext = Depends(get_tenant_context),
     actor_id: str | None = None,
     actor_email: str | None = None,
     entity_type: str | None = None,
@@ -130,6 +139,9 @@ async def export_audit_logs_csv(
         actor_id, actor_email, entity_type, entity_id, action, outcome,
         phi_accessed, date_from, date_to,
     )
+    q = scoped_filter(q, ctx)
+    if q.get("__deny__"):
+        q = {"__impossible__": True}   # empty result set
     cursor = db.audit_logs.find(q, {"_id": 0}).sort("created_at", -1).limit(limit)
 
     columns = [

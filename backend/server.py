@@ -34,6 +34,8 @@ from services.patient.router import router as patient_router  # noqa: E402
 from services.perf.router import router as perf_router, metrics_router  # noqa: E402
 from services.privacy.router import router as privacy_router  # noqa: E402
 from services.scheduling.router import router as scheduling_router  # noqa: E402
+from services.tenancy.router import router as tenancy_router  # noqa: E402
+from services.tenancy.seed import seed_tenancy  # noqa: E402
 
 
 logging.basicConfig(
@@ -58,6 +60,7 @@ async def health():
 
 
 api_router.include_router(identity_router)
+api_router.include_router(tenancy_router)
 api_router.include_router(patient_router)
 api_router.include_router(scheduling_router)
 api_router.include_router(communication_router)
@@ -130,6 +133,7 @@ async def on_startup():
         logger.warning("Transport posture: %s", warning)
     await create_indexes()
     register_comm_subscribers()
+    await seed_tenancy()      # must run BEFORE seed_identity so tenant rows exist
     await seed_identity()
     await seed_authz()
     redis_alive = await redis_ping()

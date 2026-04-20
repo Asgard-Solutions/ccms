@@ -95,6 +95,15 @@ def _clear_auth_cookies(response: Response) -> None:
         response.delete_cookie(c, path="/")
 
 
+def _issue_access_token(user: dict, epoch: int, session_started_at: str) -> str:
+    """All routes go through this so tenant_id + platform_admin claims stay in sync."""
+    return create_access_token(
+        user["id"], user["email"], user["role"], epoch, session_started_at,
+        tenant_id=user.get("tenant_id"),
+        is_platform_admin=bool(user.get("is_platform_admin")) or user.get("role") == "platform_admin",
+    )
+
+
 def _to_public(user: dict) -> dict:
     return {
         "id": user["id"],
@@ -103,6 +112,9 @@ def _to_public(user: dict) -> dict:
         "role": user["role"],
         "phone": user.get("phone"),
         "status": user.get("status", "active"),
+        "tenant_id": user.get("tenant_id"),
+        "tenant_scope_all": bool(user.get("tenant_scope_all")),
+        "is_platform_admin": bool(user.get("is_platform_admin")) or user.get("role") == "platform_admin",
         "mfa_enabled": bool(user.get("mfa_enabled")),
         "mfa_policy_required": bool(user.get("mfa_policy_required")),
         "password_changed_at": user.get("password_changed_at"),
@@ -142,6 +154,9 @@ async def register(payload: UserRegister, request: Request, response: Response):
     now_iso = datetime.now(timezone.utc).isoformat()
     user_id = str(uuid.uuid4())
     hashed = hash_password(payload.password)
+    # Public registration always creates a patient under the Default Practice.
+    default_tenant = await db.tenants.find_one({"slug": "default"}, {"_id": 0, "id": 1})
+    tenant_id = default_tenant["id"] if default_tenant else None
     doc = {
         "id": user_id,
         "email": email,
@@ -152,6 +167,8 @@ async def register(payload: UserRegister, request: Request, response: Response):
         "role": "patient",
         "phone": payload.phone,
         "status": "active",
+        "tenant_id": tenant_id,
+        "tenant_scope_all": False,
         "mfa_enabled": False,
         "mfa_policy_required": False,
         "session_epoch": 0,
@@ -161,7 +178,11 @@ async def register(payload: UserRegister, request: Request, response: Response):
     await db.users.insert_one(doc)
 
     session_started_at = datetime.now(timezone.utc).isoformat()
-    access = create_access_token(user_id, email, "patient", 0, session_started_at)
+    access = create_access_token(
+        user_id, email, "patient", 0, session_started_at,
+        tenant_id=doc.get("tenant_id"),
+        is_platform_admin=False,
+    )
     refresh = create_refresh_token(user_id, 0, session_started_at)
     _set_auth_cookies(response, access, refresh)
     await log_audit(
@@ -286,7 +307,11 @@ async def _finalise_login(db, user: dict, response: Response, request: Request) 
     await db.login_attempts.delete_one({"identifier": user["email"]})
     epoch = int(user.get("session_epoch", 0))
     session_started_at = datetime.now(timezone.utc).isoformat()
-    access = create_access_token(user["id"], user["email"], user["role"], epoch, session_started_at)
+    access = create_access_token(
+        user["id"], user["email"], user["role"], epoch, session_started_at,
+        tenant_id=user.get("tenant_id"),
+        is_platform_admin=bool(user.get("is_platform_admin")) or user.get("role") == "platform_admin",
+    )
     refresh = create_refresh_token(user["id"], epoch, session_started_at)
     _set_auth_cookies(response, access, refresh)
     await db.users.update_one(
@@ -449,6 +474,8 @@ async def refresh(request: Request, response: Response):
     sst = payload.get("sst") or datetime.now(timezone.utc).isoformat()
     access = create_access_token(
         user["id"], user["email"], user["role"], int(user.get("session_epoch", 0)), sst,
+        tenant_id=user.get("tenant_id"),
+        is_platform_admin=bool(user.get("is_platform_admin")) or user.get("role") == "platform_admin",
     )
     response.set_cookie(
         "access_token", access, **_cookie_kwargs(ACCESS_TOKEN_MINUTES * 60)
@@ -496,9 +523,7 @@ async def change_password(
         },
     )
     session_started_at = now_iso
-    access = create_access_token(
-        user["id"], user["email"], user["role"], new_epoch, session_started_at,
-    )
+    access = _issue_access_token(user, new_epoch, session_started_at)
     refresh_tok = create_refresh_token(user["id"], new_epoch, session_started_at)
     _set_auth_cookies(response, access, refresh_tok)
     await log_audit(
@@ -595,9 +620,7 @@ async def mfa_verify(
     )
     # Re-issue current session with new epoch so the user stays logged in.
     sst = datetime.now(timezone.utc).isoformat()
-    access = create_access_token(
-        user["id"], user["email"], user["role"], new_epoch, sst,
-    )
+    access = _issue_access_token(user, new_epoch, sst)
     refresh_tok = create_refresh_token(user["id"], new_epoch, sst)
     _set_auth_cookies(response, access, refresh_tok)
     await log_audit(
@@ -629,9 +652,7 @@ async def mfa_disable(
         },
     )
     sst = datetime.now(timezone.utc).isoformat()
-    access = create_access_token(
-        user["id"], user["email"], user["role"], new_epoch, sst,
-    )
+    access = _issue_access_token(user, new_epoch, sst)
     refresh_tok = create_refresh_token(user["id"], new_epoch, sst)
     _set_auth_cookies(response, access, refresh_tok)
     await log_audit(
@@ -653,6 +674,9 @@ async def list_users(
 ):
     db = get_db()
     q: dict = {}
+    # Tenant scoping: non-platform admins only see users in their tenant.
+    if not (admin.get("is_platform_admin") or admin.get("role") == "platform_admin"):
+        q["tenant_id"] = admin.get("tenant_id")
     if role:
         q["role"] = role
     if not include_disabled:
@@ -683,6 +707,9 @@ async def create_user(
 
     now = datetime.now(timezone.utc).isoformat()
     hashed = hash_password(payload.password)
+    # New users inherit the creator's tenant_id unless a platform_admin
+    # supplies an explicit tenant_id on the payload.
+    new_tenant_id = getattr(payload, "tenant_id", None) or admin.get("tenant_id")
     doc = {
         "id": str(uuid.uuid4()),
         "email": email,
@@ -693,6 +720,8 @@ async def create_user(
         "role": payload.role,
         "phone": payload.phone,
         "status": "active",
+        "tenant_id": new_tenant_id,
+        "tenant_scope_all": payload.role in ("admin", "super_admin"),
         "mfa_enabled": False,
         "mfa_policy_required": payload.role in ("admin", "doctor", "staff"),
         "session_epoch": 0,
@@ -806,19 +835,24 @@ async def enable_user(
 
 
 @router.get("/providers", response_model=list[UserPublic])
-async def list_providers(_user: dict = Depends(get_current_user)):
-    """Cached for 5 min. Provider list rarely changes; invalidated on user
-    create / disable / enable. No PHI exposure (provider names + roles only)."""
+async def list_providers(user: dict = Depends(get_current_user)):
+    """Per-tenant provider list. Cached for 5 min per tenant.
+    Invalidated on user create / disable / enable. No PHI exposure."""
+
+    tenant_id = user.get("tenant_id")
 
     async def _fetch():
         db = get_db_read()
+        q: dict = {"role": "doctor", "status": {"$ne": "disabled"}}
+        if not (user.get("is_platform_admin") or user.get("role") == "platform_admin"):
+            q["tenant_id"] = tenant_id
         cursor = db.users.find(
-            {"role": "doctor", "status": {"$ne": "disabled"}},
-            {"_id": 0, "password_hash": 0, "password_history": 0},
+            q, {"_id": 0, "password_hash": 0, "password_history": 0},
         ).sort("name", 1)
         return [_to_public(u) async for u in cursor]
 
-    return await cache.get_or_set(cache_keys.PROVIDERS, 300, _fetch)
+    tenant_suffix = tenant_id or "platform"
+    return await cache.get_or_set(f"{cache_keys.PROVIDERS}:{tenant_suffix}", 300, _fetch)
 
 
 # ---------------- Admin MFA controls ----------------

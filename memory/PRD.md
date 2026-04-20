@@ -173,6 +173,26 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **Admin UI**: new "Overrides" button on every row of `/roles` opens a `UserOverridesDialog` with permission autocomplete (115 perms), 8-scope dropdown, reason textbox (client-side 10-char minimum), optional ISO expires_at, and a live list of existing overrides with per-row revoke.
 - **Verified (iteration_13)**: 9/9 new tests pass; full regression 68/68 (iter7 + iter11 + iter12 + iter13). Zero CSP violations. Double-audit regression guarded by `test_migrated_routes_do_not_double_audit`.
 
+## 15. Multi-tenancy foundation (2026-02-21)
+- **New tenancy model**: `tenants` (id, slug, name, type=single|group, status, db_tier=shared|dedicated) parents `locations` (id, tenant_id, name, code, timezone, status). Every tenant-owned collection — `users`, `patients`, `appointments`, `medical_records`, `notifications`, `audit_logs`, `consent_records`, `communication_preferences`, `privacy_requests`, `password_reset_tokens`, `login_attempts`, `permission_scopes`, `elevation_requests`, `user_roles`, `user_location_assignments`, `patient_assignments` — now carries `tenant_id`. Location-aware rows (`patients`, `appointments`, `medical_records`) also carry `location_id`.
+- **Tenant routing abstraction (`core/tenancy.py::TenantDatabaseRouter`)**: one bridge point for shared → dedicated migration. Default routes every tenant to the shared Motor cluster; env `TENANT_DB_MAP='{"<tenant_id>": {"uri": "mongodb+srv://...", "db": "ccms_acme"}}'` promotes a tenant to its own cluster with zero business-logic change. Singleton `tenant_db(tenant_id)` is the one and only DB entry point for all repositories.
+- **Tenant context in JWT**: `tid` + `pa` (platform_admin) claims added to access tokens. `get_tenant_context()` FastAPI dependency resolves context from user + request (platform admins can override via `X-Tenant-Id` header; every such override is audited).
+- **Repository helper (`core/tenant_scope.py::scoped_filter`)**: single choke-point that injects `tenant_id` (+ optional `location_id`) into every Mongo filter. Returns a `__deny__` sentinel for users with no eligible locations so route code never has to remember to check. `stamp_for_write()` mirrors the pattern on inserts.
+- **Routers migrated**: `patient` (list/get/update/delete/export/records create+list), `scheduling` (create/list/get/update/cancel), `audit_logs` (read + csv export). Every cross-tenant id lookup returns 404, never 403, to avoid enumeration.
+- **Identity integration**: `users.tenant_id` + `tenant_scope_all` + `is_platform_admin` now surfaced in `/auth/me`, `/auth/login`, and `AdminUserCreate`. Admin `list_users` is tenant-scoped. `list_providers` is tenant-keyed in its 5-minute cache.
+- **Platform admin role** (`platform_admin`): new global role that bypasses tenant filters with an explicit audit trail. Seed account `platform-admin@ccms.app` (password `Platform@ComplianceClinic1`).
+- **New `/api/tenancy/*` endpoints**: `me/context`, `tenants` (list/create), `tenants/{id}/locations` (list/create). Listing is tenant-scoped unless caller is platform admin.
+- **Seed data (idempotent)**: `Default Practice` (single-location; adopts all legacy rows via backfill) + `Sunrise Chiro Group` (3 locations × 4 demo users with varied access scopes: group-wide admin, single-location doctor, multi-location floater doctor, single-location staff).
+- **Backfill**: every legacy tenant-owned row is stamped with the default tenant on first boot after upgrade; zero data loss.
+- **Docs**: `/app/memory/MULTI_TENANCY_ARCHITECTURE.md` — decision record, ERD, request pipeline, hybrid-DB runbook, non-goals.
+- **Tests (iteration_14)**: 19/19 new tests pass — tenant isolation across patient/appointment/audit, location scoping inside a tenant (group-admin/single-loc/floater/staff matrix), platform admin CRUD, tenant-admin denial for tenant-create, public registration assigns default tenant. Regression 9/9 (iteration_13), 15/15 (iteration_12) with correct preview URL.
+
+## 16. Out of scope / deferred
+- `privacy`, `communication`, and `elevation` routers rely on the `tenant_id` backfill but do not yet pass queries through `scoped_filter` — safe because we're still single-tenant-per-user but a P1 to harden before onboarding the second paying tenant.
+- Multi-tenant user support (one user across N tenants) — P2; requires `user_tenant_roles` table + tenant-switcher UI.
+- Subdomain-based tenant routing (`acme.ccms.app → tid=acme`) — P2; ingress + middleware work.
+- Unique-per-tenant `location.code` (currently globally unique sparse) — P2.
+
 ## 15. Key reference docs
 - `/app/memory/HIPAA_COMPLIANCE.md` — full safeguard inventory (implemented vs. external)
 - `/app/memory/AUTHORIZATION_GUIDE.md` — RBAC + scopes + policy overlays (2026-02-20)

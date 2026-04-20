@@ -40,12 +40,20 @@ async def _upsert_user(email: str, password: str, name: str, role: str, phone: s
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     now = datetime.now(timezone.utc).isoformat()
     hashed = hash_password(password)
+
+    # Legacy demo users all live under the Default Practice tenant.
+    default_tenant = await db.tenants.find_one({"slug": "default"}, {"_id": 0, "id": 1})
+    default_tenant_id = default_tenant["id"] if default_tenant else None
+
     base = {
         "email": email,
         "name": name,
         "role": role,
         "phone": phone,
         "status": "active",
+        "tenant_id": default_tenant_id,
+        # Admin sees all locations within its tenant; others are location-restricted.
+        "tenant_scope_all": role in ("admin", "super_admin"),
         "updated_at": now,
     }
     if existing is None:
@@ -108,10 +116,18 @@ async def seed() -> None:
         )
         if not has_record:
             now = datetime.now(timezone.utc).isoformat()
+            # Ensure the demo patient is attached to the Default Practice.
+            default_tenant = await db.tenants.find_one({"slug": "default"}, {"_id": 0, "id": 1})
+            default_location = await db.locations.find_one(
+                {"tenant_id": default_tenant["id"]} if default_tenant else {},
+                {"_id": 0, "id": 1},
+            ) if default_tenant else None
             await db.patients.insert_one(
                 {
                     "id": str(uuid.uuid4()),
                     "user_id": patient_user["id"],
+                    "tenant_id": default_tenant["id"] if default_tenant else None,
+                    "location_id": default_location["id"] if default_location else None,
                     "first_name": "Morgan",
                     "last_name": "Lee",
                     "date_of_birth": "1990-04-12",
@@ -204,5 +220,30 @@ async def _write_credentials_file(admin_email: str, admin_password: str) -> None
 
 ## Health
 - GET    /api/health
+
+
+## Tenancy demo accounts (multi-tenant build)
+
+### Platform admin (sees all tenants)
+- email: `platform-admin@ccms.app`
+- password: `Platform@ComplianceClinic1`
+- role: `platform_admin` (tenant_id = None)
+
+### Sunrise Chiro Group (multi-location demo)
+All demo users share the password: `Sunrise@ComplianceClinic1`
+
+| Email                            | Role   | Tenant scope         | Locations                     |
+|----------------------------------|--------|----------------------|-------------------------------|
+| group-admin@sunrise.ccms.app     | admin  | entire tenant        | all                           |
+| downtown-doc@sunrise.ccms.app    | doctor | specific location    | Downtown Clinic               |
+| floater-doc@sunrise.ccms.app     | doctor | multi-location       | Downtown + Uptown             |
+| eastside-staff@sunrise.ccms.app  | staff  | specific location    | Eastside Clinic               |
+
+### Tenant endpoints
+- GET  /api/tenancy/me/context                       — current user's tenant + visible locations
+- GET  /api/tenancy/tenants                          — list tenants (tenant-scoped unless platform admin)
+- POST /api/tenancy/tenants                          — platform admin only
+- GET  /api/tenancy/tenants/{{id}}/locations          — tenant-scoped; further filtered by user's location access
+- POST /api/tenancy/tenants/{{id}}/locations          — tenant admin or platform admin
 """
     (mem_dir / "test_credentials.md").write_text(content)

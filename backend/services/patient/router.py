@@ -24,6 +24,8 @@ from core.db import get_db, get_db_read, get_db_write, read_after_write_db
 from core.deps import get_current_user, require_role
 from core.masking import mask_patient
 from core.reauth import require_reauth
+from core.tenancy import TenantContext, get_tenant_context
+from core.tenant_scope import scoped_filter, stamp_for_write
 from services.authz.policy import require_permission
 from services.patient.models import (
     MedicalRecordCreate,
@@ -78,13 +80,14 @@ async def list_patients(
     include_deleted: bool = False,
     unmask: bool = False,
     user: dict = Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
 ):
     db = get_db_read()
     q: dict = {}
 
     if user["role"] == "patient":
         q["user_id"] = user["id"]
-    elif user["role"] not in STAFF_ROLES:
+    elif user["role"] not in STAFF_ROLES and not ctx.is_platform_admin:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
 
     if not include_deleted:
@@ -95,6 +98,11 @@ async def list_patients(
             {"first_name": {"$regex": search, "$options": "i"}},
             {"last_name": {"$regex": search, "$options": "i"}},
         ]
+
+    # Strict tenant + location isolation. Patients are location-scoped.
+    q = scoped_filter(q, ctx, location_scoped=True)
+    if q.get("__deny__"):
+        return []
 
     unmasked = bool(unmask) and user["role"] == "admin"
 
@@ -107,7 +115,8 @@ async def list_patients(
         # Never cache unmasked PHI; skip cache for ad-hoc searches too.
         shaped = await _fetch()
     else:
-        key = cache_keys.patients_list(user["role"], search, include_deleted, masked=True)
+        tenant_key = ctx.tenant_id or "platform"
+        key = cache_keys.patients_list(user["role"], search, include_deleted, masked=True) + f":{tenant_key}"
         shaped = await cache.get_or_set(key, 30, _fetch)
 
     await audit_success(
@@ -127,7 +136,9 @@ async def create_patient(
     payload: PatientCreate,
     request: Request,
     actor: dict = Depends(require_permission("patient", "create", audit_allow=False)),
+    ctx: TenantContext = Depends(get_tenant_context),
 ):
+    ctx.assert_tenant_bound()
     db = get_db_write()
     now = _now()
     user_id = None
@@ -138,14 +149,49 @@ async def create_patient(
         if existing_user:
             user_id = existing_user["id"]
 
+    # Resolve location_id. Required for tenant-scoped users who have any
+    # location restriction; platform admin may omit for cross-location rows.
+    location_id = payload.location_id
+    if not location_id:
+        if ctx.allowed_location_ids and not ctx.tenant_scope_all:
+            # Default to the user's (only) location if they have just one.
+            if len(ctx.allowed_location_ids) == 1:
+                location_id = ctx.allowed_location_ids[0]
+            else:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    "location_id is required when you have multiple location assignments.",
+                )
+        elif ctx.tenant_scope_all and ctx.tenant_id:
+            # Pick any active location in the tenant as a sensible default.
+            first_loc = await db.locations.find_one(
+                {"tenant_id": ctx.tenant_id, "status": "active"}, {"_id": 0, "id": 1},
+            )
+            if first_loc:
+                location_id = first_loc["id"]
+
+    # Validate location belongs to tenant & user is allowed there.
+    if location_id and ctx.tenant_id:
+        loc = await db.locations.find_one(
+            {"id": location_id, "tenant_id": ctx.tenant_id}, {"_id": 0, "id": 1},
+        )
+        if not loc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid location for this tenant")
+        if not ctx.tenant_scope_all and not ctx.is_platform_admin:
+            if location_id not in ctx.allowed_location_ids:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "Location not assigned to user")
+
+    body = payload.model_dump()
+    body.pop("location_id", None)
     doc = {
         "id": str(uuid.uuid4()),
         "user_id": user_id,
-        **payload.model_dump(),
+        **body,
         "status": "active",
         "created_at": now,
         "updated_at": now,
     }
+    doc = stamp_for_write(doc, ctx, location_id=location_id)
     stored = encrypt_fields(doc, PATIENT_ENCRYPTED)
     await db.patients.insert_one(stored)
     await cache.invalidate_prefix(cache_keys.PREFIX_PATIENTS)
@@ -153,7 +199,7 @@ async def create_patient(
     await audit_success(
         actor, "patient.created", request,
         entity_type="patient", entity_id=doc["id"],
-        phi_accessed=False, metadata={},
+        phi_accessed=False, metadata={"tenant_id": doc.get("tenant_id"), "location_id": location_id},
     )
     return _shape(stored, unmasked=True)
 
@@ -167,9 +213,14 @@ async def get_patient(
     unmask: bool = False,
     reason: str | None = Query(default=None),
     user: dict = Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
 ):
     db = get_db_read()
-    p = await db.patients.find_one({"id": patient_id}, {"_id": 0})
+    # Always filter by tenant to prevent cross-tenant id guessing.
+    q = scoped_filter({"id": patient_id}, ctx, location_scoped=True)
+    if q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    p = await db.patients.find_one(q, {"_id": 0})
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
 
@@ -217,6 +268,7 @@ async def update_patient(
     payload: PatientUpdate,
     request: Request,
     actor: dict = Depends(require_permission("patient", "update", audit_allow=False)),
+    ctx: TenantContext = Depends(get_tenant_context),
 ):
     db = get_db_write()
     updates = {k: v for k, v in payload.model_dump().items() if v is not None}
@@ -225,7 +277,10 @@ async def update_patient(
 
     updates["updated_at"] = _now()
     updates_to_store = encrypt_fields(updates, PATIENT_ENCRYPTED)
-    result = await db.patients.update_one({"id": patient_id}, {"$set": updates_to_store})
+    q = scoped_filter({"id": patient_id}, ctx, location_scoped=True)
+    if q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    result = await db.patients.update_one(q, {"$set": updates_to_store})
     if result.matched_count == 0:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
 
@@ -250,13 +305,17 @@ async def delete_patient(
     request: Request,
     reason: str = Query(default=""),
     admin: dict = Depends(require_permission("patient", "delete", audit_allow=False)),
+    ctx: TenantContext = Depends(get_tenant_context),
 ):
     enforced_reason = _enforce_reason(reason, required=True)
     require_reauth(request, admin)
 
     db = get_db_write()
+    q = scoped_filter({"id": patient_id}, ctx, location_scoped=True)
+    if q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
     p = await db.patients.find_one(
-        {"id": patient_id}, {"_id": 0, "id": 1, "status": 1, "legal_hold": 1},
+        q, {"_id": 0, "id": 1, "status": 1, "legal_hold": 1},
     )
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
@@ -299,21 +358,31 @@ async def export_patient(
     patient_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
 ):
     db = get_db_read()
-    p = await db.patients.find_one({"id": patient_id}, {"_id": 0})
+    q = scoped_filter({"id": patient_id}, ctx, location_scoped=True)
+    if q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    p = await db.patients.find_one(q, {"_id": 0})
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
 
     is_self = user["role"] == "patient" and p.get("user_id") == user["id"]
-    if not (user["role"] == "admin" or is_self):
+    if not (user["role"] == "admin" or is_self or ctx.is_platform_admin):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
 
+    # Child records are also tenant-scoped via explicit tenant_id filter.
+    record_filter = {"patient_id": patient_id}
+    appt_filter = {"patient_id": patient_id}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        record_filter["tenant_id"] = ctx.tenant_id
+        appt_filter["tenant_id"] = ctx.tenant_id
     records = [
-        r async for r in db.medical_records.find({"patient_id": patient_id}, {"_id": 0})
+        r async for r in db.medical_records.find(record_filter, {"_id": 0})
     ]
     appts = [
-        a async for a in db.appointments.find({"patient_id": patient_id}, {"_id": 0})
+        a async for a in db.appointments.find(appt_filter, {"_id": 0})
     ]
 
     # Decrypt everything for the export.
@@ -355,17 +424,24 @@ async def list_records(
     patient_id: str,
     request: Request,
     user: dict = Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
 ):
     db = get_db_read()
-    patient = await db.patients.find_one({"id": patient_id}, {"_id": 0, "user_id": 1})
+    patient_q = scoped_filter({"id": patient_id}, ctx, location_scoped=True)
+    if patient_q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    patient = await db.patients.find_one(patient_q, {"_id": 0, "user_id": 1})
     if not patient:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
     is_self = user["role"] == "patient" and patient.get("user_id") == user["id"]
     if user["role"] == "patient" and not is_self:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
 
+    record_filter: dict = {"patient_id": patient_id}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        record_filter["tenant_id"] = ctx.tenant_id
     docs = [
-        r async for r in db.medical_records.find({"patient_id": patient_id}, {"_id": 0})
+        r async for r in db.medical_records.find(record_filter, {"_id": 0})
         .sort("recorded_at", -1)
     ]
     decrypted = [decrypt_fields(r, RECORD_ENCRYPTED) for r in docs]
@@ -388,11 +464,15 @@ async def add_record(
     payload: MedicalRecordCreate,
     request: Request,
     user: dict = Depends(require_permission("patient_chart", "create", audit_allow=False)),
+    ctx: TenantContext = Depends(get_tenant_context),
 ):
     require_reauth(request, user)
 
     db = get_db_write()
-    patient = await db.patients.find_one({"id": patient_id}, {"_id": 0, "id": 1})
+    patient_q = scoped_filter({"id": patient_id}, ctx, location_scoped=True)
+    if patient_q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    patient = await db.patients.find_one(patient_q, {"_id": 0, "id": 1, "location_id": 1})
     if not patient:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
 
@@ -403,6 +483,7 @@ async def add_record(
         "recorded_by": user["id"],
         "recorded_at": _now(),
     }
+    doc = stamp_for_write(doc, ctx, location_id=patient.get("location_id"))
     await db.medical_records.insert_one(encrypt_fields(doc, RECORD_ENCRYPTED))
     await cache.invalidate_prefix(cache_keys.PREFIX_PATIENT)
     await audit_success(

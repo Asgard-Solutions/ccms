@@ -44,6 +44,8 @@ def create_access_token(
     role: str,
     epoch: int,
     session_started_at: str,
+    tenant_id: str | None = None,
+    is_platform_admin: bool = False,
 ) -> str:
     payload = {
         "sub": user_id,
@@ -51,6 +53,8 @@ def create_access_token(
         "role": role,
         "epoch": epoch,
         "sst": session_started_at,
+        "tid": tenant_id,                  # tenant the session is bound to
+        "pa": bool(is_platform_admin),     # platform admin flag
         "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_MINUTES),
         "type": "access",
     }

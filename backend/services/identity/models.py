@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Literal
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
-Role = Literal["admin", "doctor", "staff", "patient"]
+Role = Literal["admin", "doctor", "staff", "patient", "platform_admin", "super_admin"]
 UserStatus = Literal["active", "disabled"]
 
 
@@ -27,6 +27,9 @@ class UserPublic(BaseModel):
     role: Role
     phone: str | None = None
     status: UserStatus = "active"
+    tenant_id: str | None = None
+    tenant_scope_all: bool = False
+    is_platform_admin: bool = False
     mfa_enabled: bool = False
     mfa_policy_required: bool = False
     password_changed_at: str | None = None
@@ -57,6 +60,7 @@ class AdminUserCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     phone: str | None = None
     role: Role = "staff"
+    tenant_id: str | None = None  # platform_admin may override; otherwise inherit from creator
 
 
 class UserLogin(BaseModel):

@@ -27,6 +27,7 @@ class PatientCreate(BaseModel):
     address: str | None = None
     emergency_contact: str | None = None
     notes: str | None = None
+    location_id: str | None = None
 
 
 class PatientUpdate(BaseModel):
@@ -39,12 +40,15 @@ class PatientUpdate(BaseModel):
     address: str | None = None
     emergency_contact: str | None = None
     notes: str | None = None
+    location_id: str | None = None
 
 
 class PatientPublic(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str
     user_id: str | None = None
+    tenant_id: str | None = None
+    location_id: str | None = None
     first_name: str
     last_name: str
     display_name_masked: str | None = None

@@ -16,6 +16,8 @@ from core.crypto import decrypt_fields, encrypt_fields
 from core.db import get_db_read, get_db_write, read_after_write_db
 from core.deps import get_current_user, require_role
 from core.event_bus import publish
+from core.tenancy import TenantContext, get_tenant_context
+from core.tenant_scope import scoped_filter, stamp_for_write
 from services.authz.policy import require_permission
 from services.scheduling.models import (
     AppointmentCreate,
@@ -64,7 +66,8 @@ async def _hydrate(apps: list[dict]) -> list[dict]:
 
 
 async def _check_conflict(
-    provider_id: str, start_iso: str, end_iso: str, exclude_id: str | None = None,
+    provider_id: str, start_iso: str, end_iso: str,
+    exclude_id: str | None = None, tenant_id: str | None = None,
 ) -> None:
     db = get_db_write()  # conflict checks must read latest committed state
     q: dict = {
@@ -73,6 +76,8 @@ async def _check_conflict(
         "start_time": {"$lt": end_iso},
         "end_time": {"$gt": start_iso},
     }
+    if tenant_id:
+        q["tenant_id"] = tenant_id
     if exclude_id:
         q["id"] = {"$ne": exclude_id}
     clash = await db.appointments.find_one(q, {"_id": 0, "id": 1, "start_time": 1})
@@ -88,27 +93,50 @@ async def create_appointment(
     payload: AppointmentCreate,
     request: Request,
     actor: dict = Depends(require_permission("appointment", "create", audit_allow=False)),
+    ctx: TenantContext = Depends(get_tenant_context),
 ):
+    ctx.assert_tenant_bound()
     db = get_db_write()
     if payload.end_time <= payload.start_time:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "end_time must be after start_time")
 
-    patient = await db.patients.find_one(
+    patient_q = scoped_filter(
         {"id": payload.patient_id, "status": {"$ne": "deleted"}},
-        {"_id": 0, "id": 1},
+        ctx, location_scoped=True,
+    )
+    if patient_q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    patient = await db.patients.find_one(
+        patient_q, {"_id": 0, "id": 1, "location_id": 1},
     )
     if not patient:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
-    provider = await db.users.find_one(
-        {"id": payload.provider_id, "role": "doctor", "status": {"$ne": "disabled"}},
-        {"_id": 0, "id": 1, "name": 1},
-    )
+
+    # Provider must be in the same tenant (platform admin excepted).
+    prov_q: dict = {"id": payload.provider_id, "role": "doctor", "status": {"$ne": "disabled"}}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        prov_q["tenant_id"] = ctx.tenant_id
+    provider = await db.users.find_one(prov_q, {"_id": 0, "id": 1, "name": 1})
     if not provider:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Provider not found")
 
+    # Resolve location_id: payload > patient's location > single user loc.
+    location_id = payload.location_id or patient.get("location_id")
+    if not location_id and ctx.allowed_location_ids and len(ctx.allowed_location_ids) == 1:
+        location_id = ctx.allowed_location_ids[0]
+    if location_id and ctx.tenant_id:
+        loc = await db.locations.find_one(
+            {"id": location_id, "tenant_id": ctx.tenant_id}, {"_id": 0, "id": 1},
+        )
+        if not loc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid location for this tenant")
+        if not ctx.tenant_scope_all and not ctx.is_platform_admin:
+            if location_id not in ctx.allowed_location_ids:
+                raise HTTPException(status.HTTP_403_FORBIDDEN, "Location not assigned to user")
+
     start_iso = _to_iso(payload.start_time)
     end_iso = _to_iso(payload.end_time)
-    await _check_conflict(payload.provider_id, start_iso, end_iso)
+    await _check_conflict(payload.provider_id, start_iso, end_iso, tenant_id=ctx.tenant_id)
 
     now = _now_iso()
     doc = {
@@ -124,6 +152,7 @@ async def create_appointment(
         "created_at": now,
         "updated_at": now,
     }
+    doc = stamp_for_write(doc, ctx, location_id=location_id)
     await db.appointments.insert_one(encrypt_fields(doc, ENCRYPTED))
     await cache.invalidate_prefix(cache_keys.PREFIX_APPOINTMENTS)
     await cache.invalidate_prefix(cache_keys.PREFIX_DASHBOARD)
@@ -144,8 +173,10 @@ async def create_appointment(
 async def list_appointments(
     request: Request,
     user: dict = Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
     provider_id: str | None = None,
     patient_id: str | None = None,
+    location_id: str | None = None,
     appt_status: str | None = Query(default=None, alias="status"),
     from_date: str | None = Query(default=None, alias="from"),
     to_date: str | None = Query(default=None, alias="to"),
@@ -168,6 +199,8 @@ async def list_appointments(
         q["provider_id"] = provider_id
     if patient_id:
         q["patient_id"] = patient_id
+    if location_id:
+        q["location_id"] = location_id
     if appt_status:
         q["status"] = appt_status
     if from_date or to_date:
@@ -177,6 +210,11 @@ async def list_appointments(
         if to_date:
             range_q["$lte"] = to_date
         q["start_time"] = range_q
+
+    # Tenant + location isolation
+    q = scoped_filter(q, ctx, location_scoped=True)
+    if q.get("__deny__"):
+        return []
 
     async def _fetch():
         cursor = db.appointments.find(q, {"_id": 0}).sort("start_time", 1)
@@ -188,9 +226,11 @@ async def list_appointments(
         {
             "provider_id": provider_id,
             "patient_id": patient_id,
+            "location_id": location_id,
             "status": appt_status,
             "from": from_date,
             "to": to_date,
+            "tenant": ctx.tenant_id or "platform",
             # Doctors auto-scope to themselves; bake that into the cache key.
             "doctor_self": user["id"] if (user["role"] == "doctor" and not provider_id and not patient_id) else None,
             "patient_self": user["id"] if user["role"] == "patient" else None,
@@ -201,10 +241,15 @@ async def list_appointments(
 
 @router.get("/{appointment_id}", response_model=AppointmentPublic)
 async def get_appointment(
-    appointment_id: str, request: Request, user: dict = Depends(get_current_user)
+    appointment_id: str, request: Request,
+    user: dict = Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
 ):
     db = get_db_read()
-    a = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+    q = scoped_filter({"id": appointment_id}, ctx, location_scoped=True)
+    if q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
+    a = await db.appointments.find_one(q, {"_id": 0})
     if not a:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
     if user["role"] == "patient":
@@ -224,9 +269,13 @@ async def update_appointment(
     payload: AppointmentUpdate,
     request: Request,
     actor: dict = Depends(require_permission("appointment", "update", audit_allow=False)),
+    ctx: TenantContext = Depends(get_tenant_context),
 ):
     db = get_db_write()
-    current = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+    q = scoped_filter({"id": appointment_id}, ctx, location_scoped=True)
+    if q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
+    current = await db.appointments.find_one(q, {"_id": 0})
     if not current:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
     if current["status"] == "cancelled":
@@ -240,7 +289,8 @@ async def update_appointment(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "end_time must be after start_time")
         start_iso = _to_iso(new_start)
         end_iso = _to_iso(new_end)
-        await _check_conflict(current["provider_id"], start_iso, end_iso, exclude_id=appointment_id)
+        await _check_conflict(current["provider_id"], start_iso, end_iso,
+                              exclude_id=appointment_id, tenant_id=ctx.tenant_id)
         updates["start_time"] = start_iso
         updates["end_time"] = end_iso
     if payload.reason is not None:
@@ -279,10 +329,15 @@ async def update_appointment(
 
 @router.post("/{appointment_id}/cancel", response_model=AppointmentPublic)
 async def cancel_appointment(
-    appointment_id: str, request: Request, user: dict = Depends(get_current_user)
+    appointment_id: str, request: Request,
+    user: dict = Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
 ):
     db = get_db_write()
-    a = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})
+    q = scoped_filter({"id": appointment_id}, ctx, location_scoped=True)
+    if q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
+    a = await db.appointments.find_one(q, {"_id": 0})
     if not a:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
 

@@ -90,6 +90,7 @@ async def log_audit(
     outcome: str = "success",
     request: Request | None = None,
     phi_accessed: bool = False,
+    tenant_id: str | None = None,
 ) -> None:
     doc = {
         "id": str(uuid.uuid4()),
@@ -97,6 +98,7 @@ async def log_audit(
         "actor_id": actor_id,
         "actor_email": actor_email,
         "actor_role": actor_role,
+        "tenant_id": tenant_id,
         "entity_type": entity_type,
         "entity_id": entity_id,
         "reason": reason,
@@ -133,6 +135,8 @@ async def log_audit(
 
 
 async def audit_success(user: dict, action: str, request: Request, **kwargs) -> None:
+    # Inherit tenant_id from the acting user unless the caller supplied one.
+    kwargs.setdefault("tenant_id", user.get("tenant_id"))
     await log_audit(
         action=action,
         actor_id=user.get("id"),
@@ -179,6 +183,7 @@ async def audit_emergency(
         actor_id=user.get("id"),
         actor_email=user.get("email"),
         actor_role=user.get("role"),
+        tenant_id=user.get("tenant_id"),
         entity_type=entity_type,
         entity_id=entity_id,
         reason=reason,
