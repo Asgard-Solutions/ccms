@@ -11,6 +11,38 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+- **Clinic Profile service** (new `services/clinic_profile/`). Stores
+  one profile per location (1:1 with `locations.id`) carrying clinic
+  name, address line 1 / 2, city, state, postal code, country,
+  primary & secondary phones, email, website, IANA timezone, free-
+  form notes, and per-weekday hours of operation. Hours are modelled
+  as a list of 7 `DayHours` (0 = Monday) each with `is_closed` and a
+  list of `HoursInterval` (`open_time` / `close_time`, HH:MM 24-h) —
+  an intervals list so lunch breaks and future holiday overrides can
+  be layered in without a breaking change.
+  - Endpoints at `/api/clinic-profiles/*`: list, read (by profile id
+    OR location id), create (`POST`), update (`PUT`), delete
+    (`DELETE`). Read is gated to `admin | doctor | staff`; mutations
+    are `admin`-only.
+  - Tenant-scoped on every call via `scoped_filter` + `stamp_for_write`;
+    location-scoped for non-tenant-wide users. Cross-tenant probes
+    return `404` (never `403`) so the endpoint never leaks existence.
+  - Validation: HH:MM 24-hour format, `close > open` per interval, no
+    overlapping intervals within a day, `is_closed` forbids intervals,
+    exactly one entry per `day_of_week` 0..6, valid IANA `timezone`.
+  - Audit rows: `clinic_profile.list_viewed`, `clinic_profile.read`,
+    `clinic_profile.created`, `clinic_profile.updated` (with field
+    list), `clinic_profile.deleted`. Every mutation also appends an
+    in-document `history[]` entry.
+  - Indexes: unique `(tenant_id, location_id)` + `(tenant_id, name)`.
+  - Tests — `backend/tests/test_clinic_profile.py` — **6/6 green**:
+    happy-path CRUD + two-interval lunch break, invalid hours
+    (format / ordering / overlap / missing day / bad tz /
+    `is_closed` + intervals), 409 on duplicate profile per location,
+    doctor-can-read-not-write + scoped-staff-can't-see-other-location,
+    Sunrise↔Default cross-tenant isolation, audit rows for
+    create/update/delete.
+
 - **Scheduling Day view rebuilt as a 15-minute timeline (Task 6).**
   The table-based DayView is replaced by a vertical timeline from
   07:00–20:00 (placeholder clinic hours; 52 slots × 16 px). Each slot

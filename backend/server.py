@@ -22,6 +22,7 @@ from core.logging_setup import configure as configure_logging  # noqa: E402
 from core.security_headers import install as install_security_headers  # noqa: E402
 from core.redis_client import close as close_redis, ping as redis_ping  # noqa: E402
 from services.audit.router import router as audit_router  # noqa: E402
+from services.clinic_profile.router import router as clinic_profile_router  # noqa: E402
 from services.authz.router import router as authz_router  # noqa: E402
 from services.authz.reporting import router as authz_reports_router  # noqa: E402
 from services.authz.seed import seed_authz  # noqa: E402
@@ -81,6 +82,7 @@ api_router.include_router(exports_router)
 api_router.include_router(compliance_ops_router)
 api_router.include_router(infra_router)
 api_router.include_router(workforce_router)
+api_router.include_router(clinic_profile_router)
 api_router.include_router(metrics_router)  # GET /api/metrics
 
 app.include_router(api_router)

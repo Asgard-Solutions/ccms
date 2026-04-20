@@ -198,3 +198,6 @@ async def create_indexes() -> None:
     await db.break_glass_events.create_index([("tenant_id", 1), ("actor_id", 1), ("status", 1)])
     await db.break_glass_events.create_index([("tenant_id", 1), ("status", 1), ("activated_at", -1)])
     await db.break_glass_events.create_index("attestation_due_at")
+    # Clinic profile (iteration 21 — clinic hours)
+    await db.clinic_profiles.create_index([("tenant_id", 1), ("location_id", 1)], unique=True)
+    await db.clinic_profiles.create_index([("tenant_id", 1), ("name", 1)])
