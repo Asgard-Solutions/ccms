@@ -26,13 +26,13 @@ export default function ThemeToggle() {
           variant="ghost"
           size="icon"
           aria-label="Change theme"
-          className="h-9 w-9 text-[color:var(--text-muted)] hover:text-[color:var(--text-strong)]"
+          className="h-9 w-9 text-muted-foreground hover:text-foreground"
         >
           <Icon className="h-4 w-4" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
-        <DropdownMenuLabel className="text-xs uppercase tracking-[0.12em] text-[color:var(--text-muted)]">
+        <DropdownMenuLabel className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
           Theme
         </DropdownMenuLabel>
         <DropdownMenuSeparator />

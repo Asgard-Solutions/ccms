@@ -53,6 +53,7 @@ export function ThemeProvider({ children }) {
   const [mode, setMode] = useState(readStored);
   const [effective, setEffective] = useState(() => resolveEffective(readStored()));
   const lastPersistedRef = useRef(null);
+  const lastSyncedThemeRef = useRef(null);
 
   // Apply to DOM whenever `mode` changes; subscribe to OS theme changes
   // only while `mode === "system"`.
@@ -77,21 +78,27 @@ export function ThemeProvider({ children }) {
     };
   }, [mode]);
 
-  /** Sync from the currently-authenticated user. Called by AuthContext
-      after a successful /auth/me, /auth/login, or /auth/mfa/challenge. */
+  /** Sync from the currently-authenticated user. Stable reference — only
+      applies when the user's stored theme actually differs from the last
+      theme we synced, so a local toggle is never clobbered by a re-run
+      of the AuthContext effect. */
   const syncFromUser = useCallback((user) => {
     if (!user) return;
     const incoming = THEMES.includes(user.theme) ? user.theme : "system";
+    if (incoming === lastSyncedThemeRef.current) return;
+    lastSyncedThemeRef.current = incoming;
     lastPersistedRef.current = incoming;
-    if (incoming !== mode) setMode(incoming);
-  }, [mode]);
+    setMode(incoming);
+  }, []);
 
   /** User-initiated change — update DOM immediately, try to persist.
       Returns the persisted mode (or the local one on failure). */
   const setTheme = useCallback(async (next) => {
-    if (!THEMES.includes(next)) return mode;
+    if (!THEMES.includes(next)) return;
     setMode(next);
-    // Skip network call if this is just echoing what the backend already has.
+    // Treat this as the latest synced/persisted value so AuthContext's next
+    // syncFromUser won't race and overwrite us.
+    lastSyncedThemeRef.current = next;
     if (next === lastPersistedRef.current) return next;
     try {
       const { data } = await api.patch("/auth/me/preferences", { theme: next });
@@ -100,7 +107,7 @@ export function ThemeProvider({ children }) {
       /* Unauthenticated or offline — localStorage alone is fine. */
     }
     return next;
-  }, [mode]);
+  }, []);
 
   const value = useMemo(() => ({
     mode,

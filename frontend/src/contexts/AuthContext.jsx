@@ -15,10 +15,13 @@ export function AuthProvider({ children }) {
   const warnTimer = useRef(null);
   const { syncFromUser } = useTheme();
 
-  // Keep the theme engine aligned with the authenticated user.
+  // Keep the theme engine aligned with the authenticated user. We depend on
+  // `user?.theme` (not the full user object) so local theme toggles cannot
+  // trigger a false re-sync that rolls us back to the persisted value.
   useEffect(() => {
     if (user) syncFromUser(user);
-  }, [user, syncFromUser]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.theme, syncFromUser]);
 
   const fetchMe = useCallback(async () => {
     try {
