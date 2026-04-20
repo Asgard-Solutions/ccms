@@ -26,11 +26,11 @@ const STATUS_FLOW = {
   withdrawn: [],
 };
 const STATUS_CHIP = {
-  received: "bg-[#EDF2EE] text-[#526B58]",
-  in_review: "bg-[#FDF6ED] text-[#B5823E]",
+  received: "surface-sage text-sage-deep",
+  in_review: "surface-warning text-[#B5823E]",
   approved: "bg-[#E8EEF3] text-[#425D7A]",
   fulfilled: "bg-[#E4ECE6] text-[#3F6147]",
-  rejected: "bg-[#FBF1EE] text-[#C76D54]",
+  rejected: "surface-danger-soft text-danger",
   withdrawn: "bg-stone-100 text-stone-600",
 };
 
@@ -61,8 +61,8 @@ function InventoryTab() {
   if (!data) return <Skeleton className="h-80 w-full" />;
   return (
     <div data-testid="inventory-tab" className="space-y-4">
-      <div className="rounded-sm border border-stone-200 bg-[#FAF9F6] p-4 text-xs text-[#5C6A61]">
-        <div className="font-semibold uppercase tracking-[0.15em] text-[#1F2924]">
+      <div className="rounded-sm border border-subtle surface-app p-4 text-xs text-muted-strong">
+        <div className="font-semibold uppercase tracking-[0.15em] text-strong">
           Retention settings
         </div>
         <div className="mt-1">
@@ -76,41 +76,41 @@ function InventoryTab() {
           <div
             key={c.id}
             data-testid={`inventory-${c.id}`}
-            className="rounded-sm border border-stone-200 bg-white p-4"
+            className="rounded-sm border border-subtle bg-card p-4"
           >
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.15em] text-[#5C6A61]">
+                <div className="text-[11px] uppercase tracking-[0.15em] text-muted-strong">
                   {c.ccpa_category}
                 </div>
                 <div className="font-['Outfit'] text-lg font-medium">{c.name}</div>
               </div>
               {c.phi && (
-                <span className="rounded-sm bg-[#FDF6ED] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[#D4A373]">
+                <span className="rounded-sm surface-warning px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[#D4A373]">
                   PHI
                 </span>
               )}
             </div>
             <dl className="mt-3 space-y-2 text-xs">
               <div>
-                <dt className="font-semibold text-[#1F2924]">Collected</dt>
-                <dd className="text-[#5C6A61]">{c.collected.join(", ")}</dd>
+                <dt className="font-semibold text-strong">Collected</dt>
+                <dd className="text-muted-strong">{c.collected.join(", ")}</dd>
               </div>
               <div>
-                <dt className="font-semibold text-[#1F2924]">Purpose</dt>
-                <dd className="text-[#5C6A61]">{c.purpose}</dd>
+                <dt className="font-semibold text-strong">Purpose</dt>
+                <dd className="text-muted-strong">{c.purpose}</dd>
               </div>
               <div>
-                <dt className="font-semibold text-[#1F2924]">Access</dt>
-                <dd className="text-[#5C6A61]">{c.access_roles.join(", ")}</dd>
+                <dt className="font-semibold text-strong">Access</dt>
+                <dd className="text-muted-strong">{c.access_roles.join(", ")}</dd>
               </div>
               <div>
-                <dt className="font-semibold text-[#1F2924]">Retention</dt>
-                <dd className="text-[#5C6A61]">{c.retention_default}</dd>
+                <dt className="font-semibold text-strong">Retention</dt>
+                <dd className="text-muted-strong">{c.retention_default}</dd>
               </div>
               <div>
-                <dt className="font-semibold text-[#1F2924]">At rest</dt>
-                <dd className="text-[#5C6A61]">{c.encrypted_at_rest}</dd>
+                <dt className="font-semibold text-strong">At rest</dt>
+                <dd className="text-muted-strong">{c.encrypted_at_rest}</dd>
               </div>
             </dl>
           </div>
@@ -157,9 +157,9 @@ function NewRequestForm({ onCreated }) {
     <form
       onSubmit={submit}
       data-testid="new-request-form"
-      className="space-y-3 rounded-sm border border-stone-200 bg-white p-4"
+      className="space-y-3 rounded-sm border border-subtle bg-card p-4"
     >
-      <div className="flex items-center gap-2 text-[#1F2924]">
+      <div className="flex items-center gap-2 text-strong">
         <Inbox className="h-4 w-4" />
         <span className="font-['Outfit'] text-lg font-medium">Log a new privacy request</span>
       </div>
@@ -170,7 +170,7 @@ function NewRequestForm({ onCreated }) {
             data-testid="new-request-type"
             value={requestType}
             onChange={(e) => setRequestType(e.target.value)}
-            className="h-9 w-full rounded-sm border border-stone-200 bg-white px-2 text-sm"
+            className="h-9 w-full rounded-sm border border-subtle bg-card px-2 text-sm"
           >
             {REQUEST_TYPES.map((t) => (
               <option key={t} value={t}>
@@ -270,7 +270,7 @@ function RequestRow({ r, onChanged }) {
     >
       <td className="px-3 py-3">
         <div>{formatDateTime(r.created_at)}</div>
-        <div className="text-[11px] text-[#5C6A61]">{relativeFromNow(r.created_at)}</div>
+        <div className="text-[11px] text-muted-strong">{relativeFromNow(r.created_at)}</div>
       </td>
       <td className="px-3 py-3">
         <div className="font-mono text-xs">{r.request_type}</div>
@@ -278,16 +278,16 @@ function RequestRow({ r, onChanged }) {
           <StatusChip s={r.status} />
         </div>
       </td>
-      <td className="px-3 py-3 font-mono text-[11px] text-[#5C6A61]">
+      <td className="px-3 py-3 font-mono text-[11px] text-muted-strong">
         <div>subj: {r.subject_user_id?.slice(0, 8)}…</div>
         {r.subject_patient_id && <div>pat: {r.subject_patient_id.slice(0, 8)}…</div>}
       </td>
-      <td className="px-3 py-3 text-xs text-[#5C6A61]">
-        <div className="font-semibold text-[#1F2924]">Notes</div>
+      <td className="px-3 py-3 text-xs text-muted-strong">
+        <div className="font-semibold text-strong">Notes</div>
         <div>{r.notes || "—"}</div>
         {r.response_notes && (
           <>
-            <div className="mt-2 font-semibold text-[#1F2924]">Response</div>
+            <div className="mt-2 font-semibold text-strong">Response</div>
             <div>{r.response_notes}</div>
           </>
         )}
@@ -300,7 +300,7 @@ function RequestRow({ r, onChanged }) {
               data-testid={`transition-${r.id}-${ns}`}
               onClick={() => transition(ns)}
               disabled={busy}
-              className="rounded-sm border border-stone-200 bg-white px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-[#5C6A61] hover:bg-[#F5F5F0]"
+              className="rounded-sm border border-subtle bg-card px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-muted-strong hover:surface-muted"
             >
               → {ns}
             </button>
@@ -310,7 +310,7 @@ function RequestRow({ r, onChanged }) {
               data-testid={`fulfill-delete-${r.id}`}
               onClick={fulfillDelete}
               disabled={busy}
-              className="rounded-sm border border-[#C76D54] bg-[#FBF1EE] px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#C76D54]"
+              className="rounded-sm border border-[#C76D54] surface-danger-soft px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-danger"
             >
               Fulfil delete
             </button>
@@ -354,7 +354,7 @@ function RequestsTab() {
           data-testid="filter-status"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="h-9 rounded-sm border border-stone-200 bg-white px-2 text-sm"
+          className="h-9 rounded-sm border border-subtle bg-card px-2 text-sm"
         >
           <option value="">All statuses</option>
           {Object.keys(STATUS_FLOW).map((s) => (
@@ -367,7 +367,7 @@ function RequestsTab() {
           data-testid="filter-type"
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value)}
-          className="h-9 rounded-sm border border-stone-200 bg-white px-2 text-sm"
+          className="h-9 rounded-sm border border-subtle bg-card px-2 text-sm"
         >
           <option value="">All types</option>
           {REQUEST_TYPES.map((t) => (
@@ -376,7 +376,7 @@ function RequestsTab() {
             </option>
           ))}
         </select>
-        <span className="ml-auto text-xs text-[#5C6A61]">
+        <span className="ml-auto text-xs text-muted-strong">
           {rows ? `${rows.length} requests` : "loading…"}
         </span>
       </div>
@@ -384,14 +384,14 @@ function RequestsTab() {
       {rows === null ? (
         <Skeleton className="h-48 rounded-sm" />
       ) : rows.length === 0 ? (
-        <div className="rounded-sm border border-dashed border-stone-200 bg-white p-12 text-center">
-          <ClipboardList className="mx-auto h-10 w-10 text-[#A3AFA7]" />
+        <div className="rounded-sm border border-dashed border-subtle bg-card p-12 text-center">
+          <ClipboardList className="mx-auto h-10 w-10 text-soft" />
           <p className="mt-3 font-['Outfit'] text-base">No privacy requests logged yet.</p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-sm border border-stone-200 bg-white">
+        <div className="overflow-x-auto rounded-sm border border-subtle bg-card">
           <table className="w-full min-w-[880px] text-left text-sm">
-            <thead className="border-b border-stone-200 bg-[#FAF9F6] text-[11px] uppercase tracking-wider text-[#5C6A61]">
+            <thead className="border-b border-subtle surface-app text-[11px] uppercase tracking-wider text-muted-strong">
               <tr>
                 <th className="px-3 py-3 font-medium">Created</th>
                 <th className="px-3 py-3 font-medium">Type / status</th>
@@ -422,20 +422,20 @@ export default function Privacy() {
   return (
     <div data-testid="privacy-page" className="space-y-8 animate-in fade-in duration-300">
       <header>
-        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
           Compliance
         </span>
         <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight">
           Privacy operations
         </h1>
-        <p className="mt-2 max-w-3xl text-sm text-[#5C6A61]">
+        <p className="mt-2 max-w-3xl text-sm text-muted-strong">
           Admin intake for CCPA-style data-subject requests (access, correction,
           deletion, restriction, opt-out) and a structured inventory of the
           data categories CCMS handles.
         </p>
         <div
           data-testid="privacy-disclaimer"
-          className="mt-4 flex items-start gap-2 rounded-sm border border-[#EDE0C7] bg-[#FDF6ED] p-3 text-xs text-[#8A6C33]"
+          className="mt-4 flex items-start gap-2 rounded-sm border border-[#EDE0C7] surface-warning p-3 text-xs text-[#8A6C33]"
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
           <span>
@@ -459,7 +459,7 @@ export default function Privacy() {
               className={`inline-flex items-center gap-2 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors ${
                 tab === t.v
                   ? "bg-[#1F2924] text-white"
-                  : "border border-stone-200 bg-white text-[#5C6A61] hover:bg-[#F5F5F0]"
+                  : "border border-subtle bg-card text-muted-strong hover:surface-muted"
               }`}
             >
               <Icon className="h-4 w-4" />
@@ -471,8 +471,8 @@ export default function Privacy() {
 
       {tab === "requests" ? <RequestsTab /> : <InventoryTab />}
 
-      <div className="rounded-sm border border-stone-200 bg-white p-4 text-xs text-[#5C6A61]">
-        <div className="flex items-center gap-2 text-[#1F2924]">
+      <div className="rounded-sm border border-subtle bg-card p-4 text-xs text-muted-strong">
+        <div className="flex items-center gap-2 text-strong">
           <FileText className="h-4 w-4" />
           <span className="font-['Outfit'] text-sm font-medium">Reference</span>
         </div>

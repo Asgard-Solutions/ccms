@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../../contexts/AuthContext";
 import { Button } from "../ui/button";
+import ThemeToggle from "../ThemeToggle";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -78,17 +79,17 @@ function Sidebar({ role, open, onClose }) {
       )}
       <aside
         data-testid="app-sidebar"
-        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-stone-200 bg-[#FAF9F6] transition-transform duration-200 md:sticky md:top-0 md:h-screen md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-subtle surface-app transition-transform duration-200 md:sticky md:top-0 md:h-screen md:translate-x-0 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="flex h-16 items-center gap-2 border-b border-stone-200 px-6">
-          <div className="flex h-8 w-8 items-center justify-center rounded-sm bg-[#7B9A82] text-white">
+        <div className="flex h-16 items-center gap-2 border-b border-subtle px-6">
+          <div className="flex h-8 w-8 items-center justify-center rounded-sm bg-sage text-white">
             <Stethoscope className="h-4 w-4" />
           </div>
           <div className="flex flex-col leading-tight">
-            <span className="font-['Outfit'] text-sm font-medium text-[#1F2924]">CCMS</span>
-            <span className="text-[11px] uppercase tracking-[0.15em] text-[#5C6A61]">Clinic OS</span>
+            <span className="font-['Outfit'] text-sm font-medium text-strong">CCMS</span>
+            <span className="text-[11px] uppercase tracking-[0.15em] text-muted-strong">Clinic OS</span>
           </div>
         </div>
 
@@ -103,10 +104,11 @@ function Sidebar({ role, open, onClose }) {
               className={({ isActive }) =>
                 `flex items-center gap-3 px-6 py-3 text-sm font-medium transition-colors ${
                   isActive
-                    ? "border-l-2 border-[#7B9A82] bg-[#F5F5F0] pl-[22px] text-[#1F2924]"
-                    : "border-l-2 border-transparent text-[#5C6A61] hover:bg-[#F5F5F0] hover:text-[#1F2924]"
+                    ? "border-l-2 surface-muted pl-[22px] text-strong"
+                    : "border-l-2 border-transparent text-muted-strong hover:surface-muted hover:text-strong"
                 }`
               }
+              style={({ isActive }) => (isActive ? { borderLeftColor: "var(--sage-accent)" } : undefined)}
             >
               <Icon className="h-4 w-4" />
               {label}
@@ -114,10 +116,10 @@ function Sidebar({ role, open, onClose }) {
           ))}
         </nav>
 
-        <div className="border-t border-stone-200 px-6 py-4 text-xs text-[#5C6A61]">
+        <div className="border-t border-subtle px-6 py-4 text-xs text-muted-strong">
           <div className="font-medium uppercase tracking-[0.15em]">HIPAA</div>
           <div className="mt-1 flex items-center gap-2">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[#7B9A82]" />
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-sage" />
             audit · encryption · MFA ready
           </div>
         </div>
@@ -136,13 +138,13 @@ export default function AppShell({ children }) {
   const initials = user.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
 
   return (
-    <div className="flex min-h-screen bg-[#FAF9F6] text-[#1F2924]">
+    <div className="flex min-h-screen surface-app text-strong">
       <Sidebar role={user.role} open={open} onClose={() => setOpen(false)} />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header
           data-testid="app-topnav"
-          className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-stone-200 bg-white/90 px-6 backdrop-blur"
+          className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-subtle surface-topbar px-6 backdrop-blur"
         >
           <div className="flex items-center gap-3">
             <Button
@@ -155,7 +157,7 @@ export default function AppShell({ children }) {
               <Menu className="h-5 w-5" />
             </Button>
             <div className="hidden md:flex md:flex-col md:leading-tight">
-              <span className="text-[11px] uppercase tracking-[0.15em] text-[#5C6A61]">Welcome back</span>
+              <span className="text-[11px] uppercase tracking-[0.15em] text-muted-strong">Welcome back</span>
               <span className="font-['Outfit'] text-base font-medium">{user.name}</span>
             </div>
           </div>
@@ -164,7 +166,7 @@ export default function AppShell({ children }) {
             {user.mfa_enabled ? (
               <span
                 data-testid="mfa-indicator"
-                className="hidden rounded-sm bg-[#EDF2EE] px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#526B58] md:inline-flex"
+                className="hidden rounded-sm surface-sage px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-sage-deep md:inline-flex"
               >
                 <ShieldCheck className="mr-1 h-3 w-3" /> MFA on
               </span>
@@ -173,25 +175,27 @@ export default function AppShell({ children }) {
                 <Link
                   to="/security"
                   data-testid="mfa-setup-banner"
-                  className="hidden rounded-sm bg-[#FDF6ED] px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#D4A373] md:inline-flex"
+                  className="hidden rounded-sm surface-warning px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-warning md:inline-flex"
                 >
                   Enable MFA
                 </Link>
               )
             )}
 
+            <ThemeToggle />
+
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button
                   data-testid="user-menu-trigger"
-                  className="flex items-center gap-3 rounded-sm px-2 py-1 text-sm font-medium hover:bg-stone-100"
+                  className="flex items-center gap-3 rounded-sm px-2 py-1 text-sm font-medium hover:surface-muted"
                 >
-                  <span className="flex h-9 w-9 items-center justify-center rounded-sm bg-[#EDF2EE] text-xs font-semibold text-[#526B58]">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-sm surface-sage text-xs font-semibold text-sage-deep">
                     {initials}
                   </span>
                   <span className="hidden flex-col text-left leading-tight sm:flex">
-                    <span className="text-[#1F2924]">{user.name}</span>
-                    <span className="text-[11px] uppercase tracking-[0.15em] text-[#5C6A61]">
+                    <span className="text-strong">{user.name}</span>
+                    <span className="text-[11px] uppercase tracking-[0.15em] text-muted-strong">
                       {roleLabel(user.role)}
                     </span>
                   </span>
@@ -200,8 +204,8 @@ export default function AppShell({ children }) {
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel>
                   <div className="flex flex-col">
-                    <span className="text-[#1F2924]">{user.email}</span>
-                    <span className="text-xs text-[#5C6A61]">{roleLabel(user.role)}</span>
+                    <span className="text-strong">{user.email}</span>
+                    <span className="text-xs text-muted-strong">{roleLabel(user.role)}</span>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
@@ -217,7 +221,7 @@ export default function AppShell({ children }) {
                     await logout();
                     navigate("/login");
                   }}
-                  className="text-[#C76D54] focus:text-[#C76D54]"
+                  className="text-danger focus:text-danger"
                 >
                   <LogOut className="mr-2 h-4 w-4" /> Sign out
                 </DropdownMenuItem>
@@ -240,7 +244,7 @@ export default function AppShell({ children }) {
             <AlertDialogFooter>
               <AlertDialogAction
                 data-testid="idle-stay-btn"
-                className="rounded-sm bg-[#7B9A82] hover:bg-[#65826C]"
+                className="rounded-sm bg-sage hover:bg-sage-hover"
               >
                 Stay signed in
               </AlertDialogAction>

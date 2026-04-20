@@ -69,7 +69,7 @@ export default function ReauthDialog({ open, title, description, onConfirmed, on
               type="submit"
               disabled={submitting || !password}
               data-testid="reauth-confirm-btn"
-              className="rounded-sm bg-[#7B9A82] hover:bg-[#65826C]"
+              className="rounded-sm bg-sage hover:bg-sage-hover"
             >
               {submitting ? "Confirming…" : "Confirm"}
             </Button>

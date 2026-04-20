@@ -65,7 +65,7 @@ export default function CalendarPage() {
     <div data-testid="calendar-page" className="space-y-8 animate-in fade-in duration-300">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
             Provider calendar
           </span>
           <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight">
@@ -105,17 +105,17 @@ export default function CalendarPage() {
       {appts === null ? (
         <Skeleton className="h-[560px] rounded-sm" />
       ) : (
-        <div className="overflow-hidden rounded-sm border border-stone-200 bg-white">
-          <div className="grid grid-cols-7 border-b border-stone-200 bg-[#FAF9F6] text-xs font-semibold uppercase tracking-wider text-[#5C6A61]">
+        <div className="overflow-hidden rounded-sm border border-subtle bg-card">
+          <div className="grid grid-cols-7 border-b border-subtle surface-app text-xs font-semibold uppercase tracking-wider text-muted-strong">
             {days.map((d, i) => (
               <div
                 key={d.toISOString()}
-                className={`border-r border-stone-200 px-4 py-3 last:border-r-0 ${
-                  sameDay(d, new Date()) ? "text-[#526B58]" : ""
+                className={`border-r border-subtle px-4 py-3 last:border-r-0 ${
+                  sameDay(d, new Date()) ? "text-sage-deep" : ""
                 }`}
               >
                 <div>{DAY_LABELS[i]}</div>
-                <div className="mt-1 font-['Outfit'] text-lg font-medium text-[#1F2924]">
+                <div className="mt-1 font-['Outfit'] text-lg font-medium text-strong">
                   {d.getDate()}
                 </div>
               </div>
@@ -129,12 +129,12 @@ export default function CalendarPage() {
                 <div
                   key={key}
                   data-testid={`cal-day-${d.toISOString().slice(0, 10)}`}
-                  className={`min-h-[160px] border-r border-b border-stone-200 p-2 last:border-r-0 ${
-                    sameDay(d, new Date()) ? "bg-[#FAF9F6]" : "bg-white"
+                  className={`min-h-[160px] border-r border-b border-subtle p-2 last:border-r-0 ${
+                    sameDay(d, new Date()) ? "surface-app" : "bg-card"
                   }`}
                 >
                   {list.length === 0 ? (
-                    <div className="flex h-full items-center justify-center py-6 text-xs text-[#A3AFA7]">
+                    <div className="flex h-full items-center justify-center py-6 text-xs text-soft">
                       —
                     </div>
                   ) : (
@@ -145,13 +145,13 @@ export default function CalendarPage() {
                           data-testid={`cal-appt-${a.id}`}
                           className={`cursor-default rounded-r-sm border-l-2 p-2 text-xs ${
                             a.status === "cancelled"
-                              ? "border-[#C76D54] bg-[#FBF1EE] text-[#C76D54] line-through"
-                              : "border-[#7B9A82] bg-[#EDF2EE] text-[#1F2924] hover:bg-[#E0EBE2]"
+                              ? "border-[#C76D54] surface-danger-soft text-danger line-through"
+                              : "border-[#7B9A82] surface-sage text-strong hover:bg-[#E0EBE2]"
                           }`}
                         >
                           <div className="font-medium">{formatTime(a.start_time)}</div>
-                          <div className="truncate text-[#526B58]">{a.patient_name}</div>
-                          <div className="truncate text-[11px] text-[#5C6A61]">
+                          <div className="truncate text-sage-deep">{a.patient_name}</div>
+                          <div className="truncate text-[11px] text-muted-strong">
                             {a.provider_name}
                           </div>
                         </li>

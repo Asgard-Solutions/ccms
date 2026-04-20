@@ -38,9 +38,9 @@ const STAFF = ["admin", "doctor", "staff"];
 
 function statusChip(status) {
   const map = {
-    scheduled: "bg-[#EDF2EE] text-[#526B58]",
-    completed: "bg-[#F5F5F0] text-[#5C6A61]",
-    cancelled: "bg-[#FBF1EE] text-[#C76D54]",
+    scheduled: "surface-sage text-sage-deep",
+    completed: "surface-muted text-muted-strong",
+    cancelled: "surface-danger-soft text-danger",
   };
   return (
     <span
@@ -240,7 +240,7 @@ function BookDialog({ open, onClose, onBooked, initial }) {
               type="submit"
               disabled={submitting || !form.patient_id || !form.provider_id}
               data-testid="appt-submit-btn"
-              className="rounded-sm bg-[#7B9A82] hover:bg-[#65826C]"
+              className="rounded-sm bg-sage hover:bg-sage-hover"
             >
               {submitting ? "Saving…" : mode === "reschedule" ? "Save changes" : "Book"}
             </Button>
@@ -300,13 +300,13 @@ export default function Appointments() {
     <div data-testid="appointments-page" className="space-y-8 animate-in fade-in duration-300">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
             Scheduling
           </span>
           <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight">
             Appointments
           </h1>
-          <p className="mt-2 text-sm text-[#5C6A61]">
+          <p className="mt-2 text-sm text-muted-strong">
             Every booking, reschedule, and cancellation publishes an event to the
             communication service.
           </p>
@@ -315,7 +315,7 @@ export default function Appointments() {
           <Button
             data-testid="appt-new-btn"
             onClick={() => setDialog({ open: true, initial: null })}
-            className="h-11 rounded-sm bg-[#7B9A82] px-5 hover:bg-[#65826C]"
+            className="h-11 rounded-sm bg-sage px-5 hover:bg-sage-hover"
           >
             <Plus className="mr-2 h-4 w-4" /> New appointment
           </Button>
@@ -335,8 +335,8 @@ export default function Appointments() {
             onClick={() => setFilter(f.v)}
             className={`rounded-sm border px-4 py-1.5 text-sm font-medium transition-colors ${
               filter === f.v
-                ? "border-[#7B9A82] bg-[#EDF2EE] text-[#526B58]"
-                : "border-stone-200 bg-white text-[#5C6A61] hover:bg-[#F5F5F0]"
+                ? "border-[#7B9A82] surface-sage text-sage-deep"
+                : "border-subtle bg-card text-muted-strong hover:surface-muted"
             }`}
           >
             {f.l}
@@ -347,25 +347,25 @@ export default function Appointments() {
       {filtered === null ? (
         <Skeleton className="h-32" />
       ) : filtered.length === 0 ? (
-        <div className="rounded-sm border border-dashed border-stone-200 bg-white p-16 text-center">
-          <CalendarDays className="mx-auto h-10 w-10 text-[#A3AFA7]" />
+        <div className="rounded-sm border border-dashed border-subtle bg-card p-16 text-center">
+          <CalendarDays className="mx-auto h-10 w-10 text-soft" />
           <p className="mt-4 font-['Outfit'] text-lg">
             No {filter} appointments
           </p>
           {canBook && filter === "upcoming" && (
             <Button
               onClick={() => setDialog({ open: true, initial: null })}
-              className="mt-4 rounded-sm bg-[#7B9A82] hover:bg-[#65826C]"
+              className="mt-4 rounded-sm bg-sage hover:bg-sage-hover"
             >
               Book an appointment
             </Button>
           )}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-sm border border-stone-200 bg-white">
+        <div className="overflow-hidden rounded-sm border border-subtle bg-card">
           <table className="w-full text-left">
-            <thead className="border-b border-stone-200 bg-[#FAF9F6]">
-              <tr className="text-xs font-semibold uppercase tracking-wider text-[#5C6A61]">
+            <thead className="border-b border-subtle surface-app">
+              <tr className="text-xs font-semibold uppercase tracking-wider text-muted-strong">
                 <th className="px-6 py-3">When</th>
                 <th className="px-6 py-3">Patient</th>
                 <th className="px-6 py-3">Provider</th>
@@ -379,17 +379,17 @@ export default function Appointments() {
                 <tr
                   key={a.id}
                   data-testid={`appt-row-${a.id}`}
-                  className="border-b border-stone-100 last:border-b-0 hover:bg-[#F5F5F0]/50"
+                  className="border-b border-stone-100 last:border-b-0 hover:surface-muted/50"
                 >
                   <td className="px-6 py-4 text-sm">
                     <div className="font-medium">{formatDateTime(a.start_time)}</div>
-                    <div className="text-xs text-[#5C6A61]">
+                    <div className="text-xs text-muted-strong">
                       {relativeFromNow(a.start_time)}
                     </div>
                   </td>
                   <td className="px-6 py-4 text-sm">{a.patient_name}</td>
-                  <td className="px-6 py-4 text-sm text-[#5C6A61]">{a.provider_name}</td>
-                  <td className="px-6 py-4 text-sm text-[#5C6A61]">{a.reason || "—"}</td>
+                  <td className="px-6 py-4 text-sm text-muted-strong">{a.provider_name}</td>
+                  <td className="px-6 py-4 text-sm text-muted-strong">{a.reason || "—"}</td>
                   <td className="px-6 py-4">{statusChip(a.status)}</td>
                   <td className="px-6 py-4 text-right">
                     {a.status === "scheduled" && (
@@ -400,7 +400,7 @@ export default function Appointments() {
                             size="sm"
                             onClick={() => setDialog({ open: true, initial: a })}
                             data-testid={`appt-reschedule-${a.id}`}
-                            className="rounded-sm text-[#526B58] hover:bg-[#EDF2EE]"
+                            className="rounded-sm text-sage-deep hover:surface-sage"
                           >
                             <RefreshCcw className="mr-1 h-3 w-3" /> Reschedule
                           </Button>
@@ -410,7 +410,7 @@ export default function Appointments() {
                           size="sm"
                           onClick={() => setConfirmCancel(a)}
                           data-testid={`appt-cancel-${a.id}`}
-                          className="rounded-sm text-[#C76D54] hover:bg-[#FBF1EE]"
+                          className="rounded-sm text-danger hover:surface-danger-soft"
                         >
                           <X className="mr-1 h-3 w-3" /> Cancel
                         </Button>
@@ -442,7 +442,7 @@ export default function Appointments() {
           <AlertDialogHeader>
             <AlertDialogTitle className="font-['Outfit']">Cancel appointment?</AlertDialogTitle>
             <AlertDialogDescription>
-              This will publish an <code className="text-[#526B58]">appointment.cancelled</code>{" "}
+              This will publish an <code className="text-sage-deep">appointment.cancelled</code>{" "}
               event and queue a mock notification. The slot will open up
               immediately.
             </AlertDialogDescription>
@@ -452,7 +452,7 @@ export default function Appointments() {
             <AlertDialogAction
               data-testid="appt-cancel-confirm-btn"
               onClick={() => confirmCancel && doCancel(confirmCancel)}
-              className="rounded-sm bg-[#C76D54] hover:bg-[#B35F47]"
+              className="rounded-sm bg-danger hover:bg-danger-hover"
             >
               Cancel appointment
             </AlertDialogAction>

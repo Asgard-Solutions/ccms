@@ -30,11 +30,11 @@ function MfaStep() {
   return (
     <div className="max-w-md space-y-6">
       <div className="flex items-center gap-2">
-        <span className="flex h-9 w-9 items-center justify-center rounded-sm bg-[#EDF2EE] text-[#526B58]">
+        <span className="flex h-9 w-9 items-center justify-center rounded-sm surface-sage text-sage-deep">
           <ShieldCheck className="h-5 w-5" />
         </span>
         <div>
-          <div className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+          <div className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
             Second factor
           </div>
           <h2 className="font-['Outfit'] text-2xl font-medium">Enter your authenticator code</h2>
@@ -52,21 +52,21 @@ function MfaStep() {
             autoComplete="one-time-code"
             inputMode="numeric"
             required
-            className="h-11 rounded-sm border-stone-200 tracking-widest"
+            className="h-11 rounded-sm border-subtle tracking-widest"
           />
         </div>
         <Button
           type="submit"
           data-testid="mfa-submit-btn"
           disabled={submitting || !code.trim()}
-          className="h-11 w-full rounded-sm bg-[#7B9A82] hover:bg-[#65826C]"
+          className="h-11 w-full rounded-sm bg-sage hover:bg-sage-hover"
         >
           {submitting ? "Verifying…" : "Verify & continue"}
         </Button>
         <button
           type="button"
           onClick={logout}
-          className="w-full text-center text-xs text-[#5C6A61] hover:text-[#1F2924]"
+          className="w-full text-center text-xs text-muted-strong hover:text-strong"
         >
           Cancel and start over
         </button>
@@ -103,22 +103,22 @@ function LoginForm() {
 
   return (
     <div className="max-w-md">
-      <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+      <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
         Sign in
       </span>
-      <h1 className="mt-3 font-['Outfit'] text-4xl font-medium leading-none tracking-tight text-[#1F2924] sm:text-5xl">
+      <h1 className="mt-3 font-['Outfit'] text-4xl font-medium leading-none tracking-tight text-strong sm:text-5xl">
         Your clinic,
         <br />
         in one calm place.
       </h1>
-      <p className="mt-6 text-base leading-relaxed text-[#5C6A61]">
+      <p className="mt-6 text-base leading-relaxed text-muted-strong">
         Cookie-based JWT auth, TOTP MFA, and a full audit trail. PHI is masked
         by default and encrypted at rest.
       </p>
 
       <form onSubmit={onSubmit} className="mt-10 space-y-5">
         <div className="space-y-2">
-          <Label htmlFor="email" className="text-[#5C6A61]">Email</Label>
+          <Label htmlFor="email" className="text-muted-strong">Email</Label>
           <Input
             id="email"
             data-testid="login-email-input"
@@ -127,11 +127,11 @@ function LoginForm() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            className="h-11 rounded-sm border-stone-200"
+            className="h-11 rounded-sm border-subtle"
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="password" className="text-[#5C6A61]">Password</Label>
+          <Label htmlFor="password" className="text-muted-strong">Password</Label>
           <Input
             id="password"
             data-testid="login-password-input"
@@ -140,7 +140,7 @@ function LoginForm() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            className="h-11 rounded-sm border-stone-200"
+            className="h-11 rounded-sm border-subtle"
           />
         </div>
 
@@ -148,34 +148,34 @@ function LoginForm() {
           type="submit"
           data-testid="login-submit-button"
           disabled={submitting}
-          className="h-11 w-full rounded-sm bg-[#7B9A82] px-6 font-medium text-white transition-colors hover:bg-[#65826C] active:scale-[0.99]"
+          className="h-11 w-full rounded-sm bg-sage px-6 font-medium text-white transition-colors hover:bg-sage-hover active:scale-[0.99]"
         >
           {submitting ? "Signing in…" : "Sign in"}
         </Button>
 
-        <p className="text-center text-sm text-[#5C6A61]">
+        <p className="text-center text-sm text-muted-strong">
           <Link
             to="/password-reset"
             data-testid="login-forgot-password-link"
-            className="font-medium text-[#526B58] underline-offset-4 hover:underline"
+            className="font-medium text-sage-deep underline-offset-4 hover:underline"
           >
             Forgot your password?
           </Link>
         </p>
 
-        <p className="text-center text-sm text-[#5C6A61]">
+        <p className="text-center text-sm text-muted-strong">
           New patient?{" "}
           <Link
             to="/register"
             data-testid="login-to-register-link"
-            className="font-medium text-[#526B58] underline-offset-4 hover:underline"
+            className="font-medium text-sage-deep underline-offset-4 hover:underline"
           >
             Create an account
           </Link>
         </p>
       </form>
 
-      <div className="mt-10 rounded-sm border border-stone-200 bg-white p-4 text-xs text-[#5C6A61]">
+      <div className="mt-10 rounded-sm border border-subtle bg-card p-4 text-xs text-muted-strong">
         <div className="mb-2 font-semibold uppercase tracking-[0.15em]">
           Demo credentials
         </div>
@@ -197,14 +197,14 @@ export default function Login() {
   return (
     <div
       data-testid="login-page"
-      className="grid min-h-screen grid-cols-1 bg-[#FAF9F6] lg:grid-cols-[1.05fr_1fr]"
+      className="grid min-h-screen grid-cols-1 surface-app lg:grid-cols-[1.05fr_1fr]"
     >
       <div className="flex flex-col justify-center px-8 py-12 md:px-16 lg:px-24">
         <Link to="/login" className="mb-10 flex items-center gap-2">
-          <span className="flex h-9 w-9 items-center justify-center rounded-sm bg-[#7B9A82] text-white">
+          <span className="flex h-9 w-9 items-center justify-center rounded-sm bg-sage text-white">
             <Stethoscope className="h-5 w-5" />
           </span>
-          <span className="font-['Outfit'] text-lg font-medium text-[#1F2924]">
+          <span className="font-['Outfit'] text-lg font-medium text-strong">
             CCMS
           </span>
         </Link>
@@ -212,18 +212,18 @@ export default function Login() {
         {mfaContext?.mfa_ticket ? <MfaStep /> : <LoginForm />}
       </div>
 
-      <div className="relative hidden overflow-hidden border-l border-stone-200 lg:block" aria-hidden="true">
+      <div className="relative hidden overflow-hidden border-l border-subtle lg:block" aria-hidden="true">
         <img
           src="https://images.pexels.com/photos/8459996/pexels-photo-8459996.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
           alt=""
           className="absolute inset-0 h-full w-full object-cover"
         />
         <div className="absolute inset-0 bg-gradient-to-br from-[#FAF9F6]/40 via-[#FAF9F6]/10 to-[#7B9A82]/20" />
-        <div className="relative z-10 flex h-full flex-col justify-end p-12 text-[#1F2924]">
+        <div className="relative z-10 flex h-full flex-col justify-end p-12 text-strong">
           <blockquote className="max-w-md font-['Outfit'] text-2xl font-medium leading-tight">
             “The calm scheduling desk we always wished we had.”
           </blockquote>
-          <cite className="mt-4 block text-sm not-italic text-[#5C6A61]">
+          <cite className="mt-4 block text-sm not-italic text-muted-strong">
             Dr. A. Monroe — Chiropractic Clinic, Portland
           </cite>
         </div>

@@ -60,8 +60,8 @@ function Row({ label, children, testId }) {
   if (!hasValue(children)) return null;
   return (
     <div className="grid grid-cols-1 gap-0.5 sm:grid-cols-[200px_1fr] sm:gap-4" data-testid={testId}>
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-[#5C6A61]">{label}</span>
-      <span className="text-sm leading-relaxed text-[#1F2924] break-words">
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-strong">{label}</span>
+      <span className="text-sm leading-relaxed text-strong break-words">
         {Array.isArray(children) ? children.join(", ") : children}
       </span>
     </div>
@@ -72,11 +72,11 @@ function IntakeCard({ title, hint, testId, children }) {
   return (
     <div
       data-testid={testId}
-      className="rounded-sm border border-stone-200 bg-white p-6"
+      className="rounded-sm border border-subtle bg-card p-6"
     >
-      <div className="mb-4 border-b border-stone-200 pb-2">
-        <h3 className="font-['Outfit'] text-lg font-medium text-[#1F2924]">{title}</h3>
-        {hint && <p className="mt-0.5 text-xs text-[#5C6A61]">{hint}</p>}
+      <div className="mb-4 border-b border-subtle pb-2">
+        <h3 className="font-['Outfit'] text-lg font-medium text-strong">{title}</h3>
+        {hint && <p className="mt-0.5 text-xs text-muted-strong">{hint}</p>}
       </div>
       <div className="space-y-3">{children}</div>
     </div>
@@ -115,15 +115,15 @@ function InsurancePlanBlock({ plan, label, testId }) {
   ].filter(([, v]) => hasValue(v));
   if (!fields.length) return null;
   return (
-    <div data-testid={testId} className="rounded-sm border border-stone-200 bg-[#FAF9F6] p-4">
-      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[#5C6A61]">
+    <div data-testid={testId} className="rounded-sm border border-subtle surface-app p-4">
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-strong">
         {label}
       </div>
       <div className="space-y-1.5">
         {fields.map(([k, v]) => (
           <div key={k} className="grid grid-cols-[140px_1fr] gap-3 text-sm">
-            <span className="text-[#5C6A61]">{k}</span>
-            <span className="text-[#1F2924]">{v}</span>
+            <span className="text-muted-strong">{k}</span>
+            <span className="text-strong">{v}</span>
           </div>
         ))}
       </div>
@@ -139,9 +139,9 @@ function ConsentLine({ label, consent, consentType, onDownloadPdf }) {
       className="flex items-start justify-between gap-4 text-sm"
       data-testid={consentType ? `consent-row-${consentType}` : undefined}
     >
-      <span className="text-[#1F2924]">{label}</span>
+      <span className="text-strong">{label}</span>
       <div className="flex items-center gap-2">
-        <span className="text-right text-xs text-[#5C6A61]">{meta || "Accepted"}</span>
+        <span className="text-right text-xs text-muted-strong">{meta || "Accepted"}</span>
         {onDownloadPdf && consentType && (
           <Button
             type="button"
@@ -149,7 +149,7 @@ function ConsentLine({ label, consent, consentType, onDownloadPdf }) {
             size="sm"
             onClick={() => onDownloadPdf(consentType)}
             data-testid={`consent-pdf-${consentType}`}
-            className="h-6 px-2 text-[11px] font-semibold uppercase tracking-wider text-[#526B58] hover:bg-[#EDF2EE]"
+            className="h-6 px-2 text-[11px] font-semibold uppercase tracking-wider text-sage-deep hover:surface-sage"
           >
             <Download className="mr-1 h-3 w-3" /> PDF
           </Button>
@@ -195,14 +195,14 @@ function IntakeSections({ patient, onDownloadConsent }) {
   return (
     <section data-testid="patient-intake-sections" className="space-y-6">
       <div>
-        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
           Expanded intake
         </span>
         <h2 className="mt-1 font-['Outfit'] text-2xl font-medium tracking-tight">
           Intake sections
         </h2>
         {!patient.unmasked && (
-          <p className="mt-1 text-xs text-[#5C6A61]">
+          <p className="mt-1 text-xs text-muted-strong">
             Sections below are hidden by default — unmask above to reveal the structured intake data.
           </p>
         )}
@@ -462,7 +462,7 @@ function RecordDialog({ open, onClose, patientId, onAdded, onReauthNeeded }) {
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} className="rounded-sm">Cancel</Button>
             <Button type="submit" disabled={submitting} data-testid="record-submit-btn"
-              className="rounded-sm bg-[#7B9A82] hover:bg-[#65826C]">
+              className="rounded-sm bg-sage hover:bg-sage-hover">
               {submitting ? "Saving…" : "Add record"}
             </Button>
           </DialogFooter>
@@ -606,7 +606,7 @@ export default function PatientDetail() {
   return (
     <div data-testid="patient-detail-page" className="space-y-10 animate-in fade-in duration-300">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Button variant="ghost" asChild className="text-[#526B58]">
+        <Button variant="ghost" asChild className="text-sage-deep">
           <Link to="/patients" data-testid="patient-back-link">
             <ArrowLeft className="mr-2 h-4 w-4" /> All patients
           </Link>
@@ -676,7 +676,7 @@ export default function PatientDetail() {
               variant="outline"
               onClick={() => setDeleteConfirm(true)}
               data-testid="patient-delete-btn"
-              className="rounded-sm border-[#C76D54] text-[#C76D54] hover:bg-[#FBF1EE]"
+              className="rounded-sm border-[#C76D54] text-danger hover:surface-danger-soft"
             >
               <Trash2 className="mr-2 h-4 w-4" /> Soft-delete
             </Button>
@@ -686,21 +686,21 @@ export default function PatientDetail() {
 
       <header className="flex flex-wrap items-start justify-between gap-6">
         <div>
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
             Patient profile {patient.unmasked ? "" : "· masked"}
           </span>
-          <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight text-[#1F2924]">
+          <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight text-strong">
             {patient.unmasked
               ? `${patient.first_name} ${patient.last_name}`
               : patient.display_name_masked || "—"}
           </h1>
-          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-[#5C6A61]">
+          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-strong">
             {patient.date_of_birth && <span>DOB {patient.unmasked ? formatDate(patient.date_of_birth) : patient.date_of_birth}</span>}
             {patient.phone && <span>{patient.phone}</span>}
             {patient.email && <span>{patient.email}</span>}
             {patient.gender && <span>{patient.gender}</span>}
             {patient.status === "deleted" && (
-              <span className="rounded-sm bg-[#FBF1EE] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[#C76D54]">
+              <span className="rounded-sm surface-danger-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-danger">
                 Deleted · retained until {patient.retention_until ? formatDate(patient.retention_until) : "—"}
               </span>
             )}
@@ -709,17 +709,17 @@ export default function PatientDetail() {
       </header>
 
       <section className="grid grid-cols-1 gap-6 md:grid-cols-3">
-        <div className="rounded-sm border border-stone-200 bg-white p-6">
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">Address</span>
-          <p className="mt-3 text-sm leading-relaxed text-[#1F2924]">{patient.address || "—"}</p>
+        <div className="rounded-sm border border-subtle bg-card p-6">
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">Address</span>
+          <p className="mt-3 text-sm leading-relaxed text-strong">{patient.address || "—"}</p>
         </div>
-        <div className="rounded-sm border border-stone-200 bg-white p-6">
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">Emergency contact</span>
-          <p className="mt-3 text-sm leading-relaxed text-[#1F2924]">{patient.emergency_contact || "—"}</p>
+        <div className="rounded-sm border border-subtle bg-card p-6">
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">Emergency contact</span>
+          <p className="mt-3 text-sm leading-relaxed text-strong">{patient.emergency_contact || "—"}</p>
         </div>
-        <div className="rounded-sm border border-stone-200 bg-white p-6">
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">Intake notes</span>
-          <p className="mt-3 text-sm leading-relaxed text-[#1F2924]">{patient.notes || "—"}</p>
+        <div className="rounded-sm border border-subtle bg-card p-6">
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">Intake notes</span>
+          <p className="mt-3 text-sm leading-relaxed text-strong">{patient.notes || "—"}</p>
         </div>
       </section>
 
@@ -730,14 +730,14 @@ export default function PatientDetail() {
       <section>
         <div className="mb-4 flex items-end justify-between">
           <div>
-            <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">Clinical history</span>
+            <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">Clinical history</span>
             <h2 className="mt-1 font-['Outfit'] text-2xl font-medium tracking-tight">Medical records</h2>
           </div>
           {canAddRecord && (
             <Button
               onClick={() => setRecDialog(true)}
               data-testid="record-new-btn"
-              className="rounded-sm bg-[#7B9A82] hover:bg-[#65826C]"
+              className="rounded-sm bg-sage hover:bg-sage-hover"
             >
               <Plus className="mr-2 h-4 w-4" /> Add record
             </Button>
@@ -747,36 +747,36 @@ export default function PatientDetail() {
         {records === null ? (
           <Skeleton className="h-32" />
         ) : records.length === 0 ? (
-          <div className="rounded-sm border border-dashed border-stone-200 bg-white p-12 text-center text-sm text-[#5C6A61]">
+          <div className="rounded-sm border border-dashed border-subtle bg-card p-12 text-center text-sm text-muted-strong">
             No medical records yet.
           </div>
         ) : (
-          <ol className="relative space-y-4 border-l border-stone-200 pl-6">
+          <ol className="relative space-y-4 border-l border-subtle pl-6">
             {records.map((r) => (
-              <li key={r.id} data-testid={`record-${r.id}`} className="relative rounded-sm border border-stone-200 bg-white p-5">
-                <span className="absolute -left-[33px] top-5 flex h-5 w-5 items-center justify-center rounded-sm bg-[#EDF2EE] text-[#526B58]">
+              <li key={r.id} data-testid={`record-${r.id}`} className="relative rounded-sm border border-subtle bg-card p-5">
+                <span className="absolute -left-[33px] top-5 flex h-5 w-5 items-center justify-center rounded-sm surface-sage text-sage-deep">
                   <FileText className="h-3 w-3" />
                 </span>
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <span className="rounded-sm bg-[#F5F5F0] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[#5C6A61]">
+                    <span className="rounded-sm surface-muted px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-strong">
                       {r.record_type}
                     </span>
-                    <h3 className="mt-2 font-['Outfit'] text-lg font-medium text-[#1F2924]">{r.title}</h3>
+                    <h3 className="mt-2 font-['Outfit'] text-lg font-medium text-strong">{r.title}</h3>
                   </div>
-                  <div className="text-xs text-[#5C6A61]">
+                  <div className="text-xs text-muted-strong">
                     {formatDateTime(r.recorded_at)} · {r.recorded_by_name || "—"}
                   </div>
                 </div>
-                {r.description && <p className="mt-3 text-sm leading-relaxed text-[#1F2924]">{r.description}</p>}
+                {r.description && <p className="mt-3 text-sm leading-relaxed text-strong">{r.description}</p>}
                 <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
                   {r.diagnosis && (
-                    <div><span className="text-[11px] uppercase tracking-wider text-[#5C6A61]">Diagnosis</span>
-                      <div className="text-[#1F2924]">{r.diagnosis}</div></div>
+                    <div><span className="text-[11px] uppercase tracking-wider text-muted-strong">Diagnosis</span>
+                      <div className="text-strong">{r.diagnosis}</div></div>
                   )}
                   {r.treatment && (
-                    <div><span className="text-[11px] uppercase tracking-wider text-[#5C6A61]">Treatment</span>
-                      <div className="text-[#1F2924]">{r.treatment}</div></div>
+                    <div><span className="text-[11px] uppercase tracking-wider text-muted-strong">Treatment</span>
+                      <div className="text-strong">{r.treatment}</div></div>
                   )}
                 </div>
               </li>
@@ -787,29 +787,29 @@ export default function PatientDetail() {
 
       <section>
         <div className="mb-4">
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">Scheduling</span>
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">Scheduling</span>
           <h2 className="mt-1 font-['Outfit'] text-2xl font-medium tracking-tight">Appointments</h2>
         </div>
         {appointments === null ? (
           <Skeleton className="h-24" />
         ) : appointments.length === 0 ? (
-          <div className="rounded-sm border border-dashed border-stone-200 bg-white p-10 text-center text-sm text-[#5C6A61]">
+          <div className="rounded-sm border border-dashed border-subtle bg-card p-10 text-center text-sm text-muted-strong">
             No appointments for this patient.
           </div>
         ) : (
           <ul className="space-y-2">
             {appointments.map((a) => (
-              <li key={a.id} className="flex items-center justify-between rounded-sm border border-stone-200 bg-white px-5 py-4 text-sm">
+              <li key={a.id} className="flex items-center justify-between rounded-sm border border-subtle bg-card px-5 py-4 text-sm">
                 <div>
-                  <div className="font-medium text-[#1F2924]">{formatDateTime(a.start_time)}</div>
-                  <div className="text-xs text-[#5C6A61]">
+                  <div className="font-medium text-strong">{formatDateTime(a.start_time)}</div>
+                  <div className="text-xs text-muted-strong">
                     with {a.provider_name} · {relativeFromNow(a.start_time)}
                   </div>
                 </div>
                 <span className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
-                  a.status === "cancelled" ? "bg-[#FBF1EE] text-[#C76D54]"
-                    : a.status === "completed" ? "bg-[#F5F5F0] text-[#5C6A61]"
-                    : "bg-[#EDF2EE] text-[#526B58]"}`}>
+                  a.status === "cancelled" ? "surface-danger-soft text-danger"
+                    : a.status === "completed" ? "surface-muted text-muted-strong"
+                    : "surface-sage text-sage-deep"}`}>
                   {a.status}
                 </span>
               </li>
@@ -873,7 +873,7 @@ export default function PatientDetail() {
               data-testid="patient-delete-confirm-btn"
               disabled={deleteReason.trim().length < 8}
               onClick={softDelete}
-              className="rounded-sm bg-[#C76D54] hover:bg-[#B35F47]"
+              className="rounded-sm bg-danger hover:bg-danger-hover"
             >
               Soft-delete
             </AlertDialogAction>

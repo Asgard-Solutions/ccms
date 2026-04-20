@@ -59,6 +59,7 @@ from services.identity.models import (
     PasswordChange,
     PasswordResetConfirm,
     PasswordResetRequest,
+    PreferencesUpdate,
     ReauthRequest,
     UserLogin,
     UserPatch,
@@ -118,6 +119,7 @@ def _to_public(user: dict) -> dict:
         "mfa_enabled": bool(user.get("mfa_enabled")),
         "mfa_policy_required": bool(user.get("mfa_policy_required")),
         "password_changed_at": user.get("password_changed_at"),
+        "theme": user.get("theme", "system"),
         "created_at": user["created_at"],
     }
 
@@ -405,6 +407,37 @@ async def logout(request: Request, response: Response):
 @router.get("/me", response_model=UserPublic)
 async def me(user: dict = Depends(get_current_user)):
     return _to_public(user)
+
+
+@router.patch("/me/preferences", response_model=UserPublic)
+async def update_preferences(
+    payload: PreferencesUpdate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Persist lightweight per-user UI preferences (theme today; locale + density
+    later). Auth-only; no reauth required — these are non-sensitive settings."""
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "No preference fields supplied."
+        )
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    db = get_db_write()
+    updated = await db.users.find_one_and_update(
+        {"id": user["id"]},
+        {"$set": updates},
+        projection={"_id": 0},
+        return_document=True,
+    )
+    if not updated:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    await audit_success(
+        user, "user.preferences_updated", request,
+        entity_type="user", entity_id=user["id"],
+        metadata={"fields": sorted(k for k in updates if k != "updated_at")},
+    )
+    return _to_public(updated)
 
 
 @router.get("/me/export")

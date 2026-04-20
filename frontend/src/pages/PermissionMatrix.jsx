@@ -22,7 +22,7 @@ function Cell({ grant }) {
     return (
       <span
         data-testid="matrix-cell-denied"
-        className="inline-flex h-5 min-w-[24px] items-center justify-center rounded-sm border border-stone-200 bg-white px-1 text-[10px] text-stone-300"
+        className="inline-flex h-5 min-w-[24px] items-center justify-center rounded-sm border border-subtle bg-card px-1 text-[10px] text-stone-300"
       >
         —
       </span>
@@ -37,11 +37,11 @@ function Cell({ grant }) {
       data-testid="matrix-cell-grant"
       className="flex flex-col items-start gap-1"
     >
-      <span className="inline-flex items-center rounded-sm bg-[#EDF2EE] px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[#526B58]">
+      <span className="inline-flex items-center rounded-sm surface-sage px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sage-deep">
         {SCOPE_LABEL[grant.scope] || grant.scope}
       </span>
       {badges.length > 0 && (
-        <span className="text-[9px] text-[#B8715C]">{badges.join(" · ")}</span>
+        <span className="text-[9px] text-danger-soft">{badges.join(" · ")}</span>
       )}
     </div>
   );
@@ -78,24 +78,24 @@ export default function PermissionMatrix() {
   }, [matrix, filter, onlyPrivileged]);
 
   if (!matrix) {
-    return <div className="p-6 text-[#5C6A61]">Loading permission matrix…</div>;
+    return <div className="p-6 text-muted-strong">Loading permission matrix…</div>;
   }
 
   return (
     <div data-testid="permission-matrix-page" className="space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="font-['Outfit'] text-3xl font-medium text-[#1F2924]">
+          <h1 className="font-['Outfit'] text-3xl font-medium text-strong">
             Permission matrix
           </h1>
-          <p className="mt-1 max-w-2xl text-sm text-[#5C6A61]">
+          <p className="mt-1 max-w-2xl text-sm text-muted-strong">
             Role × permission grid. Each cell shows the scope granted to that
             role; flags indicate MFA, approval, or break-glass overlays. This
             view is read-only evidence — the backend is the authoritative
             source.
           </p>
         </div>
-        <Badge className="bg-[#EDF2EE] text-[#526B58]">
+        <Badge className="surface-sage text-sage-deep">
           <ShieldCheck className="mr-1 h-3 w-3" />
           {matrix.permissions.length} permissions × {matrix.roles.length} roles
         </Badge>
@@ -109,7 +109,7 @@ export default function PermissionMatrix() {
           onChange={(e) => setFilter(e.target.value)}
           className="max-w-sm"
         />
-        <label className="flex items-center gap-2 text-sm text-[#5C6A61]">
+        <label className="flex items-center gap-2 text-sm text-muted-strong">
           <input
             data-testid="matrix-privileged-toggle"
             type="checkbox"
@@ -123,7 +123,7 @@ export default function PermissionMatrix() {
       <Card className="rounded-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base font-normal">
-            <Info className="h-4 w-4 text-[#5C6A61]" />
+            <Info className="h-4 w-4 text-muted-strong" />
             Scopes: self · assigned · location · location+ · phi-ltd · phi-full · org · no-phi
           </CardTitle>
         </CardHeader>
@@ -131,13 +131,13 @@ export default function PermissionMatrix() {
           <table className="min-w-full border-separate border-spacing-0 text-xs">
             <thead>
               <tr>
-                <th className="sticky left-0 z-10 bg-white px-2 py-2 text-left text-[11px] uppercase tracking-wider text-[#5C6A61]">
+                <th className="sticky left-0 z-10 bg-card px-2 py-2 text-left text-[11px] uppercase tracking-wider text-muted-strong">
                   Permission
                 </th>
                 {matrix.roles.map((r) => (
                   <th
                     key={r.key}
-                    className="px-2 py-2 text-center text-[10px] uppercase tracking-wider text-[#5C6A61]"
+                    className="px-2 py-2 text-center text-[10px] uppercase tracking-wider text-muted-strong"
                     title={r.name}
                   >
                     {r.abbr}
@@ -148,13 +148,13 @@ export default function PermissionMatrix() {
             <tbody>
               {filtered.map((p) => (
                 <tr key={p.key} className="border-t border-stone-100">
-                  <td className="sticky left-0 z-10 bg-white px-2 py-2 font-mono text-[11px] text-[#1F2924]">
+                  <td className="sticky left-0 z-10 bg-card px-2 py-2 font-mono text-[11px] text-strong">
                     <div className="flex items-center gap-2">
                       {p.privileged && (
-                        <Lock className="h-3 w-3 text-[#B8715C]" />
+                        <Lock className="h-3 w-3 text-danger-soft" />
                       )}
                       {p.destructive && (
-                        <AlertTriangle className="h-3 w-3 text-[#B8715C]" />
+                        <AlertTriangle className="h-3 w-3 text-danger-soft" />
                       )}
                       {p.key}
                     </div>

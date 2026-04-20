@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { api, formatApiError } from "../api/client";
+import { useTheme } from "./ThemeContext";
 
 const AuthContext = createContext(null);
 
@@ -12,6 +13,12 @@ export function AuthProvider({ children }) {
   const [idleWarning, setIdleWarning] = useState(false);
   const idleTimer = useRef(null);
   const warnTimer = useRef(null);
+  const { syncFromUser } = useTheme();
+
+  // Keep the theme engine aligned with the authenticated user.
+  useEffect(() => {
+    if (user) syncFromUser(user);
+  }, [user, syncFromUser]);
 
   const fetchMe = useCallback(async () => {
     try {

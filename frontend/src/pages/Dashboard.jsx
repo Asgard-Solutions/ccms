@@ -21,29 +21,29 @@ function Stat({ label, value, helper, icon: Icon }) {
   return (
     <div
       data-testid={`dashboard-stat-${label.toLowerCase().replace(/\s+/g, "-")}`}
-      className="rounded-sm border border-stone-200 bg-white p-6"
+      className="rounded-sm border border-subtle bg-card p-6"
     >
       <div className="flex items-start justify-between">
-        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
           {label}
         </span>
-        <span className="flex h-8 w-8 items-center justify-center rounded-sm bg-[#EDF2EE] text-[#526B58]">
+        <span className="flex h-8 w-8 items-center justify-center rounded-sm surface-sage text-sage-deep">
           <Icon className="h-4 w-4" />
         </span>
       </div>
-      <div className="mt-6 font-['Outfit'] text-4xl font-medium tracking-tight text-[#1F2924]">
+      <div className="mt-6 font-['Outfit'] text-4xl font-medium tracking-tight text-strong">
         {value}
       </div>
-      <div className="mt-2 text-xs text-[#5C6A61]">{helper}</div>
+      <div className="mt-2 text-xs text-muted-strong">{helper}</div>
     </div>
   );
 }
 
 function statusBadge(status) {
   const map = {
-    scheduled: "bg-[#EDF2EE] text-[#526B58]",
-    completed: "bg-[#F5F5F0] text-[#5C6A61]",
-    cancelled: "bg-[#FBF1EE] text-[#C76D54]",
+    scheduled: "surface-sage text-sage-deep",
+    completed: "surface-muted text-muted-strong",
+    cancelled: "surface-danger-soft text-danger",
   };
   return (
     <Badge className={`rounded-sm border-0 font-medium ${map[status] || "bg-stone-100"}`}>
@@ -120,13 +120,13 @@ export default function Dashboard() {
   return (
     <div data-testid="dashboard-page" className="space-y-12 animate-in fade-in slide-in-from-bottom-2 duration-300">
       <header>
-        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
           Overview
         </span>
-        <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight text-[#1F2924] sm:text-5xl">
+        <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight text-strong sm:text-5xl">
           Hello, {greetingName(user.name)}.
         </h1>
-        <p className="mt-4 max-w-xl text-base leading-relaxed text-[#5C6A61]">
+        <p className="mt-4 max-w-xl text-base leading-relaxed text-muted-strong">
           Here is what is happening across the clinic today. Scheduling events
           flow through the in-process event bus to the communication service.
         </p>
@@ -156,14 +156,14 @@ export default function Dashboard() {
       <section>
         <div className="mb-4 flex items-end justify-between">
           <div>
-            <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+            <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
               Upcoming appointments
             </span>
             <h2 className="mt-1 font-['Outfit'] text-2xl font-medium tracking-tight">
               Next on the schedule
             </h2>
           </div>
-          <Button variant="ghost" asChild className="text-[#526B58]">
+          <Button variant="ghost" asChild className="text-sage-deep">
             <Link to="/appointments" data-testid="dashboard-view-all-appts">
               View all <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
@@ -171,10 +171,10 @@ export default function Dashboard() {
         </div>
 
         {upcoming.length === 0 ? (
-          <div className="rounded-sm border border-dashed border-stone-200 bg-white p-12 text-center">
-            <p className="text-sm text-[#5C6A61]">No upcoming appointments.</p>
+          <div className="rounded-sm border border-dashed border-subtle bg-card p-12 text-center">
+            <p className="text-sm text-muted-strong">No upcoming appointments.</p>
             {user.role !== "patient" && (
-              <Button asChild className="mt-4 rounded-sm bg-[#7B9A82] hover:bg-[#65826C]">
+              <Button asChild className="mt-4 rounded-sm bg-sage hover:bg-sage-hover">
                 <Link to="/appointments" data-testid="dashboard-book-first">
                   Book one
                 </Link>
@@ -182,10 +182,10 @@ export default function Dashboard() {
             )}
           </div>
         ) : (
-          <div className="overflow-hidden rounded-sm border border-stone-200 bg-white">
+          <div className="overflow-hidden rounded-sm border border-subtle bg-card">
             <table className="w-full text-left">
-              <thead className="border-b border-stone-200">
-                <tr className="text-xs font-semibold uppercase tracking-wider text-[#5C6A61]">
+              <thead className="border-b border-subtle">
+                <tr className="text-xs font-semibold uppercase tracking-wider text-muted-strong">
                   <th className="px-6 py-3">When</th>
                   <th className="px-6 py-3">Patient</th>
                   <th className="px-6 py-3">Provider</th>
@@ -198,23 +198,23 @@ export default function Dashboard() {
                   <tr
                     key={a.id}
                     data-testid={`dashboard-appt-row-${a.id}`}
-                    className="border-b border-stone-100 last:border-b-0 hover:bg-[#F5F5F0]/50"
+                    className="border-b border-stone-100 last:border-b-0 hover:surface-muted/50"
                   >
                     <td className="px-6 py-4 text-sm">
-                      <div className="font-medium text-[#1F2924]">
+                      <div className="font-medium text-strong">
                         {formatDateTime(a.start_time)}
                       </div>
-                      <div className="text-xs text-[#5C6A61]">
+                      <div className="text-xs text-muted-strong">
                         {relativeFromNow(a.start_time)}
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-sm text-[#1F2924]">
+                    <td className="px-6 py-4 text-sm text-strong">
                       {a.patient_name}
                     </td>
-                    <td className="px-6 py-4 text-sm text-[#5C6A61]">
+                    <td className="px-6 py-4 text-sm text-muted-strong">
                       {a.provider_name}
                     </td>
-                    <td className="px-6 py-4 text-sm text-[#5C6A61]">
+                    <td className="px-6 py-4 text-sm text-muted-strong">
                       {a.reason || "—"}
                     </td>
                     <td className="px-6 py-4 text-sm">{statusBadge(a.status)}</td>
@@ -230,21 +230,21 @@ export default function Dashboard() {
         <section>
           <div className="mb-4 flex items-end justify-between">
             <div>
-              <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+              <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
                 Event bus activity
               </span>
               <h2 className="mt-1 font-['Outfit'] text-2xl font-medium tracking-tight">
                 Recent mock notifications
               </h2>
             </div>
-            <Button variant="ghost" asChild className="text-[#526B58]">
+            <Button variant="ghost" asChild className="text-sage-deep">
               <Link to="/notifications" data-testid="dashboard-view-all-notifs">
                 See all <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
             </Button>
           </div>
           {(!data.notifications || data.notifications.length === 0) ? (
-            <div className="rounded-sm border border-dashed border-stone-200 bg-white p-12 text-center text-sm text-[#5C6A61]">
+            <div className="rounded-sm border border-dashed border-subtle bg-card p-12 text-center text-sm text-muted-strong">
               No notifications emitted yet. Book an appointment to see the
               event bus in action.
             </div>
@@ -254,22 +254,22 @@ export default function Dashboard() {
                 <li
                   key={n.id}
                   data-testid={`notif-feed-${n.id}`}
-                  className="flex items-start justify-between gap-6 rounded-sm border border-stone-200 bg-white px-5 py-4"
+                  className="flex items-start justify-between gap-6 rounded-sm border border-subtle bg-card px-5 py-4"
                 >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="rounded-sm bg-[#EDF2EE] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[#526B58]">
+                      <span className="rounded-sm surface-sage px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-sage-deep">
                         {n.event_type}
                       </span>
-                      <span className="text-[11px] uppercase tracking-wider text-[#5C6A61]">
+                      <span className="text-[11px] uppercase tracking-wider text-muted-strong">
                         via {n.channel}
                       </span>
                     </div>
-                    <p className="mt-2 line-clamp-2 text-sm text-[#1F2924]">
+                    <p className="mt-2 line-clamp-2 text-sm text-strong">
                       {n.body}
                     </p>
                   </div>
-                  <span className="whitespace-nowrap text-xs text-[#5C6A61]">
+                  <span className="whitespace-nowrap text-xs text-muted-strong">
                     {relativeFromNow(n.created_at)}
                   </span>
                 </li>

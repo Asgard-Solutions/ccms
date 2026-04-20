@@ -98,10 +98,10 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3 rounded-sm border border-stone-200 p-3">
+        <div className="space-y-3 rounded-sm border border-subtle p-3">
           <div className="grid gap-2 sm:grid-cols-2">
             <div>
-              <label className="text-xs uppercase tracking-wider text-[#5C6A61]">
+              <label className="text-xs uppercase tracking-wider text-muted-strong">
                 Permission
               </label>
               <Input
@@ -120,7 +120,7 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
               </datalist>
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-[#5C6A61]">
+              <label className="text-xs uppercase tracking-wider text-muted-strong">
                 Scope
               </label>
               <Select
@@ -150,7 +150,7 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
             </div>
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wider text-[#5C6A61]">
+            <label className="text-xs uppercase tracking-wider text-muted-strong">
               Reason (min 10 chars)
             </label>
             <Input
@@ -161,7 +161,7 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
             />
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wider text-[#5C6A61]">
+            <label className="text-xs uppercase tracking-wider text-muted-strong">
               Expires (ISO datetime — leave blank for permanent)
             </label>
             <Input
@@ -177,18 +177,18 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
             disabled={
               !form.permission_key || form.reason.trim().length < 10
             }
-            className="bg-[#7B9A82] hover:bg-[#65826C]"
+            className="bg-sage hover:bg-sage-hover"
           >
             Grant override
           </Button>
         </div>
 
         <div className="mt-4">
-          <div className="mb-2 text-xs uppercase tracking-wider text-[#5C6A61]">
+          <div className="mb-2 text-xs uppercase tracking-wider text-muted-strong">
             Existing overrides
           </div>
           {rows.length === 0 ? (
-            <div className="text-sm text-[#5C6A61]">No overrides.</div>
+            <div className="text-sm text-muted-strong">No overrides.</div>
           ) : (
             <ul className="divide-y divide-stone-100">
               {rows.map((o) => (
@@ -199,7 +199,7 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
                 >
                   <div>
                     <div className="font-mono text-[11px]">{o.permission_key}</div>
-                    <div className="text-xs text-[#5C6A61]">
+                    <div className="text-xs text-muted-strong">
                       scope: {o.scope} · {o.reason}
                     </div>
                     <div className="text-[10px] text-stone-400">
@@ -213,7 +213,7 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
                         data-testid={`override-revoke-btn-${o.id}`}
                         size="sm"
                         variant="ghost"
-                        className="rounded-sm text-[#B8715C]"
+                        className="rounded-sm text-danger-soft"
                         onClick={() => revoke(o.id)}
                       >
                         <Trash2 className="mr-1 h-3 w-3" /> Revoke
@@ -296,15 +296,15 @@ export default function RoleManagement() {
     <div data-testid="role-management-page" className="space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="font-['Outfit'] text-3xl font-medium text-[#1F2924]">
+          <h1 className="font-['Outfit'] text-3xl font-medium text-strong">
             Role management
           </h1>
-          <p className="mt-1 max-w-2xl text-sm text-[#5C6A61]">
+          <p className="mt-1 max-w-2xl text-sm text-muted-strong">
             Assign baseline roles to users. Each assignment bumps the user's
             session epoch so existing tokens are revoked immediately.
           </p>
         </div>
-        <Badge className="bg-[#EDF2EE] text-[#526B58]">
+        <Badge className="surface-sage text-sage-deep">
           <Shield className="mr-1 h-3 w-3" />
           {roles.length} roles · {users.length} users
         </Badge>
@@ -313,13 +313,13 @@ export default function RoleManagement() {
       <Card className="rounded-sm">
         <CardHeader>
           <CardTitle className="text-base font-normal flex items-center gap-2">
-            <Users className="h-4 w-4 text-[#5C6A61]" /> Users & role assignments
+            <Users className="h-4 w-4 text-muted-strong" /> Users & role assignments
           </CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wider text-[#5C6A61]">
+              <tr className="text-left text-[11px] uppercase tracking-wider text-muted-strong">
                 <th className="px-3 py-2">User</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Legacy role</th>
@@ -351,26 +351,26 @@ export default function RoleManagement() {
             <div
               key={r.key}
               data-testid={`role-card-${r.key}`}
-              className="flex items-start justify-between rounded-sm border border-stone-200 px-4 py-3"
+              className="flex items-start justify-between rounded-sm border border-subtle px-4 py-3"
             >
               <div>
-                <div className="font-medium text-[#1F2924]">
+                <div className="font-medium text-strong">
                   {r.name}{" "}
-                  <span className="text-[11px] uppercase tracking-wider text-[#5C6A61]">
+                  <span className="text-[11px] uppercase tracking-wider text-muted-strong">
                     · {r.abbr}
                   </span>
                 </div>
-                <div className="text-sm text-[#5C6A61]">{r.description}</div>
+                <div className="text-sm text-muted-strong">{r.description}</div>
                 {r.privileged && (
-                  <Badge className="mt-1 bg-[#FDF0EA] text-[#B8715C]">privileged</Badge>
+                  <Badge className="mt-1 bg-[#FDF0EA] text-danger-soft">privileged</Badge>
                 )}
                 {r.service_account && (
-                  <Badge className="mt-1 ml-1 bg-[#EDF2EE] text-[#526B58]">
+                  <Badge className="mt-1 ml-1 surface-sage text-sage-deep">
                     service account
                   </Badge>
                 )}
               </div>
-              <div className="text-right text-xs text-[#5C6A61]">
+              <div className="text-right text-xs text-muted-strong">
                 {r.grants?.length || 0} grants
               </div>
             </div>
@@ -408,7 +408,7 @@ export default function RoleManagement() {
               data-testid="assign-role-confirm"
               onClick={assignRole}
               disabled={!pendingRole}
-              className="bg-[#7B9A82] hover:bg-[#65826C]"
+              className="bg-sage hover:bg-sage-hover"
             >
               <UserPlus className="mr-2 h-4 w-4" />
               Assign
@@ -450,22 +450,22 @@ function UserRow({ user, onAssign, onRevoke, onOverrides }) {
       className="border-t border-stone-100 align-top"
     >
       <td className="px-3 py-2">
-        <div className="font-medium text-[#1F2924]">{user.name}</div>
-        <div className="text-xs text-[#5C6A61]">{user.email}</div>
+        <div className="font-medium text-strong">{user.name}</div>
+        <div className="text-xs text-muted-strong">{user.email}</div>
       </td>
       <td className="px-3 py-2">
         <Badge
           className={
             user.status === "disabled"
-              ? "bg-[#FDE8E3] text-[#B8715C]"
-              : "bg-[#EDF2EE] text-[#526B58]"
+              ? "bg-[#FDE8E3] text-danger-soft"
+              : "surface-sage text-sage-deep"
           }
         >
           {user.status || "active"}
         </Badge>
       </td>
-      <td className="px-3 py-2 text-sm text-[#5C6A61]">{user.role}</td>
-      <td className="px-3 py-2 text-xs text-[#5C6A61]">
+      <td className="px-3 py-2 text-sm text-muted-strong">{user.role}</td>
+      <td className="px-3 py-2 text-xs text-muted-strong">
         {userRoles.length ? userRoles.join(", ") : "via legacy role"}
       </td>
       <td className="px-3 py-2">
@@ -485,7 +485,7 @@ function UserRow({ user, onAssign, onRevoke, onOverrides }) {
             size="sm"
             variant="ghost"
             onClick={onOverrides}
-            className="rounded-sm text-[#5C6A61]"
+            className="rounded-sm text-muted-strong"
           >
             <KeyRound className="mr-1 h-3 w-3" />
             Overrides

@@ -26,7 +26,7 @@ export default function BreakGlassDialog({ open, onClose, onSubmit, title, descr
       <DialogContent data-testid="break-glass-dialog" className="max-w-md rounded-sm">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 font-['Outfit']">
-            <Shield className="h-5 w-5 text-[#C76D54]" />
+            <Shield className="h-5 w-5 text-danger" />
             {title || "Break-glass access"}
           </DialogTitle>
           <DialogDescription>
@@ -61,7 +61,7 @@ export default function BreakGlassDialog({ open, onClose, onSubmit, title, descr
               type="submit"
               disabled={tooShort}
               data-testid="break-glass-submit"
-              className="rounded-sm bg-[#C76D54] text-white hover:bg-[#B35F47]"
+              className="rounded-sm bg-danger text-white hover:bg-danger-hover"
             >
               Record & continue
             </Button>

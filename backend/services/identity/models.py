@@ -17,6 +17,7 @@ from pydantic import BaseModel, EmailStr, Field, ConfigDict
 
 Role = Literal["admin", "doctor", "staff", "patient", "platform_admin", "super_admin"]
 UserStatus = Literal["active", "disabled"]
+Theme = Literal["light", "dark", "system"]
 
 
 class UserPublic(BaseModel):
@@ -33,6 +34,7 @@ class UserPublic(BaseModel):
     mfa_enabled: bool = False
     mfa_policy_required: bool = False
     password_changed_at: str | None = None
+    theme: Theme = "system"
     created_at: datetime
 
 
@@ -108,3 +110,10 @@ class PasswordResetConfirm(BaseModel):
     model_config = ConfigDict(extra="forbid")
     token: str = Field(min_length=16, max_length=128)
     new_password: str = Field(min_length=12, max_length=128)
+
+
+class PreferencesUpdate(BaseModel):
+    """Partial update for lightweight user preferences (theme, locale, …).
+    All fields optional; only keys that are present are written."""
+    model_config = ConfigDict(extra="forbid")
+    theme: Theme | None = None

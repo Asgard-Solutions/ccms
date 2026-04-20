@@ -18,11 +18,11 @@ import { KeyRound, Check, X, Clock, Shield } from "lucide-react";
 
 function statusBadge(status) {
   const cls = {
-    pending: "bg-[#FDF6ED] text-[#D4A373]",
-    approved: "bg-[#EDF2EE] text-[#526B58]",
-    rejected: "bg-[#FDE8E3] text-[#B8715C]",
+    pending: "surface-warning text-[#D4A373]",
+    approved: "surface-sage text-sage-deep",
+    rejected: "bg-[#FDE8E3] text-danger-soft",
     expired: "bg-stone-100 text-stone-500",
-    used: "bg-[#EDF2EE] text-[#526B58]",
+    used: "surface-sage text-sage-deep",
     revoked: "bg-stone-100 text-stone-500",
   }[status] || "bg-stone-100";
   return <Badge className={cls} data-testid={`elevation-status-${status}`}>{status}</Badge>;
@@ -102,10 +102,10 @@ export default function Elevation() {
     <div data-testid="elevation-page" className="space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="font-['Outfit'] text-3xl font-medium text-[#1F2924]">
+          <h1 className="font-['Outfit'] text-3xl font-medium text-strong">
             Elevation requests
           </h1>
-          <p className="mt-1 max-w-2xl text-sm text-[#5C6A61]">
+          <p className="mt-1 max-w-2xl text-sm text-muted-strong">
             Request time-bound, justified, approver-gated access to
             high-sensitivity permissions. All approvals and uses are audited.
           </p>
@@ -113,7 +113,7 @@ export default function Elevation() {
         <Button
           data-testid="elevation-new-btn"
           onClick={() => setDlg(true)}
-          className="bg-[#7B9A82] hover:bg-[#65826C]"
+          className="bg-sage hover:bg-sage-hover"
         >
           <KeyRound className="mr-2 h-4 w-4" /> Request elevation
         </Button>
@@ -126,7 +126,7 @@ export default function Elevation() {
         <CardContent className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wider text-[#5C6A61]">
+              <tr className="text-left text-[11px] uppercase tracking-wider text-muted-strong">
                 <th className="px-2 py-1">Status</th>
                 <th className="px-2 py-1">Permission</th>
                 <th className="px-2 py-1">Requester</th>
@@ -144,14 +144,14 @@ export default function Elevation() {
                   className="border-t border-stone-100 align-top"
                 >
                   <td className="px-2 py-2">{statusBadge(r.status)}</td>
-                  <td className="px-2 py-2 font-mono text-[11px] text-[#1F2924]">
+                  <td className="px-2 py-2 font-mono text-[11px] text-strong">
                     {r.permission_key}
                   </td>
                   <td className="px-2 py-2">
                     <div>{r.requester_email}</div>
-                    <div className="text-[11px] text-[#5C6A61]">{r.requester_role}</div>
+                    <div className="text-[11px] text-muted-strong">{r.requester_role}</div>
                   </td>
-                  <td className="px-2 py-2 max-w-md text-sm text-[#5C6A61]">{r.reason}</td>
+                  <td className="px-2 py-2 max-w-md text-sm text-muted-strong">{r.reason}</td>
                   <td className="px-2 py-2 text-xs">
                     <Clock className="mr-1 inline h-3 w-3" />
                     {r.ttl_minutes}m
@@ -175,7 +175,7 @@ export default function Elevation() {
                           size="sm"
                           variant="ghost"
                           onClick={() => cancel(r)}
-                          className="rounded-sm text-[#B8715C]"
+                          className="rounded-sm text-danger-soft"
                         >
                           Cancel
                         </Button>
@@ -186,7 +186,7 @@ export default function Elevation() {
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-3 py-6 text-center text-sm text-[#5C6A61]">
+                  <td colSpan={7} className="px-3 py-6 text-center text-sm text-muted-strong">
                     No elevation requests yet.
                   </td>
                 </tr>
@@ -209,7 +209,7 @@ export default function Elevation() {
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <label className="text-xs uppercase tracking-wider text-[#5C6A61]">
+              <label className="text-xs uppercase tracking-wider text-muted-strong">
                 Permission key
               </label>
               <Input
@@ -228,7 +228,7 @@ export default function Elevation() {
               </datalist>
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-[#5C6A61]">
+              <label className="text-xs uppercase tracking-wider text-muted-strong">
                 Business justification (min 10 chars)
               </label>
               <Textarea
@@ -239,7 +239,7 @@ export default function Elevation() {
               />
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-[#5C6A61]">
+              <label className="text-xs uppercase tracking-wider text-muted-strong">
                 TTL (minutes, 5–240)
               </label>
               <Input
@@ -264,7 +264,7 @@ export default function Elevation() {
               disabled={
                 !form.permission_key || form.reason.trim().length < 10
               }
-              className="bg-[#7B9A82] hover:bg-[#65826C]"
+              className="bg-sage hover:bg-sage-hover"
             >
               Submit
             </Button>
@@ -279,7 +279,7 @@ export default function Elevation() {
             <DialogTitle>Review elevation request</DialogTitle>
             <DialogDescription>
               {reviewDlg?.requester_email} → <code>{reviewDlg?.permission_key}</code>
-              <div className="mt-2 rounded-sm bg-stone-50 p-2 text-sm text-[#5C6A61]">
+              <div className="mt-2 rounded-sm bg-stone-50 p-2 text-sm text-muted-strong">
                 {reviewDlg?.reason}
               </div>
             </DialogDescription>
@@ -297,14 +297,14 @@ export default function Elevation() {
               data-testid="elevation-reject"
               variant="outline"
               onClick={() => decide("reject")}
-              className="rounded-sm text-[#B8715C]"
+              className="rounded-sm text-danger-soft"
             >
               <X className="mr-1 h-4 w-4" /> Reject
             </Button>
             <Button
               data-testid="elevation-approve"
               onClick={() => decide("approve")}
-              className="bg-[#7B9A82] hover:bg-[#65826C]"
+              className="bg-sage hover:bg-sage-hover"
             >
               <Check className="mr-1 h-4 w-4" /> Approve
             </Button>

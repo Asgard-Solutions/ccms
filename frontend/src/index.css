@@ -8,10 +8,11 @@ body {
     margin: 0;
     font-family: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI",
         sans-serif;
-    color: #1f2924;
-    background-color: #faf9f6;
+    color: hsl(var(--foreground));
+    background-color: hsl(var(--background));
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    transition: background-color 180ms ease, color 180ms ease;
 }
 
 code {
@@ -46,6 +47,79 @@ code {
         --chart-4: 12 49% 56%;
         --chart-5: 141 14% 37%;
         --radius: 0.125rem;
+
+        /* CCMS semantic surface tokens — used by bespoke pages + AppShell
+           so light/dark swap works without per-page rewrites. */
+        --surface-app: #FAF9F6;            /* Page background */
+        --surface-raised: #FFFFFF;         /* Cards */
+        --surface-muted: #F5F5F0;          /* Quiet chips / hover */
+        --surface-sage: #EDF2EE;           /* Sage accent cells */
+        --surface-sage-soft: #FAF9F6;      /* Hover on sage rows */
+        --border-subtle: #E5E5E0;
+        --border-strong: #D6D5CE;
+        --text-strong: #1F2924;
+        --text-muted: #5C6A61;
+        --text-soft: #A3AFA7;
+        --sage-accent: #7B9A82;            /* Primary sage */
+        --sage-accent-deep: #526B58;
+        --sage-accent-hover: #65826C;
+        --danger-accent: #C76D54;
+        --warning-accent: #D4A373;
+        --warning-surface: #FDF6ED;
+        --surface-danger-soft: #FBF1EE;   /* Destructive soft chip bg */
+        --text-danger-strong: #7A3A29;    /* Destructive strong text */
+        --text-danger-soft: #B8715C;      /* Destructive mid-tone text */
+        --chrome-topbar-bg: rgba(255, 255, 255, 0.9);
+    }
+
+    .dark {
+        /* Dark sage — muted charcoal + softened sage accents. Tuned for
+           WCAG AA against on-call text. */
+        --background: 150 8% 9%;           /* ~#141917 */
+        --foreground: 60 9% 92%;           /* ~#EFEEE8 */
+        --card: 150 7% 12%;                /* ~#1B211F */
+        --card-foreground: 60 9% 92%;
+        --popover: 150 7% 13%;
+        --popover-foreground: 60 9% 92%;
+        --primary: 135 22% 60%;            /* Lighter sage for dark bg */
+        --primary-foreground: 150 10% 8%;
+        --secondary: 150 5% 18%;
+        --secondary-foreground: 60 9% 92%;
+        --muted: 150 5% 16%;
+        --muted-foreground: 150 10% 68%;
+        --accent: 135 15% 22%;
+        --accent-foreground: 132 25% 82%;
+        --destructive: 12 55% 62%;
+        --destructive-foreground: 0 0% 100%;
+        --border: 150 6% 22%;
+        --input: 150 6% 22%;
+        --ring: 135 22% 60%;
+        --chart-1: 135 22% 60%;
+        --chart-2: 150 10% 68%;
+        --chart-3: 30 54% 64%;
+        --chart-4: 12 55% 62%;
+        --chart-5: 141 18% 57%;
+
+        --surface-app: #141917;
+        --surface-raised: #1B211F;
+        --surface-muted: #232A27;
+        --surface-sage: #2A3832;
+        --surface-sage-soft: #1F2724;
+        --border-subtle: #2B332F;
+        --border-strong: #3C4541;
+        --text-strong: #EFEEE8;
+        --text-muted: #A7B1AB;
+        --text-soft: #6C7671;
+        --sage-accent: #8FB397;
+        --sage-accent-deep: #B2CFBA;
+        --sage-accent-hover: #A3C6AB;
+        --danger-accent: #E0876F;
+        --warning-accent: #E6B787;
+        --warning-surface: #352A1E;
+        --surface-danger-soft: #3B241E;
+        --text-danger-strong: #F4B6A4;
+        --text-danger-soft: #E0876F;
+        --chrome-topbar-bg: rgba(27, 33, 31, 0.88);
     }
 }
 
@@ -57,8 +131,8 @@ code {
         @apply bg-background text-foreground;
     }
     ::selection {
-        background: #edf2ee;
-        color: #1f2924;
+        background: var(--surface-sage);
+        color: var(--text-strong);
     }
     h1,
     h2,
@@ -66,6 +140,34 @@ code {
     h4 {
         font-family: "Outfit", sans-serif;
     }
+}
+
+/* Semantic utility classes — use these on bespoke pages so dark-mode
+   swap works automatically. Preferred over the legacy `bg-[#…]` hexes. */
+@layer utilities {
+    .surface-app        { background-color: var(--surface-app); }
+    .surface-raised     { background-color: var(--surface-raised); }
+    .surface-muted      { background-color: var(--surface-muted); }
+    .surface-sage       { background-color: var(--surface-sage); }
+    .surface-sage-soft  { background-color: var(--surface-sage-soft); }
+    .surface-warning    { background-color: var(--warning-surface); }
+    .surface-danger-soft{ background-color: var(--surface-danger-soft); }
+    .surface-topbar     { background-color: var(--chrome-topbar-bg); }
+    .text-strong        { color: var(--text-strong); }
+    .text-muted-strong  { color: var(--text-muted); }
+    .text-soft          { color: var(--text-soft); }
+    .text-sage          { color: var(--sage-accent); }
+    .text-sage-deep     { color: var(--sage-accent-deep); }
+    .text-danger        { color: var(--danger-accent); }
+    .text-danger-strong { color: var(--text-danger-strong); }
+    .text-danger-soft   { color: var(--text-danger-soft); }
+    .text-warning       { color: var(--warning-accent); }
+    .bg-danger          { background-color: var(--danger-accent); }
+    .hover\:bg-danger-hover:hover { background-color: var(--danger-accent); filter: brightness(0.92); }
+    .border-subtle      { border-color: var(--border-subtle); }
+    .border-strong      { border-color: var(--border-strong); }
+    .bg-sage            { background-color: var(--sage-accent); }
+    .hover\:bg-sage-hover:hover { background-color: var(--sage-accent-hover); }
 }
 
 @layer base {

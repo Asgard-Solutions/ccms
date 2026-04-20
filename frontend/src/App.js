@@ -2,6 +2,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { Toaster } from "./components/ui/sonner";
 import { AuthProvider } from "./contexts/AuthContext";
 import { PermissionsProvider } from "./contexts/PermissionsContext";
+import { ThemeProvider } from "./contexts/ThemeContext";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
 import AppShell from "./components/layout/AppShell";
 import Login from "./pages/Login";
@@ -34,32 +35,34 @@ function Shell({ children, roles }) {
 
 export default function App() {
   return (
-    <AuthProvider>
-      <PermissionsProvider>
-        <BrowserRouter>
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route path="/password-reset" element={<PasswordReset />} />
-            <Route path="/" element={<Shell><Dashboard /></Shell>} />
-            <Route path="/patients" element={<Shell><Patients /></Shell>} />
-            <Route path="/patients/:id" element={<Shell><PatientDetail /></Shell>} />
-            <Route path="/appointments" element={<Shell><Appointments /></Shell>} />
-            <Route path="/calendar" element={<Shell roles={["admin", "doctor", "staff"]}><CalendarPage /></Shell>} />
-            <Route path="/notifications" element={<Shell roles={["admin", "staff"]}><Notifications /></Shell>} />
-            <Route path="/audit-log" element={<Shell roles={["admin"]}><AuditLog /></Shell>} />
-            <Route path="/compliance" element={<Shell roles={["admin"]}><Compliance /></Shell>} />
-            <Route path="/privacy" element={<Shell roles={["admin"]}><Privacy /></Shell>} />
-            <Route path="/security-config" element={<Shell roles={["admin"]}><SecurityConfig /></Shell>} />
-            <Route path="/roles" element={<Shell roles={["admin"]}><RoleManagement /></Shell>} />
-            <Route path="/permissions" element={<Shell roles={["admin"]}><PermissionMatrix /></Shell>} />
-            <Route path="/access-review" element={<Shell roles={["admin"]}><AccessReview /></Shell>} />
-            <Route path="/elevation" element={<Shell><Elevation /></Shell>} />
-            <Route path="/security" element={<Shell><Security /></Shell>} />
-          </Routes>
-        </BrowserRouter>
-        <Toaster richColors position="top-right" />
-      </PermissionsProvider>
-    </AuthProvider>
+    <ThemeProvider>
+      <AuthProvider>
+        <PermissionsProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              <Route path="/password-reset" element={<PasswordReset />} />
+              <Route path="/" element={<Shell><Dashboard /></Shell>} />
+              <Route path="/patients" element={<Shell><Patients /></Shell>} />
+              <Route path="/patients/:id" element={<Shell><PatientDetail /></Shell>} />
+              <Route path="/appointments" element={<Shell><Appointments /></Shell>} />
+              <Route path="/calendar" element={<Shell roles={["admin", "doctor", "staff"]}><CalendarPage /></Shell>} />
+              <Route path="/notifications" element={<Shell roles={["admin", "staff"]}><Notifications /></Shell>} />
+              <Route path="/audit-log" element={<Shell roles={["admin"]}><AuditLog /></Shell>} />
+              <Route path="/compliance" element={<Shell roles={["admin"]}><Compliance /></Shell>} />
+              <Route path="/privacy" element={<Shell roles={["admin"]}><Privacy /></Shell>} />
+              <Route path="/security-config" element={<Shell roles={["admin"]}><SecurityConfig /></Shell>} />
+              <Route path="/roles" element={<Shell roles={["admin"]}><RoleManagement /></Shell>} />
+              <Route path="/permissions" element={<Shell roles={["admin"]}><PermissionMatrix /></Shell>} />
+              <Route path="/access-review" element={<Shell roles={["admin"]}><AccessReview /></Shell>} />
+              <Route path="/elevation" element={<Shell><Elevation /></Shell>} />
+              <Route path="/security" element={<Shell><Security /></Shell>} />
+            </Routes>
+          </BrowserRouter>
+          <Toaster richColors position="top-right" />
+        </PermissionsProvider>
+      </AuthProvider>
+    </ThemeProvider>
   );
 }

@@ -121,20 +121,20 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
   return (
     <section
       data-testid="patient-documents-card"
-      className="rounded-sm border border-stone-200 bg-white p-6"
+      className="rounded-sm border border-subtle bg-card p-6"
     >
-      <div className="mb-4 border-b border-stone-200 pb-2">
-        <h3 className="font-['Outfit'] text-lg font-medium text-[#1F2924]">
+      <div className="mb-4 border-b border-subtle pb-2">
+        <h3 className="font-['Outfit'] text-lg font-medium text-strong">
           Documents &amp; attachments
         </h3>
-        <p className="mt-0.5 text-xs text-[#5C6A61]">
+        <p className="mt-0.5 text-xs text-muted-strong">
           Insurance cards, IDs, referral letters &amp; imaging reports. All uploads are
           encrypted at rest and every access is audited.
         </p>
       </div>
 
       {documents === null ? (
-        <div className="py-4 text-sm text-[#5C6A61]">Loading…</div>
+        <div className="py-4 text-sm text-muted-strong">Loading…</div>
       ) : (
         <div className="space-y-5">
           {CATEGORIES.map(({ value, label, icon: Icon }) => {
@@ -144,10 +144,10 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
             return (
               <div key={value} data-testid={`docs-category-${value}`} className="space-y-2">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-sm font-medium text-[#1F2924]">
-                    <Icon className="h-4 w-4 text-[#7B9A82]" />
+                  <div className="flex items-center gap-2 text-sm font-medium text-strong">
+                    <Icon className="h-4 w-4 text-sage" />
                     <span>{label}</span>
-                    <span className="text-xs text-[#A3AFA7]">({items.length})</span>
+                    <span className="text-xs text-soft">({items.length})</span>
                   </div>
                   {canEdit && (
                     <>
@@ -186,11 +186,11 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
                       <li
                         key={doc.id}
                         data-testid={`docs-item-${doc.id}`}
-                        className="flex items-center justify-between gap-3 rounded-sm border border-stone-200 bg-[#FAF9F6] px-3 py-2 text-sm"
+                        className="flex items-center justify-between gap-3 rounded-sm border border-subtle surface-app px-3 py-2 text-sm"
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-[#1F2924]">{doc.filename}</div>
-                          <div className="text-xs text-[#5C6A61]">
+                          <div className="truncate text-strong">{doc.filename}</div>
+                          <div className="text-xs text-muted-strong">
                             {doc.content_type} · {Math.round((doc.size || 0) / 1024)} KB ·{" "}
                             {new Date(doc.uploaded_at).toLocaleString()}
                           </div>
@@ -202,7 +202,7 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
                             variant="ghost"
                             onClick={() => download(doc)}
                             data-testid={`docs-download-${doc.id}`}
-                            className="h-7 px-2 text-[#526B58] hover:bg-[#EDF2EE]"
+                            className="h-7 px-2 text-sage-deep hover:surface-sage"
                           >
                             <Download className="h-3.5 w-3.5" />
                           </Button>
@@ -213,7 +213,7 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
                               variant="ghost"
                               onClick={() => setPendingDelete(doc)}
                               data-testid={`docs-delete-${doc.id}`}
-                              className="h-7 px-2 text-[#C76D54] hover:bg-[#FBF1EE]"
+                              className="h-7 px-2 text-danger hover:surface-danger-soft"
                             >
                               <Trash2 className="h-3.5 w-3.5" />
                             </Button>
@@ -232,7 +232,7 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
       {pendingDelete && (
         <div
           data-testid="docs-delete-confirm"
-          className="mt-5 flex items-start justify-between gap-4 rounded-sm border border-[#E7C4B9] bg-[#FBF1EE] px-4 py-3 text-sm text-[#7A3A29]"
+          className="mt-5 flex items-start justify-between gap-4 rounded-sm border border-[#E7C4B9] surface-danger-soft px-4 py-3 text-sm text-danger-strong"
         >
           <span>
             Remove <strong>{pendingDelete.filename}</strong>? This soft-deletes the
@@ -244,7 +244,7 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
               size="sm"
               variant="ghost"
               onClick={() => setPendingDelete(null)}
-              className="h-7 text-[#7A3A29] hover:bg-[#F5DFD7]"
+              className="h-7 text-danger-strong hover:bg-[#F5DFD7]"
             >
               Cancel
             </Button>
@@ -253,7 +253,7 @@ export default function PatientDocumentsCard({ patientId, canEdit }) {
               size="sm"
               onClick={() => remove(pendingDelete)}
               data-testid="docs-delete-confirm-btn"
-              className="h-7 rounded-sm bg-[#C76D54] hover:bg-[#A85540]"
+              className="h-7 rounded-sm bg-danger hover:bg-[#A85540]"
             >
               Remove
             </Button>

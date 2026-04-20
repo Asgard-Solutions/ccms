@@ -400,8 +400,35 @@ Backend-only expansion of the patient domain to support richer chiropractic inta
 - **Tests** — `/app/backend/tests/test_phase5_docs_and_consent_pdf.py` — 22 scenarios covering upload/list/download/delete, reauth enforcement, validation (empty, >10 MB, bad MIME, bad category, **spoofed MIME caught by libmagic**, **PDF-declared-as-PNG caught by libmagic**), consent PDF happy path for 5 types, 409 unsigned, 404 missing, reason enforcement for doctor/staff, patient-self. **21 pass / 1 env-skipped (no pre-seeded patient→user link for `patient@ccms.app`).**
 - **Dependency** — `reportlab==4.4.10`, `python-magic==0.4.27` (+ OS `libmagic1`) added to `/app/backend/requirements.txt`.
 
-### Phase 5 hardening follow-ups (2026-04-20, post-main-agent review)
-- **Magic-byte MIME sniffing** on uploads — `documents_router._sniff_mime()` runs libmagic on the first 4 KB and rejects the request if the sniffed MIME is not in the allow-list OR diverges from the declared `Content-Type`. Closes the "declared `image/png`, actually ELF" spoof vector flagged during HIPAA code review.
+### Per-user theming — light / dark / system (2026-04-20)
+- **Backend** — `theme` field (`light|dark|system`, default `system`) on the
+  users collection. Exposed in `UserPublic` and toggled via new
+  `PATCH /api/auth/me/preferences` (auth-only, no reauth; non-sensitive).
+  New `PreferencesUpdate` Pydantic schema rejects unknown fields.
+- **Frontend** — `ThemeProvider` in `contexts/ThemeContext.jsx` with a
+  `useTheme()` hook. Applies `class="dark"` on `<html>`, sets
+  `color-scheme`, listens to `prefers-color-scheme` when the user picks
+  `system`. `<ThemeToggle />` component (sun/moon dropdown) lives in the
+  top-bar; persists the choice via `PATCH /auth/me/preferences` when
+  authenticated and falls back to localStorage otherwise. `AuthContext`
+  calls `syncFromUser(user)` on every /auth/me result so relogins restore
+  the stored theme with zero flash.
+- **Styling refactor** — introduced a full set of semantic CSS vars +
+  `@layer utilities` helpers (`surface-*`, `text-*`, `bg-sage`,
+  `bg-danger`, `border-subtle`, `border-strong`) in `index.css`. All 23
+  page + component files migrated from hard-coded hex utilities (e.g.
+  `bg-[#FAF9F6]`, `text-[#5C6A61]`) to the semantic tokens so light/dark
+  swap without per-page rewrites.
+- **Tests** — `backend/tests/test_theme_preference.py` — 9 pass: default,
+  light/dark/system swaps, invalid rejected (422), empty payload rejected
+  (400), survives logout/relogin, two users stay independent, unauth 401.
+- **Files** — `backend/services/identity/{models,router}.py`;
+  `frontend/src/{index.css,App.js,contexts/ThemeContext.jsx,
+  contexts/AuthContext.jsx,components/ThemeToggle.jsx,
+  components/layout/AppShell.jsx}` + bulk refactor across `pages/*.jsx`
+  and `components/*.jsx`.
+
+### Phase 5 hardening follow-ups (2026-04-20, post-main-agent review)- **Magic-byte MIME sniffing** on uploads — `documents_router._sniff_mime()` runs libmagic on the first 4 KB and rejects the request if the sniffed MIME is not in the allow-list OR diverges from the declared `Content-Type`. Closes the "declared `image/png`, actually ELF" spoof vector flagged during HIPAA code review.
 - **Streaming upload into `SpooledTemporaryFile`** — `_stream_upload_to_spool()` reads the multipart body in 64 KB chunks, enforces the 10 MB hard cap as it fills, and rolls over to a tmpfile past 1 MB. Cuts the connection the moment the body exceeds the cap so a malicious client can't balloon server memory during concurrent uploads. First 4 KB are captured inline for libmagic without a double-read.
 - **Router split** — `services/patient/router.py` shrank from 984 → **628 lines**:
   * `services/patient/_shared.py` (99 LoC) — shared crypto/reason/now helpers + `_patient_repo`.

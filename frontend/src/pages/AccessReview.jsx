@@ -19,13 +19,13 @@ function StatCard({ icon: Icon, label, value, sub, testId }) {
   return (
     <Card data-testid={testId} className="rounded-sm">
       <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm font-normal text-[#5C6A61]">
+        <CardTitle className="flex items-center gap-2 text-sm font-normal text-muted-strong">
           <Icon className="h-4 w-4" /> {label}
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="font-['Outfit'] text-3xl font-medium text-[#1F2924]">{value}</div>
-        {sub && <div className="mt-1 text-xs text-[#5C6A61]">{sub}</div>}
+        <div className="font-['Outfit'] text-3xl font-medium text-strong">{value}</div>
+        {sub && <div className="mt-1 text-xs text-muted-strong">{sub}</div>}
       </CardContent>
     </Card>
   );
@@ -39,19 +39,19 @@ function EventList({ title, rows, emptyText, testId }) {
       </CardHeader>
       <CardContent>
         {!rows?.length ? (
-          <div className="text-sm text-[#5C6A61]">{emptyText}</div>
+          <div className="text-sm text-muted-strong">{emptyText}</div>
         ) : (
           <ul className="divide-y divide-stone-100 text-sm">
             {rows.slice(0, 15).map((r, i) => (
               <li key={i} className="py-2">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="font-mono text-[11px] text-[#1F2924]">{r.action}</div>
-                    <div className="text-xs text-[#5C6A61]">
+                    <div className="font-mono text-[11px] text-strong">{r.action}</div>
+                    <div className="text-xs text-muted-strong">
                       {r.actor_email || "—"} {r.entity_type ? `· ${r.entity_type}:${r.entity_id}` : ""}
                     </div>
                     {r.reason && (
-                      <div className="text-[11px] text-[#B8715C]">{r.reason}</div>
+                      <div className="text-[11px] text-danger-soft">{r.reason}</div>
                     )}
                   </div>
                   <time className="shrink-0 text-[11px] text-stone-400">
@@ -132,10 +132,10 @@ export default function AccessReview() {
     <div data-testid="access-review-page" className="space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="font-['Outfit'] text-3xl font-medium text-[#1F2924]">
+          <h1 className="font-['Outfit'] text-3xl font-medium text-strong">
             Access review
           </h1>
-          <p className="mt-1 max-w-2xl text-sm text-[#5C6A61]">
+          <p className="mt-1 max-w-2xl text-sm text-muted-strong">
             Compliance evidence snapshot. Highlights privileged users, recent
             role changes, PHI access, exports, break-glass events and failed
             authorizations. Back-end reports require MFA re-auth.
@@ -186,14 +186,14 @@ export default function AccessReview() {
       <Card data-testid="privileged-users-card" className="rounded-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base font-normal">
-            <ShieldCheck className="h-4 w-4 text-[#5C6A61]" /> Privileged users
-            <Badge className="bg-[#FDF0EA] text-[#B8715C]">{privileged.length}</Badge>
+            <ShieldCheck className="h-4 w-4 text-muted-strong" /> Privileged users
+            <Badge className="bg-[#FDF0EA] text-danger-soft">{privileged.length}</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <table className="min-w-full text-sm">
             <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wider text-[#5C6A61]">
+              <tr className="text-left text-[11px] uppercase tracking-wider text-muted-strong">
                 <th className="px-2 py-1">Email</th>
                 <th className="px-2 py-1">Name</th>
                 <th className="px-2 py-1">Role</th>
@@ -208,9 +208,9 @@ export default function AccessReview() {
                   <td className="px-2 py-1">{u.name}</td>
                   <td className="px-2 py-1 text-xs">{u.role_key}</td>
                   <td className="px-2 py-1">
-                    <Badge className="bg-[#EDF2EE] text-[#526B58]">{u.status || "active"}</Badge>
+                    <Badge className="surface-sage text-sage-deep">{u.status || "active"}</Badge>
                   </td>
-                  <td className="px-2 py-1 text-xs text-[#5C6A61]">
+                  <td className="px-2 py-1 text-xs text-muted-strong">
                     {u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "—"}
                   </td>
                 </tr>
@@ -285,7 +285,7 @@ export default function AccessReview() {
               data-testid="access-review-reauth-submit"
               onClick={submitReauth}
               disabled={!reauthPassword || reauthBusy}
-              className="bg-[#7B9A82] hover:bg-[#65826C]"
+              className="bg-sage hover:bg-sage-hover"
             >
               <Lock className="mr-2 h-4 w-4" />
               Confirm

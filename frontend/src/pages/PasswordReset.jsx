@@ -32,14 +32,14 @@ function RequestStep({ onTokenIssued }) {
     return (
       <div
         data-testid="reset-request-sent"
-        className="rounded-sm border border-stone-200 bg-white p-5 text-sm text-[#5C6A61]"
+        className="rounded-sm border border-subtle bg-card p-5 text-sm text-muted-strong"
       >
-        <div className="flex items-center gap-2 text-[#1F2924]">
-          <CheckCircle2 className="h-5 w-5 text-[#526B58]" />
+        <div className="flex items-center gap-2 text-strong">
+          <CheckCircle2 className="h-5 w-5 text-sage-deep" />
           <span className="font-['Outfit'] text-lg font-medium">Request received</span>
         </div>
         <p className="mt-2">
-          If <span className="font-mono text-[#1F2924]">{email}</span> is a valid
+          If <span className="font-mono text-strong">{email}</span> is a valid
           CCMS account, a reset link has been sent. The link expires in 15
           minutes and can be used only once.
         </p>
@@ -70,7 +70,7 @@ function RequestStep({ onTokenIssued }) {
         type="submit"
         data-testid="reset-request-btn"
         disabled={submitting}
-        className="h-11 w-full rounded-sm bg-[#7B9A82] hover:bg-[#65826C]"
+        className="h-11 w-full rounded-sm bg-sage hover:bg-sage-hover"
       >
         {submitting ? "Sending…" : "Send reset link"}
       </Button>
@@ -106,9 +106,9 @@ function ConfirmStep({ tokenParam }) {
 
   if (done) {
     return (
-      <div data-testid="reset-confirm-done" className="space-y-4 text-sm text-[#5C6A61]">
-        <div className="flex items-center gap-2 text-[#1F2924]">
-          <CheckCircle2 className="h-5 w-5 text-[#526B58]" />
+      <div data-testid="reset-confirm-done" className="space-y-4 text-sm text-muted-strong">
+        <div className="flex items-center gap-2 text-strong">
+          <CheckCircle2 className="h-5 w-5 text-sage-deep" />
           <span className="font-['Outfit'] text-lg font-medium">Password reset complete</span>
         </div>
         <p>
@@ -118,7 +118,7 @@ function ConfirmStep({ tokenParam }) {
         <Button
           data-testid="reset-goto-login"
           onClick={() => navigate("/login")}
-          className="rounded-sm bg-[#7B9A82] hover:bg-[#65826C]"
+          className="rounded-sm bg-sage hover:bg-sage-hover"
         >
           Go to sign in <ArrowRight className="ml-2 h-4 w-4" />
         </Button>
@@ -152,7 +152,7 @@ function ConfirmStep({ tokenParam }) {
           required
           className="h-11 rounded-sm"
         />
-        <p className="text-[11px] text-[#5C6A61]">
+        <p className="text-[11px] text-muted-strong">
           Minimum 12 characters with upper, lower, digit and symbol. Cannot
           match your last 5 passwords.
         </p>
@@ -174,7 +174,7 @@ function ConfirmStep({ tokenParam }) {
         type="submit"
         data-testid="reset-confirm-btn"
         disabled={submitting}
-        className="h-11 w-full rounded-sm bg-[#7B9A82] hover:bg-[#65826C]"
+        className="h-11 w-full rounded-sm bg-sage hover:bg-sage-hover"
       >
         {submitting ? "Resetting…" : "Set new password"}
       </Button>
@@ -191,24 +191,24 @@ export default function PasswordReset() {
   return (
     <div
       data-testid="password-reset-page"
-      className="grid min-h-screen grid-cols-1 bg-[#FAF9F6] lg:grid-cols-[1.05fr_1fr]"
+      className="grid min-h-screen grid-cols-1 surface-app lg:grid-cols-[1.05fr_1fr]"
     >
       <div className="flex flex-col justify-center px-8 py-12 md:px-16 lg:px-24">
         <Link to="/login" className="mb-10 flex items-center gap-2">
-          <span className="flex h-9 w-9 items-center justify-center rounded-sm bg-[#7B9A82] text-white">
+          <span className="flex h-9 w-9 items-center justify-center rounded-sm bg-sage text-white">
             <Stethoscope className="h-5 w-5" />
           </span>
-          <span className="font-['Outfit'] text-lg font-medium text-[#1F2924]">
+          <span className="font-['Outfit'] text-lg font-medium text-strong">
             CCMS
           </span>
         </Link>
         <div className="max-w-md space-y-6">
           <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 items-center justify-center rounded-sm bg-[#EDF2EE] text-[#526B58]">
+            <span className="flex h-9 w-9 items-center justify-center rounded-sm surface-sage text-sage-deep">
               <KeyRound className="h-5 w-5" />
             </span>
             <div>
-              <div className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+              <div className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
                 Account recovery
               </div>
               <h1 className="font-['Outfit'] text-3xl font-medium">
@@ -224,7 +224,7 @@ export default function PasswordReset() {
               className={`rounded-sm px-3 py-1.5 text-xs font-medium uppercase tracking-wider transition-colors ${
                 mode === "request"
                   ? "bg-[#1F2924] text-white"
-                  : "bg-stone-100 text-[#5C6A61] hover:bg-stone-200"
+                  : "bg-stone-100 text-muted-strong hover:bg-stone-200"
               }`}
             >
               1. Request link
@@ -235,7 +235,7 @@ export default function PasswordReset() {
               className={`rounded-sm px-3 py-1.5 text-xs font-medium uppercase tracking-wider transition-colors ${
                 mode === "confirm"
                   ? "bg-[#1F2924] text-white"
-                  : "bg-stone-100 text-[#5C6A61] hover:bg-stone-200"
+                  : "bg-stone-100 text-muted-strong hover:bg-stone-200"
               }`}
             >
               2. Confirm reset
@@ -253,7 +253,7 @@ export default function PasswordReset() {
               {devToken && (
                 <div
                   data-testid="dev-token-hint"
-                  className="rounded-sm border border-[#EDE0C7] bg-[#FDF6ED] p-3 text-xs text-[#8A6C33]"
+                  className="rounded-sm border border-[#EDE0C7] surface-warning p-3 text-xs text-[#8A6C33]"
                 >
                   <div className="font-semibold uppercase tracking-wider">Dev token (pre-production only)</div>
                   <div className="mt-1 break-all font-mono">{devToken}</div>
@@ -264,18 +264,18 @@ export default function PasswordReset() {
             <ConfirmStep tokenParam={tokenParam || devToken} />
           )}
 
-          <div className="pt-2 text-sm text-[#5C6A61]">
+          <div className="pt-2 text-sm text-muted-strong">
             <Link
               to="/login"
               data-testid="reset-back-to-login"
-              className="font-medium text-[#526B58] underline-offset-4 hover:underline"
+              className="font-medium text-sage-deep underline-offset-4 hover:underline"
             >
               ← Back to sign in
             </Link>
           </div>
         </div>
       </div>
-      <div className="relative hidden overflow-hidden border-l border-stone-200 lg:block">
+      <div className="relative hidden overflow-hidden border-l border-subtle lg:block">
         <img
           src="https://images.pexels.com/photos/4226119/pexels-photo-4226119.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940"
           alt=""

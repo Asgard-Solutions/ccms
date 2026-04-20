@@ -7,20 +7,20 @@ import { Skeleton } from "../components/ui/skeleton";
 const STATUS_META = {
   implemented: {
     label: "Implemented",
-    chip: "bg-[#EDF2EE] text-[#526B58]",
-    dot: "bg-[#7B9A82]",
+    chip: "surface-sage text-sage-deep",
+    dot: "bg-sage",
     icon: ShieldCheck,
   },
   partial: {
     label: "Partial",
-    chip: "bg-[#FDF6ED] text-[#B5823E]",
+    chip: "surface-warning text-[#B5823E]",
     dot: "bg-[#D4A373]",
     icon: CircleDashed,
   },
   missing: {
     label: "Not implemented",
-    chip: "bg-[#FBF1EE] text-[#C76D54]",
-    dot: "bg-[#C76D54]",
+    chip: "surface-danger-soft text-danger",
+    dot: "bg-danger",
     icon: XCircle,
   },
   out_of_app: {
@@ -35,10 +35,10 @@ function StatChip({ value, label, testid }) {
   return (
     <div
       data-testid={testid}
-      className="rounded-sm border border-stone-200 bg-white px-4 py-3"
+      className="rounded-sm border border-subtle bg-card px-4 py-3"
     >
-      <div className="font-['Outfit'] text-2xl font-medium text-[#1F2924]">{value}</div>
-      <div className="mt-1 text-[11px] uppercase tracking-[0.15em] text-[#5C6A61]">{label}</div>
+      <div className="font-['Outfit'] text-2xl font-medium text-strong">{value}</div>
+      <div className="mt-1 text-[11px] uppercase tracking-[0.15em] text-muted-strong">{label}</div>
     </div>
   );
 }
@@ -47,15 +47,15 @@ function Flag({ ok, label, testid }) {
   return (
     <div
       data-testid={testid}
-      className="flex items-center justify-between gap-3 rounded-sm border border-stone-200 bg-white px-4 py-3"
+      className="flex items-center justify-between gap-3 rounded-sm border border-subtle bg-card px-4 py-3"
     >
-      <span className="text-sm text-[#1F2924]">{label}</span>
+      <span className="text-sm text-strong">{label}</span>
       <span
         className={`inline-flex items-center gap-1.5 rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
-          ok ? "bg-[#EDF2EE] text-[#526B58]" : "bg-[#FBF1EE] text-[#C76D54]"
+          ok ? "surface-sage text-sage-deep" : "surface-danger-soft text-danger"
         }`}
       >
-        <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-[#7B9A82]" : "bg-[#C76D54]"}`} />
+        <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-sage" : "bg-danger"}`} />
         {ok ? "OK" : "Review"}
       </span>
     </div>
@@ -69,20 +69,20 @@ function ControlRow({ c }) {
     <tr data-testid={`control-row-${c.id}`} className="border-b border-stone-100 last:border-0">
       <td className="py-3 pr-4 align-top">
         <div className="flex items-start gap-2">
-          <Icon className="mt-0.5 h-4 w-4 text-[#5C6A61]" />
+          <Icon className="mt-0.5 h-4 w-4 text-muted-strong" />
           <div>
-            <div className="font-mono text-[11px] uppercase tracking-wider text-[#5C6A61]">{c.id}</div>
-            <div className="mt-0.5 text-sm text-[#1F2924]">{c.name}</div>
+            <div className="font-mono text-[11px] uppercase tracking-wider text-muted-strong">{c.id}</div>
+            <div className="mt-0.5 text-sm text-strong">{c.name}</div>
           </div>
         </div>
       </td>
-      <td className="py-3 pr-4 align-top text-xs text-[#5C6A61]">{c.group}</td>
+      <td className="py-3 pr-4 align-top text-xs text-muted-strong">{c.group}</td>
       <td className="py-3 pr-4 align-top">
         <div className="flex flex-wrap gap-1.5">
           {c.frameworks.map((f) => (
             <span
               key={f}
-              className="rounded-sm bg-[#F5F5F0] px-1.5 py-0.5 text-[10px] font-medium text-[#5C6A61]"
+              className="rounded-sm surface-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-strong"
             >
               {f}
             </span>
@@ -119,7 +119,7 @@ export default function Compliance() {
 
   if (error) {
     return (
-      <div data-testid="compliance-error" className="rounded-sm border border-[#E6D5CF] bg-[#FBF1EE] p-4 text-sm text-[#C76D54]">
+      <div data-testid="compliance-error" className="rounded-sm border border-[#E6D5CF] surface-danger-soft p-4 text-sm text-danger">
         {error}
       </div>
     );
@@ -162,18 +162,18 @@ export default function Compliance() {
   return (
     <div data-testid="compliance-page" className="space-y-10 animate-in fade-in duration-300">
       <header>
-        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
           Compliance
         </span>
         <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight">
           Internal readiness dashboard
         </h1>
-        <p className="mt-3 max-w-3xl text-sm text-[#5C6A61]">
+        <p className="mt-3 max-w-3xl text-sm text-muted-strong">
           {data.disclaimer}
         </p>
         <div
           data-testid="compliance-disclaimer"
-          className="mt-4 flex items-start gap-2 rounded-sm border border-[#EDE0C7] bg-[#FDF6ED] p-3 text-xs text-[#8A6C33]"
+          className="mt-4 flex items-start gap-2 rounded-sm border border-[#EDE0C7] surface-warning p-3 text-xs text-[#8A6C33]"
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
           <span>
@@ -188,7 +188,7 @@ export default function Compliance() {
       <section data-testid="readiness-snapshot" className="space-y-4">
         <div className="flex items-baseline justify-between">
           <h2 className="font-['Outfit'] text-lg font-medium">Readiness snapshot</h2>
-          <span className="text-xs text-[#5C6A61]">
+          <span className="text-xs text-muted-strong">
             Generated {formatDateTime(data.generated_at)}
           </span>
         </div>
@@ -281,7 +281,7 @@ export default function Compliance() {
                 className={`rounded-sm px-2.5 py-1 text-[11px] font-medium uppercase tracking-wider transition-colors ${
                   groupFilter === g
                     ? "bg-[#1F2924] text-white"
-                    : "bg-stone-100 text-[#5C6A61] hover:bg-stone-200"
+                    : "bg-stone-100 text-muted-strong hover:bg-stone-200"
                 }`}
               >
                 {g === "all" ? "All" : g}
@@ -289,9 +289,9 @@ export default function Compliance() {
             ))}
           </div>
         </div>
-        <div className="overflow-x-auto rounded-sm border border-stone-200 bg-white">
+        <div className="overflow-x-auto rounded-sm border border-subtle bg-card">
           <table className="w-full min-w-[720px] text-left text-sm">
-            <thead className="border-b border-stone-200 text-[11px] uppercase tracking-[0.15em] text-[#5C6A61]">
+            <thead className="border-b border-subtle text-[11px] uppercase tracking-[0.15em] text-muted-strong">
               <tr>
                 <th className="px-4 py-3 font-medium">Control</th>
                 <th className="px-4 py-3 font-medium">Group</th>
@@ -316,14 +316,14 @@ export default function Compliance() {
             <li
               key={p}
               data-testid={`doc-${p.split("/").pop()}`}
-              className="flex items-center gap-2 text-[#5C6A61]"
+              className="flex items-center gap-2 text-muted-strong"
             >
               <ClipboardCheck className="h-4 w-4" />
-              <code className="font-mono text-xs text-[#1F2924]">{p}</code>
+              <code className="font-mono text-xs text-strong">{p}</code>
             </li>
           ))}
         </ul>
-        <p className="pt-2 text-xs text-[#5C6A61]">
+        <p className="pt-2 text-xs text-muted-strong">
           External auditors should be pointed at these files along with the
           `/api/audit-logs` export and `/api/metrics` evidence. Certification
           readiness also requires infrastructure, legal, HR and operational

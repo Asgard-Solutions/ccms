@@ -11,7 +11,31 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+### Added
+- **Per-user light / dark / system theme** — picker lives in the top-bar
+  (sun/moon dropdown), persists to the user's profile via
+  `PATCH /api/auth/me/preferences`, and syncs on every login so the
+  clinician sees their chosen theme on any browser. System mode follows
+  `prefers-color-scheme` and reacts live to OS-level changes.
+  - Backend: `theme: "light"|"dark"|"system"` field on `users`, exposed
+    via `UserPublic`; new `PreferencesUpdate` schema.
+  - Frontend: `ThemeProvider` + `useTheme` hook + `<ThemeToggle />`
+    component; localStorage fast-paint to prevent flash of wrong theme
+    before `/auth/me` resolves.
+  - Tests: `backend/tests/test_theme_preference.py` — 9 scenarios, all
+    passing (default, light/dark/system swaps, invalid rejected, empty
+    rejected, survives logout, per-user independence, unauth 401).
+
 ### Changed
+- **Color system refactored into CSS variables** so dark mode swaps
+  without per-page rewrites. New semantic utility classes
+  (`surface-app`, `surface-raised`, `surface-muted`, `surface-sage`,
+  `surface-warning`, `surface-danger-soft`, `text-strong`,
+  `text-muted-strong`, `text-soft`, `text-sage`, `text-sage-deep`,
+  `text-danger`, `text-warning`, `border-subtle`, `border-strong`,
+  `bg-sage`, `bg-danger`) are defined in `@layer utilities` and swap
+  under `.dark`. All 23 page + component files migrated from hard-coded
+  hex utilities to these semantic classes in a single bulk pass.
 - **Docs** — Added comprehensive project documentation: `README.md`,
   `CONTRIBUTING.md`, `SECURITY.md`, `docs/DOC_UPDATE_POLICY.md`, and a PR
   template. Existing long-form docs in `memory/` are now linked from

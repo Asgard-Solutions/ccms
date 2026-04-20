@@ -173,13 +173,13 @@ const EMPTY_FORM = {
 function Field({ label, htmlFor, required, error, errorTestId, children, className = "" }) {
   return (
     <div className={`space-y-1.5 ${className}`}>
-      <Label htmlFor={htmlFor} className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-[#5C6A61]">
+      <Label htmlFor={htmlFor} className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-muted-strong">
         {label}
-        {required && <span className="text-[#C76D54]" aria-label="required">*</span>}
+        {required && <span className="text-danger" aria-label="required">*</span>}
       </Label>
       {children}
       {error && (
-        <p className="text-xs text-[#C76D54]" data-testid={errorTestId || `${htmlFor}-error`}>{error}</p>
+        <p className="text-xs text-danger" data-testid={errorTestId || `${htmlFor}-error`}>{error}</p>
       )}
     </div>
   );
@@ -197,7 +197,7 @@ function TextInput({ id, value, onChange, type = "text", placeholder, testId, au
       max={max}
       min={min}
       data-testid={testId}
-      className="h-10 rounded-sm border-stone-300 bg-white text-sm"
+      className="h-10 rounded-sm border-strong bg-card text-sm"
     />
   );
 }
@@ -205,7 +205,7 @@ function TextInput({ id, value, onChange, type = "text", placeholder, testId, au
 function SelectField({ id, value, onChange, options, placeholder = "Select…", testId }) {
   return (
     <Select value={value || undefined} onValueChange={(v) => onChange(v)}>
-      <SelectTrigger id={id} data-testid={testId} className="h-10 rounded-sm border-stone-300 bg-white text-sm">
+      <SelectTrigger id={id} data-testid={testId} className="h-10 rounded-sm border-strong bg-card text-sm">
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
@@ -226,10 +226,10 @@ function CheckboxField({ id, checked, onChange, label, testId, disabled }) {
     <label
       htmlFor={id}
       className={
-        "flex items-start gap-3 rounded-sm border border-stone-200 bg-white px-3 py-2.5 text-sm " +
+        "flex items-start gap-3 rounded-sm border border-subtle bg-card px-3 py-2.5 text-sm " +
         (disabled
-          ? "cursor-not-allowed text-[#A3AFA7]"
-          : "cursor-pointer text-[#1F2924] hover:border-[#7B9A82]")
+          ? "cursor-not-allowed text-soft"
+          : "cursor-pointer text-strong hover:border-[#7B9A82]")
       }
     >
       <Checkbox
@@ -238,7 +238,7 @@ function CheckboxField({ id, checked, onChange, label, testId, disabled }) {
         disabled={disabled}
         onCheckedChange={(v) => onChange(Boolean(v))}
         data-testid={testId}
-        className="mt-0.5 border-stone-400 data-[state=checked]:border-[#7B9A82] data-[state=checked]:bg-[#7B9A82]"
+        className="mt-0.5 border-stone-400 data-[state=checked]:border-[#7B9A82] data-[state=checked]:bg-sage"
       />
       <span className="leading-snug">{label}</span>
     </label>
@@ -247,9 +247,9 @@ function CheckboxField({ id, checked, onChange, label, testId, disabled }) {
 
 function SectionTitle({ children, hint }) {
   return (
-    <div className="col-span-full mt-2 mb-1 border-b border-stone-200 pb-1">
-      <h3 className="font-['Outfit'] text-base font-medium text-[#1F2924]">{children}</h3>
-      {hint && <p className="mt-0.5 text-xs text-[#5C6A61]">{hint}</p>}
+    <div className="col-span-full mt-2 mb-1 border-b border-subtle pb-1">
+      <h3 className="font-['Outfit'] text-base font-medium text-strong">{children}</h3>
+      {hint && <p className="mt-0.5 text-xs text-muted-strong">{hint}</p>}
     </div>
   );
 }
@@ -270,14 +270,14 @@ function CheckboxGroup({ options, selected, onChange, testId }) {
           <label
             key={opt}
             htmlFor={id}
-            className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-sm text-[#1F2924] hover:bg-[#EDF2EE]"
+            className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-sm text-strong hover:surface-sage"
           >
             <Checkbox
               id={id}
               checked={checked}
               onCheckedChange={() => toggle(opt)}
               data-testid={`${testId}-opt-${opt.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`}
-              className="border-stone-400 data-[state=checked]:border-[#7B9A82] data-[state=checked]:bg-[#7B9A82]"
+              className="border-stone-400 data-[state=checked]:border-[#7B9A82] data-[state=checked]:bg-sage"
             />
             <span>{opt}</span>
           </label>
@@ -487,7 +487,7 @@ function StepBillingInsurance({ form, set, errors, providers, locations, visibil
       </div>
       {showInsurance && (
         <div data-testid="w-insurance-block" className="col-span-full grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="col-span-full -mb-1 mt-2 text-xs font-semibold uppercase tracking-wider text-[#5C6A61]">
+          <div className="col-span-full -mb-1 mt-2 text-xs font-semibold uppercase tracking-wider text-muted-strong">
             Primary insurance
           </div>
           <Field label="Carrier" htmlFor="pCarrier">
@@ -526,7 +526,7 @@ function StepBillingInsurance({ form, set, errors, providers, locations, visibil
             <TextInput id="pDed" testId="w-pi-deductible" value={form.primaryDeductible} onChange={set("primaryDeductible")} placeholder="$1500" />
           </Field>
 
-          <div className="col-span-full -mb-1 mt-4 text-xs font-semibold uppercase tracking-wider text-[#5C6A61]">
+          <div className="col-span-full -mb-1 mt-4 text-xs font-semibold uppercase tracking-wider text-muted-strong">
             Secondary insurance (optional)
           </div>
           <Field label="Carrier" htmlFor="sCarrier">
@@ -564,7 +564,7 @@ function StepClinicalIntake({ form, set }) {
       <SectionTitle hint="The patient's primary reason for visiting.">Chief complaint</SectionTitle>
       <Field label="Chief complaint" htmlFor="cc" className="col-span-full">
         <Textarea id="cc" data-testid="w-chief-complaint"
-          className="min-h-[90px] rounded-sm border-stone-300 bg-white text-sm"
+          className="min-h-[90px] rounded-sm border-strong bg-card text-sm"
           value={form.chiefComplaint} onChange={(e) => set("chiefComplaint")(e.target.value)} />
       </Field>
       <Field label="Symptom start date" htmlFor="symStart">
@@ -619,12 +619,12 @@ function StepClinicalIntake({ form, set }) {
       <SectionTitle>History</SectionTitle>
       <Field label="Prior treatment tried" htmlFor="priorTreatment" className="col-span-full">
         <Textarea id="priorTreatment" data-testid="w-prior-treatment"
-          className="min-h-[70px] rounded-sm border-stone-300 bg-white text-sm"
+          className="min-h-[70px] rounded-sm border-strong bg-card text-sm"
           value={form.priorTreatment} onChange={(e) => set("priorTreatment")(e.target.value)} />
       </Field>
       <Field label="Current medications" htmlFor="medications" className="col-span-full">
         <Textarea id="medications" data-testid="w-medications"
-          className="min-h-[60px] rounded-sm border-stone-300 bg-white text-sm"
+          className="min-h-[60px] rounded-sm border-strong bg-card text-sm"
           value={form.medications} onChange={(e) => set("medications")(e.target.value)} />
       </Field>
       <Field label="Allergies" htmlFor="allergies" className="col-span-full">
@@ -632,17 +632,17 @@ function StepClinicalIntake({ form, set }) {
       </Field>
       <Field label="Prior surgeries" htmlFor="surgeries" className="col-span-full">
         <Textarea id="surgeries" data-testid="w-surgeries"
-          className="min-h-[60px] rounded-sm border-stone-300 bg-white text-sm"
+          className="min-h-[60px] rounded-sm border-strong bg-card text-sm"
           value={form.surgeries} onChange={(e) => set("surgeries")(e.target.value)} />
       </Field>
       <Field label="Past medical history" htmlFor="medicalHistory" className="col-span-full">
         <Textarea id="medicalHistory" data-testid="w-medical-history"
-          className="min-h-[70px] rounded-sm border-stone-300 bg-white text-sm"
+          className="min-h-[70px] rounded-sm border-strong bg-card text-sm"
           value={form.medicalHistory} onChange={(e) => set("medicalHistory")(e.target.value)} />
       </Field>
       <Field label="Provider notes (internal)" htmlFor="providerNotes" className="col-span-full">
         <Textarea id="providerNotes" data-testid="w-provider-notes"
-          className="min-h-[70px] rounded-sm border-stone-300 bg-white text-sm"
+          className="min-h-[70px] rounded-sm border-strong bg-card text-sm"
           value={form.providerNotes} onChange={(e) => set("providerNotes")(e.target.value)} />
       </Field>
     </div>
@@ -658,7 +658,7 @@ function StepCaseConsents({ form, set, visibility }) {
       {!anyCase && (
         <div
           data-testid="w-case-empty-state"
-          className="col-span-full rounded-sm border border-dashed border-stone-300 bg-white px-5 py-6 text-sm text-[#5C6A61]"
+          className="col-span-full rounded-sm border border-dashed border-strong bg-card px-5 py-6 text-sm text-muted-strong"
         >
           No case-type flags selected on the Clinical Intake step. Accident, workers&apos; compensation
           and personal-injury detail fields will appear here when you mark the matching check-box on Step 3.
@@ -945,20 +945,20 @@ export function PatientWizardDialog({
     <Dialog open={open} onOpenChange={(v) => !v && !submitting && onClose()}>
       <DialogContent
         data-testid="patient-wizard-dialog"
-        className="max-h-[92vh] max-w-5xl overflow-hidden rounded-sm border-stone-200 bg-[#FAF9F6] p-0"
+        className="max-h-[92vh] max-w-5xl overflow-hidden rounded-sm border-subtle surface-app p-0"
       >
-        <DialogHeader className="border-b border-stone-200 bg-white px-8 py-5">
-          <DialogTitle className="font-['Outfit'] text-2xl font-medium tracking-tight text-[#1F2924]">
+        <DialogHeader className="border-b border-subtle bg-card px-8 py-5">
+          <DialogTitle className="font-['Outfit'] text-2xl font-medium tracking-tight text-strong">
             {isEdit ? "Edit patient intake" : "New patient intake"}
           </DialogTitle>
-          <DialogDescription className="text-sm text-[#5C6A61]">
+          <DialogDescription className="text-sm text-muted-strong">
             Step {step} of 4 — {current.label}. All PHI is encrypted at rest and every save is audited.
             {!isEdit && (
               <span
                 data-testid="wizard-draft-autosave-indicator"
                 className={
                   "ml-3 text-xs " +
-                  (draftNotice ? "text-[#7B9A82] opacity-100" : "opacity-0")
+                  (draftNotice ? "text-sage opacity-100" : "opacity-0")
                 }
                 aria-live="polite"
               >
@@ -976,10 +976,10 @@ export function PatientWizardDialog({
                     className={
                       "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold " +
                       (state === "done"
-                        ? "border-[#7B9A82] bg-[#7B9A82] text-white"
+                        ? "border-[#7B9A82] bg-sage text-white"
                         : state === "active"
-                        ? "border-[#1F2924] bg-white text-[#1F2924]"
-                        : "border-stone-300 bg-white text-[#A3AFA7]")
+                        ? "border-[#1F2924] bg-card text-strong"
+                        : "border-strong bg-card text-soft")
                     }
                   >
                     {state === "done" ? <Check className="h-4 w-4" /> : s.id}
@@ -988,12 +988,12 @@ export function PatientWizardDialog({
                     <div
                       className={
                         "truncate text-sm font-medium " +
-                        (state === "todo" ? "text-[#A3AFA7]" : "text-[#1F2924]")
+                        (state === "todo" ? "text-soft" : "text-strong")
                       }
                     >
                       {s.label}
                     </div>
-                    <div className="truncate text-xs text-[#5C6A61]">{s.sub}</div>
+                    <div className="truncate text-xs text-muted-strong">{s.sub}</div>
                   </div>
                 </li>
               );
@@ -1026,7 +1026,7 @@ export function PatientWizardDialog({
                 size="sm"
                 onClick={resumeDraft}
                 data-testid="wizard-draft-resume"
-                className="rounded-sm bg-[#7B9A82] hover:bg-[#65826C]"
+                className="rounded-sm bg-sage hover:bg-sage-hover"
               >
                 Resume draft
               </Button>
@@ -1053,7 +1053,7 @@ export function PatientWizardDialog({
           {step === 4 && <StepCaseConsents form={form} set={set} visibility={visibility} />}
         </div>
 
-        <DialogFooter className="flex flex-row items-center justify-between border-t border-stone-200 bg-white px-8 py-4 sm:justify-between">
+        <DialogFooter className="flex flex-row items-center justify-between border-t border-subtle bg-card px-8 py-4 sm:justify-between">
           <Button
             type="button"
             variant="outline"
@@ -1070,7 +1070,7 @@ export function PatientWizardDialog({
               variant="ghost"
               onClick={goBack}
               disabled={step === 1 || submitting}
-              className="rounded-sm text-[#526B58] hover:bg-[#EDF2EE]"
+              className="rounded-sm text-sage-deep hover:surface-sage"
               data-testid="wizard-back-btn"
             >
               <ChevronLeft className="mr-1 h-4 w-4" /> Back
@@ -1079,7 +1079,7 @@ export function PatientWizardDialog({
               <Button
                 type="button"
                 onClick={goNext}
-                className="h-10 rounded-sm bg-[#7B9A82] px-5 hover:bg-[#65826C]"
+                className="h-10 rounded-sm bg-sage px-5 hover:bg-sage-hover"
                 data-testid="wizard-next-btn"
               >
                 Next <ChevronRight className="ml-1 h-4 w-4" />
@@ -1089,7 +1089,7 @@ export function PatientWizardDialog({
                 type="button"
                 onClick={submit}
                 disabled={submitting}
-                className="h-10 rounded-sm bg-[#7B9A82] px-6 hover:bg-[#65826C]"
+                className="h-10 rounded-sm bg-sage px-6 hover:bg-sage-hover"
                 data-testid="wizard-save-btn"
               >
                 {submitting ? "Saving…" : isEdit ? "Save changes" : "Save patient"}
@@ -1147,9 +1147,9 @@ export default function Patients() {
     <div data-testid="patients-page" className="space-y-8 animate-in fade-in duration-300">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">Patient directory</span>
-          <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight text-[#1F2924]">Patients</h1>
-          <p className="mt-2 text-sm text-[#5C6A61]">
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">Patient directory</span>
+          <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight text-strong">Patients</h1>
+          <p className="mt-2 text-sm text-muted-strong">
             PHI is masked by default. Administrators can unmask; every unmasked view is audited.
           </p>
         </div>
@@ -1169,7 +1169,7 @@ export default function Patients() {
             <Button
               data-testid="patients-new-btn"
               onClick={() => setOpen(true)}
-              className="h-11 rounded-sm bg-[#7B9A82] px-5 hover:bg-[#65826C]"
+              className="h-11 rounded-sm bg-sage px-5 hover:bg-sage-hover"
             >
               <Plus className="mr-2 h-4 w-4" /> New patient
             </Button>
@@ -1178,13 +1178,13 @@ export default function Patients() {
       </header>
 
       <div className="relative max-w-md">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#A3AFA7]" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-soft" />
         <Input
           data-testid="patients-search"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder="Search by name…"
-          className="h-11 rounded-sm border-stone-200 pl-9"
+          className="h-11 rounded-sm border-subtle pl-9"
         />
       </div>
 
@@ -1193,20 +1193,20 @@ export default function Patients() {
           {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-16 rounded-sm" />)}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="rounded-sm border border-dashed border-stone-200 bg-white p-16 text-center">
-          <User2 className="mx-auto h-10 w-10 text-[#A3AFA7]" />
-          <p className="mt-4 font-['Outfit'] text-lg text-[#1F2924]">
+        <div className="rounded-sm border border-dashed border-subtle bg-card p-16 text-center">
+          <User2 className="mx-auto h-10 w-10 text-soft" />
+          <p className="mt-4 font-['Outfit'] text-lg text-strong">
             No patients {search ? "match your search" : "yet"}
           </p>
-          <p className="mt-1 text-sm text-[#5C6A61]">
+          <p className="mt-1 text-sm text-muted-strong">
             {canCreate && !search && "Start by creating your first patient record."}
           </p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-sm border border-stone-200 bg-white">
+        <div className="overflow-hidden rounded-sm border border-subtle bg-card">
           <table className="w-full text-left">
-            <thead className="border-b border-stone-200 bg-[#FAF9F6]">
-              <tr className="text-xs font-semibold uppercase tracking-wider text-[#5C6A61]">
+            <thead className="border-b border-subtle surface-app">
+              <tr className="text-xs font-semibold uppercase tracking-wider text-muted-strong">
                 <th className="px-6 py-3">Name</th>
                 <th className="px-6 py-3">Contact</th>
                 <th className="px-6 py-3">DOB</th>
@@ -1219,31 +1219,31 @@ export default function Patients() {
                 <tr
                   key={p.id}
                   data-testid={`patient-row-${p.id}`}
-                  className="border-b border-stone-100 last:border-b-0 hover:bg-[#F5F5F0]/50"
+                  className="border-b border-stone-100 last:border-b-0 hover:surface-muted/50"
                 >
                   <td className="px-6 py-4">
-                    <div className="font-medium text-[#1F2924]">
+                    <div className="font-medium text-strong">
                       {p.unmasked ? `${p.first_name} ${p.last_name}` : p.display_name_masked || "—"}
                     </div>
-                    <div className="text-xs text-[#5C6A61]">
+                    <div className="text-xs text-muted-strong">
                       {p.gender || "—"}
                       {p.status === "deleted" && (
-                        <span className="ml-2 rounded-sm bg-[#FBF1EE] px-1.5 py-0.5 text-[10px] font-semibold uppercase text-[#C76D54]">
+                        <span className="ml-2 rounded-sm surface-danger-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase text-danger">
                           deleted
                         </span>
                       )}
                     </div>
                   </td>
-                  <td className="px-6 py-4 text-sm text-[#5C6A61]">
+                  <td className="px-6 py-4 text-sm text-muted-strong">
                     <div>{p.email || "—"}</div>
                     <div className="text-xs">{p.phone || "—"}</div>
                   </td>
-                  <td className="px-6 py-4 text-sm text-[#5C6A61]">
+                  <td className="px-6 py-4 text-sm text-muted-strong">
                     {p.date_of_birth ? (p.unmasked ? formatDate(p.date_of_birth) : p.date_of_birth) : "—"}
                   </td>
-                  <td className="px-6 py-4 text-sm text-[#5C6A61]">{formatDate(p.created_at)}</td>
+                  <td className="px-6 py-4 text-sm text-muted-strong">{formatDate(p.created_at)}</td>
                   <td className="px-6 py-4 text-right">
-                    <Button variant="ghost" asChild className="text-[#526B58] hover:bg-[#EDF2EE]">
+                    <Button variant="ghost" asChild className="text-sage-deep hover:surface-sage">
                       <Link to={`/patients/${p.id}`} data-testid={`patient-open-${p.id}`}>Open</Link>
                     </Button>
                   </td>
