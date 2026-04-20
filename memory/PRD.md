@@ -215,7 +215,19 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - **Docs** — `/app/memory/INFRASTRUCTURE_ARCHITECTURE.md` covers topology, DB routing rules, cache/redis hardening, object storage with S3 Terraform snippet, secrets provider swap + rotation runbooks, TLS 1.3 posture, backup/DR (including tenant-logical-restore limits), PromQL alerts for tenant-isolation detections, environment separation + CI policy gates.
 - **Verified (iteration_17)**: 15/15 new tests pass — primary-only refusal, replica-disable fallback, replica-health shape, storage path traversal, tenant-prefixed paths, missing tenant refusal, unsafe suffix, TTL bounds, token tenant claim, required-secrets present, `require` raises for missing, 4 redaction format cases + live value match, cache-category TTL bounds. Combined iteration_16 + iteration_17 25/25 green.
 
-## 19. Deferred (still)
+## 19. Iteration 18 — Compliance operations backbone (2026-02-21)
+- **Unified compliance model** — 8 entity types (`control`, `evidence`, `risk`, `policy`, `incident`, `vendor`, `data_class`, `access_review`) sharing `{id, tenant_id, type, status, owner, history[], created_at, updated_at}`. Every mutation appends a `history` entry; every mutation also emits a semantic audit row (`compliance.<type>_<action>`).
+- **Controls registry** with free-form `framework_mappings` (`HIPAA`, `SOC2`, `ISO27001`, `CCPA`, …) and `?framework=HIPAA` filter. Seven seed controls mapped across ≥ 3 frameworks each.
+- **Evidence integrity**: every row carries `integrity_sha256 = sha256(source_system | source_reference | content_summary | coverage_period_*)`, computed server-side at creation. Field allow-list for patches rejects `integrity_sha256`, `history`, `source_reference`, `coverage_period_*` — tamper requires generating a new evidence row. `POST /{id}/legal-hold` is MFA-gated.
+- **Risks** with `likelihood * impact = inherent_score` and treatment/status workflow. **Policies** with version + `review_date` overdue flag. **Incidents** with severity, timeline, `notification_required=true` auto-flagged for high/critical. **Vendors** with BAA tracking. **Data classes** with retention + deletion method. **Access reviews** with `due_at < now → status="overdue"` auto-compute.
+- **Generic endpoints** — `POST /compliance-ops/{type}/{id}/status`, `PATCH /compliance-ops/{type}/{id}` (field allow-list), `GET /compliance-ops/{type}/{id}` returning raw doc + history. All tenant-scoped via `TenantScopedRepository`.
+- **Dashboard** `GET /api/compliance-ops/dashboard` — single aggregated snapshot of controls/risks/incidents/policies/vendors/access-reviews/privacy-requests/evidence. Gated by `reporting.read`. Audited `compliance.dashboard_viewed`.
+- **Seed data** — 7 controls, 3 risks, 3 policies (1 overdue), 1 closed incident, 2 vendors (1 BAA-missing), 4 data classes, 2 access reviews (1 overdue), 1 evidence item — for EVERY existing tenant idempotently.
+- **Indexes** — `(tenant_id, updated_at)` on every compliance collection; extra indexes on controls.family, evidence.control_id, access_reviews.due_at.
+- **Docs** — `/app/memory/COMPLIANCE_OPS_ARCHITECTURE.md` covers model, lifecycle, HIPAA 45-CFR mapping table, SOC 2 recurring activities, CCPA/CPRA flow linkage, evidence bundle export flow, "how to add a new control domain" cookbook.
+- **Verified (iteration_18)**: 10/10 new tests — dashboard fidelity, multi-framework mapping, framework filter, integrity hash + legal hold, tamper-resistant patch, tenant isolation, overdue access-review auto-flag, incident history append, unknown-type rejection, BAA-missing counted. Combined iteration_17+18 = 25/25 green.
+
+## 20. Deferred (still)
 - `privacy`, `communication`, and `elevation` routers rely on the `tenant_id` backfill but do not yet pass queries through `scoped_filter` — safe because we're still single-tenant-per-user but a P1 to harden before onboarding the second paying tenant.
 - Multi-tenant user support (one user across N tenants) — P2; requires `user_tenant_roles` table + tenant-switcher UI.
 - Subdomain-based tenant routing (`acme.ccms.app → tid=acme`) — P2; ingress + middleware work.

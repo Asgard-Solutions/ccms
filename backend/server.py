@@ -28,6 +28,8 @@ from services.authz.seed import seed_authz  # noqa: E402
 from services.communication.router import router as communication_router  # noqa: E402
 from services.compliance.router import router as compliance_router  # noqa: E402
 from services.communication.subscribers import register as register_comm_subscribers  # noqa: E402
+from services.compliance_ops.router import router as compliance_ops_router  # noqa: E402
+from services.compliance_ops.seed import seed_compliance_ops  # noqa: E402
 from services.exports import router as exports_router, cleanup_expired_exports  # noqa: E402
 from services.identity.router import router as identity_router  # noqa: E402
 from services.identity.seed import seed as seed_identity  # noqa: E402
@@ -75,6 +77,7 @@ api_router.include_router(audit_router)
 api_router.include_router(perf_router)
 api_router.include_router(reports_router)
 api_router.include_router(exports_router)
+api_router.include_router(compliance_ops_router)
 api_router.include_router(infra_router)
 api_router.include_router(metrics_router)  # GET /api/metrics
 
@@ -148,6 +151,7 @@ async def on_startup():
     await seed_tenancy()      # must run BEFORE seed_identity so tenant rows exist
     await seed_identity()
     await seed_authz()
+    await seed_compliance_ops()
     # Purge expired export artifacts (best-effort — errors are logged).
     try:
         await cleanup_expired_exports()

@@ -174,3 +174,11 @@ async def create_indexes() -> None:
     await db.jobs.create_index([("tenant_id", 1), ("job_type", 1)])
     await db.exports.create_index([("tenant_id", 1), ("status", 1)])
     await db.exports.create_index("expires_at")
+    # Compliance-ops (iteration 18)
+    for coll in ("compliance_controls", "compliance_evidence", "compliance_risks",
+                 "compliance_policies", "compliance_incidents", "compliance_vendors",
+                 "compliance_data_classes", "compliance_access_reviews"):
+        await db[coll].create_index([("tenant_id", 1), ("updated_at", -1)])
+    await db.compliance_controls.create_index([("tenant_id", 1), ("family", 1)])
+    await db.compliance_evidence.create_index([("tenant_id", 1), ("control_id", 1)])
+    await db.compliance_access_reviews.create_index([("tenant_id", 1), ("due_at", 1)])
