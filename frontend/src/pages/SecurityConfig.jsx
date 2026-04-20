@@ -6,21 +6,21 @@ import { Skeleton } from "../components/ui/skeleton";
 
 function Flag({ ok, label, testid, warn = false }) {
   const cls = ok
-    ? "surface-sage text-sage-deep"
+    ? "bg-primary/10 text-primary"
     : warn
-    ? "surface-warning text-warning"
-    : "surface-danger-soft text-danger";
+    ? "bg-warning-soft text-warning"
+    : "bg-destructive-soft text-destructive";
   const dot = ok
-    ? "bg-sage"
+    ? "bg-primary"
     : warn
     ? "bg-warning"
-    : "bg-danger";
+    : "bg-destructive";
   return (
     <div
       data-testid={testid}
-      className="flex items-center justify-between gap-3 rounded-sm border border-subtle bg-card px-4 py-3 text-sm"
+      className="flex items-center justify-between gap-3 rounded-sm border border-border bg-card px-4 py-3 text-sm"
     >
-      <span className="text-strong">{label}</span>
+      <span className="text-foreground">{label}</span>
       <span
         className={`inline-flex items-center gap-1.5 rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${cls}`}
       >
@@ -35,10 +35,10 @@ function Row({ label, value, testid, mono = false }) {
   return (
     <div
       data-testid={testid}
-      className="flex items-center justify-between gap-3 rounded-sm border border-subtle bg-card px-4 py-3 text-sm"
+      className="flex items-center justify-between gap-3 rounded-sm border border-border bg-card px-4 py-3 text-sm"
     >
-      <span className="text-muted-strong">{label}</span>
-      <span className={`${mono ? "font-mono text-xs" : ""} text-strong`}>{value}</span>
+      <span className="text-muted-foreground">{label}</span>
+      <span className={`${mono ? "font-mono text-xs" : ""} text-foreground`}>{value}</span>
     </div>
   );
 }
@@ -62,7 +62,7 @@ export default function SecurityConfig() {
     return (
       <div
         data-testid="security-config-error"
-        className="rounded-sm border border-destructive-soft surface-danger-soft p-4 text-sm text-danger"
+        className="rounded-sm border border-destructive-soft bg-destructive-soft p-4 text-sm text-destructive"
       >
         {error}
       </div>
@@ -82,30 +82,30 @@ export default function SecurityConfig() {
   return (
     <div data-testid="security-config-page" className="space-y-10 animate-in fade-in duration-300">
       <header>
-        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
+        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
           Compliance
         </span>
-        <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight">
+        <h1 className="mt-2 font-display text-4xl font-medium tracking-tight">
           Security configuration
         </h1>
-        <p className="mt-3 max-w-3xl text-sm text-muted-strong">{data.disclaimer}</p>
+        <p className="mt-3 max-w-3xl text-sm text-muted-foreground">{data.disclaimer}</p>
         <div
           data-testid="security-config-env"
           className="mt-4 flex items-center gap-4 text-xs"
         >
-          <span className="inline-flex items-center gap-1.5 rounded-sm bg-muted px-2 py-1 font-mono uppercase tracking-wider text-strong">
+          <span className="inline-flex items-center gap-1.5 rounded-sm bg-muted px-2 py-1 font-mono uppercase tracking-wider text-foreground">
             <CircleDot className="h-3 w-3" /> APP_ENV = {data.app_env}
           </span>
           <span
             className={`inline-flex items-center gap-1.5 rounded-sm px-2 py-1 font-semibold uppercase tracking-wider ${
               data.production_ready
-                ? "surface-sage text-sage-deep"
-                : "surface-warning text-warning"
+                ? "bg-primary/10 text-primary"
+                : "bg-warning-soft text-warning"
             }`}
           >
             {data.production_ready ? "production-ready" : "pre-production"}
           </span>
-          <span className="text-muted-strong">
+          <span className="text-muted-foreground">
             Generated {formatDateTime(data.generated_at)}
           </span>
         </div>
@@ -114,11 +114,11 @@ export default function SecurityConfig() {
       {data.production_gaps.length > 0 && (
         <section
           data-testid="security-config-gaps"
-          className="rounded-sm border border-border surface-warning p-4 text-sm text-warning"
+          className="rounded-sm border border-border bg-warning-soft p-4 text-sm text-warning"
         >
           <div className="flex items-center gap-2">
             <AlertTriangle className="h-4 w-4" />
-            <span className="font-['Outfit'] text-base font-medium">
+            <span className="font-display text-base font-medium">
               Gaps for production go-live
             </span>
           </div>
@@ -131,7 +131,7 @@ export default function SecurityConfig() {
       )}
 
       <section className="space-y-4">
-        <h2 className="flex items-center gap-2 font-['Outfit'] text-lg font-medium">
+        <h2 className="flex items-center gap-2 font-display text-lg font-medium">
           <Server className="h-4 w-4" /> Required configuration
         </h2>
         <div className="grid gap-3 md:grid-cols-2">
@@ -142,7 +142,7 @@ export default function SecurityConfig() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="flex items-center gap-2 font-['Outfit'] text-lg font-medium">
+        <h2 className="flex items-center gap-2 font-display text-lg font-medium">
           <Server className="h-4 w-4" /> Recommended configuration
         </h2>
         <div className="grid gap-3 md:grid-cols-2">
@@ -159,7 +159,7 @@ export default function SecurityConfig() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="flex items-center gap-2 font-['Outfit'] text-lg font-medium">
+        <h2 className="flex items-center gap-2 font-display text-lg font-medium">
           <KeyRound className="h-4 w-4" /> Secret strength
         </h2>
         <div className="grid gap-3 md:grid-cols-2">
@@ -187,14 +187,14 @@ export default function SecurityConfig() {
           />
         </div>
         {data.weak_secrets.length > 0 && (
-          <div className="rounded-sm border border-destructive-soft surface-danger-soft p-3 text-xs text-danger">
+          <div className="rounded-sm border border-destructive-soft bg-destructive-soft p-3 text-xs text-destructive">
             Weak secrets detected: {data.weak_secrets.join(", ")} (minimum 32 chars)
           </div>
         )}
       </section>
 
       <section className="space-y-4">
-        <h2 className="flex items-center gap-2 font-['Outfit'] text-lg font-medium">
+        <h2 className="flex items-center gap-2 font-display text-lg font-medium">
           <Lock className="h-4 w-4" /> Field-level encryption
         </h2>
         <div className="grid gap-3 md:grid-cols-2">
@@ -221,8 +221,8 @@ export default function SecurityConfig() {
             mono
           />
         </div>
-        <div className="rounded-sm border border-subtle surface-app p-3 text-xs text-muted-strong">
-          <div className="font-semibold uppercase tracking-[0.15em] text-strong">
+        <div className="rounded-sm border border-border bg-background p-3 text-xs text-muted-foreground">
+          <div className="font-semibold uppercase tracking-[0.15em] text-foreground">
             Encrypted at rest
           </div>
           <div className="mt-1">
@@ -241,7 +241,7 @@ export default function SecurityConfig() {
       </section>
 
       <section className="space-y-4">
-        <h2 className="flex items-center gap-2 font-['Outfit'] text-lg font-medium">
+        <h2 className="flex items-center gap-2 font-display text-lg font-medium">
           <ShieldCheck className="h-4 w-4" /> Security features
         </h2>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
@@ -251,8 +251,8 @@ export default function SecurityConfig() {
         </div>
       </section>
 
-      <section className="space-y-3 text-xs text-muted-strong">
-        <h2 className="font-['Outfit'] text-lg font-medium text-strong">
+      <section className="space-y-3 text-xs text-muted-foreground">
+        <h2 className="font-display text-lg font-medium text-foreground">
           Reference
         </h2>
         <ul className="list-disc space-y-1 pl-5">

@@ -58,6 +58,43 @@ public release yet — we're pre-1.0).
   `Patients`, `Register`, `Dashboard`, `PermissionMatrix`, `toast`.
 
 ### Added (theme guardrail)
+- **Phase 3 — legacy alias retirement (2026-04-20)** — migrated every
+  backwards-compat utility class across `frontend/src/**` to direct
+  semantic Tailwind utilities. 762 instances swept in one atomic
+  pass using word-boundary sed replacements:
+    - `text-strong` → `text-foreground` (88×)
+    - `text-muted-strong` → `text-muted-foreground` (215×)
+    - `text-soft` → `text-muted-foreground/70` (26×)
+    - `text-sage-deep`, `text-sage` → `text-primary` (53×)
+    - `text-danger-strong`, `text-danger-soft`, `text-danger` → `text-destructive` (34×)
+    - `surface-sage` → `bg-primary/10` (38×)
+    - `surface-sage-soft` → `bg-primary/5` (1×)
+    - `surface-muted` → `bg-muted` (26×)
+    - `surface-app` → `bg-background` (21×)
+    - `surface-warning` → `bg-warning-soft` (16×)
+    - `surface-danger-soft` → `bg-destructive-soft` (21×)
+    - `surface-topbar` → `bg-card/90 backdrop-blur` (1×)
+    - `bg-sage`, `hover:bg-sage-hover`, `bg-danger`, `hover:bg-danger-hover`
+      → `bg-primary`, `hover:bg-[var(--primary-hover)]`, `bg-destructive`,
+      `hover:brightness-95` (79× combined)
+    - `border-subtle` → `border-border` (102×)
+    - `border-strong` → `border-border-strong` (14×)
+  The only non-semantic raw strings still in feature code are the
+  `--primary-hover`, `--dialog-overlay`, `--sidebar-active-*`,
+  `--table-*`, `--badge-premium-*`, `--focus`, `--input-placeholder`,
+  and `--calendar-slot-selected` CSS-variable references exposed by
+  the theme layer itself. These are intentional — they consume alias
+  tokens.
+
+- **AppShell shell hardening** — Sidebar now reads the sidebar alias
+  tokens (`--sidebar-bg`, `--sidebar-fg`, `--sidebar-active-bg`,
+  `--sidebar-active-fg`, `--sidebar-active-indicator`) instead of
+  inline `style={{ borderLeftColor: "var(--sage-accent)" }}` or
+  generic `bg-background` / `bg-muted`. `font-['Outfit']` arbitrary
+  classes migrated to the `font-display` utility. `text-white` on
+  primary surfaces swapped for `text-primary-foreground` so dark-mode
+  contrast stays correct.
+
 - **Refactored every core Shadcn primitive** to match the spec:
   `button.jsx`, `input.jsx`, `textarea.jsx`, `select.jsx`, `card.jsx`,
   `dialog.jsx`, `dropdown-menu.jsx`, `tabs.jsx`, `badge.jsx`,

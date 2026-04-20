@@ -42,7 +42,7 @@ export default function ReauthDialog({ open, title, description, onConfirmed, on
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent data-testid="reauth-dialog" className="max-w-md rounded-sm">
         <DialogHeader>
-          <DialogTitle className="font-['Outfit']">{title || "Confirm it's you"}</DialogTitle>
+          <DialogTitle className="font-display">{title || "Confirm it's you"}</DialogTitle>
           <DialogDescription>
             {description || "This action is logged to the audit trail. Please re-enter your password."}
           </DialogDescription>
@@ -69,7 +69,7 @@ export default function ReauthDialog({ open, title, description, onConfirmed, on
               type="submit"
               disabled={submitting || !password}
               data-testid="reauth-confirm-btn"
-              className="rounded-sm bg-sage hover:bg-sage-hover"
+              className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
             >
               {submitting ? "Confirming…" : "Confirm"}
             </Button>

@@ -92,7 +92,7 @@ export function SignaturePad({ value, onChange, testId = "signature-pad", height
 
   return (
     <div data-testid={testId} className="space-y-2">
-      <div className="relative overflow-hidden rounded-sm border border-strong bg-card">
+      <div className="relative overflow-hidden rounded-sm border border-border-strong bg-card">
         <canvas
           ref={canvasRef}
           data-testid={`${testId}-canvas`}
@@ -105,14 +105,14 @@ export function SignaturePad({ value, onChange, testId = "signature-pad", height
         {!hasContent && (
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-soft"
+            className="pointer-events-none absolute inset-0 flex items-center justify-center text-xs text-muted-foreground/70"
           >
             Sign above — draw with mouse or finger
           </div>
         )}
       </div>
       <div className="flex items-center justify-between">
-        <span className="text-[11px] text-muted-strong">
+        <span className="text-[11px] text-muted-foreground">
           Your signature is stored as a PNG and attached to the matching consents.
         </span>
         <Button
@@ -122,7 +122,7 @@ export function SignaturePad({ value, onChange, testId = "signature-pad", height
           onClick={clear}
           disabled={disabled || !hasContent}
           data-testid={`${testId}-clear`}
-          className="h-7 text-xs text-muted-strong hover:surface-sage"
+          className="h-7 text-xs text-muted-foreground hover:bg-primary/10"
         >
           <Eraser className="mr-1 h-3 w-3" /> Clear
         </Button>

@@ -78,6 +78,32 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Verified light/dark parity via screenshots on Login, Dashboard,
   Patients lookup, Calendar, Audit Log, Compliance.
 
+### Theme discipline Phase 3 — primitive + shell refactor (2026-04-20)
+- Refactored every Shadcn primitive in `components/ui/` (Button,
+  Input, Textarea, Select, Card, Dialog, DropdownMenu, Tabs, Badge,
+  Table, Sonner) to consume semantic tokens, 8px / 12px radii,
+  accessible 2px focus rings off the `--focus` token, tokenized
+  placeholder / overlay / row-hover / row-selected alias tokens, and
+  a copper `premium` badge variant.
+- Fixed the broken Sonner import (was pulling `next-themes` instead
+  of the app's own `ThemeContext`).
+- Added tokenized `success` / `warning` / `info` / `error` variant
+  classes to toasts so state colors stay semantic.
+
+### Theme discipline Phase 4 — legacy alias retirement (2026-04-20)
+- Migrated 762 backwards-compat utility-class usages across
+  `frontend/src/**` to direct semantic Tailwind utilities
+  (`text-foreground`, `text-muted-foreground`, `text-primary`,
+  `text-destructive`, `bg-muted`, `bg-background`, `bg-card`,
+  `bg-primary/10`, `bg-warning-soft`, `bg-destructive-soft`,
+  `border-border`, `border-border-strong`). The sage vocabulary is
+  now fully retired from feature code.
+- AppShell Sidebar now consumes the sidebar alias tokens
+  (`--sidebar-bg/fg/active-bg/active-fg/active-indicator`) instead of
+  inline style + generic classes.
+- All `font-['Outfit']` arbitrary values migrated to the `font-display`
+  utility.
+
 ### Performance + scalability pass (2026-04-19)
 - **Redis** (supervisord-managed, `127.0.0.1:6379`, `maxmemory 128mb allkeys-lru`) for application cache + IP rate-limit buckets
 - **Write/Read DB split**: `get_db_write()` / `get_db_read()` / `read_after_write_db()` in `core/db.py` — identical API whether the backend is a single Mongo, a Mongo replica set, or a Postgres primary + replica

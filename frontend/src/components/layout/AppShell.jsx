@@ -73,23 +73,23 @@ function Sidebar({ role, open, onClose }) {
       {open && (
         <div
           data-testid="sidebar-backdrop"
-          className="fixed inset-0 z-40 bg-black/20 md:hidden"
+          className="fixed inset-0 z-40 bg-foreground/20 md:hidden"
           onClick={onClose}
         />
       )}
       <aside
         data-testid="app-sidebar"
-        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-subtle surface-app transition-transform duration-200 md:sticky md:top-0 md:h-screen md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-50 flex w-64 flex-col border-r border-border bg-[var(--sidebar-bg)] text-[var(--sidebar-fg)] transition-transform duration-200 md:sticky md:top-0 md:h-screen md:translate-x-0 ${
           open ? "translate-x-0" : "-translate-x-full"
         }`}
       >
-        <div className="flex h-16 items-center gap-2 border-b border-subtle px-6">
-          <div className="flex h-8 w-8 items-center justify-center rounded-sm bg-sage text-white">
+        <div className="flex h-16 items-center gap-2 border-b border-border px-6">
+          <div className="flex h-8 w-8 items-center justify-center rounded-sm bg-primary text-primary-foreground">
             <Stethoscope className="h-4 w-4" />
           </div>
           <div className="flex flex-col leading-tight">
-            <span className="font-['Outfit'] text-sm font-medium text-strong">CCMS</span>
-            <span className="text-[11px] uppercase tracking-[0.15em] text-muted-strong">Clinic OS</span>
+            <span className="font-display text-sm font-semibold text-foreground">CCMS</span>
+            <span className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">Clinic OS</span>
           </div>
         </div>
 
@@ -102,13 +102,12 @@ function Sidebar({ role, open, onClose }) {
               data-testid={`nav-${label.toLowerCase().replace(/\s+/g, "-")}`}
               onClick={onClose}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-6 py-3 text-sm font-medium transition-colors ${
+                `flex items-center gap-3 border-l-2 px-6 py-3 text-sm font-medium transition-colors ${
                   isActive
-                    ? "border-l-2 surface-muted pl-[22px] text-strong"
-                    : "border-l-2 border-transparent text-muted-strong hover:surface-muted hover:text-strong"
+                    ? "border-[var(--sidebar-active-indicator)] bg-[var(--sidebar-active-bg)] pl-[22px] text-[var(--sidebar-active-fg)]"
+                    : "border-transparent text-muted-foreground hover:bg-[var(--sidebar-active-bg)] hover:text-foreground"
                 }`
               }
-              style={({ isActive }) => (isActive ? { borderLeftColor: "var(--sage-accent)" } : undefined)}
             >
               <Icon className="h-4 w-4" />
               {label}
@@ -116,10 +115,10 @@ function Sidebar({ role, open, onClose }) {
           ))}
         </nav>
 
-        <div className="border-t border-subtle px-6 py-4 text-xs text-muted-strong">
+        <div className="border-t border-border px-6 py-4 text-xs text-muted-foreground">
           <div className="font-medium uppercase tracking-[0.15em]">HIPAA</div>
           <div className="mt-1 flex items-center gap-2">
-            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-sage" />
+            <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-primary" />
             audit · encryption · MFA ready
           </div>
         </div>
@@ -138,13 +137,13 @@ export default function AppShell({ children }) {
   const initials = user.name.split(" ").map((n) => n[0]).slice(0, 2).join("").toUpperCase();
 
   return (
-    <div className="flex min-h-screen surface-app text-strong">
+    <div className="flex min-h-screen bg-background text-foreground">
       <Sidebar role={user.role} open={open} onClose={() => setOpen(false)} />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header
           data-testid="app-topnav"
-          className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-subtle surface-topbar px-6 backdrop-blur"
+          className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-card/90 px-6 backdrop-blur"
         >
           <div className="flex items-center gap-3">
             <Button
@@ -157,8 +156,8 @@ export default function AppShell({ children }) {
               <Menu className="h-5 w-5" />
             </Button>
             <div className="hidden md:flex md:flex-col md:leading-tight">
-              <span className="text-[11px] uppercase tracking-[0.15em] text-muted-strong">Welcome back</span>
-              <span className="font-['Outfit'] text-base font-medium">{user.name}</span>
+              <span className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">Welcome back</span>
+              <span className="font-display text-base font-semibold">{user.name}</span>
             </div>
           </div>
 
@@ -166,7 +165,7 @@ export default function AppShell({ children }) {
             {user.mfa_enabled ? (
               <span
                 data-testid="mfa-indicator"
-                className="hidden rounded-sm surface-sage px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-sage-deep md:inline-flex"
+                className="hidden rounded-sm bg-primary/10 px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-primary md:inline-flex"
               >
                 <ShieldCheck className="mr-1 h-3 w-3" /> MFA on
               </span>
@@ -175,7 +174,7 @@ export default function AppShell({ children }) {
                 <Link
                   to="/security"
                   data-testid="mfa-setup-banner"
-                  className="hidden rounded-sm surface-warning px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-warning md:inline-flex"
+                  className="hidden rounded-sm bg-warning-soft px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-warning md:inline-flex"
                 >
                   Enable MFA
                 </Link>
@@ -188,14 +187,14 @@ export default function AppShell({ children }) {
               <DropdownMenuTrigger asChild>
                 <button
                   data-testid="user-menu-trigger"
-                  className="flex items-center gap-3 rounded-sm px-2 py-1 text-sm font-medium hover:surface-muted"
+                  className="flex items-center gap-3 rounded-sm px-2 py-1 text-sm font-medium hover:bg-muted"
                 >
-                  <span className="flex h-9 w-9 items-center justify-center rounded-sm surface-sage text-xs font-semibold text-sage-deep">
+                  <span className="flex h-9 w-9 items-center justify-center rounded-sm bg-primary/10 text-xs font-semibold text-primary">
                     {initials}
                   </span>
                   <span className="hidden flex-col text-left leading-tight sm:flex">
-                    <span className="text-strong">{user.name}</span>
-                    <span className="text-[11px] uppercase tracking-[0.15em] text-muted-strong">
+                    <span className="text-foreground">{user.name}</span>
+                    <span className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
                       {roleLabel(user.role)}
                     </span>
                   </span>
@@ -204,8 +203,8 @@ export default function AppShell({ children }) {
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel>
                   <div className="flex flex-col">
-                    <span className="text-strong">{user.email}</span>
-                    <span className="text-xs text-muted-strong">{roleLabel(user.role)}</span>
+                    <span className="text-foreground">{user.email}</span>
+                    <span className="text-xs text-muted-foreground">{roleLabel(user.role)}</span>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
@@ -221,7 +220,7 @@ export default function AppShell({ children }) {
                     await logout();
                     navigate("/login");
                   }}
-                  className="text-danger focus:text-danger"
+                  className="text-destructive focus:text-destructive"
                 >
                   <LogOut className="mr-2 h-4 w-4" /> Sign out
                 </DropdownMenuItem>
@@ -235,7 +234,7 @@ export default function AppShell({ children }) {
         <AlertDialog open={!!idleWarning}>
           <AlertDialogContent data-testid="idle-warning" className="rounded-sm">
             <AlertDialogHeader>
-              <AlertDialogTitle className="font-['Outfit']">Are you still there?</AlertDialogTitle>
+              <AlertDialogTitle className="font-display">Are you still there?</AlertDialogTitle>
               <AlertDialogDescription>
                 You will be signed out automatically in under a minute to protect
                 patient data. Click Stay to continue.
@@ -244,7 +243,7 @@ export default function AppShell({ children }) {
             <AlertDialogFooter>
               <AlertDialogAction
                 data-testid="idle-stay-btn"
-                className="rounded-sm bg-sage hover:bg-sage-hover"
+                className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
               >
                 Stay signed in
               </AlertDialogAction>

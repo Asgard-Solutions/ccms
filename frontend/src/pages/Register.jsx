@@ -55,41 +55,41 @@ export default function Register() {
   return (
     <div
       data-testid="register-page"
-      className="flex min-h-screen items-center justify-center surface-app px-6 py-12"
+      className="flex min-h-screen items-center justify-center bg-background px-6 py-12"
     >
       <div className="w-full max-w-md">
         <Link to="/login" className="mb-8 flex items-center gap-2">
-          <span className="flex h-9 w-9 items-center justify-center rounded-sm bg-sage text-white">
+          <span className="flex h-9 w-9 items-center justify-center rounded-sm bg-primary text-primary-foreground">
             <Stethoscope className="h-5 w-5" />
           </span>
-          <span className="font-['Outfit'] text-lg font-medium text-strong">CCMS</span>
+          <span className="font-display text-lg font-medium text-foreground">CCMS</span>
         </Link>
 
-        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
+        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
           Create a patient account
         </span>
-        <h1 className="mt-3 font-['Outfit'] text-3xl font-medium tracking-tight text-strong">
+        <h1 className="mt-3 font-display text-3xl font-medium tracking-tight text-foreground">
           Join your clinic portal
         </h1>
-        <p className="mt-3 text-sm leading-relaxed text-muted-strong">
+        <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
           After registration an intake team member will complete your medical
           profile.
         </p>
 
-        <form onSubmit={onSubmit} className="mt-8 space-y-5 rounded-sm border border-subtle bg-card p-6">
+        <form onSubmit={onSubmit} className="mt-8 space-y-5 rounded-sm border border-border bg-card p-6">
           <div className="space-y-2">
-            <Label htmlFor="name" className="text-muted-strong">Full name</Label>
+            <Label htmlFor="name" className="text-muted-foreground">Full name</Label>
             <Input
               id="name"
               data-testid="register-name-input"
               value={form.name}
               onChange={update("name")}
               required
-              className="h-11 rounded-sm border-subtle"
+              className="h-11 rounded-sm border-border"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="email" className="text-muted-strong">Email</Label>
+            <Label htmlFor="email" className="text-muted-foreground">Email</Label>
             <Input
               id="email"
               data-testid="register-email-input"
@@ -97,21 +97,21 @@ export default function Register() {
               value={form.email}
               onChange={update("email")}
               required
-              className="h-11 rounded-sm border-subtle"
+              className="h-11 rounded-sm border-border"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="phone" className="text-muted-strong">Phone (optional)</Label>
+            <Label htmlFor="phone" className="text-muted-foreground">Phone (optional)</Label>
             <Input
               id="phone"
               data-testid="register-phone-input"
               value={form.phone}
               onChange={update("phone")}
-              className="h-11 rounded-sm border-subtle"
+              className="h-11 rounded-sm border-border"
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="password" className="text-muted-strong">Password</Label>
+            <Label htmlFor="password" className="text-muted-foreground">Password</Label>
             <Input
               id="password"
               data-testid="register-password-input"
@@ -120,7 +120,7 @@ export default function Register() {
               onChange={update("password")}
               required
               minLength={6}
-              className="h-11 rounded-sm border-subtle"
+              className="h-11 rounded-sm border-border"
             />
           </div>
 
@@ -128,14 +128,14 @@ export default function Register() {
             type="submit"
             data-testid="register-submit-button"
             disabled={submitting || !acceptedPrivacy}
-            className="h-11 w-full rounded-sm bg-sage px-6 font-medium text-white hover:bg-sage-hover disabled:opacity-60"
+            className="h-11 w-full rounded-sm bg-primary px-6 font-medium text-primary-foreground hover:bg-[var(--primary-hover)] disabled:opacity-60"
           >
             {submitting ? "Creating…" : "Create account"}
           </Button>
 
           <label
             htmlFor="privacy-accept"
-            className="flex items-start gap-2 rounded-sm border border-subtle surface-app p-3 text-xs text-muted-strong"
+            className="flex items-start gap-2 rounded-sm border border-border bg-background p-3 text-xs text-muted-foreground"
           >
             <input
               id="privacy-accept"
@@ -143,7 +143,7 @@ export default function Register() {
               type="checkbox"
               checked={acceptedPrivacy}
               onChange={(e) => setAcceptedPrivacy(e.target.checked)}
-              className="mt-0.5 h-4 w-4 rounded-sm border-strong accent-primary"
+              className="mt-0.5 h-4 w-4 rounded-sm border-border-strong accent-primary"
             />
             <span>
               I have read and accept the Privacy Notice (version
@@ -154,12 +154,12 @@ export default function Register() {
             </span>
           </label>
 
-          <p className="text-center text-sm text-muted-strong">
+          <p className="text-center text-sm text-muted-foreground">
             Already have an account?{" "}
             <Link
               to="/login"
               data-testid="register-to-login-link"
-              className="font-medium text-sage-deep underline-offset-4 hover:underline"
+              className="font-medium text-primary underline-offset-4 hover:underline"
             >
               Sign in
             </Link>

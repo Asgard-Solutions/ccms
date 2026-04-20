@@ -7,20 +7,20 @@ import { Skeleton } from "../components/ui/skeleton";
 const STATUS_META = {
   implemented: {
     label: "Implemented",
-    chip: "surface-sage text-sage-deep",
-    dot: "bg-sage",
+    chip: "bg-primary/10 text-primary",
+    dot: "bg-primary",
     icon: ShieldCheck,
   },
   partial: {
     label: "Partial",
-    chip: "surface-warning text-warning",
+    chip: "bg-warning-soft text-warning",
     dot: "bg-warning",
     icon: CircleDashed,
   },
   missing: {
     label: "Not implemented",
-    chip: "surface-danger-soft text-danger",
-    dot: "bg-danger",
+    chip: "bg-destructive-soft text-destructive",
+    dot: "bg-destructive",
     icon: XCircle,
   },
   out_of_app: {
@@ -35,10 +35,10 @@ function StatChip({ value, label, testid }) {
   return (
     <div
       data-testid={testid}
-      className="rounded-sm border border-subtle bg-card px-4 py-3"
+      className="rounded-sm border border-border bg-card px-4 py-3"
     >
-      <div className="font-['Outfit'] text-2xl font-medium text-strong">{value}</div>
-      <div className="mt-1 text-[11px] uppercase tracking-[0.15em] text-muted-strong">{label}</div>
+      <div className="font-display text-2xl font-medium text-foreground">{value}</div>
+      <div className="mt-1 text-[11px] uppercase tracking-[0.15em] text-muted-foreground">{label}</div>
     </div>
   );
 }
@@ -47,15 +47,15 @@ function Flag({ ok, label, testid }) {
   return (
     <div
       data-testid={testid}
-      className="flex items-center justify-between gap-3 rounded-sm border border-subtle bg-card px-4 py-3"
+      className="flex items-center justify-between gap-3 rounded-sm border border-border bg-card px-4 py-3"
     >
-      <span className="text-sm text-strong">{label}</span>
+      <span className="text-sm text-foreground">{label}</span>
       <span
         className={`inline-flex items-center gap-1.5 rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
-          ok ? "surface-sage text-sage-deep" : "surface-danger-soft text-danger"
+          ok ? "bg-primary/10 text-primary" : "bg-destructive-soft text-destructive"
         }`}
       >
-        <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-sage" : "bg-danger"}`} />
+        <span className={`h-1.5 w-1.5 rounded-full ${ok ? "bg-primary" : "bg-destructive"}`} />
         {ok ? "OK" : "Review"}
       </span>
     </div>
@@ -69,20 +69,20 @@ function ControlRow({ c }) {
     <tr data-testid={`control-row-${c.id}`} className="border-b border-border last:border-0">
       <td className="py-3 pr-4 align-top">
         <div className="flex items-start gap-2">
-          <Icon className="mt-0.5 h-4 w-4 text-muted-strong" />
+          <Icon className="mt-0.5 h-4 w-4 text-muted-foreground" />
           <div>
-            <div className="font-mono text-[11px] uppercase tracking-wider text-muted-strong">{c.id}</div>
-            <div className="mt-0.5 text-sm text-strong">{c.name}</div>
+            <div className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">{c.id}</div>
+            <div className="mt-0.5 text-sm text-foreground">{c.name}</div>
           </div>
         </div>
       </td>
-      <td className="py-3 pr-4 align-top text-xs text-muted-strong">{c.group}</td>
+      <td className="py-3 pr-4 align-top text-xs text-muted-foreground">{c.group}</td>
       <td className="py-3 pr-4 align-top">
         <div className="flex flex-wrap gap-1.5">
           {c.frameworks.map((f) => (
             <span
               key={f}
-              className="rounded-sm surface-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-strong"
+              className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
             >
               {f}
             </span>
@@ -119,7 +119,7 @@ export default function Compliance() {
 
   if (error) {
     return (
-      <div data-testid="compliance-error" className="rounded-sm border border-destructive-soft surface-danger-soft p-4 text-sm text-danger">
+      <div data-testid="compliance-error" className="rounded-sm border border-destructive-soft bg-destructive-soft p-4 text-sm text-destructive">
         {error}
       </div>
     );
@@ -162,18 +162,18 @@ export default function Compliance() {
   return (
     <div data-testid="compliance-page" className="space-y-10 animate-in fade-in duration-300">
       <header>
-        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
+        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
           Compliance
         </span>
-        <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight">
+        <h1 className="mt-2 font-display text-4xl font-medium tracking-tight">
           Internal readiness dashboard
         </h1>
-        <p className="mt-3 max-w-3xl text-sm text-muted-strong">
+        <p className="mt-3 max-w-3xl text-sm text-muted-foreground">
           {data.disclaimer}
         </p>
         <div
           data-testid="compliance-disclaimer"
-          className="mt-4 flex items-start gap-2 rounded-sm border border-border surface-warning p-3 text-xs text-warning"
+          className="mt-4 flex items-start gap-2 rounded-sm border border-border bg-warning-soft p-3 text-xs text-warning"
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
           <span>
@@ -187,8 +187,8 @@ export default function Compliance() {
       {/* readiness snapshot */}
       <section data-testid="readiness-snapshot" className="space-y-4">
         <div className="flex items-baseline justify-between">
-          <h2 className="font-['Outfit'] text-lg font-medium">Readiness snapshot</h2>
-          <span className="text-xs text-muted-strong">
+          <h2 className="font-display text-lg font-medium">Readiness snapshot</h2>
+          <span className="text-xs text-muted-foreground">
             Generated {formatDateTime(data.generated_at)}
           </span>
         </div>
@@ -207,7 +207,7 @@ export default function Compliance() {
 
       {/* environment hardening */}
       <section data-testid="env-hardening" className="space-y-4">
-        <h2 className="font-['Outfit'] text-lg font-medium">Environment hardening</h2>
+        <h2 className="font-display text-lg font-medium">Environment hardening</h2>
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
           {envFlags.map((f) => (
             <Flag key={f.k} ok={!!env[f.k]} label={f.l} testid={`env-flag-${f.k}`} />
@@ -217,7 +217,7 @@ export default function Compliance() {
 
       {/* audit activity */}
       <section data-testid="audit-activity" className="space-y-4">
-        <h2 className="font-['Outfit'] text-lg font-medium">Audit & access activity</h2>
+        <h2 className="font-display text-lg font-medium">Audit & access activity</h2>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <StatChip testid="audit-total" value={data.audit_activity.total_rows} label="Audit rows (total)" />
           <StatChip testid="audit-24h" value={data.audit_activity.last_24h} label="Events · last 24 h" />
@@ -248,7 +248,7 @@ export default function Compliance() {
 
       {/* retention */}
       <section data-testid="retention-status" className="space-y-4">
-        <h2 className="font-['Outfit'] text-lg font-medium">Retention & privacy workflow</h2>
+        <h2 className="font-display text-lg font-medium">Retention & privacy workflow</h2>
         <div className="grid gap-3 md:grid-cols-3">
           <StatChip
             testid="retention-softdelete"
@@ -271,7 +271,7 @@ export default function Compliance() {
       {/* controls table */}
       <section data-testid="controls-table" className="space-y-4">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
-          <h2 className="font-['Outfit'] text-lg font-medium">Controls ({filteredControls.length})</h2>
+          <h2 className="font-display text-lg font-medium">Controls ({filteredControls.length})</h2>
           <div className="flex flex-wrap gap-1.5">
             {groups.map((g) => (
               <button
@@ -289,9 +289,9 @@ export default function Compliance() {
             ))}
           </div>
         </div>
-        <div className="overflow-x-auto rounded-sm border border-subtle bg-card">
+        <div className="overflow-x-auto rounded-sm border border-border bg-card">
           <table className="w-full min-w-[720px] text-left text-sm">
-            <thead className="border-b border-subtle text-[11px] uppercase tracking-[0.15em] text-muted-strong">
+            <thead className="border-b border-border text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
               <tr>
                 <th className="px-4 py-3 font-medium">Control</th>
                 <th className="px-4 py-3 font-medium">Group</th>
@@ -310,20 +310,20 @@ export default function Compliance() {
 
       {/* docs */}
       <section data-testid="compliance-docs" className="space-y-3">
-        <h2 className="font-['Outfit'] text-lg font-medium">Reference documents</h2>
+        <h2 className="font-display text-lg font-medium">Reference documents</h2>
         <ul className="space-y-2 text-sm">
           {data.documents.map((p) => (
             <li
               key={p}
               data-testid={`doc-${p.split("/").pop()}`}
-              className="flex items-center gap-2 text-muted-strong"
+              className="flex items-center gap-2 text-muted-foreground"
             >
               <ClipboardCheck className="h-4 w-4" />
-              <code className="font-mono text-xs text-strong">{p}</code>
+              <code className="font-mono text-xs text-foreground">{p}</code>
             </li>
           ))}
         </ul>
-        <p className="pt-2 text-xs text-muted-strong">
+        <p className="pt-2 text-xs text-muted-foreground">
           External auditors should be pointed at these files along with the
           `/api/audit-logs` export and `/api/metrics` evidence. Certification
           readiness also requires infrastructure, legal, HR and operational

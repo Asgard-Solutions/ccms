@@ -26,11 +26,11 @@ const STATUS_FLOW = {
   withdrawn: [],
 };
 const STATUS_CHIP = {
-  received: "surface-sage text-sage-deep",
-  in_review: "surface-warning text-warning",
+  received: "bg-primary/10 text-primary",
+  in_review: "bg-warning-soft text-warning",
   approved: "bg-info-soft text-info",
   fulfilled: "bg-success-soft text-success",
-  rejected: "surface-danger-soft text-danger",
+  rejected: "bg-destructive-soft text-destructive",
   withdrawn: "bg-muted text-muted-foreground",
 };
 
@@ -61,8 +61,8 @@ function InventoryTab() {
   if (!data) return <Skeleton className="h-80 w-full" />;
   return (
     <div data-testid="inventory-tab" className="space-y-4">
-      <div className="rounded-sm border border-subtle surface-app p-4 text-xs text-muted-strong">
-        <div className="font-semibold uppercase tracking-[0.15em] text-strong">
+      <div className="rounded-sm border border-border bg-background p-4 text-xs text-muted-foreground">
+        <div className="font-semibold uppercase tracking-[0.15em] text-foreground">
           Retention settings
         </div>
         <div className="mt-1">
@@ -76,41 +76,41 @@ function InventoryTab() {
           <div
             key={c.id}
             data-testid={`inventory-${c.id}`}
-            className="rounded-sm border border-subtle bg-card p-4"
+            className="rounded-sm border border-border bg-card p-4"
           >
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.15em] text-muted-strong">
+                <div className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
                   {c.ccpa_category}
                 </div>
-                <div className="font-['Outfit'] text-lg font-medium">{c.name}</div>
+                <div className="font-display text-lg font-medium">{c.name}</div>
               </div>
               {c.phi && (
-                <span className="rounded-sm surface-warning px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-warning">
+                <span className="rounded-sm bg-warning-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-warning">
                   PHI
                 </span>
               )}
             </div>
             <dl className="mt-3 space-y-2 text-xs">
               <div>
-                <dt className="font-semibold text-strong">Collected</dt>
-                <dd className="text-muted-strong">{c.collected.join(", ")}</dd>
+                <dt className="font-semibold text-foreground">Collected</dt>
+                <dd className="text-muted-foreground">{c.collected.join(", ")}</dd>
               </div>
               <div>
-                <dt className="font-semibold text-strong">Purpose</dt>
-                <dd className="text-muted-strong">{c.purpose}</dd>
+                <dt className="font-semibold text-foreground">Purpose</dt>
+                <dd className="text-muted-foreground">{c.purpose}</dd>
               </div>
               <div>
-                <dt className="font-semibold text-strong">Access</dt>
-                <dd className="text-muted-strong">{c.access_roles.join(", ")}</dd>
+                <dt className="font-semibold text-foreground">Access</dt>
+                <dd className="text-muted-foreground">{c.access_roles.join(", ")}</dd>
               </div>
               <div>
-                <dt className="font-semibold text-strong">Retention</dt>
-                <dd className="text-muted-strong">{c.retention_default}</dd>
+                <dt className="font-semibold text-foreground">Retention</dt>
+                <dd className="text-muted-foreground">{c.retention_default}</dd>
               </div>
               <div>
-                <dt className="font-semibold text-strong">At rest</dt>
-                <dd className="text-muted-strong">{c.encrypted_at_rest}</dd>
+                <dt className="font-semibold text-foreground">At rest</dt>
+                <dd className="text-muted-foreground">{c.encrypted_at_rest}</dd>
               </div>
             </dl>
           </div>
@@ -157,11 +157,11 @@ function NewRequestForm({ onCreated }) {
     <form
       onSubmit={submit}
       data-testid="new-request-form"
-      className="space-y-3 rounded-sm border border-subtle bg-card p-4"
+      className="space-y-3 rounded-sm border border-border bg-card p-4"
     >
-      <div className="flex items-center gap-2 text-strong">
+      <div className="flex items-center gap-2 text-foreground">
         <Inbox className="h-4 w-4" />
-        <span className="font-['Outfit'] text-lg font-medium">Log a new privacy request</span>
+        <span className="font-display text-lg font-medium">Log a new privacy request</span>
       </div>
       <div className="grid gap-3 md:grid-cols-4">
         <div>
@@ -170,7 +170,7 @@ function NewRequestForm({ onCreated }) {
             data-testid="new-request-type"
             value={requestType}
             onChange={(e) => setRequestType(e.target.value)}
-            className="h-9 w-full rounded-sm border border-subtle bg-card px-2 text-sm"
+            className="h-9 w-full rounded-sm border border-border bg-card px-2 text-sm"
           >
             {REQUEST_TYPES.map((t) => (
               <option key={t} value={t}>
@@ -204,7 +204,7 @@ function NewRequestForm({ onCreated }) {
             type="submit"
             data-testid="new-request-submit"
             disabled={submitting}
-            className="h-9 w-full rounded-sm bg-primary text-primary-foreground hover:bg-sage-hover"
+            className="h-9 w-full rounded-sm bg-primary text-primary-foreground hover:bg-[var(--primary-hover)]"
           >
             {submitting ? "Logging…" : "Log request"}
           </Button>
@@ -270,7 +270,7 @@ function RequestRow({ r, onChanged }) {
     >
       <td className="px-3 py-3">
         <div>{formatDateTime(r.created_at)}</div>
-        <div className="text-[11px] text-muted-strong">{relativeFromNow(r.created_at)}</div>
+        <div className="text-[11px] text-muted-foreground">{relativeFromNow(r.created_at)}</div>
       </td>
       <td className="px-3 py-3">
         <div className="font-mono text-xs">{r.request_type}</div>
@@ -278,16 +278,16 @@ function RequestRow({ r, onChanged }) {
           <StatusChip s={r.status} />
         </div>
       </td>
-      <td className="px-3 py-3 font-mono text-[11px] text-muted-strong">
+      <td className="px-3 py-3 font-mono text-[11px] text-muted-foreground">
         <div>subj: {r.subject_user_id?.slice(0, 8)}…</div>
         {r.subject_patient_id && <div>pat: {r.subject_patient_id.slice(0, 8)}…</div>}
       </td>
-      <td className="px-3 py-3 text-xs text-muted-strong">
-        <div className="font-semibold text-strong">Notes</div>
+      <td className="px-3 py-3 text-xs text-muted-foreground">
+        <div className="font-semibold text-foreground">Notes</div>
         <div>{r.notes || "—"}</div>
         {r.response_notes && (
           <>
-            <div className="mt-2 font-semibold text-strong">Response</div>
+            <div className="mt-2 font-semibold text-foreground">Response</div>
             <div>{r.response_notes}</div>
           </>
         )}
@@ -300,7 +300,7 @@ function RequestRow({ r, onChanged }) {
               data-testid={`transition-${r.id}-${ns}`}
               onClick={() => transition(ns)}
               disabled={busy}
-              className="rounded-sm border border-subtle bg-card px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-muted-strong hover:surface-muted"
+              className="rounded-sm border border-border bg-card px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground hover:bg-muted"
             >
               → {ns}
             </button>
@@ -310,7 +310,7 @@ function RequestRow({ r, onChanged }) {
               data-testid={`fulfill-delete-${r.id}`}
               onClick={fulfillDelete}
               disabled={busy}
-              className="rounded-sm border border-destructive surface-danger-soft px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-danger"
+              className="rounded-sm border border-destructive bg-destructive-soft px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-destructive"
             >
               Fulfil delete
             </button>
@@ -354,7 +354,7 @@ function RequestsTab() {
           data-testid="filter-status"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="h-9 rounded-sm border border-subtle bg-card px-2 text-sm"
+          className="h-9 rounded-sm border border-border bg-card px-2 text-sm"
         >
           <option value="">All statuses</option>
           {Object.keys(STATUS_FLOW).map((s) => (
@@ -367,7 +367,7 @@ function RequestsTab() {
           data-testid="filter-type"
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value)}
-          className="h-9 rounded-sm border border-subtle bg-card px-2 text-sm"
+          className="h-9 rounded-sm border border-border bg-card px-2 text-sm"
         >
           <option value="">All types</option>
           {REQUEST_TYPES.map((t) => (
@@ -376,7 +376,7 @@ function RequestsTab() {
             </option>
           ))}
         </select>
-        <span className="ml-auto text-xs text-muted-strong">
+        <span className="ml-auto text-xs text-muted-foreground">
           {rows ? `${rows.length} requests` : "loading…"}
         </span>
       </div>
@@ -384,14 +384,14 @@ function RequestsTab() {
       {rows === null ? (
         <Skeleton className="h-48 rounded-sm" />
       ) : rows.length === 0 ? (
-        <div className="rounded-sm border border-dashed border-subtle bg-card p-12 text-center">
-          <ClipboardList className="mx-auto h-10 w-10 text-soft" />
-          <p className="mt-3 font-['Outfit'] text-base">No privacy requests logged yet.</p>
+        <div className="rounded-sm border border-dashed border-border bg-card p-12 text-center">
+          <ClipboardList className="mx-auto h-10 w-10 text-muted-foreground/70" />
+          <p className="mt-3 font-display text-base">No privacy requests logged yet.</p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-sm border border-subtle bg-card">
+        <div className="overflow-x-auto rounded-sm border border-border bg-card">
           <table className="w-full min-w-[880px] text-left text-sm">
-            <thead className="border-b border-subtle surface-app text-[11px] uppercase tracking-wider text-muted-strong">
+            <thead className="border-b border-border bg-background text-[11px] uppercase tracking-wider text-muted-foreground">
               <tr>
                 <th className="px-3 py-3 font-medium">Created</th>
                 <th className="px-3 py-3 font-medium">Type / status</th>
@@ -422,20 +422,20 @@ export default function Privacy() {
   return (
     <div data-testid="privacy-page" className="space-y-8 animate-in fade-in duration-300">
       <header>
-        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
+        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
           Compliance
         </span>
-        <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight">
+        <h1 className="mt-2 font-display text-4xl font-medium tracking-tight">
           Privacy operations
         </h1>
-        <p className="mt-2 max-w-3xl text-sm text-muted-strong">
+        <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
           Admin intake for CCPA-style data-subject requests (access, correction,
           deletion, restriction, opt-out) and a structured inventory of the
           data categories CCMS handles.
         </p>
         <div
           data-testid="privacy-disclaimer"
-          className="mt-4 flex items-start gap-2 rounded-sm border border-border surface-warning p-3 text-xs text-warning"
+          className="mt-4 flex items-start gap-2 rounded-sm border border-border bg-warning-soft p-3 text-xs text-warning"
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
           <span>
@@ -459,7 +459,7 @@ export default function Privacy() {
               className={`inline-flex items-center gap-2 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors ${
                 tab === t.v
                   ? "bg-primary text-primary-foreground"
-                  : "border border-subtle bg-card text-muted-strong hover:surface-muted"
+                  : "border border-border bg-card text-muted-foreground hover:bg-muted"
               }`}
             >
               <Icon className="h-4 w-4" />
@@ -471,10 +471,10 @@ export default function Privacy() {
 
       {tab === "requests" ? <RequestsTab /> : <InventoryTab />}
 
-      <div className="rounded-sm border border-subtle bg-card p-4 text-xs text-muted-strong">
-        <div className="flex items-center gap-2 text-strong">
+      <div className="rounded-sm border border-border bg-card p-4 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 text-foreground">
           <FileText className="h-4 w-4" />
-          <span className="font-['Outfit'] text-sm font-medium">Reference</span>
+          <span className="font-display text-sm font-medium">Reference</span>
         </div>
         <ul className="mt-2 list-disc space-y-1 pl-5">
           <li><code>/app/memory/PRIVACY_AND_RETENTION.md</code> — full workflow and retention model</li>

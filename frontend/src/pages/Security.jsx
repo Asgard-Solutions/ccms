@@ -36,12 +36,12 @@ function PasswordChangeCard() {
   }
 
   return (
-    <div className="rounded-sm border border-subtle bg-card p-6">
+    <div className="rounded-sm border border-border bg-card p-6">
       <div className="flex items-center gap-2">
-        <Lock className="h-5 w-5 text-sage-deep" />
-        <h2 className="font-['Outfit'] text-2xl font-medium">Password</h2>
+        <Lock className="h-5 w-5 text-primary" />
+        <h2 className="font-display text-2xl font-medium">Password</h2>
       </div>
-      <p className="mt-2 text-sm text-muted-strong">
+      <p className="mt-2 text-sm text-muted-foreground">
         Must be at least 12 characters with upper, lower, digit, and symbol.
         We remember your last 5 passwords — you cannot reuse them.
       </p>
@@ -84,7 +84,7 @@ function PasswordChangeCard() {
           type="submit"
           disabled={submitting}
           data-testid="pw-submit-btn"
-          className="rounded-sm bg-sage hover:bg-sage-hover"
+          className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
         >
           {submitting ? "Updating…" : "Update password"}
         </Button>
@@ -138,20 +138,20 @@ function MfaCard() {
   }
 
   return (
-    <div className="rounded-sm border border-subtle bg-card p-6">
+    <div className="rounded-sm border border-border bg-card p-6">
       <div className="flex items-center gap-2">
-        <ShieldCheck className="h-5 w-5 text-sage-deep" />
-        <h2 className="font-['Outfit'] text-2xl font-medium">Two-factor authentication</h2>
+        <ShieldCheck className="h-5 w-5 text-primary" />
+        <h2 className="font-display text-2xl font-medium">Two-factor authentication</h2>
         {user?.mfa_enabled && (
           <span
             data-testid="mfa-status-enabled"
-            className="ml-auto rounded-sm surface-sage px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-sage-deep"
+            className="ml-auto rounded-sm bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary"
           >
             Enabled
           </span>
         )}
       </div>
-      <p className="mt-2 text-sm text-muted-strong">
+      <p className="mt-2 text-sm text-muted-foreground">
         Required for admin, doctor and staff accounts in production. Uses the
         TOTP standard — scan the QR code with Google Authenticator, 1Password,
         Authy, or any compatible app.
@@ -161,7 +161,7 @@ function MfaCard() {
         <Button
           onClick={start}
           data-testid="mfa-start-btn"
-          className="mt-4 rounded-sm bg-sage hover:bg-sage-hover"
+          className="mt-4 rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
         >
           Begin MFA setup
         </Button>
@@ -169,8 +169,8 @@ function MfaCard() {
 
       {!user?.mfa_enabled && setup && (
         <div className="mt-5 space-y-4">
-          <div className="rounded-sm border border-subtle surface-app p-4">
-            <div className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
+          <div className="rounded-sm border border-border bg-background p-4">
+            <div className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
               1. Scan or enter manually
             </div>
             <div className="mt-2 flex flex-col items-start gap-4 md:flex-row md:items-center">
@@ -179,11 +179,11 @@ function MfaCard() {
                   setup.otpauth_url
                 )}&size=160x160&margin=2`}
                 alt="TOTP QR code"
-                className="h-40 w-40 rounded-sm border border-subtle bg-card p-2"
+                className="h-40 w-40 rounded-sm border border-border bg-card p-2"
                 data-testid="mfa-qr-image"
               />
               <div className="space-y-2">
-                <div className="text-xs uppercase tracking-wider text-muted-strong">
+                <div className="text-xs uppercase tracking-wider text-muted-foreground">
                   Or copy this secret
                 </div>
                 <code
@@ -196,8 +196,8 @@ function MfaCard() {
             </div>
           </div>
 
-          <div className="rounded-sm border border-subtle surface-app p-4">
-            <div className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
+          <div className="rounded-sm border border-border bg-background p-4">
+            <div className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
               2. Save these backup codes — each can be used once
             </div>
             <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-4">
@@ -229,7 +229,7 @@ function MfaCard() {
               type="submit"
               data-testid="mfa-verify-btn"
               disabled={submitting}
-              className="rounded-sm bg-sage hover:bg-sage-hover"
+              className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
             >
               {submitting ? "Verifying…" : "Enable MFA"}
             </Button>
@@ -254,7 +254,7 @@ function MfaCard() {
             type="submit"
             variant="outline"
             data-testid="mfa-disable-btn"
-            className="rounded-sm border-destructive text-danger hover:surface-danger-soft"
+            className="rounded-sm border-destructive text-destructive hover:bg-destructive-soft"
           >
             Disable MFA
           </Button>
@@ -280,13 +280,13 @@ export default function Security() {
   return (
     <div data-testid="security-page" className="space-y-8 animate-in fade-in duration-300">
       <header>
-        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
+        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
           Account security
         </span>
-        <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight">
+        <h1 className="mt-2 font-display text-4xl font-medium tracking-tight">
           Security
         </h1>
-        <p className="mt-2 max-w-2xl text-sm text-muted-strong">
+        <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
           Your credentials protect every record in the system. Rotate your
           password every 90 days and enable MFA to meet HIPAA technical
           safeguards.
@@ -298,13 +298,13 @@ export default function Security() {
           data-testid="password-age-banner"
           className={`flex items-start gap-3 rounded-sm border p-4 ${
             passwordAge >= 90
-              ? "border-warning surface-warning text-muted-foreground"
-              : "border-subtle bg-card text-muted-strong"
+              ? "border-warning bg-warning-soft text-muted-foreground"
+              : "border-border bg-card text-muted-foreground"
           }`}
         >
           <KeyRound className="mt-0.5 h-4 w-4" />
           <div className="text-sm">
-            <div className="font-medium text-strong">
+            <div className="font-medium text-foreground">
               Password age: {passwordAge} day{passwordAge === 1 ? "" : "s"}
             </div>
             <div>
@@ -320,10 +320,10 @@ export default function Security() {
       <MfaCard />
       <RecentSignInsCard />
 
-      <div className="rounded-sm border border-subtle bg-card p-6 text-sm text-muted-strong">
-        <div className="flex items-center gap-2 text-strong">
-          <CheckCircle2 className="h-4 w-4 text-sage-deep" />
-          <span className="font-['Outfit'] text-base font-medium">Session hardening active</span>
+      <div className="rounded-sm border border-border bg-card p-6 text-sm text-muted-foreground">
+        <div className="flex items-center gap-2 text-foreground">
+          <CheckCircle2 className="h-4 w-4 text-primary" />
+          <span className="font-display text-base font-medium">Session hardening active</span>
         </div>
         <ul className="mt-2 list-disc space-y-1 pl-5">
           <li>15-minute idle auto-logoff; 12-hour absolute session cap.</li>
@@ -352,7 +352,7 @@ function RecentSignInsCard() {
 
   if (!data) {
     return (
-      <div className="rounded-sm border border-subtle bg-card p-6 text-sm text-muted-strong">
+      <div className="rounded-sm border border-border bg-card p-6 text-sm text-muted-foreground">
         Loading recent sign-ins…
       </div>
     );
@@ -361,13 +361,13 @@ function RecentSignInsCard() {
   return (
     <div
       data-testid="sessions-card"
-      className="rounded-sm border border-subtle bg-card p-6"
+      className="rounded-sm border border-border bg-card p-6"
     >
       <div className="flex items-center gap-2">
-        <History className="h-5 w-5 text-sage-deep" />
-        <h2 className="font-['Outfit'] text-2xl font-medium">Recent sign-ins</h2>
+        <History className="h-5 w-5 text-primary" />
+        <h2 className="font-display text-2xl font-medium">Recent sign-ins</h2>
       </div>
-      <p className="mt-2 text-sm text-muted-strong">
+      <p className="mt-2 text-sm text-muted-foreground">
         Review recent authentication events on your account. Unexpected
         sign-ins? Change your password immediately — this will revoke every
         active session, including suspicious ones.
@@ -375,21 +375,21 @@ function RecentSignInsCard() {
 
       <div
         data-testid="current-session-panel"
-        className="mt-4 rounded-sm border border-subtle surface-app p-3 text-xs text-muted-strong"
+        className="mt-4 rounded-sm border border-border bg-background p-3 text-xs text-muted-foreground"
       >
-        <div className="flex items-center gap-2 text-strong">
+        <div className="flex items-center gap-2 text-foreground">
           <Globe className="h-3.5 w-3.5" />
           <span className="font-semibold uppercase tracking-wider">This session</span>
         </div>
         <div className="mt-1 space-y-0.5">
-          <div>IP: <span className="font-mono text-strong">{data.current_session?.ip || "unknown"}</span></div>
+          <div>IP: <span className="font-mono text-foreground">{data.current_session?.ip || "unknown"}</span></div>
           <div className="truncate">UA: <span className="font-mono">{data.current_session?.user_agent || "—"}</span></div>
         </div>
       </div>
 
-      <div className="mt-4 overflow-hidden rounded-sm border border-subtle">
+      <div className="mt-4 overflow-hidden rounded-sm border border-border">
         <table className="w-full text-left text-sm">
-          <thead className="surface-app text-[11px] uppercase tracking-[0.15em] text-muted-strong">
+          <thead className="bg-background text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
             <tr>
               <th className="px-3 py-2 font-medium">When</th>
               <th className="px-3 py-2 font-medium">Event</th>
@@ -400,7 +400,7 @@ function RecentSignInsCard() {
           <tbody>
             {data.events.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-3 py-4 text-center text-xs text-muted-strong">
+                <td colSpan={4} className="px-3 py-4 text-center text-xs text-muted-foreground">
                   No sign-in events yet.
                 </td>
               </tr>
@@ -413,7 +413,7 @@ function RecentSignInsCard() {
                 >
                   <td className="px-3 py-2 align-top">
                     <div>{formatDateTime(e.created_at)}</div>
-                    <div className="text-[11px] text-muted-strong">{relativeFromNow(e.created_at)}</div>
+                    <div className="text-[11px] text-muted-foreground">{relativeFromNow(e.created_at)}</div>
                   </td>
                   <td className="px-3 py-2 align-top">
                     <code className="font-mono text-xs">{e.action}</code>
@@ -422,14 +422,14 @@ function RecentSignInsCard() {
                     <span
                       className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
                         e.outcome === "success"
-                          ? "surface-sage text-sage-deep"
-                          : "surface-danger-soft text-danger"
+                          ? "bg-primary/10 text-primary"
+                          : "bg-destructive-soft text-destructive"
                       }`}
                     >
                       {e.outcome || "—"}
                     </span>
                   </td>
-                  <td className="px-3 py-2 align-top font-mono text-xs text-muted-strong">
+                  <td className="px-3 py-2 align-top font-mono text-xs text-muted-foreground">
                     {e.ip || "—"}
                   </td>
                 </tr>

@@ -173,13 +173,13 @@ const EMPTY_FORM = {
 function Field({ label, htmlFor, required, error, errorTestId, children, className = "" }) {
   return (
     <div className={`space-y-1.5 ${className}`}>
-      <Label htmlFor={htmlFor} className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-muted-strong">
+      <Label htmlFor={htmlFor} className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
-        {required && <span className="text-danger" aria-label="required">*</span>}
+        {required && <span className="text-destructive" aria-label="required">*</span>}
       </Label>
       {children}
       {error && (
-        <p className="text-xs text-danger" data-testid={errorTestId || `${htmlFor}-error`}>{error}</p>
+        <p className="text-xs text-destructive" data-testid={errorTestId || `${htmlFor}-error`}>{error}</p>
       )}
     </div>
   );
@@ -197,7 +197,7 @@ function TextInput({ id, value, onChange, type = "text", placeholder, testId, au
       max={max}
       min={min}
       data-testid={testId}
-      className="h-10 rounded-sm border-strong bg-card text-sm"
+      className="h-10 rounded-sm border-border-strong bg-card text-sm"
     />
   );
 }
@@ -205,7 +205,7 @@ function TextInput({ id, value, onChange, type = "text", placeholder, testId, au
 function SelectField({ id, value, onChange, options, placeholder = "Select…", testId }) {
   return (
     <Select value={value || undefined} onValueChange={(v) => onChange(v)}>
-      <SelectTrigger id={id} data-testid={testId} className="h-10 rounded-sm border-strong bg-card text-sm">
+      <SelectTrigger id={id} data-testid={testId} className="h-10 rounded-sm border-border-strong bg-card text-sm">
         <SelectValue placeholder={placeholder} />
       </SelectTrigger>
       <SelectContent>
@@ -226,10 +226,10 @@ function CheckboxField({ id, checked, onChange, label, testId, disabled }) {
     <label
       htmlFor={id}
       className={
-        "flex items-start gap-3 rounded-sm border border-subtle bg-card px-3 py-2.5 text-sm " +
+        "flex items-start gap-3 rounded-sm border border-border bg-card px-3 py-2.5 text-sm " +
         (disabled
-          ? "cursor-not-allowed text-soft"
-          : "cursor-pointer text-strong hover:border-primary")
+          ? "cursor-not-allowed text-muted-foreground/70"
+          : "cursor-pointer text-foreground hover:border-primary")
       }
     >
       <Checkbox
@@ -238,7 +238,7 @@ function CheckboxField({ id, checked, onChange, label, testId, disabled }) {
         disabled={disabled}
         onCheckedChange={(v) => onChange(Boolean(v))}
         data-testid={testId}
-        className="mt-0.5 border-border-strong data-[state=checked]:border-primary data-[state=checked]:bg-primary"
+        className="mt-0.5 border-border-border-strong data-[state=checked]:border-primary data-[state=checked]:bg-primary"
       />
       <span className="leading-snug">{label}</span>
     </label>
@@ -247,9 +247,9 @@ function CheckboxField({ id, checked, onChange, label, testId, disabled }) {
 
 function SectionTitle({ children, hint }) {
   return (
-    <div className="col-span-full mt-2 mb-1 border-b border-subtle pb-1">
-      <h3 className="font-['Outfit'] text-base font-medium text-strong">{children}</h3>
-      {hint && <p className="mt-0.5 text-xs text-muted-strong">{hint}</p>}
+    <div className="col-span-full mt-2 mb-1 border-b border-border pb-1">
+      <h3 className="font-display text-base font-medium text-foreground">{children}</h3>
+      {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }
@@ -270,14 +270,14 @@ function CheckboxGroup({ options, selected, onChange, testId }) {
           <label
             key={opt}
             htmlFor={id}
-            className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-sm text-strong hover:surface-sage"
+            className="flex cursor-pointer items-center gap-2 rounded-sm px-2 py-1 text-sm text-foreground hover:bg-primary/10"
           >
             <Checkbox
               id={id}
               checked={checked}
               onCheckedChange={() => toggle(opt)}
               data-testid={`${testId}-opt-${opt.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}`}
-              className="border-border-strong data-[state=checked]:border-primary data-[state=checked]:bg-primary"
+              className="border-border-border-strong data-[state=checked]:border-primary data-[state=checked]:bg-primary"
             />
             <span>{opt}</span>
           </label>
@@ -487,7 +487,7 @@ function StepBillingInsurance({ form, set, errors, providers, locations, visibil
       </div>
       {showInsurance && (
         <div data-testid="w-insurance-block" className="col-span-full grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <div className="col-span-full -mb-1 mt-2 text-xs font-semibold uppercase tracking-wider text-muted-strong">
+          <div className="col-span-full -mb-1 mt-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Primary insurance
           </div>
           <Field label="Carrier" htmlFor="pCarrier">
@@ -526,7 +526,7 @@ function StepBillingInsurance({ form, set, errors, providers, locations, visibil
             <TextInput id="pDed" testId="w-pi-deductible" value={form.primaryDeductible} onChange={set("primaryDeductible")} placeholder="$1500" />
           </Field>
 
-          <div className="col-span-full -mb-1 mt-4 text-xs font-semibold uppercase tracking-wider text-muted-strong">
+          <div className="col-span-full -mb-1 mt-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             Secondary insurance (optional)
           </div>
           <Field label="Carrier" htmlFor="sCarrier">
@@ -564,7 +564,7 @@ function StepClinicalIntake({ form, set }) {
       <SectionTitle hint="The patient's primary reason for visiting.">Chief complaint</SectionTitle>
       <Field label="Chief complaint" htmlFor="cc" className="col-span-full">
         <Textarea id="cc" data-testid="w-chief-complaint"
-          className="min-h-[90px] rounded-sm border-strong bg-card text-sm"
+          className="min-h-[90px] rounded-sm border-border-strong bg-card text-sm"
           value={form.chiefComplaint} onChange={(e) => set("chiefComplaint")(e.target.value)} />
       </Field>
       <Field label="Symptom start date" htmlFor="symStart">
@@ -619,12 +619,12 @@ function StepClinicalIntake({ form, set }) {
       <SectionTitle>History</SectionTitle>
       <Field label="Prior treatment tried" htmlFor="priorTreatment" className="col-span-full">
         <Textarea id="priorTreatment" data-testid="w-prior-treatment"
-          className="min-h-[70px] rounded-sm border-strong bg-card text-sm"
+          className="min-h-[70px] rounded-sm border-border-strong bg-card text-sm"
           value={form.priorTreatment} onChange={(e) => set("priorTreatment")(e.target.value)} />
       </Field>
       <Field label="Current medications" htmlFor="medications" className="col-span-full">
         <Textarea id="medications" data-testid="w-medications"
-          className="min-h-[60px] rounded-sm border-strong bg-card text-sm"
+          className="min-h-[60px] rounded-sm border-border-strong bg-card text-sm"
           value={form.medications} onChange={(e) => set("medications")(e.target.value)} />
       </Field>
       <Field label="Allergies" htmlFor="allergies" className="col-span-full">
@@ -632,17 +632,17 @@ function StepClinicalIntake({ form, set }) {
       </Field>
       <Field label="Prior surgeries" htmlFor="surgeries" className="col-span-full">
         <Textarea id="surgeries" data-testid="w-surgeries"
-          className="min-h-[60px] rounded-sm border-strong bg-card text-sm"
+          className="min-h-[60px] rounded-sm border-border-strong bg-card text-sm"
           value={form.surgeries} onChange={(e) => set("surgeries")(e.target.value)} />
       </Field>
       <Field label="Past medical history" htmlFor="medicalHistory" className="col-span-full">
         <Textarea id="medicalHistory" data-testid="w-medical-history"
-          className="min-h-[70px] rounded-sm border-strong bg-card text-sm"
+          className="min-h-[70px] rounded-sm border-border-strong bg-card text-sm"
           value={form.medicalHistory} onChange={(e) => set("medicalHistory")(e.target.value)} />
       </Field>
       <Field label="Provider notes (internal)" htmlFor="providerNotes" className="col-span-full">
         <Textarea id="providerNotes" data-testid="w-provider-notes"
-          className="min-h-[70px] rounded-sm border-strong bg-card text-sm"
+          className="min-h-[70px] rounded-sm border-border-strong bg-card text-sm"
           value={form.providerNotes} onChange={(e) => set("providerNotes")(e.target.value)} />
       </Field>
     </div>
@@ -658,7 +658,7 @@ function StepCaseConsents({ form, set, visibility }) {
       {!anyCase && (
         <div
           data-testid="w-case-empty-state"
-          className="col-span-full rounded-sm border border-dashed border-strong bg-card px-5 py-6 text-sm text-muted-strong"
+          className="col-span-full rounded-sm border border-dashed border-border-strong bg-card px-5 py-6 text-sm text-muted-foreground"
         >
           No case-type flags selected on the Clinical Intake step. Accident, workers&apos; compensation
           and personal-injury detail fields will appear here when you mark the matching check-box on Step 3.
@@ -945,20 +945,20 @@ export function PatientWizardDialog({
     <Dialog open={open} onOpenChange={(v) => !v && !submitting && onClose()}>
       <DialogContent
         data-testid="patient-wizard-dialog"
-        className="max-h-[92vh] max-w-5xl overflow-hidden rounded-sm border-subtle surface-app p-0"
+        className="max-h-[92vh] max-w-5xl overflow-hidden rounded-sm border-border bg-background p-0"
       >
-        <DialogHeader className="border-b border-subtle bg-card px-8 py-5">
-          <DialogTitle className="font-['Outfit'] text-2xl font-medium tracking-tight text-strong">
+        <DialogHeader className="border-b border-border bg-card px-8 py-5">
+          <DialogTitle className="font-display text-2xl font-medium tracking-tight text-foreground">
             {isEdit ? "Edit patient intake" : "New patient intake"}
           </DialogTitle>
-          <DialogDescription className="text-sm text-muted-strong">
+          <DialogDescription className="text-sm text-muted-foreground">
             Step {step} of 4 — {current.label}. All PHI is encrypted at rest and every save is audited.
             {!isEdit && (
               <span
                 data-testid="wizard-draft-autosave-indicator"
                 className={
                   "ml-3 text-xs " +
-                  (draftNotice ? "text-sage opacity-100" : "opacity-0")
+                  (draftNotice ? "text-primary opacity-100" : "opacity-0")
                 }
                 aria-live="polite"
               >
@@ -978,8 +978,8 @@ export function PatientWizardDialog({
                       (state === "done"
                         ? "border-primary bg-primary text-primary-foreground"
                         : state === "active"
-                        ? "border-foreground bg-card text-strong"
-                        : "border-strong bg-card text-soft")
+                        ? "border-foreground bg-card text-foreground"
+                        : "border-border-strong bg-card text-muted-foreground/70")
                     }
                   >
                     {state === "done" ? <Check className="h-4 w-4" /> : s.id}
@@ -988,12 +988,12 @@ export function PatientWizardDialog({
                     <div
                       className={
                         "truncate text-sm font-medium " +
-                        (state === "todo" ? "text-soft" : "text-strong")
+                        (state === "todo" ? "text-muted-foreground/70" : "text-foreground")
                       }
                     >
                       {s.label}
                     </div>
-                    <div className="truncate text-xs text-muted-strong">{s.sub}</div>
+                    <div className="truncate text-xs text-muted-foreground">{s.sub}</div>
                   </div>
                 </li>
               );
@@ -1004,7 +1004,7 @@ export function PatientWizardDialog({
         {draftPrompt && (
           <div
             data-testid="wizard-draft-prompt"
-            className="flex items-center justify-between gap-4 border-b border-border surface-warning px-8 py-3 text-sm text-warning"
+            className="flex items-center justify-between gap-4 border-b border-border bg-warning-soft px-8 py-3 text-sm text-warning"
           >
             <span>
               <strong>Unfinished draft found.</strong>{" "}
@@ -1017,7 +1017,7 @@ export function PatientWizardDialog({
                 variant="ghost"
                 onClick={discardDraft}
                 data-testid="wizard-draft-discard"
-                className="rounded-sm text-warning hover:surface-warning"
+                className="rounded-sm text-warning hover:bg-warning-soft"
               >
                 Discard
               </Button>
@@ -1026,7 +1026,7 @@ export function PatientWizardDialog({
                 size="sm"
                 onClick={resumeDraft}
                 data-testid="wizard-draft-resume"
-                className="rounded-sm bg-sage hover:bg-sage-hover"
+                className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
               >
                 Resume draft
               </Button>
@@ -1053,7 +1053,7 @@ export function PatientWizardDialog({
           {step === 4 && <StepCaseConsents form={form} set={set} visibility={visibility} />}
         </div>
 
-        <DialogFooter className="flex flex-row items-center justify-between border-t border-subtle bg-card px-8 py-4 sm:justify-between">
+        <DialogFooter className="flex flex-row items-center justify-between border-t border-border bg-card px-8 py-4 sm:justify-between">
           <Button
             type="button"
             variant="outline"
@@ -1070,7 +1070,7 @@ export function PatientWizardDialog({
               variant="ghost"
               onClick={goBack}
               disabled={step === 1 || submitting}
-              className="rounded-sm text-sage-deep hover:surface-sage"
+              className="rounded-sm text-primary hover:bg-primary/10"
               data-testid="wizard-back-btn"
             >
               <ChevronLeft className="mr-1 h-4 w-4" /> Back
@@ -1079,7 +1079,7 @@ export function PatientWizardDialog({
               <Button
                 type="button"
                 onClick={goNext}
-                className="h-10 rounded-sm bg-sage px-5 hover:bg-sage-hover"
+                className="h-10 rounded-sm bg-primary px-5 hover:bg-[var(--primary-hover)]"
                 data-testid="wizard-next-btn"
               >
                 Next <ChevronRight className="ml-1 h-4 w-4" />
@@ -1089,7 +1089,7 @@ export function PatientWizardDialog({
                 type="button"
                 onClick={submit}
                 disabled={submitting}
-                className="h-10 rounded-sm bg-sage px-6 hover:bg-sage-hover"
+                className="h-10 rounded-sm bg-primary px-6 hover:bg-[var(--primary-hover)]"
                 data-testid="wizard-save-btn"
               >
                 {submitting ? "Saving…" : isEdit ? "Save changes" : "Save patient"}
@@ -1175,7 +1175,7 @@ function Highlight({ value, rx }) {
     <>
       {parts.map((chunk, i) =>
         i % 2 === 1 ? (
-          <mark key={i} className="bg-[color:var(--sage-accent)]/25 text-strong rounded-sm px-0.5">
+          <mark key={i} className="bg-[color:var(--sage-accent)]/25 text-foreground rounded-sm px-0.5">
             {chunk}
           </mark>
         ) : (
@@ -1300,10 +1300,10 @@ export default function Patients() {
     <div data-testid="patients-page" className="space-y-8 animate-in fade-in duration-300">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">Patient lookup</span>
-          <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight text-strong">Find a patient</h1>
-          <p className="mt-2 text-sm text-muted-strong">
-            Search by name, phone, address, or DOB. Use <code className="rounded-sm surface-muted px-1">%</code> as a wildcard (e.g., <code className="rounded-sm surface-muted px-1">Test%</code>). PHI is masked in results.
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Patient lookup</span>
+          <h1 className="mt-2 font-display text-4xl font-medium tracking-tight text-foreground">Find a patient</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Search by name, phone, address, or DOB. Use <code className="rounded-sm bg-muted px-1">%</code> as a wildcard (e.g., <code className="rounded-sm bg-muted px-1">Test%</code>). PHI is masked in results.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -1311,7 +1311,7 @@ export default function Patients() {
             <Button
               data-testid="patients-new-btn"
               onClick={() => setOpen(true)}
-              className="h-11 rounded-sm bg-sage px-5 hover:bg-sage-hover"
+              className="h-11 rounded-sm bg-primary px-5 hover:bg-[var(--primary-hover)]"
             >
               <Plus className="mr-2 h-4 w-4" /> New patient
             </Button>
@@ -1321,12 +1321,12 @@ export default function Patients() {
 
       <form onSubmit={onSubmit} onKeyDown={onKeyDown} className="space-y-4">
         <div className="flex items-center justify-between gap-3">
-          <div className="inline-flex rounded-sm border border-subtle bg-card p-0.5 text-xs font-semibold">
+          <div className="inline-flex rounded-sm border border-border bg-card p-0.5 text-xs font-semibold">
             <button
               type="button"
               data-testid="search-mode-global"
               onClick={() => setMode("global")}
-              className={`px-3 py-1.5 rounded-sm uppercase tracking-wider ${mode === "global" ? "bg-sage text-white" : "text-muted-strong"}`}
+              className={`px-3 py-1.5 rounded-sm uppercase tracking-wider ${mode === "global" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
             >
               Quick lookup
             </button>
@@ -1334,7 +1334,7 @@ export default function Patients() {
               type="button"
               data-testid="search-mode-advanced"
               onClick={() => setMode("advanced")}
-              className={`px-3 py-1.5 rounded-sm uppercase tracking-wider ${mode === "advanced" ? "bg-sage text-white" : "text-muted-strong"}`}
+              className={`px-3 py-1.5 rounded-sm uppercase tracking-wider ${mode === "advanced" ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
             >
               Advanced
             </button>
@@ -1348,14 +1348,14 @@ export default function Patients() {
 
         {mode === "global" ? (
           <div className="relative">
-            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-soft" />
+            <Search className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/70" />
             <Input
               data-testid="search-q"
               autoFocus
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Test Patient · (555) 123-4567 · Test% · 01/15/1985"
-              className="h-14 rounded-sm border-subtle pl-11 text-base"
+              className="h-14 rounded-sm border-border pl-11 text-base"
             />
             {loading && (
               <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2">
@@ -1373,7 +1373,7 @@ export default function Patients() {
               <Button
                 type="submit"
                 data-testid="search-submit"
-                className="h-10 rounded-sm bg-sage px-6 hover:bg-sage-hover"
+                className="h-10 rounded-sm bg-primary px-6 hover:bg-[var(--primary-hover)]"
               >
                 <Search className="mr-2 h-4 w-4" /> Search
               </Button>
@@ -1415,14 +1415,14 @@ export default function Patients() {
 
 function AdvancedInput({ testid, label, placeholder, value, onChange }) {
   return (
-    <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-muted-strong">
+    <label className="flex flex-col gap-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
       <span>{label}</span>
       <Input
         data-testid={testid}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className="h-10 rounded-sm border-subtle text-sm font-normal normal-case tracking-normal text-strong"
+        className="h-10 rounded-sm border-border text-sm font-normal normal-case tracking-normal text-foreground"
       />
     </label>
   );
@@ -1439,18 +1439,18 @@ function SearchResults({ results, loading, activeIdx, meta, onOpen, highlightRx 
   if (results === null) return null;
   if (results.length === 0) {
     return (
-      <div data-testid="search-empty" className="rounded-sm border border-dashed border-subtle bg-card p-12 text-center">
-        <User2 className="mx-auto h-10 w-10 text-soft" />
-        <p className="mt-4 font-['Outfit'] text-lg text-strong">No matching patients</p>
-        <p className="mt-1 text-sm text-muted-strong">
-          Try a different name, phone, address, or DOB. Wildcard <code className="rounded-sm surface-muted px-1">%</code> is supported.
+      <div data-testid="search-empty" className="rounded-sm border border-dashed border-border bg-card p-12 text-center">
+        <User2 className="mx-auto h-10 w-10 text-muted-foreground/70" />
+        <p className="mt-4 font-display text-lg text-foreground">No matching patients</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Try a different name, phone, address, or DOB. Wildcard <code className="rounded-sm bg-muted px-1">%</code> is supported.
         </p>
       </div>
     );
   }
   return (
-    <div data-testid="search-results" className="overflow-hidden rounded-sm border border-subtle bg-card">
-      <div className="flex items-center justify-between border-b border-subtle surface-app px-4 py-2 text-xs uppercase tracking-wider text-muted-strong">
+    <div data-testid="search-results" className="overflow-hidden rounded-sm border border-border bg-card">
+      <div className="flex items-center justify-between border-b border-border bg-background px-4 py-2 text-xs uppercase tracking-wider text-muted-foreground">
         <span>{meta.total} result{meta.total === 1 ? "" : "s"}</span>
         <span className="text-[11px]">Use ↑↓ + Enter</span>
       </div>
@@ -1463,13 +1463,13 @@ function SearchResults({ results, loading, activeIdx, meta, onOpen, highlightRx 
             data-testid={`search-result-${r.id}`}
             onClick={() => onOpen(r)}
             onMouseEnter={() => {}}
-            className={`cursor-pointer border-b border-subtle last:border-b-0 px-4 py-3 text-sm transition-colors ${
-              idx === activeIdx ? "surface-sage" : "hover:surface-muted"
+            className={`cursor-pointer border-b border-border last:border-b-0 px-4 py-3 text-sm transition-colors ${
+              idx === activeIdx ? "bg-primary/10" : "hover:bg-muted"
             }`}
           >
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 flex-1">
-                <div className="flex items-baseline gap-2 text-strong">
+                <div className="flex items-baseline gap-2 text-foreground">
                   <span className="font-medium">
                     <Highlight
                       value={r.display_name_masked || `${r.first_name || ""} ${r.last_name || ""}`.trim() || "—"}
@@ -1477,18 +1477,18 @@ function SearchResults({ results, loading, activeIdx, meta, onOpen, highlightRx 
                     />
                   </span>
                   {r.status === "deleted" && (
-                    <span className="rounded-sm surface-danger-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase text-danger">deleted</span>
+                    <span className="rounded-sm bg-destructive-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase text-destructive">deleted</span>
                   )}
                 </div>
-                <div className="mt-0.5 text-xs text-muted-strong">
+                <div className="mt-0.5 text-xs text-muted-foreground">
                   <Highlight value={`DOB ${r.date_of_birth || "—"}`} rx={highlightRx} />
-                  <span className="mx-2 text-soft">·</span>
+                  <span className="mx-2 text-muted-foreground/70">·</span>
                   <Highlight value={r.primary_phone || "—"} rx={highlightRx} />
-                  <span className="mx-2 text-soft">·</span>
+                  <span className="mx-2 text-muted-foreground/70">·</span>
                   <Highlight value={r.address_summary || "—"} rx={highlightRx} />
                 </div>
               </div>
-              <ChevronRight className="h-4 w-4 text-soft" />
+              <ChevronRight className="h-4 w-4 text-muted-foreground/70" />
             </div>
           </li>
         ))}
@@ -1500,11 +1500,11 @@ function SearchResults({ results, loading, activeIdx, meta, onOpen, highlightRx 
 function RecentPatients({ recent, onOpen, canCreate }) {
   if (!recent.length) {
     return (
-      <div data-testid="patients-empty-hero" className="rounded-sm border border-dashed border-subtle bg-card p-16 text-center">
-        <Search className="mx-auto h-10 w-10 text-soft" />
-        <p className="mt-4 font-['Outfit'] text-lg text-strong">Search to find a patient</p>
-        <p className="mt-1 text-sm text-muted-strong">
-          Try <code className="rounded-sm surface-muted px-1">Test Patient</code>, <code className="rounded-sm surface-muted px-1">5551234567</code>, <code className="rounded-sm surface-muted px-1">01/15/1985</code>, or a wildcard like <code className="rounded-sm surface-muted px-1">Test%</code>.
+      <div data-testid="patients-empty-hero" className="rounded-sm border border-dashed border-border bg-card p-16 text-center">
+        <Search className="mx-auto h-10 w-10 text-muted-foreground/70" />
+        <p className="mt-4 font-display text-lg text-foreground">Search to find a patient</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Try <code className="rounded-sm bg-muted px-1">Test Patient</code>, <code className="rounded-sm bg-muted px-1">5551234567</code>, <code className="rounded-sm bg-muted px-1">01/15/1985</code>, or a wildcard like <code className="rounded-sm bg-muted px-1">Test%</code>.
           {canCreate && " New patient? Use the button above."}
         </p>
       </div>
@@ -1512,7 +1512,7 @@ function RecentPatients({ recent, onOpen, canCreate }) {
   }
   return (
     <section data-testid="recent-patients" className="space-y-3">
-      <h2 className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">Recently viewed</h2>
+      <h2 className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Recently viewed</h2>
       <ul className="grid grid-cols-1 gap-2 md:grid-cols-2 lg:grid-cols-3">
         {recent.map((r) => (
           <li key={r.id}>
@@ -1520,13 +1520,13 @@ function RecentPatients({ recent, onOpen, canCreate }) {
               type="button"
               data-testid={`recent-${r.id}`}
               onClick={() => onOpen(r)}
-              className="group flex w-full items-center justify-between rounded-sm border border-subtle bg-card px-4 py-3 text-left transition-colors hover:surface-muted"
+              className="group flex w-full items-center justify-between rounded-sm border border-border bg-card px-4 py-3 text-left transition-colors hover:bg-muted"
             >
               <div>
-                <div className="font-medium text-strong">{r.display || r.id.slice(0, 8)}</div>
-                <div className="text-xs text-muted-strong">DOB {r.dob || "—"}</div>
+                <div className="font-medium text-foreground">{r.display || r.id.slice(0, 8)}</div>
+                <div className="text-xs text-muted-foreground">DOB {r.dob || "—"}</div>
               </div>
-              <ChevronRight className="h-4 w-4 text-soft group-hover:text-sage" />
+              <ChevronRight className="h-4 w-4 text-muted-foreground/70 group-hover:text-primary" />
             </button>
           </li>
         ))}

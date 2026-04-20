@@ -65,10 +65,10 @@ export default function CalendarPage() {
     <div data-testid="calendar-page" className="space-y-8 animate-in fade-in duration-300">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-strong">
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
             Provider calendar
           </span>
-          <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight">
+          <h1 className="mt-2 font-display text-4xl font-medium tracking-tight">
             {rangeLabel}
           </h1>
         </div>
@@ -105,17 +105,17 @@ export default function CalendarPage() {
       {appts === null ? (
         <Skeleton className="h-[560px] rounded-sm" />
       ) : (
-        <div className="overflow-hidden rounded-sm border border-subtle bg-card">
-          <div className="grid grid-cols-7 border-b border-subtle surface-app text-xs font-semibold uppercase tracking-wider text-muted-strong">
+        <div className="overflow-hidden rounded-sm border border-border bg-card">
+          <div className="grid grid-cols-7 border-b border-border bg-background text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             {days.map((d, i) => (
               <div
                 key={d.toISOString()}
-                className={`border-r border-subtle px-4 py-3 last:border-r-0 ${
-                  sameDay(d, new Date()) ? "text-sage-deep" : ""
+                className={`border-r border-border px-4 py-3 last:border-r-0 ${
+                  sameDay(d, new Date()) ? "text-primary" : ""
                 }`}
               >
                 <div>{DAY_LABELS[i]}</div>
-                <div className="mt-1 font-['Outfit'] text-lg font-medium text-strong">
+                <div className="mt-1 font-display text-lg font-medium text-foreground">
                   {d.getDate()}
                 </div>
               </div>
@@ -129,12 +129,12 @@ export default function CalendarPage() {
                 <div
                   key={key}
                   data-testid={`cal-day-${d.toISOString().slice(0, 10)}`}
-                  className={`min-h-[160px] border-r border-b border-subtle p-2 last:border-r-0 ${
-                    sameDay(d, new Date()) ? "surface-app" : "bg-card"
+                  className={`min-h-[160px] border-r border-b border-border p-2 last:border-r-0 ${
+                    sameDay(d, new Date()) ? "bg-background" : "bg-card"
                   }`}
                 >
                   {list.length === 0 ? (
-                    <div className="flex h-full items-center justify-center py-6 text-xs text-soft">
+                    <div className="flex h-full items-center justify-center py-6 text-xs text-muted-foreground/70">
                       —
                     </div>
                   ) : (
@@ -145,13 +145,13 @@ export default function CalendarPage() {
                           data-testid={`cal-appt-${a.id}`}
                           className={`cursor-default rounded-r-sm border-l-2 p-2 text-xs ${
                             a.status === "cancelled"
-                              ? "border-destructive surface-danger-soft text-danger line-through"
-                              : "border-primary surface-sage text-strong hover:surface-sage-soft"
+                              ? "border-destructive bg-destructive-soft text-destructive line-through"
+                              : "border-primary bg-primary/10 text-foreground hover:bg-primary/5"
                           }`}
                         >
                           <div className="font-medium">{formatTime(a.start_time)}</div>
-                          <div className="truncate text-sage-deep">{a.patient_name}</div>
-                          <div className="truncate text-[11px] text-muted-strong">
+                          <div className="truncate text-primary">{a.patient_name}</div>
+                          <div className="truncate text-[11px] text-muted-foreground">
                             {a.provider_name}
                           </div>
                         </li>
