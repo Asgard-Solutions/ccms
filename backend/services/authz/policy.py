@@ -183,6 +183,42 @@ async def effective_grants(user: dict) -> list[EffectiveGrant]:
             via_elevation=True,
         )
 
+    # --- per-user permission overrides (exceptions) ---
+    # These are stored in `permission_scopes` and always take precedence over
+    # role grants. They can either GRANT a permission not in the role or
+    # BROADEN a scope the role already covers.
+    async for ov in db.permission_scopes.find(
+        {"user_id": uid, "status": "active"}, {"_id": 0},
+    ):
+        exp = ov.get("expires_at")
+        if exp:
+            if isinstance(exp, str):
+                try:
+                    exp_dt = datetime.fromisoformat(exp)
+                except ValueError:
+                    continue
+            else:
+                exp_dt = exp
+            if exp_dt and exp_dt.tzinfo is None:
+                exp_dt = exp_dt.replace(tzinfo=timezone.utc)
+            if not exp_dt or exp_dt < now:
+                continue
+        key = ov["permission_key"]
+        cur = grants.get(key)
+        cand = EffectiveGrant(
+            permission_key=key,
+            scope=ov.get("scope") or "all_org",
+            requires_mfa=bool(ov.get("requires_mfa")),
+            requires_approval=bool(ov.get("requires_approval")),
+            break_glass_allowed=bool(ov.get("break_glass_allowed")),
+            source_role="override:" + str(ov["id"]),
+        )
+        # Override always wins if it broadens scope OR if permission was
+        # otherwise absent; if it would narrow an existing grant, the role
+        # grant stays (least-astonishment).
+        if cur is None or SCOPE_RANK.get(cand.scope, -1) >= SCOPE_RANK.get(cur.scope, -1):
+            grants[key] = cand
+
     if legacy_shim and not AUTHZ_BYPASS:
         logger.debug("authz legacy-role shim used for user=%s role=%s", uid, user.get("role"))
     return list(grants.values())
@@ -362,23 +398,18 @@ def require_permission(
     action: str,
     *,
     ctx_from_path: dict[str, str] | None = None,
+    audit_allow: bool = True,
 ):
     """FastAPI dependency factory.
 
-    Usage:
-        @router.get("/patients/{patient_id}")
-        async def get(
-            patient_id: str,
-            user: dict = Depends(require_permission(
-                "patient", "read", ctx_from_path={"patient_id": "patient_id"},
-            )),
-        ):
-            ...
-
-    Audit:
-      * SUCCESS allow → `authz.allow`
-      * DENY → `authz.denied`  (failure)
-      * requires_mfa but no reauth → 401 with X-Reauth-Required header
+    Args:
+        resource, action: permission key components.
+        ctx_from_path: optional mapping of resource-context keys to path
+            parameter names (e.g. `{"patient_id": "patient_id"}`).
+        audit_allow: when False, skip the `authz.allow` audit row. Use this
+            for routes that already emit a semantic audit (e.g. the patient
+            list handler writes `patient.list_viewed`) so we don't double
+            audit volume. Denials and MFA/approval gates are always audited.
     """
     from core.deps import get_current_user  # lazy import to avoid cycle
 
@@ -453,22 +484,25 @@ def require_permission(
                 "This action requires approval. Please request an elevation.",
             )
 
-        # Success audit — cheap, lets the "allow" side be visible in access review.
-        await log_audit(
-            action="authz.allow",
-            actor_id=user.get("id"),
-            actor_email=user.get("email"),
-            actor_role=user.get("role"),
-            entity_type=resource,
-            entity_id=ctx.get("patient_id") or ctx.get("entity_id"),
-            request=request,
-            metadata={
-                "target_action": action,
-                "scope": decision.scope,
-                "via_elevation": decision.via_elevation,
-                "source_role": decision.source_role,
-            },
-        )
+        # Success audit — only emit when the route hasn't opted out. Most
+        # migrated routes already write a semantic audit (e.g.
+        # `patient.list_viewed`) so we skip the authz.allow row there.
+        if audit_allow:
+            await log_audit(
+                action="authz.allow",
+                actor_id=user.get("id"),
+                actor_email=user.get("email"),
+                actor_role=user.get("role"),
+                entity_type=resource,
+                entity_id=ctx.get("patient_id") or ctx.get("entity_id"),
+                request=request,
+                metadata={
+                    "target_action": action,
+                    "scope": decision.scope,
+                    "via_elevation": decision.via_elevation,
+                    "source_role": decision.source_role,
+                },
+            )
         # Stash decision on request.state for route-level inspection.
         request.state.authz = decision
         return user

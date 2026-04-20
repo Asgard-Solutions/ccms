@@ -32,6 +32,7 @@ from fastapi.responses import StreamingResponse
 from core.audit import audit_success
 from core.db import get_db_read
 from core.deps import require_role
+from services.authz.policy import require_permission
 
 router = APIRouter(prefix="/audit-logs", tags=["audit"])
 
@@ -75,7 +76,7 @@ def _build_query(
 @router.get("")
 async def list_audit_logs(
     request: Request,
-    user: dict = Depends(require_role("admin")),
+    user: dict = Depends(require_permission("audit_log", "read", audit_allow=False)),
     actor_id: str | None = None,
     actor_email: str | None = None,
     entity_type: str | None = None,
@@ -107,7 +108,7 @@ async def list_audit_logs(
 @router.get("/export.csv")
 async def export_audit_logs_csv(
     request: Request,
-    user: dict = Depends(require_role("admin")),
+    user: dict = Depends(require_permission("audit_log", "export", audit_allow=False)),
     actor_id: str | None = None,
     actor_email: str | None = None,
     entity_type: str | None = None,

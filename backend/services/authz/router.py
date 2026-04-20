@@ -27,6 +27,8 @@ from services.authz.models import (
     LocationCreate,
     LocationOut,
     PatientAssignmentCreate,
+    PermissionOverrideCreate,
+    PermissionOverrideOut,
     RoleAssign,
     RoleUnassign,
     UserLocationAssign,
@@ -550,3 +552,123 @@ async def cancel_elevation(
         request=request,
     )
     return {"message": "Elevation revoked"}
+
+
+# ---------------------------------------------------------------------------
+# Per-user permission overrides (exceptions)
+#
+# Use sparingly — every override weakens the auditability of "who has what".
+# Ideal for temporary vendor access, clinician covering an out-of-scope
+# patient panel, or an auditor needing a one-off view. Every override is
+# fully audited and tied to a written reason; `expires_at` is strongly
+# recommended (null = permanent; revoked_at is the kill switch).
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/users/{user_id}/overrides",
+    status_code=201,
+    response_model=PermissionOverrideOut,
+)
+async def grant_override(
+    user_id: str,
+    payload: PermissionOverrideCreate,
+    request: Request,
+    admin: dict = Depends(require_permission("permission", "update")),
+):
+    db = get_db_write()
+    perm = await db.permissions.find_one({"key": payload.permission_key}, {"_id": 0})
+    if not perm:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown permission")
+    target = await db.users.find_one({"id": user_id}, {"_id": 0, "id": 1, "email": 1})
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    now = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user_id,
+        "target_email": target["email"],
+        "permission_key": payload.permission_key,
+        "scope": payload.scope,
+        "requires_mfa": payload.requires_mfa,
+        "requires_approval": payload.requires_approval,
+        "break_glass_allowed": payload.break_glass_allowed,
+        "reason": payload.reason.strip(),
+        "status": "active",
+        "granted_by_id": admin["id"],
+        "granted_by_email": admin["email"],
+        "created_at": now,
+        "expires_at": payload.expires_at,
+        "revoked_at": None,
+    }
+    await db.permission_scopes.insert_one(doc)
+    # Bump session epoch so old tokens pick up the new grant.
+    await db.users.update_one(
+        {"id": user_id}, {"$inc": {"session_epoch": 1}, "$set": {"updated_at": now}},
+    )
+    await log_audit(
+        action="authz.override_granted",
+        actor_id=admin["id"], actor_email=admin["email"], actor_role=admin.get("role"),
+        entity_type="user", entity_id=user_id,
+        request=request,
+        metadata={
+            "permission_key": payload.permission_key,
+            "scope": payload.scope,
+            "expires_at": payload.expires_at,
+            "reason": doc["reason"],
+            "target_email": target["email"],
+            "sessions_revoked": True,
+        },
+    )
+    return doc
+
+
+@router.get("/users/{user_id}/overrides")
+async def list_overrides(
+    user_id: str,
+    include_revoked: bool = False,
+    admin: dict = Depends(require_permission("permission", "read")),
+):
+    db = get_db_read()
+    q: dict = {"user_id": user_id}
+    if not include_revoked:
+        q["status"] = "active"
+    rows = [
+        r async for r in db.permission_scopes.find(q, {"_id": 0}).sort(
+            "created_at", -1,
+        )
+    ]
+    return rows
+
+
+@router.delete("/users/{user_id}/overrides/{override_id}")
+async def revoke_override(
+    user_id: str,
+    override_id: str,
+    request: Request,
+    admin: dict = Depends(require_permission("permission", "update")),
+):
+    db = get_db_write()
+    doc = await db.permission_scopes.find_one(
+        {"id": override_id, "user_id": user_id}, {"_id": 0},
+    )
+    if not doc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Override not found")
+    if doc["status"] != "active":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Already revoked")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.permission_scopes.update_one(
+        {"id": override_id},
+        {"$set": {"status": "revoked", "revoked_at": now}},
+    )
+    await db.users.update_one(
+        {"id": user_id}, {"$inc": {"session_epoch": 1}},
+    )
+    await log_audit(
+        action="authz.override_revoked",
+        actor_id=admin["id"], actor_email=admin["email"], actor_role=admin.get("role"),
+        entity_type="user", entity_id=user_id,
+        request=request,
+        metadata={"permission_key": doc["permission_key"],
+                  "override_id": override_id, "sessions_revoked": True},
+    )
+    return {"message": "Override revoked"}

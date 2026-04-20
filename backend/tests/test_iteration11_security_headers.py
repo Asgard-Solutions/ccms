@@ -179,6 +179,8 @@ def test_regression_patients_list_masked(admin_session):
 
 
 def test_regression_audit_logs(admin_session):
+    # After iter13 migration, audit_log.read is MFA-gated → reauth first.
+    admin_session.post(f"{API}/auth/reauth", json={"password": "Admin@ComplianceClinic1"}, timeout=15)
     r = admin_session.get(f"{API}/audit-logs?limit=5", timeout=15)
     assert r.status_code == 200
 

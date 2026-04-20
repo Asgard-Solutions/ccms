@@ -24,6 +24,7 @@ from core.db import get_db, get_db_read, get_db_write, read_after_write_db
 from core.deps import get_current_user, require_role
 from core.masking import mask_patient
 from core.reauth import require_reauth
+from services.authz.policy import require_permission
 from services.patient.models import (
     MedicalRecordCreate,
     MedicalRecordPublic,
@@ -125,7 +126,7 @@ async def list_patients(
 async def create_patient(
     payload: PatientCreate,
     request: Request,
-    actor: dict = Depends(require_role(*STAFF_ROLES)),
+    actor: dict = Depends(require_permission("patient", "create", audit_allow=False)),
 ):
     db = get_db_write()
     now = _now()
@@ -215,7 +216,7 @@ async def update_patient(
     patient_id: str,
     payload: PatientUpdate,
     request: Request,
-    actor: dict = Depends(require_role(*STAFF_ROLES)),
+    actor: dict = Depends(require_permission("patient", "update", audit_allow=False)),
 ):
     db = get_db_write()
     updates = {k: v for k, v in payload.model_dump().items() if v is not None}
@@ -248,7 +249,7 @@ async def delete_patient(
     patient_id: str,
     request: Request,
     reason: str = Query(default=""),
-    admin: dict = Depends(require_role("admin")),
+    admin: dict = Depends(require_permission("patient", "delete", audit_allow=False)),
 ):
     enforced_reason = _enforce_reason(reason, required=True)
     require_reauth(request, admin)
@@ -386,7 +387,7 @@ async def add_record(
     patient_id: str,
     payload: MedicalRecordCreate,
     request: Request,
-    user: dict = Depends(require_role("admin", "doctor")),
+    user: dict = Depends(require_permission("patient_chart", "create", audit_allow=False)),
 ):
     require_reauth(request, user)
 

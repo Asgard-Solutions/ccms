@@ -165,11 +165,31 @@ Every authz decision is also mirrored into the structured security JSON log (`co
 
 ## 9. Rollout plan (dual-run → single-run)
 
-1. **Now**: matrix + policy engine + admin UI + reports live; routers still call `require_role()` for backwards compatibility. `/api/authz/me/permissions` is authoritative for the frontend.
-2. **Next**: migrate each router to `require_permission()` (patient → scheduling → audit → identity). Each migration removes one `require_role()` call and adds a `scope_filter()` in the list handler.
-3. **Cut-over**: once all routers are migrated, delete `LEGACY_ROLE_TO_KEY` shim and drop the `users.role` string column.
-4. **Post-cut-over**: enable `APP_ENV=production` + set all CUSTOMIZE grants through `role_permissions` rows with `custom=true`.
+1. **Now**: matrix + policy engine + admin UI + reports live. `patient` / `scheduling` / `audit` routers migrated to `require_permission()`. `identity` admin routes still use `require_role("admin")` pending a wider refactor (self-service routes like `/auth/me` don't need authz migration).
+2. **Migrated routes** use `audit_allow=False` so they don't duplicate `authz.allow` rows with the semantic audit the route already emits (e.g. `patient.created`). `authz.denied` / `authz.mfa_required` / `authz.approval_required` are **always** written.
+3. **Next**: migrate remaining admin identity routes (`/auth/users/{id}/...`) and privacy/communication routers. Each migration adds a `scope_filter()` call in the list handler.
+4. **Cut-over**: once all routers are migrated, delete `LEGACY_ROLE_TO_KEY` shim and drop the `users.role` string column.
+5. **Post-cut-over**: enable `APP_ENV=production` + set all customized grants through `role_permissions` rows with `custom=true`.
 
-## 10. Testing
+## 10. Per-user overrides (exception grants)
 
-`backend/tests/test_iteration12_authz.py` covers: matrix shape, role catalogue, permission catalogue, `/me/permissions` for each legacy role, `require_permission` denial paths, MFA gate on audit reports (401 without reauth / 200 with reauth), end-to-end elevation (request → approve → separation-of-duties), role assign/revoke with session-epoch bump, reporting endpoints smoke, patient-portal scope containment, denial audit rows.
+Use cases:
+- Temporary vendor / contractor access to a limited resource.
+- Clinician covering an out-of-panel patient for a single day.
+- External auditor needing one-off read on a privileged report.
+
+Operations:
+- `POST /api/authz/users/{user_id}/overrides` — requires `permission.update` (admin + MFA reauth). Body: `{permission_key, scope, requires_mfa, requires_approval, break_glass_allowed, reason (≥10 chars), expires_at}`. 201 returns the full override document. Session epoch of the target user is bumped so existing tokens pick up the new grant.
+- `GET /api/authz/users/{user_id}/overrides?include_revoked=false` — list overrides (admin + `permission.read`).
+- `DELETE /api/authz/users/{user_id}/overrides/{override_id}` — revoke an override. Session epoch bumped again.
+
+Semantics:
+- Overrides are **additive**: they union with role grants. If the user already has the permission via a role, the override wins only if it **broadens** the scope.
+- Overrides with a non-null `expires_at` in the past are ignored.
+- Every grant and revoke writes an `authz.override_granted` / `authz.override_revoked` audit row.
+- Admin UI: the Role Management page exposes a per-user "Overrides" dialog with a permission autocomplete, scope picker, reason textbox, and optional `expires_at`.
+
+## 11. Testing
+
+- `tests/test_iteration12_authz.py` — matrix + core policy engine (15 tests).
+- `tests/test_iteration13_migration_overrides.py` — router migration + overrides end-to-end (9 tests). Covers: admin patient list still works, audit log now requires MFA reauth, patient cannot delete, doctor still creates appointments, grant-then-revoke override flow bumps session_epoch and is reflected in `/me/permissions`, non-admin cannot grant overrides, unknown permission rejected, no double-audit from migrated routes (`authz.allow` not written alongside `patient.created`).

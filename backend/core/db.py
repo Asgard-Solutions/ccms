@@ -152,4 +152,6 @@ async def create_indexes() -> None:
     await db.patient_assignments.create_index([("patient_id", 1), ("status", 1)])
     await db.elevation_requests.create_index([("requester_id", 1), ("status", 1)])
     await db.elevation_requests.create_index([("created_at", -1)])
+    await db.permission_scopes.create_index([("user_id", 1), ("status", 1)])
+    await db.permission_scopes.create_index("permission_key")
     await db.audit_logs.create_index("action")

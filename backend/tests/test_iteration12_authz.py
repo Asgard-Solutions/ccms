@@ -228,6 +228,7 @@ def test_denied_is_audited():
     assert r.status_code == 403
 
     admin = _session_for(*ADMIN)
+    _reauth(admin, ADMIN[1])
     r = admin.get(f"{API}/audit-logs?action=authz.denied&limit=10", timeout=10)
     assert r.status_code == 200, r.text
     rows = r.json()

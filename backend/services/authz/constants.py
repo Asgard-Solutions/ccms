@@ -297,10 +297,26 @@ ROLE_GRANTS: dict[str, list[dict]] = {
     # documented in AUTHORIZATION_GUIDE.md §7.
     "super_admin": [
         g("patient", "read", "phi_limited"),
+        # Demo/bootstrap: SA retains CRUD + audit export that the legacy admin
+        # role had. In a segregation-of-duties production tenant these would
+        # move to clinic_manager / front_desk / billing_specialist. Matrix
+        # purists can remove these lines via a `custom=true` role_permissions
+        # override in the DB without code changes.
+        g("patient", "create"),
+        g("patient", "update"),
+        g("patient", "delete", "all_org", "MFA"),
+        g("patient", "export", "all_org", "MFA"),
         g("patient_chart", "read", "phi_full", "MFA|BG"),
+        g("patient_chart", "create"),
+        g("patient_chart", "update"),
+        g("patient_chart", "manage"),
         g("soap_note", "read", "phi_full", "MFA|BG"),
         g("treatment_plan", "read", "phi_full", "MFA|BG"),
         g("appointment", "read", "phi_limited"),
+        g("appointment", "create"),
+        g("appointment", "update"),
+        g("appointment", "delete"),
+        g("waitlist", "manage"),
         g("intake_form", "read", "phi_limited"),
         g("insurance", "read", "phi_limited"),
         g("billing", "read", "phi_limited"),
@@ -310,6 +326,9 @@ ROLE_GRANTS: dict[str, list[dict]] = {
         g("message", "read", "phi_limited"),
         g("consent", "read"),
         g("audit_log", "read", "all_org", "MFA"),
+        g("audit_log", "export", "all_org", "MFA"),
+        g("phi_access_report", "read", "all_org", "MFA"),
+        g("access_review", "manage", "all_org", "MFA"),
         g("security_event", "read", "all_org", "MFA"),
         g("user", "read"),
         g("user", "invite", "all_org", "MFA"),

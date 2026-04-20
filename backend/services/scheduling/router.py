@@ -16,6 +16,7 @@ from core.crypto import decrypt_fields, encrypt_fields
 from core.db import get_db_read, get_db_write, read_after_write_db
 from core.deps import get_current_user, require_role
 from core.event_bus import publish
+from services.authz.policy import require_permission
 from services.scheduling.models import (
     AppointmentCreate,
     AppointmentPublic,
@@ -86,7 +87,7 @@ async def _check_conflict(
 async def create_appointment(
     payload: AppointmentCreate,
     request: Request,
-    actor: dict = Depends(require_role(*STAFF_ROLES)),
+    actor: dict = Depends(require_permission("appointment", "create", audit_allow=False)),
 ):
     db = get_db_write()
     if payload.end_time <= payload.start_time:
@@ -222,7 +223,7 @@ async def update_appointment(
     appointment_id: str,
     payload: AppointmentUpdate,
     request: Request,
-    actor: dict = Depends(require_role(*STAFF_ROLES)),
+    actor: dict = Depends(require_permission("appointment", "update", audit_allow=False)),
 ):
     db = get_db_write()
     current = await db.appointments.find_one({"id": appointment_id}, {"_id": 0})

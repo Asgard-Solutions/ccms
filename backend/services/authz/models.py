@@ -104,6 +104,33 @@ class ElevationOut(BaseModel):
     used_at: str | None = None
 
 
+class PermissionOverrideCreate(BaseModel):
+    permission_key: str
+    scope: str = "all_org"
+    requires_mfa: bool = False
+    requires_approval: bool = False
+    break_glass_allowed: bool = False
+    reason: str = Field(..., min_length=10, max_length=500)
+    expires_at: str | None = None  # ISO datetime; null = permanent
+
+
+class PermissionOverrideOut(BaseModel):
+    id: str
+    user_id: str
+    permission_key: str
+    scope: str
+    requires_mfa: bool
+    requires_approval: bool
+    break_glass_allowed: bool
+    reason: str
+    status: str
+    granted_by_id: str
+    granted_by_email: str
+    created_at: str
+    expires_at: str | None = None
+    revoked_at: str | None = None
+
+
 class PermissionCheckResult(BaseModel):
     allow: bool
     scope: str | None = None

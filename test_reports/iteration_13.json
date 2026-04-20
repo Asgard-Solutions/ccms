@@ -1,0 +1,53 @@
+{
+  "summary": "Iteration 13 (router migration to require_permission + per-user permission overrides) — FULL verification against https ingress. Backend: 9/9 iter13 tests pass, 15/15 iter12 regressions pass, 43/43 iter7+iter11 regressions pass once the stale iter11 audit-logs regression test was updated to include the now-mandatory MFA reauth (direct consequence of the documented migration). Frontend: /roles page shows an Overrides button next to every Assign role button (196 user rows × 2 buttons). The UserOverridesDialog opens cleanly with Permission autocomplete, Scope dropdown (all_org default, 8 options available), Reason input carrying a visible 'MIN 10 CHARS' hint, optional Expires (ISO datetime) field, and a 'Grant override' submit button that is correctly disabled on open until all required fields are populated. All 10 admin pages (patients/audit-log/compliance/privacy/roles/permissions/access-review/elevation/security-config/security) render for admin; /audit-log and /access-review render skeletons with the known iter12 reauth-required behaviour (401s surfaced via toast) — pre-existing UX polish item, not introduced by iter13.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "test-suite/test_iteration11_security_headers.py::test_regression_audit_logs", "issue": "Stale regression test expected 200 on GET /api/audit-logs without reauth. Iter13 migration correctly makes audit_log.read MFA-gated. I patched the test to call POST /api/auth/reauth before the GET — now green. No product code change."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/audit-log and /access-review (pre-existing from iter12)", "issues": ["MFA-gated pages surface 401 via toast and leave skeleton empty until the user goes to /security to reauth — inline reauth prompt would improve UX. Not new in iter13."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration13_migration_overrides.py",
+    "/app/backend/tests/test_iteration12_authz.py",
+    "/app/backend/tests/test_iteration7_privacy.py",
+    "/app/backend/tests/test_iteration11_security_headers.py",
+    "/app/test_reports/pytest/iteration13.xml",
+    "/app/test_reports/pytest/iteration13_iter12.xml",
+    "/app/test_reports/pytest/iteration13_regression.xml"
+  ],
+  "action_items": [
+    "None blocking. Previously-logged UX polish items from iter12 still open: (1) disable Elevation-Request Submit until reason>=10 chars client-side; (2) offer inline reauth on /access-review and /audit-log so stat cards/log list populate without navigating to /security. Both are cosmetic."
+  ],
+  "critical_code_review_comments": [
+    "policy.require_permission(..., audit_allow=False) is correctly wired into migrated routers (patient/scheduling/audit/identity). Verified behaviour: POST /api/patients emits exactly ONE audit row with action='patient.created' and ZERO authz.allow rows keyed to the same entity_id (test_migrated_routes_do_not_double_audit green). Denials/MFA/approval gates are still always audited — as intended.",
+    "GET /api/audit-logs is now MFA-gated (requires_mfa=True on audit_log.read for super_admin). Without reauth → 401 + X-Reauth-Required:1, with reauth → 200. Same pattern for /api/audit-logs/export.csv. Verified green.",
+    "/api/authz/users/{uid}/overrides endpoints (POST/GET/DELETE) are correctly scoped admin-only + MFA. Unknown permission_key → 400. Non-admin doctor → 401/403. Granting bumps session_epoch so existing tokens for the target are revoked — user must re-login to pick up the new grant (verified via two sequential /auth/login calls in test_override_grant_and_revoke_flow).",
+    "Override model persists source_role='override:<id>' which then appears in /api/authz/me/permissions after re-login and disappears after revoke — verified round-trip.",
+    "Override audit trail: authz.override_granted and authz.override_revoked rows are written — verified via /api/audit-logs filter.",
+    "Super_admin grants were extended to retain legacy admin CRUD (patient/appointment create/update/delete + audit_log.export). Documented as bootstrap posture in AUTHORIZATION_GUIDE.md §10 — this is a conscious design choice, acceptable for the HIPAA-hardened bootstrap tier but worth flagging in future hardening iterations.",
+    "Frontend UserOverridesDialog client-side-validates min-10-char reason (Grant button remains disabled until filled). Scope dropdown exposes 8 options. Good UX; mirrors the iter12 feedback pattern that was missing on the Elevation dialog.",
+    "session_epoch rotation on both grant and revoke is symmetric — eliminates a stale-grant window. Good.",
+    "permission_scopes collection has an index on (user_id, permission_key, status) — confirmed in core/db.py.",
+    "Zero new CSP violations on /roles after the dialog was added (re-verified from iter11 baseline)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration11_security_headers.py (stale regression test patched to include POST /auth/reauth before calling the now-MFA-gated GET /audit-logs endpoint)"
+  ],
+  "success_rate": {
+    "backend": "100% — iter13: 9/9, iter12: 15/15, iter7: 27/27, iter11: 17/17 after fixing one stale regression test. 68/68 total in isolation.",
+    "frontend": "100% — Overrides button + dialog present on every row of /roles, validation works, disable-until-valid works, all 10 admin pages render."
+  },
+  "test_credentials": "Used /app/memory/test_credentials.md verbatim. admin@ccms.app / Admin@ComplianceClinic1 for privileged calls; doctor/patient identical to prior iterations.",
+  "seed_data_creation": "Tests created (then auto-retained, no cleanup needed) one permission_scopes row granting patient@ccms.app → role.read (revoked at test end). One new patient row 'AuditTest NoDouble' under a random email — same pattern as prior iterations (no PHI).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 13 merged two changes: (a) migrated legacy require_role() call-sites on patient / scheduling / audit / identity routers to require_permission(resource, action) with audit_allow=False so semantic audits aren't doubled up, and (b) added per-user permission overrides (permission_scopes collection) with CRUD endpoints under /api/authz/users/{uid}/overrides. Backend tests live at /app/backend/tests/test_iteration13_migration_overrides.py — 9/9 green. To run all iteration suites: REACT_APP_BACKEND_URL=https://patient-hub-95.preview.emergentagent.com CCMS_BASE_URL=https://patient-hub-95.preview.emergentagent.com/api pytest backend/tests/test_iteration13_migration_overrides.py backend/tests/test_iteration12_authz.py backend/tests/test_iteration7_privacy.py backend/tests/test_iteration11_security_headers.py. Rate-limit cooldown rule from iter10/11/12 STILL APPLIES — ~80-90s gap between suites on shared ingress IP or you'll see 429s. Frontend UI: /roles Overrides button + dialog verified. MFA reauth for audit-logs is now default (correct); iter11 regression test was adjusted to match. MOCKED: email/SMS comms only (unchanged).",
+  "rca of the issue": "No product bugs. One stale test had to be updated to track the intentional permission change: GET /api/audit-logs used to be admin-role-checked (200 with just a login cookie). After iter13 migration it is MFA-gated (requires_mfa=True on audit_log.read), so returns 401 until POST /api/auth/reauth is called. That 401 is the desired behaviour (verified by test_admin_audit_log_requires_mfa_after_migration + test_admin_audit_log_ok_with_reauth in iter13). I updated test_iteration11_security_headers.py::test_regression_audit_logs to reauth first. Product code is correct."
+}
