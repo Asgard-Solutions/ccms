@@ -41,6 +41,7 @@ from services.reports.router import router as reports_router  # noqa: E402
 from services.scheduling.router import router as scheduling_router  # noqa: E402
 from services.tenancy.router import router as tenancy_router  # noqa: E402
 from services.tenancy.seed import seed_tenancy  # noqa: E402
+from services.workforce.router import router as workforce_router  # noqa: E402
 
 
 logging.basicConfig(
@@ -79,6 +80,7 @@ api_router.include_router(reports_router)
 api_router.include_router(exports_router)
 api_router.include_router(compliance_ops_router)
 api_router.include_router(infra_router)
+api_router.include_router(workforce_router)
 api_router.include_router(metrics_router)  # GET /api/metrics
 
 app.include_router(api_router)

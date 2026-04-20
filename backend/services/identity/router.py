@@ -253,6 +253,9 @@ async def login(payload: UserLogin, request: Request, response: Response):
             action="auth.login", request=request, actor_email=email,
             reason="invalid_credentials",
         )
+        # Iteration 19 — suspicious-login detection on failures.
+        from services.workforce.router import record_login_signal
+        await record_login_signal(user or {"email": email}, request, outcome="failure")
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid email or password")
 
     if user.get("status") == "disabled":
@@ -318,6 +321,11 @@ async def _finalise_login(db, user: dict, response: Response, request: Request) 
         {"id": user["id"]},
         {"$set": {"last_login_at": session_started_at}},
     )
+    # Iteration 19 — run suspicious-login detection BEFORE the auth.login
+    # audit row so the "prior IP lookup" doesn't match the row we're about
+    # to write.
+    from services.workforce.router import record_login_signal
+    await record_login_signal(user, request, outcome="success")
     await log_audit(
         action="auth.login",
         actor_id=user["id"],

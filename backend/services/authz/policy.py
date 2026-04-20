@@ -458,16 +458,26 @@ def require_permission(
             raise HTTPException(status.HTTP_403_FORBIDDEN, detail)
 
         # MFA gate for sensitive actions — require the reauth cookie.
-        if decision.requires_mfa:
+        # Iteration 19: also enforce MFA when user.step_up_required is True
+        # (e.g. suspicious login detected, or outstanding break-glass
+        # attestation overdue). The gate is active for ANY permission
+        # beyond the trivial self-read actions so the operator cannot
+        # silently bypass it via a non-MFA-flagged permission.
+        step_up = bool(user.get("step_up_required"))
+        trivial = resource in ("self",) or (
+            resource == "session" and action in ("read_self",)
+        )
+        if decision.requires_mfa or (step_up and not trivial):
             if not (request.headers.get("x-reauth-token") or request.cookies.get("reauth_token")):
                 response_headers = {"X-Reauth-Required": "1"}
                 await audit_failure(
                     action="authz.mfa_required",
                     request=request,
                     actor_email=user.get("email"),
-                    reason="reauth_missing",
+                    reason="reauth_missing" + ("_step_up" if step_up and not decision.requires_mfa else ""),
                     metadata={
                         "resource": resource, "target_action": action,
+                        "step_up_required": step_up,
                         **ctx,
                     },
                 )
