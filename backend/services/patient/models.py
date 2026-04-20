@@ -54,16 +54,21 @@ class Demographics(BaseModel):
     ethnicity: str | None = None
     occupation: str | None = None
     employer: str | None = None
+    employer_phone: str | None = None
 
 
 class ContactInfo(BaseModel):
     model_config = ConfigDict(extra="ignore")
     phone: str | None = None
     phone_alt: str | None = None
+    phone_work: str | None = None
     email: EmailStr | None = None
     preferred_contact_method: str | None = None  # phone|email|sms|portal
     best_time_to_call: str | None = None
     ok_to_leave_message: bool | None = None
+    sms_consent: bool | None = None
+    email_consent: bool | None = None
+    voicemail_consent: bool | None = None
 
 
 class AddressInfo(BaseModel):
@@ -107,6 +112,7 @@ class GuarantorInfo(BaseModel):
     email: EmailStr | None = None
     address: str | None = None
     employer: str | None = None
+    employer_phone: str | None = None
     ssn_last4: str | None = Field(default=None, max_length=4)
 
 
@@ -137,6 +143,7 @@ class ClinicalIntake(BaseModel):
     model_config = ConfigDict(extra="ignore")
     chief_complaint: str | None = None
     complaint_onset: str | None = None
+    onset_type: str | None = None  # sudden|gradual|acute|chronic|other
     pain_level: int | None = Field(default=None, ge=0, le=10)
     pain_description: str | None = None
     pain_locations: list[str] | None = None
@@ -168,6 +175,8 @@ class CaseDetails(BaseModel):
     adjuster_name: str | None = None
     adjuster_phone: str | None = None
     employer_for_claim: str | None = None
+    work_comp_carrier: str | None = None
+    auto_carrier: str | None = None
     return_to_work_status: str | None = None
     notes: str | None = None
 
