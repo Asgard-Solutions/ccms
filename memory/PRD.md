@@ -860,3 +860,54 @@ page into a single operational scheduling experience.
 - ClinicSettings shows Payers + Fee schedules sections with
   functional dialogs.
 - Captures stream chronologically into the patient ledger.
+
+## Iteration 26 — Billing Phase 3 Claims UI wired (2026-04-20)
+
+### Backend (already landed in iteration 25, tests remain at 69/69 passing)
+- Scrubber engine `services/billing/scrubber.py` with blocking errors
+  vs warnings, code linkage via `entity_path`.
+- `POST /api/billing/claims/from-invoice/{invoice_id}` — drafts a
+  claim from a captured insurance/mixed invoice; inherits payer,
+  policy, lines; diagnoses seed from source medical record.
+- `POST /api/billing/claims/{id}/validate` — runs scrubber, writes
+  error/warning counts, auto-transitions draft/validation_failed/ready
+  states, persists each run into `claim_validation_runs`.
+- `GET /api/billing/claims/{id}/detail`, `PUT .../header`,
+  `PUT .../diagnoses`, `PUT .../lines` for authoring.
+- `POST /api/billing/claims/{id}/submit` (reuses transitions).
+
+### Frontend (new this iteration)
+- Routes: `/billing/claims` (Queue) and `/billing/claims/:id` (Detail)
+  in `App.js` under `admin|doctor|staff` RBAC.
+- Sidebar entry **Claims** (FileStack) in `AppShell.jsx`.
+- `BillingDashboard` gains a secondary "Claims queue" button.
+- `InvoiceDetail` gains a **Generate claim** button that calls the
+  from-invoice endpoint and navigates to the new claim. Server rejects
+  self-pay invoices with a 409 surfaced as a toast.
+- Claim Detail edit surfaces: Header (with defensive
+  `claim_type || "professional"` default for Radix Select), Diagnoses
+  (1..12 ICD-10 codes), Service lines (code, date, units, billed, dx
+  pointers, modifiers).
+- Scrubber panel shows error codes with `entity_path` hint; warnings in
+  a separate amber-toned section; clean pass highlights success state.
+
+### Verified
+- All three edit dialogs mount correctly on fresh page loads
+  (screenshot verified: header, diagnoses, lines).
+- Reauth flow properly mediated by `ReauthGate` for validate/submit/
+  update/generate-claim mutations.
+- Seed data has 42 claims (2 ready, 4 validation_failed) and 14
+  invoices eligible for from-invoice generation.
+
+### Known follow-ups
+- Dedupe sonner toasts for rapid self-pay Generate-claim clicks
+  (cosmetic; `toast.error(..., {id: 'gen-claim'})`).
+- `BillingTotal` card on Claims Queue aggregates only the filtered
+  subset — relabel to "Billed (filtered)" for clarity.
+- Persist an "Eligibility reason" inline alert on `InvoiceDetail` when
+  from-invoice returns 409, so the reason doesn't vanish with the
+  toast.
+- Consider splitting Header/Diagnoses/Lines edit dialogs out of
+  `ClaimDetail.jsx` (currently 755 lines) into
+  `pages/billing/dialogs/` for maintainability.
+
