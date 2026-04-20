@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 11 validated the new SecurityHeadersMiddleware + /api/compliance/transport admin endpoint and ran a full regression of prior phases (iter5/6/7/8/9) plus an end-to-end frontend smoke. All 17 iteration_11 tests pass. Full regression passes 102/102 (iter5 20, iter6+7+8 48, iter9 17, iter11 17) when suites are isolated with the known rate-limit-bucket cool-down documented in iteration_10. Frontend loads with CSP active, admin login reaches dashboard, all admin pages render, and zero CSP violations observed across the flow.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "test-orchestration", "issue": "Same rate-limit-bucket collision previously documented in iteration_10.json still exists: running iter5 (40-burst login test) immediately before iter6/7/8 trips the per-IP 30/60s bucket on their login fixtures. Workaround: ~80s sleep between suites, or run iter5/iter9 last. Not a product defect."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Audit log navigation", "issue": "Sidebar shows 'Audit log' link and backend endpoint is /api/audit-logs, but the React route for the page appears to be /audit (console warning: 'No routes matched location /audit-logs' when probed directly). This is an informational mismatch — the sidebar link itself works fine. Only flagged for consistency.", "affected_selectors": []}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration11_security_headers.py",
+    "/app/test_reports/pytest/iteration11.xml",
+    "/app/test_reports/pytest/iteration11_iter5.xml",
+    "/app/test_reports/pytest/iteration11_iter678.xml",
+    "/app/test_reports/pytest/iteration11_iter9.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "SecurityHeadersMiddleware is placed correctly AFTER CORSMiddleware in server.py (line 117), so security headers attach to every outbound response including CORS preflight responses. Verified on /health, authenticated /patients, 401 /auth/me, 404, POST /auth/login. Good.",
+    "HSTS is correctly suppressed when APP_ENV is unset (treated as 'dev'). Will only emit on production + https-effective-scheme via x-forwarded-proto. Matches design doc /app/memory/TLS_AND_TRANSPORT_SECURITY.md.",
+    "CSP defaults include 'unsafe-inline' in both style-src and script-src. This is documented as an intentional compromise for the CRA-built SPA; before this app is exposed to the public internet, tighten script-src via nonce/sha hashes (CSP_EXTRA is already wired to allow per-env overrides).",
+    "setdefault() is used for every header, so downstream middleware or a specific route could override. That's intentional and safe here; just worth flagging so future devs don't accidentally rely on middleware being the only writer.",
+    "/api/compliance/transport is admin-gated via require_role('admin') (verified: 401 anon, 403 patient, 200 admin). Response body is HIPAA-safe — no PHI, no secrets; cookie flags are meta-config only.",
+    "Nothing in the middleware reads the request body, so it's cheap; dispatch is O(1) header-setting per response. No measurable latency impact observed in the 17 probes."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration11_security_headers.py"
+  ],
+  "success_rate": {
+    "backend": "100% — iter11: 17/17, iter5: 20/20, iter6+7+8: 48/48, iter9: 17/17 (102/102 in isolation). Combined back-to-back run fails ~40 due to the same test-harness ordering rate-limit collision documented in iteration_10; product code is clean.",
+    "frontend": "100% — login succeeded, admin dashboard rendered, /patients / /compliance / /security / /security-config / /privacy all rendered, zero CSP violations, only expected pre-login 401s on /api/auth/me."
+  },
+  "test_credentials": "Used /app/memory/test_credentials.md as-is. admin@ccms.app/Admin@ComplianceClinic1 for privileged calls. MFA not enrolled for seeded demo users, so login returned mfa_required=false for all four roles.",
+  "seed_data_creation": "None. No persistent side-effects beyond a single dev_token password-reset-request against patient@ccms.app (returns token in body in non-prod) and ephemeral rows in login_attempts which are auto-aged.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 11 = TLS/transport security posture. New code: core/security_headers.py (global middleware) + /api/compliance/transport admin endpoint. Verified on live ingress: CSP (default-src 'self', frame-ancestors 'none', upgrade-insecure-requests), X-Content-Type-Options: nosniff, X-Frame-Options: DENY, Referrer-Policy: strict-origin-when-cross-origin, Permissions-Policy geolocation=() et al, COOP: same-origin, CORP: same-site on every API response — including 200/401/404/POST. HSTS correctly absent (APP_ENV unset => 'dev'). /api/compliance/transport: 401 anon, 403 non-admin, 200 admin with app_env/observed_scheme/cookie_flags/hsts/transport_warnings etc. Prior phase regression confirmed clean in isolation (102/102). NOTE for future runs: the iter5+iter9 40-burst bad-login tests still collide with other suites' login fixtures when run back-to-back through a shared ingress IP; either run them LAST or insert ~80s sleep between suites. That is a harness issue, not a product issue, and is the same issue reported in iteration_10.json.",
+  "rca of the issue": "No new bugs. Remaining 'issue' is a carry-over test-orchestration artifact: back-to-back pytest runs against the same public ingress IP exhaust the per-IP 30/60s login bucket from the 40-burst bad-login test in iter5/iter9. Mitigation: isolate suites or sleep ~80s between them, as already documented."
+}

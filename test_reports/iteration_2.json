@@ -1,0 +1,47 @@
+{
+  "summary": "HIPAA-hardening iteration 2 end-to-end review. Rewrote pytest suite (24 tests) covering identity+password policy, MFA full flow (setup/verify/challenge TOTP + backup-code + disable), brute-force lockout, admin-only audit log w/ PHI flag, AES-256-GCM field-level encryption at rest (verified enc:v1: prefix in raw Mongo for patient address/emergency_contact/notes AND appointment notes), PHI masking + unmask, break-glass reason enforcement for non-admin, step-up reauth, 7-year soft-delete + retention_until, patient right-to-access export, account disable/enable, notification masking, scheduling lifecycle (+6 mock notifications), and RBAC regressions. Backend 24/24 pass (100%). Frontend verified via Playwright: admin audit log rows render (200), MFA setup page shows secret+backup codes, admin Patients list masked (M. L., p******@ccms.app, ***-***-0104, 19**-**-**), doctor sidebar correctly omits Audit log + Notifications and /audit-log redirects to /, doctor opening a patient triggers 'Open patient record — Reason (8+ characters)' break-glass dialog, patient role sees only their own record with 'Export JSON' button on detail page and [redacted] for address/emergency_contact/intake_notes. No regressions from Phase 1.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "core/password_policy.py reject_password_reuse works correctly. Suite initially mis-assumed seed populated password_history for admin — it does not. Seed admin starts with empty history; first change puts hash(new_pwd) in history. Consider seeding admin's password_history with current hash at seed time so the very first change-password cannot go back to the seeded password.",
+    "Mongo email lookups should be case-insensitive OR normalized — register lowercases email, but tests that query _db.users.find_one with mixed-case email miss the row. Not a bug per se, but worth documenting that emails are canonical-lower in the DB layer.",
+    "Backup code one-shot enforcement verified (second use returns 4xx). Good.",
+    "Break-glass dialog copy is clear and the 8-char min hint matches backend enforcement (400 if <8 chars). Doctor role correctly has no audit-log/notification sidebar items and direct URL /audit-log redirects client-side."
+  ],
+  "updated_files": [
+    "/app/backend/tests/backend_test.py (rewritten for HIPAA suite, 24 tests, 100% pass)"
+  ],
+  "success_rate": {"backend": "100% (24/24)", "frontend": "100% (all 7 flows verified via screenshots + playwright)"},
+  "test_credentials": "admin@ccms.app/Admin@ComplianceClinic1, doctor@ccms.app/Doctor@ComplianceClinic1, staff@ccms.app/Staff@ComplianceClinic1, patient@ccms.app/Patient@ComplianceClinic1 (credentials verified working; admin MFA is reset at start and end of test session via direct mongo update so admin stays MFA-disabled for repeatable runs)",
+  "seed_data_creation": "Each run creates a handful of TEST_* users (brute-force, MFA, disable, password-history, strong-register) and TEST_* patients (encryption, reauth, soft-delete). All prefixed TEST_ and safe to leave. MFA test user ends with MFA disabled. Soft-delete test patient remains in deleted state with retention_until ~7y out.",
+  "mocked_apis_verified": "Communication service is still mock-only: 2 notifications (email+sms) per appointment.booked/updated/cancelled = 6 per full lifecycle. Confirmed by TestSchedulingLifecycle.",
+  "hipaa_safeguards_verified": {
+    "audit_logging": "Every login / patient list / notification list / mutation produces an audit row with ip, user_agent, outcome, created_at. PHI-touching rows have phi_accessed=true. GET /api/audit-logs admin-only (403 for doctor/staff/patient).",
+    "password_policy": "Weak passwords rejected on register AND change-password (400). History rejection of last 5 hashes verified via TestPasswordPolicy on a dedicated user.",
+    "mfa": "setup returns {secret, otpauth_url, 8 backup_codes}. verify with TOTP enables. challenge with TOTP OR backup code completes login. Backup codes are one-shot. disable requires password.",
+    "brute_force": "5 wrong attempts -> 6th is 429 (email-keyed lockout working in ingress env).",
+    "encryption_at_rest": "Raw Mongo doc for TEST_Enc patient has address/emergency_contact/notes prefixed 'enc:v1:' — verified directly via pymongo. Appointment notes also encrypted.",
+    "phi_masking": "List + detail masked by default: display_name_masked (M. L.), email p******@ccms.app, phone ***-***-0104, dob 19**-**-**, free-text fields [redacted]. unmask=true returns cleartext for admin (unmasked=true flag).",
+    "break_glass": "Doctor GET /api/patients/{id} without reason -> 400. With reason<8 chars -> 400. With valid reason -> 200 and audit row. Patient self-access needs no reason.",
+    "step_up_reauth": "POST /api/patients/{id}/records and DELETE /api/patients/{id} return 401 without reauth cookie; POST /api/auth/reauth with password unlocks a 5-min window.",
+    "soft_delete_retention": "DELETE with reason + reauth flips status=deleted, sets deleted_at + retention_until ~7y. Hidden from default list, visible with ?include_deleted=true, detail still returns status=deleted.",
+    "export": "Admin + patient-self can GET /api/patients/{id}/export (JSON with patient + medical_records + appointments). Doctor + staff -> 403.",
+    "account_disable": "POST /users/{id}/disable -> subsequent login returns 403. /enable restores access."
+  },
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Suite at /app/backend/tests/backend_test.py is the source of truth for this HIPAA hardening build — 24 tests, all passing. JUnit XML at /app/test_reports/pytest/pytest_results.xml. When rerunning: admin's MFA is auto-reset at session start/end via a pymongo update in the autouse _wipe_admin_mfa_at_start fixture. If admin password ever gets rotated mid-run, the TestPasswordPolicy class now uses a dedicated TEST_pwhist_* user so admin creds stay canonical. Frontend is verified via screenshots — data-testid coverage is partial; stable text selectors used instead. The event bus still emits 6 mock notifications per appt lifecycle. No open bugs.",
+  "rca_of_issues": "No outstanding issues. Phase-1 bugs from iteration_1 (patient-role self-visibility seed typo + brute-force per-IP identifier) are both fixed — TestRBAC.test_patient_sees_only_self and TestBruteForce.test_brute_force_lockout both pass."
+}

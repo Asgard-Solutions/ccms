@@ -1,0 +1,39 @@
+{
+  "summary": "Iteration 8 (data-protection + secure-config hardening) tested end-to-end. Backend: 15/15 new iteration-8 tests pass — covers /api/compliance/security-config RBAC (admin 200, doctor/staff/patient 403, anon 401), full payload shape (app_env, production_ready, required_config all True, recommended_config, secret_strength with jwt_secret_length=64/dek_length=44 + correctly-masked 'abcd…(N)' form, encryption block with provider=env/active_version=v1/enabled=true/date_of_birth in patient_encrypted_fields, features.retention_worker_running=false, non-empty production_gaps mentioning KMS_PROVIDER), no-secret-leak assertion, DOB field-level encryption end-to-end (POST encrypts → raw Mongo row begins with enc:v1:, GET unmask=true → plaintext '1985-06-15', list returns masked DOB, PUT re-encrypts, export decrypts), legacy plaintext DOB pass-through via decrypt_text, and ensure_required() fail-fast when DATA_ENCRYPTION_KEY is unset. Iteration 6+7 refresh/privacy regression suites fully pass (27/27 iter7 + 13/13 iter6). Iteration 5 suite: 10 passed before shared-IP rate limit (429) kicked in across the 3-suite run — environmental, same pattern flagged in iteration 7 report; all meaningful iter5 fixture tests that ran (login-shape, session epoch, password reset, audit filters CSV shape) passed. Frontend: admin sidebar shows 'Security config' nav entry; /security-config page renders with all required data-testids (security-config-page, security-config-env, enc-provider, enc-active-version, secret-jwt-length, secret-dek-length, feature-retention_worker_running); masked secrets render as '71f5…(64)' + 'iX3r…(44)' — no full secret in the DOM; patient has NO 'Security config' nav entry and is ProtectedRoute-bounced from /security-config back to /.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration8_security_config.py",
+    "/app/test_reports/pytest/iteration8_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "core/key_manager.py uses functools.lru_cache on _load_active_key. Combined with reset_cache_for_tests(), this is correct; just ensure production never mutates DATA_ENCRYPTION_KEY at runtime (cache would hide the change). Acceptable for current KMS-less phase.",
+    "core/config.describe() returns secret_lengths unconditionally; if a future deploy somehow left a REQUIRED var empty, the length would be 0 which the admin UI will surface — good. No PII / secret leakage observed in the compliance/security-config response body.",
+    "services/compliance/router.py security_config uses os.environ.get(...) directly for mask_secret inputs. This is safe because mask_secret never returns raw material, but for symmetry you may prefer to go through config.mask_secret with values fetched inside core/config.py to keep all secret reads in one module.",
+    "services/patient/router.py _shape: when admin creates a patient the response is returned unmasked (dob plaintext). That is consistent with the existing convention but worth re-reviewing from a 'post-encryption write response should not echo plaintext' lens. Low priority because the actor already supplied the plaintext.",
+    "services/patient/router.py list_patients caches masked list under cache.get_or_set with role+search+include_deleted. DOB is masked, but cache TTL=30s — be aware that if encryption key rotates via EXTRA_DATA_KEYS, cached entries still decrypt fine because cache stores already-shaped (masked) dict. No change needed.",
+    "core/key_manager describe() swallows exceptions in extra_versions parse — fine for diagnostics. enabled flag correctly flips false when DEK missing.",
+    "server.py on_startup ordering: ensure_config() → create_indexes() → register_comm_subscribers() → seed_identity(). Correct: config fail-fast runs before any DB/crypto access."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration8_security_config.py"
+  ],
+  "success_rate": {
+    "backend": "100% (15/15 iteration8) + 100% iteration7 (27/27) + 100% iteration6 (13/13 refresh-epoch); iteration5 suite hit shared-IP rate limit mid-run (10 pass, 6 fail purely from HTTP 429 on repeated logins — environmental, not regression)",
+    "frontend": "100% — admin /security-config renders all required testids and masked secrets, patient nav omits Security config and /security-config bounces to /"
+  },
+  "test_credentials": "Used /app/memory/test_credentials.md (admin/doctor/staff/patient @ccms.app). Seeded admin MFA not required; logins worked cleanly.",
+  "seed_data_creation": "Two throwaway patients created via POST /api/patients with TEST_Iter8 first_name + random email (one asserting round-trip, one asserting raw Mongo ciphertext). Neither modifies seeded demo users. Both remain in DB under status='active' but are identifiable via TEST_Iter8 prefix.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "When running multiple iteration test files back-to-back against the preview URL, honour the shared-IP login rate limit: add a 60-90s sleep between suites or reduce total admin logins. Iteration 8 file stands on its own (15 tests, ~4s). For raw-Mongo assertions we spawn a python subprocess that load_dotenv's /app/backend/.env and reads via core.db.get_db_read — reusable pattern for future iterations. Dev token for password-reset is returned because APP_ENV=dev.",
+  "rca of the issue": "No product bugs found. The only failing tests in the aggregate run were iteration-5 regression cases that tripped rate-limiting (HTTP 429 'Too many requests from this address') after the iteration-8 + iteration-7 + iteration-6 suites had already consumed the per-IP login quota. Reproduction: run all four suites back-to-back from a single IP without sleep; mitigation: (a) run iteration8 in isolation (does not trigger), (b) space suites with a 60s sleep, or (c) temporarily relax RATE_LIMIT_LOGIN env during CI. Not a regression of iteration 5 functionality — identical environmental behaviour flagged in iteration_7.json."
+}

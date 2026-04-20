@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 7 (privacy & data-governance) tested end-to-end. Backend: 27/27 new tests pass covering data-inventory RBAC, privacy requests state machine, legal-hold + fulfill-delete 409 + reauth, consents, comm prefs, self-export secret-scrubbing, patient.created audit no-PHI regression, and /api/compliance/overview RBAC regression. Iteration 5 + 6 regression suites: 26/26 pass. Iteration 4 failures are environmental (Redis unavailable + shared rate-limit, not functional). Frontend: /privacy page renders for admin with 8 inventory cards and Requests default tab; patient is ProtectedRoute-bounced (no Privacy nav entry either); register page has data-testid register-privacy-checkbox with submit button disabled until checkbox ticked.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration7_privacy.py",
+    "/app/test_reports/pytest/iteration7_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/privacy/router.py delete_patient flow: require_reauth is enforced in patient router; however the privacy router requires step-up reauth AFTER doing `require_role('admin')` Depends — this is correct order but worth a unit test that the `create_reauth_token` TTL is 5m (currently enforced via cookie). OK.",
+    "services/privacy/router.py create_request: when `subject_user_id` is None, code defaults to user['id']; the 404 branch then queries users collection — fine. But patients can only self-submit so patient could pass subject_user_id=None and it will resolve to self. Consistent.",
+    "services/privacy/models.py PrivacyRequestCreate.notes has max_length=2000 but no server-side PHI scrubbing — relies on user discipline. Documented in UI disclaimer; acceptable for MVP, but a simple regex-based PHI heuristic could be added as a P1.",
+    "services/identity/router.py export_me: audit metadata exposes counts only (good). Correctly strips password_hash/password_history/mfa_secret/mfa_backup_codes by whitelisting keys.",
+    "services/privacy/router.py fulfill_delete: only marks privacy request fulfilled; does NOT trigger actual patient soft-delete. Flow relies on admin then calling DELETE /patients/{id}. Documented in fulfillment_note but could drift — consider linking atomically in a future iteration.",
+    "services/privacy/router.py accept_consent: uses `log_audit` directly rather than `audit_success`; OK since there is no user dict shape mismatch, but inconsistency with the rest of the module is minor."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration7_privacy.py"
+  ],
+  "success_rate": {
+    "backend": "100% (27/27 iteration7) + 100% (26/26 iteration5+6 regression); iteration4 env-dependent tests skipped due to Redis absence + shared rate limit",
+    "frontend": "100% of iteration-7 UI assertions (privacy page, inventory cards, protected route, register checkbox gating)"
+  },
+  "test_credentials": "Used /app/memory/test_credentials.md (admin/doctor/staff/patient @ccms.app). Ephemeral users created for consent + prefs tests.",
+  "seed_data_creation": "Created throwaway patient + several TEST_ prefixed privacy_requests and ephemeral registered users (test_*@example.com, audit_*@example.com, ui_*@example.com). Also toggled legal hold on/off on throwaway patient. Seed restores on backend restart per review note.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 7 backend fully validated. Use REACT_APP_BACKEND_URL env var when running pytest (e.g., REACT_APP_BACKEND_URL=<preview-url> pytest tests/test_iteration7_privacy.py). Legal hold + fulfill-delete require /api/auth/reauth first; 5-minute TTL. Iteration 4 rate-limit + Redis-gauge tests expect Redis up; they error with 429/ccms_redis_up 0.0 in this pod — this is environmental, not a regression.",
+  "rca of the issue": "One false-positive encountered and fixed in the test itself: DELETE /api/patients/{id} requires a `reason` query parameter (enforced via `_enforce_reason` before the legal_hold 409 branch). Original test omitted the reason and received 400 instead of 409. Fixed by passing `?reason=TEST legal hold regression` — not a product bug."
+}

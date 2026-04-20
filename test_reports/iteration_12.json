@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 12 (RBAC authz with 11 roles × 115 permissions × 11 grant groups + policy overlays + admin pages) — FULL verification. 15/15 iteration_12 backend tests pass against live ingress (https). Regression suites iter7 (27/27) and iter8+iter11 (32/32) also pass. Frontend: all 14 sidebar items for admin render, /permissions matrix is 115 rows × 11 role cols (12 incl. permission column), filter + 'Privileged only' checkbox both work (27 privileged rows). /roles, /access-review, /elevation pages load cleanly. Doctor can request elevation via 10-char-min reason dialog; admin sees Review button for pending requests. Sidebar correctly hides privileged items for patient role (0/6 leaked). Zero CSP violations observed across the 4 new pages.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "test-orchestration", "issue": "Running iter7/iter11 (which hit /api/auth/login in fixtures) immediately after any 40-burst bad-login suite still trips the 30/60s per-IP rate-limit bucket on shared ingress IP. Same harness artefact documented in iteration_10 + iteration_11. Mitigation unchanged: ~80s cooldown between suites. Not a product defect — iter12 already passes 15/15 in isolation and all regressions pass cleanly with the cooldown."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Elevation / Request dialog", "issue": "Submit button is NOT client-side-disabled when 'Business justification' is <10 chars. The backend enforces the min-10 rule (returns 400), but UX lets the user click Submit with a 9-char reason and only finds out after the round-trip. Should disable Submit until len(trim(reason))>=10, or show inline error.", "selector": "Request elevation dialog → Submit button", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Access review reauth", "issue": "When admin opens /access-review the 9 MFA-gated reports return 401 until re-auth. Frontend surfaces this with a toast 'Re-authentication required — please confirm your password on the Security page.' — correct default-deny behaviour, BUT the user is bounced to the Security page to reauth; the page does not offer an inline reauth prompt. Result: the 4 top-of-page stat cards (Active users / PHI reads 7d / Authz denials 7d / Break-glass 30d) remain empty on first load. Consider inline reauth modal on this page.", "affected_selectors": ["/access-review", "reauth toast"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration12_authz.py",
+    "/app/test_reports/pytest/iteration12.xml",
+    "/app/test_reports/pytest/iteration12_iter7.xml",
+    "/app/test_reports/pytest/iteration12_iter8_11.xml"
+  ],
+  "action_items": [
+    "(LOW) Disable the Request-elevation dialog Submit button while reason <10 chars (currently validated only by backend).",
+    "(LOW) Offer inline reauth prompt on /access-review instead of redirecting the user to /security — today the stat cards sit empty behind a toast.",
+    "No product code changes needed for the passing tests; the two above are UX polish."
+  ],
+  "critical_code_review_comments": [
+    "services/authz/constants.py cleanly separates roles, permissions, and the ROLE_GRANTS matrix; super_admin is correctly stripped of APR on governance actions (verified via /api/authz/matrix).",
+    "policy.require_permission default-deny is authoritative: patient→/authz/roles 403, doctor→/access/reports/privileged-users 403, and every denial writes action=authz.denied into the audit log (confirmed via GET /api/audit-logs?action=authz.denied).",
+    "MFA gate returns 401 + X-Reauth-Required:1 (not 403) — this is correct and lets the frontend differentiate 'please reauth' from 'you have no grant'.",
+    "Elevation lifecycle enforces separation-of-duties: admin POST /elevation/{own_id}/decision {approve} returns 400 with 'Separation' in detail. Good.",
+    "POST /authz/users/{uid}/roles response includes sessions_revoked=true and bumps session_epoch — old JWTs for that user are correctly invalidated immediately.",
+    "Dual-run shim /authz/me/permissions maps legacy admin→super_admin (51 perms), doctor→provider, staff→clinical_staff, patient→patient_portal (scope=self) — verified for all four seeded accounts.",
+    "Permission matrix page pulls from /api/authz/matrix (read-only evidence); no write path on the frontend — matches the 'backend is authoritative, frontend reflects' contract.",
+    "Zero CSP violations across /permissions /roles /access-review /elevation — CSP middleware from iter11 is unaffected by the new pages."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% — iter12: 15/15, iter7: 27/27, iter8+iter11: 32/32 (74/74 in isolation). Combined back-to-back run reproduces the same iter5/iter9 40-burst login-bucket collision already documented in iter10/iter11; product code is clean.",
+    "frontend": "~95% — all required flows work; the two items in action_items above are UX polish, not blockers. 0 CSP violations. Sidebar + RBAC hiding correct for admin/doctor/patient."
+  },
+  "test_credentials": "Used /app/memory/test_credentials.md as-is. admin@ccms.app / Admin@ComplianceClinic1 for privileged calls; doctor/staff/patient identical to prior iterations. MFA not enrolled on seeded accounts — reauth path is password-only (POST /api/auth/reauth {password}).",
+  "seed_data_creation": "Iteration 12 backend seed runs idempotently on startup: 11 roles / 115 perms / 11 grant groups — confirmed on live /api/authz/matrix. Tests only create ephemeral elevation-request rows (UUID-scoped) which remain in the elevation_requests collection; no PHI written.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 12 = RBAC + scopes + policy overlays + 4 admin pages (Roles, Permission matrix, Access review, Elevation). Backend tests live at /app/backend/tests/test_iteration12_authz.py — 15/15 green against https ingress. Run ALL iteration tests with env: REACT_APP_BACKEND_URL=https://clinic-intake-wiz.preview.emergentagent.com CCMS_BASE_URL=https://clinic-intake-wiz.preview.emergentagent.com/api pytest …. IMPORTANT: tests hit localhost by default but require HTTPS because login cookies are Secure+SameSite=None — set CCMS_BASE_URL to the public URL or they all 401. Rate-limit cooldown rule from iter10/iter11 still applies: do not run iter5 or iter9's 40-burst login tests back-to-back with other suites without ~80s wait. The only 2 open items are LOW-priority frontend UX polish (see action_items). MOCKED: email/SMS comms (unchanged). HSTS suppressed by design (APP_ENV not production).",
+  "rca of the issue": "No new bugs to RCA. Minor UX items: (1) Elevation dialog relies on backend for the 10-char validation — safer pattern is to mirror the constraint client-side (disable Submit button) so users see immediate feedback; (2) /access-review page uses a toast to signal 401 from the reports endpoints but does not offer an inline reauth prompt, so the 4 stat-card numbers stay empty on first load until the user visits /security and reauths. Both are cosmetic; authz enforcement itself (default-deny, MFA gate, separation-of-duties, audit) is correct."
+}

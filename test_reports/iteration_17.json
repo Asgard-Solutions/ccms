@@ -1,0 +1,48 @@
+{
+  "summary": "Phase 5 verification — patient-document upload/list/download/delete + consent-PDF generation. Created /app/backend/tests/test_phase5_docs_and_consent_pdf.py (20 tests). 19 passed, 1 skipped (patient@ccms.app has no linked patient row with a signed hipaa consent — expected env gap, not a bug). All review-request backend scenarios pass end-to-end against the live backend: multipart PNG upload w/ reauth → 201, list/download/soft-delete, empty-body 400, 10MB+ 413, unsupported content-type 400, unknown category 400, missing-reauth 401, PDF render for all 5 consent types (%PDF- magic bytes confirmed, >500 bytes each), 409 on unsigned, 404 on non-existent type, staff/doctor 400 without reason, staff 200 with reason. Frontend: PatientDocumentsCard renders with 8 upload rows on patient detail (admin unmasked view). Consent PDF button (data-testid='consent-pdf-hipaa') appears ONLY in the unmasked consents section (works as designed) and triggers an actual PDF download (filename 'consent-hipaa-4df08a79.pdf' with real %PDF bytes) when clicked. One frontend integration gap observed: uploading via the PatientDocumentsCard file input returns 401 'Re-authentication required' because the admin's browser session does not have a reauth cookie (clicking 'Mask/Unmask' did NOT open a reauth prompt in this session); the backend path is correct but the card never asks the user to re-enter their password before calling POST /documents. SignaturePad e2e could not be fully driven: wizard step-1 validation blocks auto-advance to step 4 without a large scripted fill; the component file has the required data-testid='signature-pad' + '-canvas' + '-clear' and is imported by the wizard (code-reviewed), but browser drawing was not exercised in this run.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/patients/{id}/documents/{doc_id}/download", "issue": "Returns Content-Disposition 'inline' (no quoted filename) for images; some download clients fall back to last-URL-segment, which is the {doc_id} without an extension. Cosmetic — PDFs correctly use 'attachment; filename=...'."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "PatientDocumentsCard upload",
+        "issue": "Uploading an insurance-card PNG from the UI fails with a 401 'Re-authentication required' toast because the card posts to /documents without first triggering /auth/reauth. The backend correctly requires reauth; the UI should either (a) open a password-prompt dialog on upload click, OR (b) detect 401 + reason='reauth required' and re-attempt after a reauth dialog. Currently the user sees only an error toast with no guidance.",
+        "affected_selectors": ["[data-testid='docs-upload-drivers_license']", "[data-testid^='docs-upload-btn-']"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_phase5_docs_and_consent_pdf.py",
+    "/app/test_reports/pytest/iteration17_phase5.xml"
+  ],
+  "action_items": [
+    "Wire a reauth-prompt dialog into PatientDocumentsCard: before POST /patients/{id}/documents, if /auth/reauth/status shows no active reauth window, present a password modal → POST /auth/reauth → then retry upload. Same fix should apply to the card's Delete button (also reauth-gated server-side).",
+    "Optionally: auto-open the same reauth prompt when the user clicks data-testid='patient-unmask-toggle' on a patient they haven't reauth'd against recently — currently unmask flips PHI visibility but does not refresh the reauth cookie, which cascades into the documents upload failing."
+  ],
+  "critical_code_review_comments": [
+    "/app/backend/services/patient/router.py is 984 lines and now covers patients + records + documents + consent PDFs in one module; recommend splitting documents + consent-PDF routes into /app/backend/services/patient/documents_router.py and /app/backend/services/patient/consent_pdf_router.py for maintainability and to shrink this single-file blast radius.",
+    "upload_patient_document reads the full file into memory (await file.read()) before size-checking; for 10MB cap this is fine, but prefer a streaming check / SpooledTemporaryFile to avoid memory spikes under concurrent uploads.",
+    "ALLOWED_DOC_MIMES hard-codes content-type; consider also sniffing magic bytes (python-magic) — a malicious client can easily send 'image/png' for an executable payload. Given this is HIPAA-adjacent PHI storage, deeper validation is warranted.",
+    "download_consent_pdf catches all Exception from render_consent_pdf and returns the raw exception message in the 500 body — for HIPAA hardening this should log and return a generic message (current text risks leaking library traces to the client).",
+    "The PatientDocumentsCard integration gap above: the card should pre-flight reauth rather than relying on users to have already hit the unmask toggle."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phase5_docs_and_consent_pdf.py (new — 20 tests, 19 pass, 1 skipped)"
+  ],
+  "success_rate": {
+    "backend": "19/20 = 95% (1 env-skipped — patient@ccms.app has no pre-seeded signed hipaa row)",
+    "frontend": "3/4 review-request items verified end-to-end: documents-card renders + 8 upload rows ✓, consent-pdf-hipaa button visible after unmask + downloads real PDF ✓, SignaturePad component + data-testid wired (code-verified; e2e drawing not exercised because wizard step-1 validation blocks auto-advance to step 4 in a scripted run). Upload-from-UI ✗ due to missing reauth prompt (see integration issue above)."
+  },
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (reauth ok), doctor@ccms.app / Doctor@ComplianceClinic1, staff@ccms.app / Staff@ComplianceClinic1, patient@ccms.app / Patient@ComplianceClinic1. All still valid.",
+  "seed_data_creation": "Each backend pytest run creates 1 TESTDocs_Phase5_* patient (tagged with all 5 consent types signed + PNG data-url signatures) plus 1 TESTUnsigned_Phase5_* patient. Uploads attach then soft-delete 1 insurance_card_front doc per run. Consider a teardown fixture that DELETE /api/patients/{id}s all TESTDocs_*/TESTUnsigned_* rows after the class.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 5 backend (documents + consent PDF) is 19/20 passing against live. The single meaningful gap is frontend-side: PatientDocumentsCard does not trigger /auth/reauth before POSTing an upload, so a freshly-authenticated admin who has not already clicked 'Unmask+password' will always see a 401 toast on the first upload attempt. Backend is correct — fix is UI-only. Test patient id 4df08a79-2a17-408f-8045-1986e911bf8f has hipaa signed and is the seed used for the consent-pdf download click-test. Login rate-limit of 30/min on /api/auth/login is still in effect; if re-running phase5 + iteration19 + intake_phase1 suites back-to-back, add a ~30s cooldown between suites.",
+  "rca of the issue": "RCA for the upload-from-UI 401: reauth is a short-lived (5 min) cookie issued by POST /api/auth/reauth. The /auth/login flow issues ONLY access_token + refresh_token cookies; reauth_token is not set until /auth/reauth is called with a password. PatientDocumentsCard's onSubmit calls apiClient.post('/patients/{id}/documents', formData) directly without checking reauth state. The backend (router.py line 731) calls require_reauth(request, user) which returns 401 when the cookie is absent. The fix path is entirely frontend: (1) add a reauth dialog component or reuse the existing one (likely in /app/frontend/src/pages/PatientDetail.jsx for the soft-delete flow), (2) wrap the upload/delete handlers with a reauth-gate that opens the dialog, POSTs /auth/reauth, then retries the original request. Reproduction: log in as admin → go directly to /patients/{id} → click any Upload button → select a small PNG → toast 'Re-authentication required for this action'. Backend audit log will show no patient.document.uploaded event for this attempt, which matches the 401-pre-handler behaviour (action is correctly blocked). Mitigation workaround today: the user can trigger the reauth cookie by hitting a flow that already prompts for password (e.g., open the Soft-delete dialog, enter the password, cancel) — after that the next upload works for 5 minutes. That workaround is not obvious to users, so this should be classed as a P1 UX bug even though the backend is behaving correctly."
+}

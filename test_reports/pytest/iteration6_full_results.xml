@@ -1,0 +1,362 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="16" failures="15" skipped="0" tests="80" time="44.066" timestamp="2026-04-19T22:59:21.761344+00:00" hostname="agent-env-a3108878-c232-4d0d-b887-df4b4632a33f"><testcase classname="backend.tests.backend_test.TestHealth" name="test_health" time="0.129" /><testcase classname="backend.tests.backend_test.TestPasswordPolicy" name="test_register_weak_rejected" time="0.119" /><testcase classname="backend.tests.backend_test.TestPasswordPolicy" name="test_register_common_weak_rejected" time="0.375" /><testcase classname="backend.tests.backend_test.TestPasswordPolicy" name="test_register_strong_auto_login" time="0.395" /><testcase classname="backend.tests.backend_test.TestPasswordPolicy" name="test_change_password_rejects_reuse_and_weak" time="4.473" /><testcase classname="backend.tests.backend_test.TestBruteForce" name="test_brute_force_lockout" time="2.198" /><testcase classname="backend.tests.backend_test.TestMFA" name="test_mfa_full_flow" time="2.273" /><testcase classname="backend.tests.backend_test.TestAuditLog" name="test_admin_only" time="1.679" /><testcase classname="backend.tests.backend_test.TestAuditLog" name="test_audit_rows_have_required_fields_and_phi_flag" time="0.401" /><testcase classname="backend.tests.backend_test.TestEncryptionAtRest" name="test_patient_free_text_encrypted" time="0.524" /><testcase classname="backend.tests.backend_test.TestPHIMasking" name="test_list_masked_by_default_admin" time="0.054" /><testcase classname="backend.tests.backend_test.TestPHIMasking" name="test_unmask_admin_returns_cleartext" time="0.048" /><testcase classname="backend.tests.backend_test.TestBreakGlass" name="test_doctor_detail_requires_reason" time="0.205" /><testcase classname="backend.tests.backend_test.TestBreakGlass" name="test_patient_self_no_reason_needed" time="0.123" /><testcase classname="backend.tests.backend_test.TestStepUpReauth" name="test_add_record_requires_reauth" time="0.771" /><testcase classname="backend.tests.backend_test.TestSoftDelete" name="test_soft_delete_with_reauth_and_reason" time="2.008" /><testcase classname="backend.tests.backend_test.TestExport" name="test_admin_can_export" time="0.107" /><testcase classname="backend.tests.backend_test.TestExport" name="test_doctor_forbidden_staff_forbidden" time="0.166" /><testcase classname="backend.tests.backend_test.TestExport" name="test_patient_self_export" time="0.113" /><testcase classname="backend.tests.backend_test.TestAccountDisable" name="test_disable_and_reenable" time="1.223" /><testcase classname="backend.tests.backend_test.TestNotificationsMasking" name="test_admin_masked_default_and_unmask" time="0.096" /><testcase classname="backend.tests.backend_test.TestSchedulingLifecycle" name="test_lifecycle_six_notifications_and_encrypted_notes" time="1.051" /><testcase classname="backend.tests.backend_test.TestRBAC" name="test_doctor_cannot_list_notifications_or_audit" time="0.111" /><testcase classname="backend.tests.backend_test.TestRBAC" name="test_patient_sees_only_self" time="0.051" /><testcase classname="backend.tests.test_iteration4.TestPatchUser" name="test_patch_role_invalidates_providers_cache" time="0.658"><failure message="FileNotFoundError: [Errno 2] No such file or directory: 'redis-cli'">backend/tests/test_iteration4.py:70: in test_patch_role_invalidates_providers_cache
+    assert _redis("EXISTS", "identity:providers:active") == "1"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_iteration4.py:29: in _redis
+    return subprocess.run(["redis-cli", *args], capture_output=True, text=True).stdout.strip()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/subprocess.py:548: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+/usr/local/lib/python3.11/subprocess.py:1955: in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+E   FileNotFoundError: [Errno 2] No such file or directory: 'redis-cli'</failure></testcase><testcase classname="backend.tests.test_iteration4.TestPatchUser" name="test_patch_status_invalidates_providers_cache" time="0.320"><failure message="FileNotFoundError: [Errno 2] No such file or directory: 'redis-cli'">backend/tests/test_iteration4.py:93: in test_patch_status_invalidates_providers_cache
+    assert _redis("EXISTS", "identity:providers:active") == "1"
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_iteration4.py:29: in _redis
+    return subprocess.run(["redis-cli", *args], capture_output=True, text=True).stdout.strip()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/subprocess.py:548: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+/usr/local/lib/python3.11/subprocess.py:1955: in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+E   FileNotFoundError: [Errno 2] No such file or directory: 'redis-cli'</failure></testcase><testcase classname="backend.tests.test_iteration4.TestPatchUser" name="test_patch_audit_row_written" time="0.400" /><testcase classname="backend.tests.test_iteration4.TestPatchUser" name="test_non_admin_forbidden" time="0.667" /><testcase classname="backend.tests.test_iteration4.TestPatchUser" name="test_cannot_demote_self" time="0.097" /><testcase classname="backend.tests.test_iteration4.TestPatchUser" name="test_cannot_disable_self" time="0.088" /><testcase classname="backend.tests.test_iteration4.TestPatchUser" name="test_empty_body_returns_400" time="0.333" /><testcase classname="backend.tests.test_iteration4.TestPatchUser" name="test_unknown_user_returns_404" time="0.053" /><testcase classname="backend.tests.test_iteration4.TestPatchUser" name="test_extra_fields_return_422" time="0.318" /><testcase classname="backend.tests.test_iteration4.TestNotificationsCache" name="test_masked_populates_cache_second_is_hit" time="0.155"><failure message="FileNotFoundError: [Errno 2] No such file or directory: 'redis-cli'">backend/tests/test_iteration4.py:187: in test_masked_populates_cache_second_is_hit
+    subprocess.run(["redis-cli", "--scan", "--pattern", "notifications:*"], capture_output=True, text=True)
+/usr/local/lib/python3.11/subprocess.py:548: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+/usr/local/lib/python3.11/subprocess.py:1955: in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+E   FileNotFoundError: [Errno 2] No such file or directory: 'redis-cli'</failure></testcase><testcase classname="backend.tests.test_iteration4.TestNotificationsCache" name="test_booking_invalidates_notifications_prefix" time="0.047"><failure message="FileNotFoundError: [Errno 2] No such file or directory: 'redis-cli'">backend/tests/test_iteration4.py:213: in test_booking_invalidates_notifications_prefix
+    keys_before = set(self._scan_notifications_keys())
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_iteration4.py:149: in _scan_notifications_keys
+    out = _redis("--scan", "--pattern", "notifications:*")
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_iteration4.py:29: in _redis
+    return subprocess.run(["redis-cli", *args], capture_output=True, text=True).stdout.strip()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/subprocess.py:548: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+/usr/local/lib/python3.11/subprocess.py:1955: in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+E   FileNotFoundError: [Errno 2] No such file or directory: 'redis-cli'</failure></testcase><testcase classname="backend.tests.test_iteration4.TestNotificationsCache" name="test_unmask_does_not_populate_cache" time="0.050"><failure message="FileNotFoundError: [Errno 2] No such file or directory: 'redis-cli'">backend/tests/test_iteration4.py:227: in test_unmask_does_not_populate_cache
+    before = set(self._scan_notifications_keys())
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_iteration4.py:149: in _scan_notifications_keys
+    out = _redis("--scan", "--pattern", "notifications:*")
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+backend/tests/test_iteration4.py:29: in _redis
+    return subprocess.run(["redis-cli", *args], capture_output=True, text=True).stdout.strip()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/subprocess.py:548: in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/subprocess.py:1026: in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+/usr/local/lib/python3.11/subprocess.py:1955: in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+E   FileNotFoundError: [Errno 2] No such file or directory: 'redis-cli'</failure></testcase><testcase classname="backend.tests.test_iteration4.TestConnectionInfo" name="test_admin_shape" time="0.047" /><testcase classname="backend.tests.test_iteration4.TestConnectionInfo" name="test_non_admin_forbidden" time="0.101" /><testcase classname="backend.tests.test_iteration4.TestMetrics" name="test_unauth_ok_content_type" time="0.139" /><testcase classname="backend.tests.test_iteration4.TestMetrics" name="test_required_metric_names" time="0.127" /><testcase classname="backend.tests.test_iteration4.TestMetrics" name="test_traffic_increases_counters" time="0.734"><failure message="AssertionError: cache hits did not increase (0.0-&gt;0.0)&#10;assert 0.0 &gt; 0.0">backend/tests/test_iteration4.py:303: in test_traffic_increases_counters
+    assert h1 &gt; h0, f"cache hits did not increase ({h0}-&gt;{h1})"
+E   AssertionError: cache hits did not increase (0.0-&gt;0.0)
+E   assert 0.0 &gt; 0.0</failure></testcase><testcase classname="backend.tests.test_iteration4.TestMetrics" name="test_histogram_has_positive_buckets" time="0.286" /><testcase classname="backend.tests.test_iteration4.TestMetrics" name="test_path_prefix_does_not_explode_with_ids" time="0.215" /><testcase classname="backend.tests.test_iteration4.TestMetrics" name="test_redis_up_gauge_flips_when_stopped" time="0.114"><failure message="AssertionError: assert (&lt;re.Match object; span=(2302, 2319), match='ccms_redis_up 0.0'&gt; and 0.0 == 1.0)&#10; +  where 0.0 = float('0.0')&#10; +    where '0.0' = &lt;built-in method group of re.Match object at 0xfdcd827ad000&gt;(1)&#10; +      where &lt;built-in method group of re.Match object at 0xfdcd827ad000&gt; = &lt;re.Match object; span=(2302, 2319), match='ccms_redis_up 0.0'&gt;.group">backend/tests/test_iteration4.py:330: in test_redis_up_gauge_flips_when_stopped
+    assert m and float(m.group(1)) == 1.0
+E   AssertionError: assert (&lt;re.Match object; span=(2302, 2319), match='ccms_redis_up 0.0'&gt; and 0.0 == 1.0)
+E    +  where 0.0 = float('0.0')
+E    +    where '0.0' = &lt;built-in method group of re.Match object at 0xfdcd827ad000&gt;(1)
+E    +      where &lt;built-in method group of re.Match object at 0xfdcd827ad000&gt; = &lt;re.Match object; span=(2302, 2319), match='ccms_redis_up 0.0'&gt;.group</failure></testcase><testcase classname="backend.tests.test_iteration5.TestLoginShape" name="test_login_returns_new_fields_all_roles" time="0.131"><failure message="AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code">backend/tests/test_iteration5.py:64: in test_login_returns_new_fields_all_roles
+    s, body = _login(*creds)
+              ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_iteration5.TestSessionEpoch" name="test_disable_revokes_sessions" time="0.121"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestSessionEpoch" name="test_patch_role_bumps_target_epoch_not_admin" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestSessionEpoch" name="test_change_password_keeps_current_session_kills_old_token" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestSessionEpoch" name="test_refresh_dies_after_epoch_bump" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestPasswordReset" name="test_unknown_email_still_200_no_enum" time="0.111" /><testcase classname="backend.tests.test_iteration5.TestPasswordReset" name="test_known_email_returns_dev_token_and_confirm_flow" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestPasswordReset" name="test_confirm_rejects_reused_password_history" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestAdminMFA" name="test_admin_mfa_reset_rbac" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestAdminMFA" name="test_admin_mfa_require_toggle" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestSessions" name="test_sessions_returns_current_and_events" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestAuditFilters" name="test_date_from_to_and_actor_email_filters" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestAuditFilters" name="test_csv_export_admin_only_and_shape" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestAuditFilters" name="test_csv_export_writes_exported_meta_row" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestAuditFilters" name="test_csv_export_forbidden_for_non_admin" time="0.108"><failure message="AssertionError: login doctor@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code">backend/tests/test_iteration5.py:283: in test_csv_export_forbidden_for_non_admin
+    s, _ = _login(*creds)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login doctor@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_iteration5.TestNoPhiInAudit" name="test_patient_create_audit_metadata_has_no_phi" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestRegressions" name="test_compliance_overview_rbac" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestRegressions" name="test_patients_list_masked_default" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration5.TestRegressions" name="test_audit_logs_still_admin_only" time="1.158" /><testcase classname="backend.tests.test_iteration5.TestRegressions" name="test_break_glass_reason_required_for_doctor" time="0.000"><error message="failed on setup with &quot;AssertionError: login admin@ccms.app: 429 {&quot;detail&quot;:&quot;Too many requests from this address. Please slow down.&quot;}&#10;assert 429 == 200&#10; +  where 429 = &lt;Response [429]&gt;.status_code&quot;">backend/tests/test_iteration5.py:42: in admin_session
+    s, _ = _login(*ADMIN)
+           ^^^^^^^^^^^^^^
+backend/tests/test_iteration5.py:36: in _login
+    assert r.status_code == 200, f"login {email}: {r.status_code} {r.text}"
+E   AssertionError: login admin@ccms.app: 429 {"detail":"Too many requests from this address. Please slow down."}
+E   assert 429 == 200
+E    +  where 429 = &lt;Response [429]&gt;.status_code</error></testcase><testcase classname="backend.tests.test_iteration6_refresh" name="test_refresh_success_all_roles[admin-admin@ccms.app-Admin@ComplianceClinic1]" time="0.391" /><testcase classname="backend.tests.test_iteration6_refresh" name="test_refresh_success_all_roles[doctor-doctor@ccms.app-Doctor@ComplianceClinic1]" time="0.388" /><testcase classname="backend.tests.test_iteration6_refresh" name="test_refresh_success_all_roles[staff-staff@ccms.app-Staff@ComplianceClinic1]" time="0.410" /><testcase classname="backend.tests.test_iteration6_refresh" name="test_refresh_success_all_roles[patient-patient@ccms.app-Patient@ComplianceClinic1]" time="0.392" /><testcase classname="backend.tests.test_iteration6_refresh" name="test_refresh_rejected_after_epoch_bump_via_disable_enable" time="1.187" /><testcase classname="backend.tests.test_iteration6_refresh" name="test_refresh_rejected_after_role_patch" time="1.123" /><testcase classname="backend.tests.test_perf_cache_rate.TestPerfStats" name="test_redis_ping" time="0.002"><failure message="redis.exceptions.ConnectionError: Error 111 connecting to 127.0.0.1:6379. Connection refused.">/root/.venv/lib/python3.11/site-packages/redis/connection.py:1003: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:1515: in _connect
+    raise err
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:1499: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+backend/tests/test_perf_cache_rate.py:73: in test_redis_ping
+    assert rds.ping() is True
+           ^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/commands/core.py:1250: in ping
+    return self.execute_command("PING", **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/client.py:716: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/client.py:722: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/utils.py:236: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:3041: in get_connection
+    connection.connect()
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:976: in connect
+    self.retry.call_with_retry(
+/root/.venv/lib/python3.11/site-packages/redis/retry.py:132: in call_with_retry
+    raise error
+/root/.venv/lib/python3.11/site-packages/redis/retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:977: in &lt;lambda&gt;
+    lambda: self.connect_check_health(
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:1025: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 111 connecting to 127.0.0.1:6379. Connection refused.</failure></testcase><testcase classname="backend.tests.test_perf_cache_rate.TestPerfStats" name="test_stats_admin_ok" time="0.386"><failure message="AssertionError: assert False is True&#10; +  where False = &lt;built-in method get of dict object at 0xfdcd81b54340&gt;('redis_alive')&#10; +    where &lt;built-in method get of dict object at 0xfdcd81b54340&gt; = {'cache': {'errors': 43, 'hit_ratio': 0.0, 'hits': 0, 'invalidations': 0, ...}, 'db': {'read_after_write': 5, 'read_ratio_overall': 0.1768, 'reads': 93, 'writes': 428}, 'rate_limit': {'local_blocks': 3}, 'redis_alive': False}.get">backend/tests/test_perf_cache_rate.py:79: in test_stats_admin_ok
+    assert body.get("redis_alive") is True
+E   AssertionError: assert False is True
+E    +  where False = &lt;built-in method get of dict object at 0xfdcd81b54340&gt;('redis_alive')
+E    +    where &lt;built-in method get of dict object at 0xfdcd81b54340&gt; = {'cache': {'errors': 43, 'hit_ratio': 0.0, 'hits': 0, 'invalidations': 0, ...}, 'db': {'read_after_write': 5, 'read_ratio_overall': 0.1768, 'reads': 93, 'writes': 428}, 'rate_limit': {'local_blocks': 3}, 'redis_alive': False}.get</failure></testcase><testcase classname="backend.tests.test_perf_cache_rate.TestPerfStats" name="test_stats_forbidden_for_non_admin" time="1.245" /><testcase classname="backend.tests.test_perf_cache_rate.TestProvidersCache" name="test_providers_cache_hit_and_invalidation" time="0.001"><failure message="redis.exceptions.ConnectionError: Error 111 connecting to 127.0.0.1:6379. Connection refused.">/root/.venv/lib/python3.11/site-packages/redis/connection.py:1003: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:1515: in _connect
+    raise err
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:1499: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+backend/tests/test_perf_cache_rate.py:95: in test_providers_cache_hit_and_invalidation
+    rds.delete("identity:providers:active")
+/root/.venv/lib/python3.11/site-packages/redis/commands/core.py:1841: in delete
+    return self.execute_command("DEL", *names)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/client.py:716: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/client.py:722: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/utils.py:236: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:3041: in get_connection
+    connection.connect()
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:976: in connect
+    self.retry.call_with_retry(
+/root/.venv/lib/python3.11/site-packages/redis/retry.py:132: in call_with_retry
+    raise error
+/root/.venv/lib/python3.11/site-packages/redis/retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:977: in &lt;lambda&gt;
+    lambda: self.connect_check_health(
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:1025: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 111 connecting to 127.0.0.1:6379. Connection refused.</failure></testcase><testcase classname="backend.tests.test_perf_cache_rate.TestPatientsCache" name="test_masked_cached_unmask_never_cached_and_invalidated_on_write" time="0.001"><failure message="redis.exceptions.ConnectionError: Error 111 connecting to 127.0.0.1:6379. Connection refused.">/root/.venv/lib/python3.11/site-packages/redis/connection.py:1003: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:1515: in _connect
+    raise err
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:1499: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+backend/tests/test_perf_cache_rate.py:137: in test_masked_cached_unmask_never_cached_and_invalidated_on_write
+    for k in rds.scan_iter(match="patients:list:*"):
+/root/.venv/lib/python3.11/site-packages/redis/commands/core.py:3378: in scan_iter
+    cursor, data = self.scan(
+/root/.venv/lib/python3.11/site-packages/redis/commands/core.py:3353: in scan
+    return self.execute_command("SCAN", *pieces, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/client.py:716: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/client.py:722: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/utils.py:236: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:3041: in get_connection
+    connection.connect()
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:976: in connect
+    self.retry.call_with_retry(
+/root/.venv/lib/python3.11/site-packages/redis/retry.py:132: in call_with_retry
+    raise error
+/root/.venv/lib/python3.11/site-packages/redis/retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:977: in &lt;lambda&gt;
+    lambda: self.connect_check_health(
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:1025: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 111 connecting to 127.0.0.1:6379. Connection refused.</failure></testcase><testcase classname="backend.tests.test_perf_cache_rate.TestAppointmentsCacheAndRAW" name="test_list_cache_and_raw_on_update_and_cancel" time="0.099"><failure message="redis.exceptions.ConnectionError: Error 111 connecting to 127.0.0.1:6379. Connection refused.">/root/.venv/lib/python3.11/site-packages/redis/connection.py:1003: in connect_check_health
+    sock = self._connect()
+           ^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:1515: in _connect
+    raise err
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:1499: in _connect
+    sock.connect(socket_address)
+E   ConnectionRefusedError: [Errno 111] Connection refused
+
+During handling of the above exception, another exception occurred:
+backend/tests/test_perf_cache_rate.py:199: in test_list_cache_and_raw_on_update_and_cancel
+    for k in rds.scan_iter(match="appts:*"):
+/root/.venv/lib/python3.11/site-packages/redis/commands/core.py:3378: in scan_iter
+    cursor, data = self.scan(
+/root/.venv/lib/python3.11/site-packages/redis/commands/core.py:3353: in scan
+    return self.execute_command("SCAN", *pieces, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/client.py:716: in execute_command
+    return self._execute_command(*args, **options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/client.py:722: in _execute_command
+    conn = self.connection or pool.get_connection()
+                              ^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/utils.py:236: in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:3041: in get_connection
+    connection.connect()
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:976: in connect
+    self.retry.call_with_retry(
+/root/.venv/lib/python3.11/site-packages/redis/retry.py:132: in call_with_retry
+    raise error
+/root/.venv/lib/python3.11/site-packages/redis/retry.py:120: in call_with_retry
+    return do()
+           ^^^^
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:977: in &lt;lambda&gt;
+    lambda: self.connect_check_health(
+/root/.venv/lib/python3.11/site-packages/redis/connection.py:1025: in connect_check_health
+    raise e
+E   redis.exceptions.ConnectionError: Error 111 connecting to 127.0.0.1:6379. Connection refused.</failure></testcase><testcase classname="backend.tests.test_perf_cache_rate.TestPatientPutRAW" name="test_put_patient_reflects_new_name_in_body" time="0.102" /><testcase classname="backend.tests.test_perf_cache_rate.TestRateLimit" name="test_login_ip_rate_limit_blocks_31st" time="0.350" /><testcase classname="backend.tests.test_perf_cache_rate.TestRateLimit" name="test_x_forwarded_for_resets_ip_bucket" time="0.162" /><testcase classname="backend.tests.test_perf_cache_rate.TestRedisFallback" name="test_app_healthy_when_redis_stopped" time="11.245"><failure message="AssertionError: redis did NOT come back alive after start&#10;assert False">backend/tests/test_perf_cache_rate.py:374: in test_app_healthy_when_redis_stopped
+    assert alive, "redis did NOT come back alive after start"
+E   AssertionError: redis did NOT come back alive after start
+E   assert False</failure></testcase></testsuite></testsuites>

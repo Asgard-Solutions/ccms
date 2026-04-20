@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 9 (operational security readiness) backend verification: all 17 new tests pass plus full 68-test regression from iterations 5-8. Found one CRITICAL bug: rate_limit.block event emission crashes due to duplicate 'component' kwarg, causing 500s on rate-limit trip and blocking the documented suspicious() WARNING log line.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "core/rate_limit.py -> core/security_logger.py",
+        "issue": "security_logger.suspicious('rate_limit.block', component='rate_limit', ...) raises TypeError: event() got multiple values for keyword argument 'component'. suspicious() already passes component='suspicious' positionally. Every real rate-limit block (31+ logins from same IP) raises a 500 via the global error handler instead of the intended 429, and the documented 'rate_limit.block' JSON log line never gets emitted. Seen 158 times in /var/log/supervisor/backend.err.log during this test cycle. Fix: either drop the caller's component kwarg in rate_limit.py (_local_check and is_allowed branches) OR remove the hard-coded component='suspicious' inside security_logger.suspicious() (prefer the latter so callers can keep the 'rate_limit' tag). Counter ccms_rate_limit_blocks_total still increments because .inc() runs before suspicious() is called, so the metrics-increment assertion passed — but the WARNING log line in the iteration 9 spec is not being produced.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration9_operational_security.py",
+    "/app/test_reports/pytest/iteration9_results.xml",
+    "/app/test_reports/pytest/iteration9_regression.xml"
+  ],
+  "action_items": [
+    "Fix the duplicate-component kwarg clash in core/security_logger.suspicious(); preferred patch: change signature to `def suspicious(name, *, component='suspicious', **meta)` so callers can override. After the fix, trigger >30 rapid /api/auth/login attempts and confirm (a) 429 response (not 500), (b) a WARNING-level JSON line with \"event\":\"rate_limit.block\" shows up on the security logger, (c) ccms_rate_limit_blocks_total{source='local'} still increments.",
+    "Re-run /app/backend/tests/test_iteration9_operational_security.py::TestRateLimitBlock after the fix to get genuine 429-path coverage (current pass relied on counter-before-exception ordering)."
+  ],
+  "critical_code_review_comments": [
+    "core/security_logger.suspicious() hard-codes component='suspicious' but callers pass their own component → TypeError. This is a hard break reachable on any rate-limit event.",
+    "Global 500 handler is sound (sanitised payload with correlation_id, no traceback leakage, bumps ccms_secure_endpoint_errors_total). However, it is currently masking the above rate-limit TypeError in production — consider a unit test that asserts suspicious() works end-to-end with a caller-supplied component.",
+    "core/audit._emit_metrics is well-scoped and uses try/except to protect request path. Good.",
+    "/api/compliance/monitoring-hooks payload is complete: 25 events (>=20), 11 metrics (>=10), 7 incident_evidence_surfaces (>=5). RBAC (admin 200, others 403, anon 401) solid.",
+    "core/security_logger._BANNED_META_KEYS correctly redacts password/token/secret variants (case-insensitive)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration9_operational_security.py"
+  ],
+  "success_rate": {"backend": "100% (17/17 new + 68/68 regression)", "frontend": "n/a"},
+  "test_credentials": "/app/memory/test_credentials.md (admin/doctor/staff/patient seed accounts used; Mongo login_attempts collection cleared between runs to unlock admin after wrong-password probes).",
+  "seed_data_creation": "Test creates throwaway staff users (TEST_disable_<uid>@ccms.app) and patients (TEST BG_<uid>) for counter-bump assertions. login_attempts collection is flushed by an autouse fixture so brute-force lockout from the rate-limit sub-test does not cascade into admin fixtures.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 9 full suite file: /app/backend/tests/test_iteration9_operational_security.py (17 tests, all green). Run regression with `REACT_APP_BACKEND_URL=$URL pytest backend/tests/test_iteration5.py backend/tests/test_iteration6_refresh.py backend/tests/test_iteration7_privacy.py backend/tests/test_iteration8_security_config.py backend/tests/test_iteration9_operational_security.py`. Clear Mongo test_database.login_attempts between runs if admin starts returning 429 'Too many failed attempts'. Rate-limit window is ~60s on IP bucket + up to 15m on per-email lockout. CRITICAL open bug: security_logger.suspicious() duplicate 'component' kwarg — needs main-agent fix before rate_limit.block WARNING log line can be asserted end-to-end.",
+  "rca of the issue": "core/rate_limit.py calls `security_logger.suspicious('rate_limit.block', component='rate_limit', ...)`. core/security_logger.suspicious() is defined as `def suspicious(name, **meta): event(name, outcome='warning', component='suspicious', level=logging.WARNING, **meta)`. Python evaluates this as `event(name, outcome='warning', component='suspicious', level=..., component='rate_limit', ...)` → TypeError duplicate kwarg. Reproduction: from shell issue 31 rapid `POST /api/auth/login` from the same IP → backend.err.log shows the TypeError and the client gets 500. Mitigation: change suspicious() to `def suspicious(name, *, component='suspicious', **meta): event(name, outcome='warning', component=component, level=logging.WARNING, **meta)`."
+}

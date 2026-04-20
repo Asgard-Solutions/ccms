@@ -1,0 +1,136 @@
+{
+  "theme": "LIGHT",
+  "archetype": "1 (Organic & Earthy)",
+  "domain": "Chiropractic Clinic Management System (CCMS)",
+  "design_philosophy": "A clean, clinical, yet warm interface that prioritizes function, high data legibility, and a calm atmosphere for both healthcare providers and patients. Avoiding cold 'fintech blue' and generic 'SaaS purple'.",
+  "colors": {
+    "background": {
+      "default": "#FAF9F6",
+      "surface": "#FFFFFF",
+      "subtle": "#F5F5F0",
+      "highlight": "#EBEBE6"
+    },
+    "text": {
+      "primary": "#1F2924",
+      "secondary": "#5C6A61",
+      "disabled": "#A3AFA7",
+      "inverse": "#FFFFFF"
+    },
+    "primary": {
+      "DEFAULT": "#7B9A82",
+      "hover": "#65826C",
+      "active": "#526B58",
+      "foreground": "#FFFFFF"
+    },
+    "status": {
+      "success": "#7B9A82",
+      "success_bg": "#EDF2EE",
+      "warning": "#D4A373",
+      "warning_bg": "#FDF6ED",
+      "destructive": "#C76D54",
+      "destructive_bg": "#FBF1EE",
+      "info": "#7B9A82",
+      "info_bg": "#EDF2EE"
+    },
+    "border": {
+      "default": "#E5E5E0",
+      "focus": "#7B9A82"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "heading": "'Outfit', sans-serif",
+      "body": "'Manrope', sans-serif",
+      "mono": "'JetBrains Mono', monospace"
+    },
+    "scale": {
+      "h1": "text-4xl sm:text-5xl font-medium tracking-tight leading-none text-primary-text",
+      "h2": "text-2xl sm:text-3xl font-medium tracking-tight text-primary-text",
+      "h3": "text-xl font-medium text-primary-text",
+      "h4": "text-lg font-medium text-primary-text",
+      "body": "text-base font-normal leading-relaxed text-secondary-text",
+      "small": "text-sm font-medium text-secondary-text",
+      "overline": "text-xs font-semibold uppercase tracking-[0.15em] text-secondary-text"
+    }
+  },
+  "spacing_and_layout": {
+    "container": "max-w-7xl mx-auto px-6 lg:px-12",
+    "section_gap": "gap-12 md:gap-16",
+    "bento_grid": "grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6",
+    "surface_style": {
+      "type": "Flat Solid",
+      "border_radius": "rounded-sm",
+      "border": "border border-stone-200",
+      "shadow": "shadow-none hover:shadow-sm transition-shadow duration-200",
+      "padding": "p-6 md:p-8"
+    }
+  },
+  "components": {
+    "button": {
+      "primary": "bg-[#7B9A82] text-white hover:bg-[#65826C] rounded-sm px-6 py-2.5 font-medium transition-colors",
+      "secondary": "bg-transparent border border-stone-200 text-[#1F2924] hover:bg-stone-50 rounded-sm px-6 py-2.5 font-medium transition-colors",
+      "destructive": "bg-[#C76D54] text-white hover:bg-[#B35F47] rounded-sm px-6 py-2.5 font-medium transition-colors",
+      "ghost": "bg-transparent text-[#5C6A61] hover:bg-stone-100 rounded-sm px-4 py-2 font-medium transition-colors"
+    },
+    "input": {
+      "base": "w-full border border-stone-200 rounded-sm px-4 py-2.5 bg-white text-[#1F2924] placeholder:text-[#A3AFA7] focus:outline-none focus:ring-2 focus:ring-[#7B9A82]/20 focus:border-[#7B9A82] transition-all"
+    },
+    "table": {
+      "wrapper": "w-full text-left border-collapse",
+      "header": "border-b-2 border-stone-200 pb-3 text-xs font-semibold uppercase tracking-wider text-[#5C6A61]",
+      "row": "border-b border-stone-100 hover:bg-[#F5F5F0]/50 transition-colors",
+      "cell": "py-4 px-2 text-sm text-[#1F2924]"
+    },
+    "calendar": {
+      "wrapper": "border border-stone-200 rounded-sm bg-white",
+      "header": "flex justify-between items-center p-4 border-b border-stone-200",
+      "grid": "grid grid-cols-7 gap-px bg-stone-200",
+      "day_cell": "bg-white min-h-[120px] p-2 hover:bg-[#F5F5F0]/50 transition-colors",
+      "appointment_block": "bg-[#EDF2EE] border-l-2 border-[#7B9A82] text-xs p-2 rounded-r-sm mb-1 cursor-pointer hover:bg-[#E0EBE2]"
+    },
+    "sidebar": {
+      "wrapper": "w-64 border-r border-stone-200 bg-[#FAF9F6] h-screen fixed flex flex-col",
+      "nav_item": "flex items-center px-4 py-3 text-sm font-medium text-[#5C6A61] hover:bg-[#F5F5F0] hover:text-[#1F2924] transition-colors",
+      "nav_item_active": "flex items-center px-4 py-3 text-sm font-medium text-[#1F2924] bg-[#F5F5F0] border-l-2 border-[#7B9A82]"
+    },
+    "top_nav": {
+      "wrapper": "h-16 border-b border-stone-200 bg-white flex items-center justify-between px-6 sticky top-0 z-50",
+      "user_profile": "flex items-center gap-3 text-sm font-medium text-[#1F2924]"
+    }
+  },
+  "motion": {
+    "page_transition": "animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out",
+    "hover_micro_interaction": "active:scale-[0.98] transition-transform",
+    "skeleton": "animate-pulse bg-stone-200 rounded-sm"
+  },
+  "media": {
+    "image_urls": {
+      "auth_background": {
+        "url": "https://images.pexels.com/photos/8459996/pexels-photo-8459996.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Bright and clean medical waiting room with modern seating. Use as a background on the Login/Register split screen.",
+        "category": "hero"
+      },
+      "doctor_avatar_placeholder": {
+        "url": "https://images.pexels.com/photos/6762869/pexels-photo-6762869.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Portrait of a calm male doctor. Use as placeholder for the provider profile.",
+        "category": "avatar"
+      },
+      "empty_state_abstract": {
+        "url": "https://images.pexels.com/photos/5723876/pexels-photo-5723876.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Abstract spine X-ray. Use carefully in empty states (desaturated, low opacity) to add a clinic-specific touch.",
+        "category": "background"
+      }
+    }
+  },
+  "testing": {
+    "data_testid_rule": "All interactive elements must include a data-testid attribute formatted as kebab-case, role-based. E.g., data-testid='appointment-book-button'."
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the color palette. DO NOT USE Tailwind's default blue, purple, or indigo.",
+    "Use Phosphor Icons (@phosphor-icons/react) for a clean, line-based UI that matches the clinical tone.",
+    "Ensure the sidebar navigation is collapsible. Provide role-based conditional rendering for navigation links.",
+    "For the calendar, implement a custom CSS grid or use a library that supports clean, border-based bento cells without heavy box-shadows.",
+    "Add empty state illustrations using the provided abstract imagery, applying grayscale and opacity filters (`grayscale opacity-30`) to keep them subtle.",
+    "Use Shadcn components for forms, dialogs, and dropdowns, but heavily customize them to use `rounded-sm` and the stone/sage color palette."
+  ]
+}

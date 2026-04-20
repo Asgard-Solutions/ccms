@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 5 security-hardening testing complete. 18/20 backend tests in test_iteration5.py PASS; 2 genuine backend bugs found. Frontend smoke all green: forgot-password link on login, /password-reset page with request+confirm tabs, /security Recent sign-ins (sessions-card), /audit-log advanced filters + Export CSV button — all render, zero console errors. Covered: login shape (mfa_policy_required), session epoch revocation on disable/enable/patch-role/change-password (old cookies + old access tokens rejected), password reset full flow (unknown-email no-enumeration, dev_token delivery, weak rejected, strong accepted, single-use enforced, history reuse rejected), admin MFA reset + require toggle RBAC, /auth/sessions response shape, audit date-range + actor_email filters, CSV export admin-only streaming with header+rows and audit_log.exported meta-row, and regressions (compliance overview RBAC, patient masking default, audit-logs admin-only, break-glass reason enforced).",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/auth/refresh",
+        "issue": "Returns HTTP 500 — TypeError: create_access_token() missing 2 required positional arguments 'epoch' and 'session_started_at'. services/identity/router.py:388 calls create_access_token(user['id'], user['email'], user['role']) without the epoch/sst args required by the new signature. This completely breaks token refresh for every user (admin/doctor/staff/patient). Fix: access = create_access_token(user['id'], user['email'], user['role'], int(user.get('session_epoch', 0)), datetime.now(timezone.utc).isoformat())",
+        "priority": "CRITICAL"
+      },
+      {
+        "endpoint": "POST /api/patients (and likely PUT /api/patients/{id})",
+        "issue": "PHI leak into audit metadata. patient.created audit row metadata contains {'name': 'TEST_phi_xxx Leak'} — the patient's full name (first_name + last_name concatenation). Task spec explicitly says 'metadata should only have enums/ids/counts, never raw first_name/address/phone'. Full name is a direct HIPAA identifier. Reproduced: admin POST /api/patients with first_name='TEST_phi_81f1f0', last_name='Leak' → audit_logs row shows metadata.name='TEST_phi_81f1f0 Leak'. Fix: remove 'name' from audit_success metadata on patient.create/update; keep only entity_id, enums (role, gender_enum) and counts.",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration5.py",
+    "/app/test_reports/pytest/iteration5_results.xml"
+  ],
+  "action_items": [
+    "FIX services/identity/router.py::refresh line 388 — pass epoch + session_started_at to create_access_token so /api/auth/refresh stops 500-ing.",
+    "FIX PHI leak in patient.create/update audit metadata — remove patient full name from audit_success metadata; retain only ids, enums, counts per HIPAA minimum-necessary rule.",
+    "Consider widening test coverage: when refresh is fixed, re-run test_refresh_dies_after_epoch_bump to verify post-bump 401 behaviour (currently blocked by the 500)."
+  ],
+  "critical_code_review_comments": [
+    "identity/router.py::refresh — new token contract (epoch + sst) was not applied here. This is a straight miss from the security hardening PR; all other token-issuing sites (login, mfa_challenge, change_password, mfa_verify, mfa_disable, register) correctly pass epoch/sst. Single consistent helper e.g. _issue_session(response, user) would prevent this recurring.",
+    "patients router audit_success for patient.created/updated should be reviewed line-by-line for any PHI fields (name, dob, address, emergency_contact, phone). Current leak is 'name'. Recommend a whitelist approach: AUDIT_METADATA_ALLOWED = {'record_type','gender','provider_id','count','fields'} and reject anything else at write time.",
+    "audit/router.py _build_query — date_from/date_to compared as strings against 'created_at' (ISO string). Works only because timestamps are zero-padded ISO-8601 UTC. Add an explicit comment or convert to datetime. Low priority.",
+    "identity/router.py _cookie_kwargs uses secure=True + samesite='none' which is correct for cross-site cookie, but there is no comment explaining the deployment assumption. A single behind-reverse-proxy HTTP dev environment would fail silently.",
+    "password_reset_request leaks no enumeration, but rate-limit key 'pwreset:{ip}' uses only IP — an attacker behind an upstream proxy (single X-Forwarded-For) can still spray. Consider composite key (ip, email_hash).",
+    "audit export.csv trailer audit_success is inside the async generator — if the client disconnects mid-stream, the meta row is not written. Acceptable for best-effort but worth documenting."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration5.py (NEW — 20 iteration-5 tests; 18 PASS, 2 FAIL revealing backend bugs above)"
+  ],
+  "success_rate": {
+    "backend": "90% (18/20 iteration-5 tests pass; 2 failures are real backend bugs, not test bugs)",
+    "frontend": "100% smoke (login-forgot-password-link, /password-reset tabs, /security sessions-card, /audit-log advanced filters + Export CSV all present, zero console errors)"
+  },
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 — verified. doctor/staff/patient @ccms.app with COMPLIANCECLINIC1 suffix also verified. All seed creds intact at end of run.",
+  "seed_data_creation": "Each run of test_iteration5.py creates ~6-8 TEST_it5_*@ccms.app staff users (used as throwaway subjects for epoch + password-reset tests). They end the run either disabled or with rotated passwords — none of them are seed users, safe to leave behind. No mutation to admin/doctor/staff/patient@ccms.app seed creds.",
+  "redis_note": "Redis unavailable in this pod (ECONNREFUSED 127.0.0.1:6379) as noted in request. Cache passes through, rate-limit uses in-process fallback — did not fail tests on this.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent fixes (1) /auth/refresh 500 and (2) patient audit PHI leak, re-run ONLY: pytest /app/backend/tests/test_iteration5.py::TestSessionEpoch::test_refresh_dies_after_epoch_bump /app/backend/tests/test_iteration5.py::TestNoPhiInAudit -v. Full regression: pytest /app/backend/tests/ -v --junitxml=/app/test_reports/pytest/pytest_results.xml with env REACT_APP_BACKEND_URL=https://clinic-intake-wiz.preview.emergentagent.com MONGO_URL=mongodb://localhost:27017 DB_NAME=test_database. The PHI-leak test uses first_name='TEST_phi_<hex>' as the needle — if main agent fixes by whitelisting metadata fields, the test will pass immediately; the assertion scans metadata str() for the first_name, address, emergency_contact, phone values actually submitted.",
+  "rca_of_issue": "Bug 1 (refresh 500): new signature create_access_token(sub, email, role, epoch, session_started_at) was adopted everywhere except /auth/refresh which was left at the old 3-arg form. Reproducer: login as any user → POST /api/auth/refresh → 500. Mitigation: pass user's current session_epoch and a fresh ISO timestamp. Bug 2 (PHI in audit): patient create/update writes {'name': <full patient name>} into audit metadata. Full name is PHI. Reproducer: admin POST /api/patients, then query audit_logs for that entity_id — metadata.name contains the plaintext name. Mitigation: restrict audit metadata to id/enum/count fields only; switch to a whitelist."
+}
