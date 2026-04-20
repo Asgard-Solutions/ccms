@@ -62,6 +62,29 @@ Add the entry to the **[Unreleased]** section at the top of `CHANGELOG.md`.
 When we cut a date-stamped release, move the unreleased block under a new
 `## [YYYY-MM-DD]` heading.
 
+## Automated guards
+The repository ships a small guard that catches code changes missing a
+CHANGELOG entry. Activate the local pre-commit hook once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+After this, every `git commit` runs `scripts/check_changelog.sh`. The same
+script runs on every pull request via the `Docs guard` GitHub Actions
+workflow (`.github/workflows/docs-guard.yml`).
+
+To run the guard manually against your branch:
+```bash
+scripts/check_changelog.sh origin/main   # or any base ref
+```
+
+Bypass (not recommended, only for emergency hotfixes where a follow-up
+CHANGELOG PR is filed immediately):
+```bash
+git commit --no-verify
+```
+
 ## Commit & PR conventions
 - **Imperative mood**, present tense. Example: `Add magic-byte sniff to patient doc uploads`.
 - Reference issues or the PRD backlog item in the PR body.

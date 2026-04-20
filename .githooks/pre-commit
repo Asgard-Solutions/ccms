@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+#
+# Pre-commit hook — activated via:
+#     git config core.hooksPath .githooks
+#
+# Runs the CHANGELOG guard locally before every commit.
+# Skip with: git commit --no-verify (not recommended).
+#
+set -e
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+SCRIPT="${REPO_ROOT}/scripts/check_changelog.sh"
+
+if [[ ! -x "$SCRIPT" ]]; then
+  echo "pre-commit: check_changelog.sh missing or not executable — skipping guard."
+  exit 0
+fi
+
+"$SCRIPT"

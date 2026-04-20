@@ -11,6 +11,17 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+### Changed
+- **Docs** — Added comprehensive project documentation: `README.md`,
+  `CONTRIBUTING.md`, `SECURITY.md`, `docs/DOC_UPDATE_POLICY.md`, and a PR
+  template. Existing long-form docs in `memory/` are now linked from
+  `README.md`'s Documentation map.
+- **CI** — Added `.github/workflows/docs-guard.yml` +
+  `scripts/check_changelog.sh` that fails any PR touching `backend/` or
+  `frontend/` without a matching `CHANGELOG.md` update. Same guard
+  available locally as an opt-in pre-commit hook
+  (`git config core.hooksPath .githooks`).
+
 ## [2026-04-20] Phase 5 — Intake polish, uploads, signed consents + hardening
 ### Added
 - **Wet-ink signature capture** (`frontend/src/components/SignaturePad.jsx`)

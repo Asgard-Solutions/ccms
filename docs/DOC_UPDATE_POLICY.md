@@ -93,11 +93,16 @@ When you create a new doc:
 ## Automation hooks
 Today the policy is enforced by:
 - `.github/pull_request_template.md` checkbox list.
+- **`.github/workflows/docs-guard.yml` + `scripts/check_changelog.sh`** —
+  fails the PR when `backend/**` or `frontend/**` changed without a matching
+  `CHANGELOG.md` update. Mirror guard runs locally via the opt-in
+  `.githooks/pre-commit` hook (enable once with
+  `git config core.hooksPath .githooks`).
 - The testing agent's `test_credentials.md` freshness check.
 - The main agent's `finish` tool, which updates `memory/PRD.md` on every
   successful feature completion.
 
 Future automation (tracked in `memory/COMPLIANCE_BACKLOG.md`):
-- Pre-commit hook that grep-checks the diff against this matrix.
-- CI job that diffs `CHANGELOG.md`'s `[Unreleased]` block and fails if no
-  entry was added when code in `backend/` or `frontend/` changed.
+- Matrix-aware guard that inspects changed paths and verifies *each*
+  required document was touched (not just CHANGELOG).
+- Auto-label PRs with the doc-categories their diff affects.
