@@ -12,6 +12,31 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Changed
+- **Patient Detail — Intake vs Documents split (2026-02-20).**
+  - The old "Intake" tab contained only consents + upload rows —
+    which is really document management. Renamed to
+    **"Documents & Attachments"** and kept the consent + upload UI.
+  - Introduced a brand-new **"Intake"** tab that shows actual
+    intake *forms*: chief complaint, onset, pain score, pain areas,
+    symptom count, case-type badge, notes. Uses the shared
+    `DateRangeFilter` (defaults to last 30 days, quick picks 60/90
+    /180/365/Today/Custom) so users can scope the intake history
+    like they can on Records and Appointments. The backend
+    currently exposes a single intake blob per patient; the UI is
+    already list-shaped (`{id:'current', version_label:'Current
+    intake'}`) so switching to a multi-form backend later is a
+    drop-in.
+  - A new **"New intake form"** CTA on the Intake tab opens the
+    existing clinical-intake wizard (same break-glass / unmask /
+    re-auth flow).
+  - Removed **Edit patient** and **Edit intake** buttons from the
+    page-top toolbar. Their equivalents now live inside the tabs:
+    "Edit patient info" on Overview, "New intake form" on Intake.
+    Top toolbar keeps only Mask/Unmask, Export JSON, and Soft-delete.
+  - New testids: `tab-documents`, `patient-intake-forms`,
+    `intake-new-form-btn`, `intake-date-range`, `intake-form-{id}`,
+    `intake-forms-empty`.
+
 - **Patient Overview — full read-only patient info (2026-02-20).**
   The Overview tab used to show only Address / Emergency contact /
   Intake notes, which felt disjointed from the Edit Patient wizard.

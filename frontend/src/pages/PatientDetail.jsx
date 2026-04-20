@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Download, Eye, EyeOff, FileText, Pencil, Plus, Stethoscope, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, Eye, EyeOff, FileText, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, formatApiError } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { formatDate, formatDateTime, relativeFromNow } from "../utils/time";
@@ -172,6 +172,40 @@ function InsuranceRow({ label, carrier, plan, memberId, planType, testId }) {
           Member ID <span className="text-foreground">{memberId}</span>
         </div>
       )}
+    </div>
+  );
+}
+
+function InsurancePlanBlock({ plan, label, testId }) {
+  if (!plan || typeof plan !== "object") return null;
+  const fields = [
+    ["Carrier", plan.carrier],
+    ["Plan name", plan.plan_name],
+    ["Plan type", plan.plan_type],
+    ["Member ID", plan.member_id],
+    ["Group #", plan.group_number],
+    ["Policy holder", plan.policy_holder_name],
+    ["Relationship", plan.policy_holder_relationship],
+    ["Policy holder DOB", plan.policy_holder_dob],
+    ["Effective", plan.effective_date],
+    ["Termination", plan.termination_date],
+    ["Copay", plan.copay],
+    ["Deductible", plan.deductible],
+  ].filter(([, v]) => hasValue(v));
+  if (!fields.length) return null;
+  return (
+    <div data-testid={testId} className="rounded-sm border border-border bg-background p-4">
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {label}
+      </div>
+      <div className="space-y-1.5">
+        {fields.map(([k, v]) => (
+          <div key={k} className="grid grid-cols-[140px_1fr] gap-3 text-sm">
+            <span className="text-muted-foreground">{k}</span>
+            <span className="text-foreground">{v}</span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -365,40 +399,6 @@ function PatientOverview({ patient, providers, onEdit, canEdit }) {
   );
 }
 
-function InsurancePlanBlock({ plan, label, testId }) {
-  if (!plan || typeof plan !== "object") return null;
-  const fields = [
-    ["Carrier", plan.carrier],
-    ["Plan name", plan.plan_name],
-    ["Plan type", plan.plan_type],
-    ["Member ID", plan.member_id],
-    ["Group #", plan.group_number],
-    ["Policy holder", plan.policy_holder_name],
-    ["Relationship", plan.policy_holder_relationship],
-    ["Policy holder DOB", plan.policy_holder_dob],
-    ["Effective", plan.effective_date],
-    ["Termination", plan.termination_date],
-    ["Copay", plan.copay],
-    ["Deductible", plan.deductible],
-  ].filter(([, v]) => hasValue(v));
-  if (!fields.length) return null;
-  return (
-    <div data-testid={testId} className="rounded-sm border border-border bg-background p-4">
-      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {label}
-      </div>
-      <div className="space-y-1.5">
-        {fields.map(([k, v]) => (
-          <div key={k} className="grid grid-cols-[140px_1fr] gap-3 text-sm">
-            <span className="text-muted-foreground">{k}</span>
-            <span className="text-foreground">{v}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 function ConsentLine({ label, consent, consentType, onDownloadPdf }) {
   if (!consent || !consent.accepted) return null;
   const meta = [consent.signature_name, consent.signed_at].filter(Boolean).join(" · ");
@@ -426,6 +426,175 @@ function ConsentLine({ label, consent, consentType, onDownloadPdf }) {
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// IntakeFormsTab — list of clinical intake forms for a patient. The backend
+// currently stores a single intake blob on the patient record; the UI already
+// treats it as a versioned list so switching to a multi-form backend (one row
+// per encounter) later is a drop-in.
+// ---------------------------------------------------------------------------
+
+function IntakeFormRow({ form }) {
+  const painAreas = Array.isArray(form.pain_locations) ? form.pain_locations : [];
+  const symptoms = Array.isArray(form.symptoms) ? form.symptoms : [];
+  const caseLabel = form.case_type ? form.case_type.replace(/_/g, " ") : null;
+  return (
+    <li
+      data-testid={`intake-form-${form.id}`}
+      className="relative rounded-sm border border-border bg-card p-5"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-sm bg-muted px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              {form.version_label}
+            </span>
+            {caseLabel && (
+              <span className="rounded-sm bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
+                {caseLabel}
+              </span>
+            )}
+            {typeof form.pain_level === "number" && (
+              <span className="rounded-sm bg-warning-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-warning">
+                Pain {form.pain_level}/10
+              </span>
+            )}
+          </div>
+          <h3 className="mt-2 font-display text-lg font-medium text-foreground">
+            {form.chief_complaint || "No chief complaint recorded"}
+          </h3>
+        </div>
+        <div className="text-right text-xs text-muted-foreground">
+          {form.captured_at ? formatDateTime(form.captured_at) : "Date unknown"}
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Onset</div>
+          <div className="text-foreground">
+            {form.complaint_onset
+              ? formatDate(form.complaint_onset)
+              : form.onset_type || <span className="text-muted-foreground">—</span>}
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Pain areas</div>
+          <div className="text-foreground">
+            {painAreas.length > 0
+              ? painAreas.slice(0, 4).join(", ") + (painAreas.length > 4 ? "…" : "")
+              : <span className="text-muted-foreground">—</span>}
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Symptoms</div>
+          <div className="text-foreground">
+            {symptoms.length > 0
+              ? `${symptoms.length} reported`
+              : <span className="text-muted-foreground">—</span>}
+          </div>
+        </div>
+      </div>
+
+      {form.notes && (
+        <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground">
+          {form.notes}
+        </p>
+      )}
+    </li>
+  );
+}
+
+function IntakeFormsTab({ patient, range, onNew, onRangeChange, canEdit }) {
+  const clinical = patient.clinical_intake || {};
+  const caseDetails = patient.case_details || {};
+  const hasAny = hasValue(clinical) || hasValue(caseDetails);
+
+  // The backend currently exposes a single intake snapshot per patient.
+  // We render it as a one-item list so the tab is already list-shaped.
+  const capturedAt =
+    patient.clinical_intake_updated_at ||
+    patient.intake_completed_at ||
+    patient.updated_at ||
+    null;
+
+  const allForms = hasAny
+    ? [{
+        id: "current",
+        version_label: "Current intake",
+        captured_at: capturedAt,
+        chief_complaint: clinical.chief_complaint,
+        complaint_onset: clinical.complaint_onset,
+        onset_type: clinical.onset_type,
+        pain_level: typeof clinical.pain_level === "number" ? clinical.pain_level : null,
+        pain_locations: clinical.pain_locations,
+        symptoms: clinical.symptoms,
+        notes: clinical.notes,
+        case_type: caseDetails.case_type,
+      }]
+    : [];
+
+  const filteredForms = allForms.filter(
+    (f) => !f.captured_at || isInRange(f.captured_at, range),
+  );
+
+  return (
+    <section data-testid="patient-intake-forms" className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+            Clinical intake
+          </span>
+          <h2 className="mt-1 font-display text-2xl font-medium tracking-tight">
+            Intake forms
+          </h2>
+          <p className="mt-1 max-w-xl text-xs text-muted-foreground">
+            Every intake captured for this patient — chief complaint, pain, symptoms,
+            and case details.
+          </p>
+        </div>
+        {canEdit && (
+          <Button
+            onClick={onNew}
+            data-testid="intake-new-form-btn"
+            className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
+          >
+            <Plus className="mr-2 h-4 w-4" /> New intake form
+          </Button>
+        )}
+      </div>
+
+      <DateRangeFilter
+        testId="intake-date-range"
+        onChange={onRangeChange}
+      />
+
+      {!patient.unmasked && (
+        <p className="text-xs text-muted-foreground">
+          Clinical details are hidden by default — unmask above to reveal the structured intake data.
+        </p>
+      )}
+
+      {filteredForms.length === 0 ? (
+        <div
+          data-testid="intake-forms-empty"
+          className="rounded-sm border border-dashed border-border bg-card p-12 text-center text-sm text-muted-foreground"
+        >
+          {allForms.length === 0
+            ? "No intake forms captured yet."
+            : "No intake forms in the selected range."}
+        </div>
+      ) : (
+        <ul className="space-y-3">
+          {filteredForms.map((f) => (
+            <IntakeFormRow key={f.id} form={f} />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 
 function IntakeSections({ patient, onDownloadConsent }) {
   const demo = patient.demographics || {};
@@ -768,6 +937,7 @@ export default function PatientDetail() {
   const [providers, setProviders] = useState([]);
   const [recordsRange, setRecordsRange] = useState(null);
   const [appointmentsRange, setAppointmentsRange] = useState(null);
+  const [intakeRange, setIntakeRange] = useState(null);
 
   const filteredRecords = useMemo(
     () => (records || []).filter((r) => isInRange(r.recorded_at, recordsRange)),
@@ -868,6 +1038,48 @@ export default function PatientDetail() {
     }
   }
 
+  async function openEditPatientWizard() {
+    if (patient.unmasked) {
+      setEditWizardOpen(true);
+      return;
+    }
+    if (canUnmask) {
+      try {
+        setUnmask(true);
+        await load({ withUnmask: true, breakGlassReason: reason });
+        setEditWizardOpen(true);
+      } catch (err) {
+        setUnmask(false);
+        toast.error(formatApiError(err));
+      }
+      return;
+    }
+    toast.message("Break-glass required to edit patient", {
+      description: "Enter a reason above to unmask this record before editing.",
+    });
+  }
+
+  async function openIntakeWizard() {
+    if (patient.unmasked) {
+      setIntakeWizardOpen(true);
+      return;
+    }
+    if (canUnmask) {
+      try {
+        setUnmask(true);
+        await load({ withUnmask: true, breakGlassReason: reason });
+        setIntakeWizardOpen(true);
+      } catch (err) {
+        setUnmask(false);
+        toast.error(formatApiError(err));
+      }
+      return;
+    }
+    toast.message("Break-glass required to edit intake", {
+      description: "Enter a reason above to unmask this record before editing.",
+    });
+  }
+
   if (reasonRequired && !reason) {
     return (
       <BreakGlassDialog
@@ -915,64 +1127,6 @@ export default function PatientDetail() {
             >
               {unmask ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
               {unmask ? "Mask" : "Unmask (audited)"}
-            </Button>
-          )}
-          {canEditIntake && (
-            <Button
-              variant="outline"
-              onClick={async () => {
-                if (patient.unmasked) {
-                  setEditWizardOpen(true);
-                  return;
-                }
-                if (canUnmask) {
-                  try {
-                    setUnmask(true);
-                    await load({ withUnmask: true, breakGlassReason: reason });
-                    setEditWizardOpen(true);
-                  } catch (err) {
-                    setUnmask(false);
-                    toast.error(formatApiError(err));
-                  }
-                  return;
-                }
-                toast.message("Break-glass required to edit patient", {
-                  description: "Enter a reason above to unmask this record before editing.",
-                });
-              }}
-              data-testid="patient-edit-patient-btn"
-              className="rounded-sm"
-            >
-              <Pencil className="mr-2 h-4 w-4" /> Edit patient
-            </Button>
-          )}
-          {canEditIntake && (
-            <Button
-              variant="outline"
-              onClick={async () => {
-                if (patient.unmasked) {
-                  setIntakeWizardOpen(true);
-                  return;
-                }
-                if (canUnmask) {
-                  try {
-                    setUnmask(true);
-                    await load({ withUnmask: true, breakGlassReason: reason });
-                    setIntakeWizardOpen(true);
-                  } catch (err) {
-                    setUnmask(false);
-                    toast.error(formatApiError(err));
-                  }
-                  return;
-                }
-                toast.message("Break-glass required to edit intake", {
-                  description: "Enter a reason above to unmask this record before editing.",
-                });
-              }}
-              data-testid="patient-edit-intake-btn"
-              className="rounded-sm"
-            >
-              <Stethoscope className="mr-2 h-4 w-4" /> Edit intake
             </Button>
           )}
           {canExport && (
@@ -1029,6 +1183,7 @@ export default function PatientDetail() {
         >
           <TabsTrigger value="overview" data-testid="tab-overview" className="rounded-sm">Overview</TabsTrigger>
           <TabsTrigger value="intake" data-testid="tab-intake" className="rounded-sm">Intake</TabsTrigger>
+          <TabsTrigger value="documents" data-testid="tab-documents" className="rounded-sm">Documents &amp; Attachments</TabsTrigger>
           <TabsTrigger value="records" data-testid="tab-records" className="rounded-sm">Medical Records</TabsTrigger>
           <TabsTrigger value="appointments" data-testid="tab-appointments" className="rounded-sm">Appointments</TabsTrigger>
           <TabsTrigger value="insurance" data-testid="tab-insurance" className="rounded-sm">Insurance</TabsTrigger>
@@ -1040,30 +1195,21 @@ export default function PatientDetail() {
             patient={patient}
             providers={providers}
             canEdit={canEditIntake}
-            onEdit={async () => {
-              if (patient.unmasked) {
-                setEditWizardOpen(true);
-                return;
-              }
-              if (canUnmask) {
-                try {
-                  setUnmask(true);
-                  await load({ withUnmask: true, breakGlassReason: reason });
-                  setEditWizardOpen(true);
-                } catch (err) {
-                  setUnmask(false);
-                  toast.error(formatApiError(err));
-                }
-                return;
-              }
-              toast.message("Break-glass required to edit patient", {
-                description: "Enter a reason above to unmask this record before editing.",
-              });
-            }}
+            onEdit={openEditPatientWizard}
           />
         </TabsContent>
 
         <TabsContent value="intake" className="mt-6 space-y-6">
+          <IntakeFormsTab
+            patient={patient}
+            range={intakeRange}
+            onRangeChange={setIntakeRange}
+            canEdit={canEditIntake}
+            onNew={openIntakeWizard}
+          />
+        </TabsContent>
+
+        <TabsContent value="documents" className="mt-6 space-y-6">
           <IntakeSections patient={patient} onDownloadConsent={downloadConsentPdf} />
           <PatientDocumentsCard patientId={id} canEdit={canEditIntake} />
         </TabsContent>
