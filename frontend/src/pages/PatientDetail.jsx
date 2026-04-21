@@ -5,7 +5,7 @@ import { ArrowLeft, Download, Eye, EyeOff, FileText, Pencil, Plus, Trash2 } from
 import { api, formatApiError } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { formatDate, formatDateTime, relativeFromNow } from "../utils/time";
-import { PatientWizardDialog } from "./Patients";
+import { PatientWizardDialog } from "../components/patient-wizard/PatientWizardDialog";
 import { payloadToForm } from "./patientWizardLogic";
 import { Button } from "../components/ui/button";
 import { Skeleton } from "../components/ui/skeleton";
@@ -434,10 +434,11 @@ function ConsentLine({ label, consent, consentType, onDownloadPdf }) {
 // per encounter) later is a drop-in.
 // ---------------------------------------------------------------------------
 
-function IntakeFormRow({ form }) {
+function IntakeFormRow({ form, onEdit, canEdit }) {
   const painAreas = Array.isArray(form.pain_locations) ? form.pain_locations : [];
   const symptoms = Array.isArray(form.symptoms) ? form.symptoms : [];
   const caseLabel = form.case_type ? form.case_type.replace(/_/g, " ") : null;
+  const isDraft = form.version_label?.startsWith("Draft");
   return (
     <li
       data-testid={`intake-form-${form.id}`}
@@ -464,8 +465,21 @@ function IntakeFormRow({ form }) {
             {form.chief_complaint || "No chief complaint recorded"}
           </h3>
         </div>
-        <div className="text-right text-xs text-muted-foreground">
-          {form.captured_at ? formatDateTime(form.captured_at) : "Date unknown"}
+        <div className="flex flex-col items-end gap-2">
+          <div className="text-right text-xs text-muted-foreground">
+            {form.captured_at ? formatDateTime(form.captured_at) : "Date unknown"}
+          </div>
+          {canEdit && isDraft && onEdit && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onEdit(form)}
+              data-testid={`intake-form-edit-${form.id}`}
+              className="rounded-sm"
+            >
+              <Pencil className="mr-1 h-3 w-3" /> Edit draft
+            </Button>
+          )}
         </div>
       </div>
 
@@ -505,7 +519,7 @@ function IntakeFormRow({ form }) {
   );
 }
 
-function IntakeFormsTab({ patientId, patient, range, onNew, onRangeChange, canEdit, refreshKey }) {
+function IntakeFormsTab({ patientId, patient, range, onNew, onEdit, onRangeChange, canEdit, refreshKey }) {
   const [forms, setForms] = useState(null);
   const [creating, setCreating] = useState(false);
 
@@ -553,6 +567,9 @@ function IntakeFormsTab({ patientId, patient, range, onNew, onRangeChange, canEd
     symptoms: f.clinical_intake?.symptoms,
     notes: f.notes || f.clinical_intake?.notes,
     case_type: f.case_details?.case_type,
+    // Keep the original form object around so parent can open the wizard
+    // seeded with its latest clinical + case data.
+    _raw: f,
   }));
 
   const filteredForms = rows.filter(
@@ -614,7 +631,12 @@ function IntakeFormsTab({ patientId, patient, range, onNew, onRangeChange, canEd
       ) : (
         <ul className="space-y-3">
           {filteredForms.map((f) => (
-            <IntakeFormRow key={f.id} form={f} />
+            <IntakeFormRow
+              key={f.id}
+              form={f}
+              canEdit={canEdit}
+              onEdit={() => onEdit?.(f._raw)}
+            />
           ))}
         </ul>
       )}
@@ -960,6 +982,8 @@ export default function PatientDetail() {
   const [deleteReason, setDeleteReason] = useState("");
   const [editWizardOpen, setEditWizardOpen] = useState(false);
   const [intakeWizardOpen, setIntakeWizardOpen] = useState(false);
+  const [editingIntakeForm, setEditingIntakeForm] = useState(null);
+  const [intakeRefreshKey, setIntakeRefreshKey] = useState(0);
   const [chargeRecord, setChargeRecord] = useState(null);
   const [providers, setProviders] = useState([]);
   const [recordsRange, setRecordsRange] = useState(null);
@@ -1086,8 +1110,13 @@ export default function PatientDetail() {
     });
   }
 
-  async function openIntakeWizard() {
+  async function openIntakeWizard(intakeForm) {
+    if (!intakeForm) {
+      toast.error("No intake form selected.");
+      return;
+    }
     if (patient.unmasked) {
+      setEditingIntakeForm(intakeForm);
       setIntakeWizardOpen(true);
       return;
     }
@@ -1095,6 +1124,7 @@ export default function PatientDetail() {
       try {
         setUnmask(true);
         await load({ withUnmask: true, breakGlassReason: reason });
+        setEditingIntakeForm(intakeForm);
         setIntakeWizardOpen(true);
       } catch (err) {
         setUnmask(false);
@@ -1234,6 +1264,8 @@ export default function PatientDetail() {
             onRangeChange={setIntakeRange}
             canEdit={canEditIntake}
             onNew={openIntakeWizard}
+            onEdit={openIntakeWizard}
+            refreshKey={intakeRefreshKey}
           />
         </TabsContent>
 
@@ -1466,14 +1498,30 @@ export default function PatientDetail() {
           />
           <PatientWizardDialog
             open={intakeWizardOpen}
-            onClose={() => setIntakeWizardOpen(false)}
+            onClose={() => {
+              setIntakeWizardOpen(false);
+              setEditingIntakeForm(null);
+            }}
             mode="edit"
             scope="intake"
             patientId={id}
-            initialForm={payloadToForm(patient)}
+            intakeFormId={editingIntakeForm?.id}
+            intakeFormStatus={editingIntakeForm?.status}
+            initialForm={
+              editingIntakeForm
+                ? payloadToForm({
+                    ...patient,
+                    clinical_intake: editingIntakeForm.clinical_intake,
+                    case_details: editingIntakeForm.case_details,
+                  })
+                : payloadToForm(patient)
+            }
             userId={user.id}
             tenantId={user.tenant_id}
-            onSaved={() => load({ withUnmask: unmask, breakGlassReason: reason })}
+            onSaved={() => {
+              setIntakeRefreshKey((k) => k + 1);
+              load({ withUnmask: unmask, breakGlassReason: reason });
+            }}
           />
         </>
       )}
