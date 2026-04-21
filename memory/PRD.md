@@ -2486,3 +2486,58 @@ audited reporting and secure export. Entry point: `/reports` (new
 ### Packages added
 `openpyxl==3.1.5`, `pyzipper==0.3.6`
 
+
+## 2026-04-21 — Reports Phase 2 (HIPAA-grade export hardening)
+
+Tightened the Phase-1 export pipeline to guarantee that any file labelled
+`password_protected=true` is *genuinely* cryptographically protected.
+
+### Backend
+
+- **PDF native AES-128 encryption** via `reportlab.pdfencrypt`
+  (`StandardEncryption`). `protection_kind="pdf_native"`. PDF readers
+  prompt for the password on open — no ZIP wrapper. `canModify=0`,
+  `canAnnotate=0`.
+- **CSV + XLSX** stay AES-256 ZIP (pyzipper) because open-source libs
+  cannot natively encrypt xlsx; `protection_kind="aes_zip"`.
+- **Password at rest** encrypted with AES-GCM via `core.crypto.encrypt_text`
+  (`password_enc` field on the `exports` row). Plaintext *never*
+  persists; legacy `password_plain` field migrated out.
+- **Filenames** `{title_slug}-{YYYYMMDD-HHMM}.{ext}` — slug strips
+  `/:?` and similar unsafe characters.
+- **`reason`** (≤500 chars) accepted on `POST /reports/{name}/export`
+  — persisted on the export row and emitted in the
+  `report.export_requested` audit event for HIPAA minimum-necessary
+  review.
+- **`protection_kind`** field surfaced in `GET /exports/{id}` response.
+- Audit events unchanged (`report.export_requested`,
+  `report.export_generated`, `export.password_revealed`,
+  `export.downloaded`); **no plaintext password ever appears in logs or
+  audit metadata**.
+
+### Frontend
+
+- **Pre-export PHI consent dialog** (`PhiConsentDialog`) — shown before
+  every HIPAA export. Explains the protection technique (native PDF vs
+  AES-256 ZIP) and captures the caller's purpose-of-export.
+- Post-export result dialog copy now tailors to `protection_kind`.
+- Non-PHI exports bypass the consent dialog entirely.
+
+### Tests
+
+- 14 framework unit tests + 7 Phase-2 API/E2E tests = **21/21 passing**
+  (`test_reports_framework.py`, `test_reports_phase2_e2e.py`).
+- Frontend Playwright run: all four PHI consent scenarios pass
+  (`test_reports/iteration_52.json`).
+
+### Files touched
+
+```
+backend/services/reports/export_writer.py     # PDF native encryption, filenames, protection_kind
+backend/services/exports/__init__.py          # password_enc at rest, reason, protection_kind
+backend/services/reports/router.py            # ExportRequest.reason
+backend/tests/test_reports_framework.py       # +5 Phase-2 unit tests
+backend/tests/test_reports_phase2_e2e.py      # +7 API E2E tests (new)
+frontend/src/pages/reports/ReportViewer.jsx   # PhiConsentDialog + protection-aware copy
+```
+
