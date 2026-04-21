@@ -2429,3 +2429,60 @@ storage, no consistent display format.
 - **P3 (future)** — International phone support (current contract is
   US-only by spec).
 
+
+## 2026-04-21 — Reports Module (Phase 0 + Phase 1 Framework + 10 P0 Reports)
+
+Built an end-to-end Reports section with tenant-scoped, permission-aware,
+audited reporting and secure export. Entry point: `/reports` (new
+**Insights** sidebar group).
+
+### Backend framework
+- **`services/reports/definitions.py`** — `ReportDefinition` + `Column`,
+  `Filter`, `SortOption`, `QueryContext`, `RunResult`, `register()` +
+  `resolve_columns/sort` helpers.
+- **`services/reports/builtin.py`** — registers 10 initial reports:
+  * Operational: `appointments_list` (PHI), `provider_productivity`,
+    `patient_roster` (PHI)
+  * Clinical: `unsigned_clinical_notes` (PHI)
+  * Financial: `claims_list` (PHI), `invoices_list` (PHI),
+    `payments_received` (PHI), `denials_log`
+  * Compliance: `audit_activity`, `license_expiration`
+- **`services/reports/router.py`** — `GET /catalog`, `GET /{name}`,
+  `POST /{name}/run`, saved-view CRUD, `POST /{name}/export`. Every
+  request is permission-gated via `services.authz.policy` and audited
+  (`report.generated`, `report.export_requested`, `report.view_*`).
+- **`services/reports/views.py`** — per-user + tenant-shared saved views
+  with `is_default` uniqueness per (user,report). Collection:
+  `report_saved_views`.
+- **`services/reports/export_writer.py`** — CSV, Excel (openpyxl), PDF
+  (reportlab). PHI exports wrapped in **AES-256 password-protected ZIP**
+  via `pyzipper`; one-time password surfaced exactly once in the
+  `/api/exports/{id}` polling response.
+
+### Frontend
+- **`pages/reports/ReportsLandingPage.jsx`** — categorized catalog,
+  PHI badges, empty state, loading skeletons.
+- **`pages/reports/ReportViewer.jsx`** — filter panel, sortable columns,
+  column picker, saved-views dropdown, export menu, pagination,
+  aggregates strip. One-time password reveal dialog for PHI exports.
+- **`components/layout/navConfig.js`** — new `insights` group.
+- **`App.js`** — `/reports` and `/reports/:name` routes.
+
+### Security model
+* `reporting.read` / `reporting.read_financial` / `reporting.read_clinical`
+  for viewing.
+* `reporting.export` + `reporting.export_phi` for exporting PHI (admin
+  role key only; `super_admin` can view but NOT export PHI — confirmed
+  as 403 with actionable error).
+* PHI exports encrypted AES-256; password hashed (sha256) in audit,
+  plaintext wiped on first reveal.
+
+### Tests
+- 9 framework unit tests + 14 API E2E tests (testing agent iteration 50):
+  23/23 passing.
+- Additional deps: `openpyxl==3.1.5`, `pyzipper==0.3.6` (added to
+  `requirements.txt`).
+
+### Packages added
+`openpyxl==3.1.5`, `pyzipper==0.3.6`
+
