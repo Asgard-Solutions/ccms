@@ -429,6 +429,90 @@ async def me(user: dict = Depends(get_current_user)):
     return _to_public(user)
 
 
+# ---------------------------------------------------------------------------
+# Sensitive-action failure throttling (shared across PIN / reauth / MFA
+# endpoints). Mirrors the pattern used by `/change-password`:
+#   * a per-user sliding window that gates entry to the handler once the
+#     failure budget is exhausted;
+#   * a per-IP volume ceiling to block scripted abuse from a single
+#     source regardless of which account is targeted.
+#
+# Keyed by endpoint *action* so a run of bad PIN verifies doesn't block
+# an honest password change, and vice-versa.
+# ---------------------------------------------------------------------------
+SENSITIVE_AUTH_FAIL_LIMIT = 5
+SENSITIVE_AUTH_FAIL_WINDOW_SECONDS = 15 * 60  # 15 minutes
+SENSITIVE_AUTH_IP_VOLUME_LIMIT = 60
+SENSITIVE_AUTH_IP_VOLUME_WINDOW_SECONDS = 60
+
+
+def _client_ip(request: Request) -> str:
+    return (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or (
+        request.client.host if request.client else "unknown"
+    )
+
+
+async def _guard_sensitive_auth(
+    *,
+    action: str,
+    user: dict,
+    request: Request,
+    skip_ip_volume: bool = False,
+) -> None:
+    """Refuse further work if the caller has exhausted their per-user
+    failure budget OR the IP has blown past the per-IP volume ceiling.
+
+    `action` is both the audit log action *and* the rate-limit key
+    namespace, so a spam of wrong PINs can't steal budget from a
+    password change on the same account.
+    """
+    ip = _client_ip(request)
+    if not skip_ip_volume and not await rate_limit.is_allowed(
+        f"{action}:vol:{ip}",
+        limit=SENSITIVE_AUTH_IP_VOLUME_LIMIT,
+        window_seconds=SENSITIVE_AUTH_IP_VOLUME_WINDOW_SECONDS,
+    ):
+        await log_audit(
+            action=action,
+            actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure", reason="rate_limited_volume",
+            request=request,
+        )
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many attempts from this address. Please try again shortly.",
+        )
+
+    fail_key = f"{action}:user:{user['id']}"
+    current = await rate_limit.failure_count(
+        fail_key, window_seconds=SENSITIVE_AUTH_FAIL_WINDOW_SECONDS,
+    )
+    if current >= SENSITIVE_AUTH_FAIL_LIMIT:
+        await log_audit(
+            action=action,
+            actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure", reason="locked_out",
+            metadata={"failed_attempts": current},
+            request=request,
+        )
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many failed attempts. Please wait a few minutes and try again.",
+        )
+
+
+async def _record_sensitive_auth_failure(
+    *, action: str, user_id: str,
+) -> None:
+    """Bump the per-user failure counter after a credential mismatch."""
+    await rate_limit.record_failure(
+        f"{action}:user:{user_id}",
+        window_seconds=SENSITIVE_AUTH_FAIL_WINDOW_SECONDS,
+    )
+
+
 @router.patch("/me/preferences", response_model=UserPublic)
 async def update_preferences(
     payload: PreferencesUpdate,
@@ -534,6 +618,13 @@ async def update_profile(
     if "email" in dumped and dumped["email"]:
         new_email = str(dumped["email"]).lower().strip()
         if new_email != (user.get("email") or "").lower():
+            # Per-IP volume guard ONLY for the sensitive email-change
+            # path; benign profile edits (phone, display_name, NPI) do
+            # not hit the limiter so everyday saves stay snappy.
+            await _guard_sensitive_auth(
+                action="auth.profile_email_change",
+                user=user, request=request,
+            )
             require_reauth(request, user)
             existing = await db.users.find_one(
                 {"email": new_email, "id": {"$ne": user["id"]}},
@@ -644,7 +735,13 @@ async def create_pin(
             status.HTTP_409_CONFLICT,
             "PIN already configured. Use PATCH to change it.",
         )
+    await _guard_sensitive_auth(
+        action="user.pin_create", user=user, request=request,
+    )
     if not verify_password(payload.current_password, full["password_hash"]):
+        await _record_sensitive_auth_failure(
+            action="user.pin_create", user_id=user["id"],
+        )
         await log_audit(
             action="user.pin_create",
             actor_id=user["id"],
@@ -652,7 +749,7 @@ async def create_pin(
             actor_role=user["role"],
             tenant_id=user.get("tenant_id"),
             outcome="failure",
-            reason="wrong_current_password",
+            reason="invalid_password",
             request=request,
         )
         raise HTTPException(
@@ -694,22 +791,31 @@ async def change_pin(
             status.HTTP_404_NOT_FOUND,
             "No PIN configured. Use POST to create one.",
         )
+    await _guard_sensitive_auth(
+        action="user.pin_change", user=user, request=request,
+    )
     if not verify_password(payload.current_password, full["password_hash"]):
+        await _record_sensitive_auth_failure(
+            action="user.pin_change", user_id=user["id"],
+        )
         await log_audit(
             action="user.pin_change",
             actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
             tenant_id=user.get("tenant_id"),
-            outcome="failure", reason="wrong_current_password", request=request,
+            outcome="failure", reason="invalid_password", request=request,
         )
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "Current password is incorrect",
         )
     if not verify_password(payload.current_pin, full["pin_hash"]):
+        await _record_sensitive_auth_failure(
+            action="user.pin_change", user_id=user["id"],
+        )
         await log_audit(
             action="user.pin_change",
             actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
             tenant_id=user.get("tenant_id"),
-            outcome="failure", reason="wrong_current_pin", request=request,
+            outcome="failure", reason="invalid_pin", request=request,
         )
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "Current PIN is incorrect",
@@ -800,12 +906,18 @@ async def remove_pin(
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, "No PIN configured.",
         )
+    await _guard_sensitive_auth(
+        action="user.pin_remove", user=user, request=request,
+    )
     if not verify_password(payload.password, full["password_hash"]):
+        await _record_sensitive_auth_failure(
+            action="user.pin_remove", user_id=user["id"],
+        )
         await log_audit(
             action="user.pin_remove",
             actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
             tenant_id=user.get("tenant_id"),
-            outcome="failure", reason="wrong_current_password", request=request,
+            outcome="failure", reason="invalid_password", request=request,
         )
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, "Current password is incorrect",
@@ -872,7 +984,7 @@ async def verify_pin(
             actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
             tenant_id=user.get("tenant_id"),
             outcome="failure",
-            reason="locked_out" if locked else "wrong_pin",
+            reason="locked_out" if locked else "invalid_pin",
             metadata={"failed_attempts": fails, "locked": locked},
             request=request,
         )
@@ -1346,7 +1458,7 @@ async def reauth(
                 actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
                 tenant_id=user.get("tenant_id"),
                 outcome="failure",
-                reason="pin_locked",
+                reason="locked_out",
                 metadata=audit_metadata,
                 request=request,
             )
@@ -1373,7 +1485,7 @@ async def reauth(
                 actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
                 tenant_id=user.get("tenant_id"),
                 outcome="failure",
-                reason="wrong_pin" if not locked else "locked_out",
+                reason="invalid_pin" if not locked else "locked_out",
                 metadata={**audit_metadata,
                           "failed_attempts": fails, "locked": locked},
                 request=request,
@@ -1393,10 +1505,21 @@ async def reauth(
             }},
         )
     else:
+        await _guard_sensitive_auth(
+            action="auth.reauth", user=user, request=request,
+        )
         if not verify_password(payload.password, full["password_hash"]):
-            await audit_failure(
-                action="auth.reauth", request=request, actor_email=user["email"],
-                reason="wrong_password",
+            await _record_sensitive_auth_failure(
+                action="auth.reauth", user_id=user["id"],
+            )
+            await log_audit(
+                action="auth.reauth",
+                actor_id=user["id"], actor_email=user["email"],
+                actor_role=user["role"],
+                tenant_id=user.get("tenant_id"),
+                outcome="failure", reason="invalid_password",
+                metadata=audit_metadata,
+                request=request,
             )
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid password")
 
@@ -1491,7 +1614,23 @@ async def mfa_disable(
     """Requires current password (step-down)."""
     db = get_db()
     full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
-    if not full or not verify_password(payload.password, full["password_hash"]):
+    if not full:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+    await _guard_sensitive_auth(
+        action="auth.mfa_disable", user=user, request=request,
+    )
+    if not verify_password(payload.password, full["password_hash"]):
+        await _record_sensitive_auth_failure(
+            action="auth.mfa_disable", user_id=user["id"],
+        )
+        await log_audit(
+            action="auth.mfa_disable",
+            actor_id=user["id"], actor_email=user["email"],
+            actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure", reason="invalid_password",
+            request=request,
+        )
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid password")
     new_epoch = int(full.get("session_epoch", 0)) + 1
     await db.users.update_one(
