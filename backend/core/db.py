@@ -286,3 +286,13 @@ async def create_indexes() -> None:
     await db.clinical_audit_events.create_index(
         [("tenant_id", 1), ("episode_id", 1), ("created_at", -1)],
     )
+    # Phase 2 — history (one per patient) + problem list
+    await db.clinical_history.create_index(
+        [("tenant_id", 1), ("patient_id", 1)], unique=True,
+    )
+    await db.clinical_diagnoses.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("status", 1), ("is_primary", -1), ("created_at", -1)],
+    )
+    await db.clinical_diagnoses.create_index(
+        [("tenant_id", 1), ("episode_id", 1)],
+    )

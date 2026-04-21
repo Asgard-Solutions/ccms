@@ -164,6 +164,13 @@ async def get_clinical_summary(
         {**tenant_q, "status": {"$in": ["active", "on_hold"]}}
     )
 
+    dx_total = await db.clinical_diagnoses.count_documents(tenant_q)
+    dx_open = await db.clinical_diagnoses.count_documents(
+        {**tenant_q, "status": "active"}
+    )
+    history_doc = await db.clinical_history.find_one(tenant_q, {"_id": 0, "id": 1})
+    history_present = 1 if history_doc else 0
+
     await audit_success(
         user, "clinical.summary_viewed", request,
         entity_type="patient", entity_id=patient_id, phi_accessed=True,
@@ -175,11 +182,12 @@ async def get_clinical_summary(
         "tenant_id": ctx.tenant_id,
         "episodes": ClinicalSectionCount(total=ep_total, open=ep_open).model_dump(),
         "notes": ClinicalSectionCount().model_dump(),
-        "diagnoses": ClinicalSectionCount().model_dump(),
+        "diagnoses": ClinicalSectionCount(total=dx_total, open=dx_open).model_dump(),
         "treatment_plans": ClinicalSectionCount().model_dump(),
         "outcomes": ClinicalSectionCount().model_dump(),
         "media": ClinicalSectionCount().model_dump(),
         "encounter_links": ClinicalSectionCount().model_dump(),
+        "history_present": history_present,
         "generated_at": now_iso(),
     }
 

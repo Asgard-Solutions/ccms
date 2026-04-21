@@ -24,6 +24,8 @@ from core.redis_client import close as close_redis, ping as redis_ping  # noqa: 
 from services.audit.router import router as audit_router  # noqa: E402
 from services.clinic_profile.router import router as clinic_profile_router  # noqa: E402
 from services.clinical.router import router as clinical_router  # noqa: E402
+from services.clinical.history_router import router as clinical_history_router  # noqa: E402
+from services.clinical.diagnoses_router import router as clinical_diagnoses_router  # noqa: E402
 from services.appointment_types.router import router as appointment_types_router  # noqa: E402
 from services.authz.router import router as authz_router  # noqa: E402
 from services.billing.router import router as billing_router  # noqa: E402
@@ -88,6 +90,8 @@ api_router.include_router(infra_router)
 api_router.include_router(workforce_router)
 api_router.include_router(clinic_profile_router)
 api_router.include_router(clinical_router)
+api_router.include_router(clinical_history_router)
+api_router.include_router(clinical_diagnoses_router)
 api_router.include_router(appointment_types_router)
 api_router.include_router(billing_router)
 api_router.include_router(metrics_router)  # GET /api/metrics

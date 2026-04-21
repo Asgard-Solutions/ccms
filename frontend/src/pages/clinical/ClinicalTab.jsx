@@ -24,7 +24,6 @@ import {
   FileText,
   GitBranch,
   Image as ImageIcon,
-  ListChecks,
   PlayCircle,
   PlusCircle,
   Stethoscope,
@@ -32,6 +31,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { api, formatApiError } from "../../api/client";
+import IntakeHistoryCard from "./IntakeHistoryCard";
+import DiagnosesCard from "./DiagnosesCard";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Badge } from "../../components/ui/badge";
@@ -564,8 +565,16 @@ export default function ClinicalTab({
     return [
       { label: "Open episodes", value: s.episodes?.open ?? "—", id: "stat-open-episodes" },
       { label: "Total episodes", value: s.episodes?.total ?? "—", id: "stat-total-episodes" },
-      { label: "Notes", value: "—", id: "stat-notes" },
-      { label: "Diagnoses", value: "—", id: "stat-diagnoses" },
+      {
+        label: "Active diagnoses",
+        value: s.diagnoses?.open ?? "—",
+        id: "stat-diagnoses",
+      },
+      {
+        label: "History",
+        value: s.history_present ? "On file" : "—",
+        id: "stat-history",
+      },
     ];
   }, [summary]);
 
@@ -668,24 +677,26 @@ export default function ClinicalTab({
         )}
       </div>
 
+      {/* Phase 2 — Intake & History + Diagnoses are live */}
+      <IntakeHistoryCard
+        patientId={patientId}
+        canWrite={canWrite}
+        onReauthNeeded={onReauthNeeded}
+      />
+
+      <DiagnosesCard
+        patientId={patientId}
+        episodes={episodes || []}
+        canWrite={canWrite}
+        onReauthNeeded={onReauthNeeded}
+      />
+
       {/* Future-phase section placeholders */}
       <div>
         <h3 className="mb-3 font-display text-lg font-semibold text-foreground">
           Chart sections
         </h3>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <PlaceholderCard
-            icon={ClipboardList}
-            title="Intake &amp; History"
-            description="Medical, surgical, family, social history and intake form snapshots. Linked to this patient across every episode."
-            testId="clinical-placeholder-intake"
-          />
-          <PlaceholderCard
-            icon={ListChecks}
-            title="Diagnoses"
-            description="ICD-10 problem list with ranking, onset date, and resolved/active status — scoped by episode but viewable patient-wide."
-            testId="clinical-placeholder-diagnoses"
-          />
           <PlaceholderCard
             icon={Stethoscope}
             title="Initial Exam"
