@@ -1,0 +1,51 @@
+{
+  "summary": "Phase 4 Clinical (Initial Exam workflow) fully verified end-to-end. Backend pytest /app/backend/tests/test_clinical_phase4.py: 11/11 passing against the public external URL covering: create-from-encounter with appointment/provider/episode/location auto-fill + frozen template_snapshot (3 sections), prefill-from-chart copies history & auto-selects active diagnoses, one-exam-per-encounter guard (X-Exam-Existed header), cancelled encounter rejects create 409, PATCH merges sections with structured vitals/ROM/orthopedic/muscle strength round-trip, cross-patient diagnosis_ids 400, explicit /prefill non-destructive (preserves provider edits, fills empty fields, updates prefilled_from_chart_at), mark-sign-ready + unmark transitions + 409 from wrong status, sign from draft, double-sign 409, PATCH signed 409, new_diagnoses materialization with ICD-10 uppercase + de-dup against existing active + primary-uniqueness, narrative with INITIAL EXAMINATION header + HISTORY/EXAMINATION/ASSESSMENT & PLAN + structured bits + DIAGNOSES block, summary.initial_exams total/open counts live, tenant isolation (404 on cross-tenant GET/PATCH/sign), reauth required on writes (401 without). Regression Phase 1+2: 24/24 green. Phase 3: 8/9 green (1 flaky appt-overlap seed collision in test_writes_require_reauth — pre-existing random-time jitter issue unrelated to Phase 4). GET /api/clinical/exam-templates/default returns default-initial-exam-v1 with 3 sections [history, examination, assessment]. Frontend E2E (group-admin@sunrise.ccms.app): Clinical tab → stat-exams tile live; clinical-exams-card renders; encounter-start-exam-{id} button POSTs exam create and routes to /patients/{pid}/clinical/exams/{eid}; initial-exam-editor + exam-status-badge + all 3 exam-section-* sections render from the frozen template_snapshot; exam-save-btn PATCHes (editor stays editable); exam-prefill-btn triggers non-destructive prefill; exam-mark-ready-btn → SIGN-READY; exam-unmark-ready-btn → DRAFT; exam-narrative-btn opens exam-narrative-dialog with exam-narrative-text containing 'INITIAL EXAMINATION' + HISTORY + EXAMINATION; exam-sign-btn → exam-signed-banner appears and save button is hidden (editor becomes read-only). stat-exams 'Open exams' tile correctly drops after sign.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": { "ui_bugs": [], "integration_issues": [], "design_issues": [] },
+  "verified_flows": [
+    "POST /api/patients/{pid}/clinical/exams with encounter_id → 201, auto-fills appointment_id/provider_id/patient_id/status=draft, template_id='default-initial-exam-v1', template_snapshot.sections[0].id='history'",
+    "prefill_from_chart=true copies chief_complaint/medications/etc from clinical_history and auto-selects active diagnoses",
+    "Duplicate POST for same encounter → 200 with X-Exam-Existed:true header + same exam id",
+    "Cancelled encounter POST → 409",
+    "PATCH merges history/examination (vitals, posture, orthopedic_tests[].result, muscle_strength[].grade, range_of_motion)/assessment; cross-patient diagnosis_ids → 400",
+    "POST /prefill preserves provider-entered fields (chief_complaint), fills empty fields, sets prefilled_from_chart_at",
+    "mark-sign-ready draft→sign_ready (200); unmark sign_ready→draft (200); sign draft→signed (200) with signed_at+signed_by; double-sign 409; PATCH signed 409; mark-sign-ready from signed 409",
+    "Sign materializes new_diagnoses: ICD-10 uppercased; (icd10_code, body_region, laterality) case-insensitive de-dup against existing active (no duplicate M54.50 row); final diagnosis_ids include pre-selected + materialized; at most one active primary",
+    "Narrative contains 'INITIAL EXAMINATION' header, HISTORY / EXAMINATION / ASSESSMENT & PLAN sections, BP/Pulse, orthopedic test names, ROM regions, DIAGNOSES block with ICD-10 codes",
+    "GET /clinical/summary → initial_exams {total, open}; open=draft+sign_ready; signed → open drops",
+    "Cross-tenant GET/PATCH/sign → 404",
+    "Reauth required on POST create → 401 when reauth cookie missing ('re-auth' in detail)",
+    "GET /api/clinical/exam-templates/default → id='default-initial-exam-v1', 3 sections",
+    "Frontend Clinical tab: clinical-exams-card + stat-exams live; encounter-start-exam-{enc} → nav to exam editor",
+    "Editor: initial-exam-editor, exam-status-badge, 3 exam-section-* blocks from frozen template_snapshot",
+    "Save draft: exam-vitals-bp/exam-vitals-pulse dirty then exam-save-btn PATCH succeeds; editor stays editable",
+    "exam-prefill-btn → non-destructive prefill on mounted editor",
+    "exam-mark-ready-btn → SIGN-READY badge; exam-unmark-ready-btn → DRAFT",
+    "exam-narrative-btn → exam-narrative-dialog → exam-narrative-text with INITIAL EXAMINATION header",
+    "exam-sign-btn → exam-signed-banner visible; exam-save-btn removed (read-only); stat-exams open count drops post-sign"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_clinical_phase4.py",
+    "/app/test_reports/pytest/iter34_phase4.xml"
+  ],
+  "action_items": [
+    "INFRA (env-only, not product): This preview container was missing the libmagic system library, which caused backend uvicorn to fail to import services.patient.documents_router (python-magic) and return 502 at the ingress intermittently. Testing agent installed libmagic1 (apt-get install -y libmagic1) and restarted backend — everything is green. Main agent should add libmagic1 to the container bootstrap / Dockerfile so the service survives a cold restart.",
+    "OPTIONAL: Harden tests/test_clinical_phase3.py::test_writes_require_reauth against provider-booking-overlap flakes by widening the random day range or picking a fresh provider per test (observed 1/9 flake; not a product bug)."
+  ],
+  "critical_code_review_comments": [
+    "services/clinical/exams_router.py — clean separation of create/prefill/patch/sign; cancelled-encounter guard (409) correct; one-exam-per-encounter idempotency uses (encounter_id, status != cancelled) lookup with X-Exam-Existed header; diagnosis_ids cross-patient validation 400 works; sign endpoint correctly uppercases ICD-10 and dedupes on (code, body_region, laterality) case-insensitive.",
+    "services/clinical/exam_template.py — frozen default template 'default-initial-exam-v1' with 3 sections history/examination/assessment snapshot-copied at create-time — guarantees signed immutability even if template evolves.",
+    "services/clinical/exams_models.py — prefilled_from_chart_at timestamp + materialized_diagnosis_ids + signed_at/signed_by fields covered; structured vitals/ROM/orthopedic_tests/muscle_strength round-trip cleanly via PATCH.",
+    "frontend/pages/clinical/InitialExamEditor.jsx — all required testids present (exam-section-{id}, exam-vitals-bp/pulse, exam-rom-{region}-{move}, exam-ortho-row-{i}, exam-ms-row-{i}, exam-existing-dx-{id}, exam-new-dx-row-{i}, exam-new-dx-add, exam-save-btn, exam-mark-ready-btn, exam-unmark-ready-btn, exam-sign-btn, exam-narrative-btn, exam-narrative-dialog, exam-signed-banner); save disabled when clean, sign disabled while dirty — UX correct.",
+    "frontend/pages/clinical/ClinicalTab.jsx — stat-exams tile wired to summary.initial_exams.open; InitialExamsCard mounted under the Clinical tab.",
+    "frontend/pages/clinical/EncountersCard.jsx — encounter-start-exam-{enc.id} button on in-progress encounters POSTs /clinical/exams and navigates to /patients/{pid}/clinical/exams/{eid}."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100% Phase 4 (11/11) + 100% Phase 1+2 regression (24/24); Phase 3 8/9 (1 flaky test-seeding collision, non-product)", "frontend": "100% — all Phase 4 E2E user flows verified" },
+  "test_credentials": "group-admin@sunrise.ccms.app / Sunrise@ComplianceClinic1 (primary); admin@ccms.app / Admin@ComplianceClinic1 (Default-tenant cross-tenant probe)",
+  "seed_data_creation": "E2E created 1 Sunrise-tenant patient + 1 future appointment + 1 in_progress encounter + 1 signed initial exam under that encounter. Backend pytest suite also seeded its own patients/appts/encounters/exams per-test (cleaned up by test isolation). No seeded fixtures altered.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 4 is GA-worthy. Start pattern: book appointment → launch encounter → POST /clinical/exams. Reauth is mandatory on create + PATCH + sign. Narrative endpoint is Initial-Exam-oriented (not SOAP): expect 'INITIAL EXAMINATION' header, HISTORY / EXAMINATION / ASSESSMENT & PLAN labels, DIAGNOSES block — empty sections are omitted so seed assessment content before asserting ASSESSMENT label. The editor's Save button is disabled while clean; type into exam-vitals-bp/pulse to dirty state. Sign button is disabled while dirty — always Save before Sign. If you see 502s from the external URL, the container may be missing libmagic1 — `sudo apt-get install -y libmagic1 && sudo supervisorctl restart backend` fixes it.",
+  "rca of the issue": "No product bugs. Infra RCA: backend was briefly down returning 502 because python-magic requires the libmagic1 system library which was not pre-installed in this preview container; uvicorn worker exited on import in services/patient/documents_router.py. Fix: install libmagic1 at image build time."
+}

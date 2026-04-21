@@ -1,52 +1,300 @@
-@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+/* =========================================================================
+   Chiro Software — Theme System (Slate + Teal + Copper)
+   -------------------------------------------------------------------------
+   Source of truth: /app/docs/theme/
+     - CHIRO_SOFTWARE_THEME_STANDARD.md
+     - CHIRO_THEME_ENGINEERING_IMPLEMENTATION_SPEC.md
+     - CHIRO_UI_REVIEW_AND_COMPLIANCE_CHECKLIST.md
+
+   Section order (per spec §18):
+     1. Font imports
+     2. Foundation tokens (palette, space, radius, shadow, fonts)
+     3. Light semantic tokens
+     4. Dark semantic tokens
+     5. Component alias tokens
+     6. Base element styles
+     7. Shared utilities
+   ========================================================================= */
+
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;650;700&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
-    margin: 0;
-    font-family: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI",
-        sans-serif;
-    color: #1f2924;
-    background-color: #faf9f6;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-}
-
-code {
-    font-family: "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
-}
-
+/* -------------------------------------------------------------------------
+   2. Foundation tokens
+   ------------------------------------------------------------------------- */
 @layer base {
     :root {
-        /* CCMS sage + stone theme — mapped to shadcn HSL tokens. */
-        --background: 46 21% 97%; /* #FAF9F6 */
-        --foreground: 153 18% 14%; /* #1F2924 */
-        --card: 0 0% 100%;
-        --card-foreground: 153 18% 14%;
-        --popover: 0 0% 100%;
-        --popover-foreground: 153 18% 14%;
-        --primary: 135 13% 54%; /* #7B9A82 */
-        --primary-foreground: 0 0% 100%;
-        --secondary: 60 7% 95%; /* #F5F5F0 */
-        --secondary-foreground: 153 18% 14%;
-        --muted: 60 7% 95%;
-        --muted-foreground: 145 7% 39%; /* #5C6A61 */
-        --accent: 132 15% 94%; /* #EDF2EE */
-        --accent-foreground: 141 14% 37%; /* #526B58 */
-        --destructive: 12 49% 56%; /* #C76D54 */
-        --destructive-foreground: 0 0% 100%;
-        --border: 45 11% 89%; /* #E5E5E0 */
-        --input: 45 11% 89%;
-        --ring: 135 13% 54%;
-        --chart-1: 135 13% 54%;
-        --chart-2: 145 7% 39%;
-        --chart-3: 30 54% 64%;
-        --chart-4: 12 49% 56%;
-        --chart-5: 141 14% 37%;
-        --radius: 0.125rem;
+        /* Typography families */
+        --font-display: "Outfit", ui-sans-serif, system-ui, sans-serif;
+        --font-body: "Manrope", ui-sans-serif, system-ui, sans-serif;
+        --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+        /* Spacing scale (compact operational density) */
+        --space-1: 4px;
+        --space-2: 8px;
+        --space-3: 12px;
+        --space-4: 16px;
+        --space-5: 20px;
+        --space-6: 24px;
+        --space-8: 32px;
+        --space-10: 40px;
+        --space-12: 48px;
+
+        /* Radius scale */
+        --radius-xs: 6px;
+        --radius-sm: 8px;
+        --radius-md: 10px;
+        --radius-lg: 12px;
+        --radius-xl: 14px;
+
+        /* Shadow scale */
+        --shadow-xs: 0 1px 2px rgba(15, 23, 32, 0.06);
+        --shadow-sm: 0 2px 6px rgba(15, 23, 32, 0.08);
+        --shadow-md: 0 8px 24px rgba(15, 23, 32, 0.12);
+        --shadow-lg: 0 16px 40px rgba(15, 23, 32, 0.16);
+
+        /* Palette — slate */
+        --slate-950: #0F1720;
+        --slate-900: #16202B;
+        --slate-850: #1B2834;
+        --slate-800: #223241;
+        --slate-700: #314657;
+        --slate-600: #496174;
+        --slate-500: #6A8599;
+        --slate-400: #93A8B8;
+        --slate-300: #B8C6D1;
+        --slate-200: #D7E0E7;
+        --slate-100: #ECF2F6;
+        --slate-50:  #F6FAFC;
+
+        /* Palette — teal (brand primary) */
+        --teal-900: #0F4E52;
+        --teal-800: #116168;
+        --teal-700: #14757C;
+        --teal-600: #1A8A91;
+        --teal-500: #23A1A8;
+        --teal-400: #4CB5BA;
+        --teal-300: #7ACACE;
+        --teal-200: #A9DEE0;
+        --teal-100: #D8F0F1;
+
+        /* Palette — copper (warm accent) */
+        --copper-900: #6B432B;
+        --copper-800: #845338;
+        --copper-700: #9E6445;
+        --copper-600: #B97856;
+        --copper-500: #CF8E68;
+        --copper-400: #DCA784;
+        --copper-300: #E8C1A7;
+        --copper-200: #F2DDD1;
+        --copper-100: #FAF0EB;
+
+        /* Status palette */
+        --success-700: #1E7A52;
+        --success-600: #249262;
+        --success-100: #DDF4E9;
+        --warning-700: #9A6A12;
+        --warning-600: #B27A14;
+        --warning-100: #F8EBCB;
+        --danger-700:  #B03E4A;
+        --danger-600:  #C54A56;
+        --danger-100:  #F9E1E4;
+        --info-700:    #2B658F;
+        --info-600:    #3678A8;
+        --info-100:    #DDECF7;
     }
+}
+
+/* -------------------------------------------------------------------------
+   3. Light semantic tokens
+   -------------------------------------------------------------------------
+   Two formats are exposed:
+     - HSL-channel tokens for the shadcn Tailwind pattern: hsl(var(--x))
+     - Hex tokens for bespoke utility classes (surface-2, border-strong, …)
+   ------------------------------------------------------------------------- */
+@layer base {
+    :root {
+        /* ---- Shadcn HSL channels (consumed by tailwind.config.js) ---- */
+        --background: 200 50% 98%;            /* #F6FAFC */
+        --foreground: 210 34% 13%;            /* #15202B */
+        --card: 0 0% 100%;                    /* #FFFFFF */
+        --card-foreground: 210 34% 13%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 210 34% 13%;
+        --primary: 184 72% 28%;               /* #14757C teal-700 */
+        --primary-foreground: 0 0% 100%;
+        --secondary: 200 33% 97%;             /* #F1F6F9 */
+        --secondary-foreground: 210 34% 13%;
+        --muted: 205 29% 95%;                 /* #ECF2F6 slate-100 */
+        --muted-foreground: 207 19% 40%;      /* #53697A */
+        --accent: 22 64% 95%;                 /* #FAF0EB copper-100 */
+        --accent-foreground: 22 43% 30%;      /* #6B432B copper-900 */
+        --destructive: 354 50% 53%;           /* #C54A56 */
+        --destructive-foreground: 0 0% 100%;
+        --border: 205 21% 88%;                /* #D7E0E7 slate-200 */
+        --input: 205 21% 88%;
+        --ring: 184 72% 33%;                  /* #1A8A91 teal-600 */
+        --chart-1: 184 72% 28%;
+        --chart-2: 184 40% 44%;
+        --chart-3: 22 43% 53%;
+        --chart-4: 202 55% 43%;
+        --chart-5: 210 34% 30%;
+        --radius: 0.5rem;                     /* 8px base (spec §7) */
+
+        /* ---- Extended hex semantic tokens (direct CSS consumption) ---- */
+        --surface: #FFFFFF;
+        --surface-2: #F1F6F9;
+        --surface-3: #EAF1F5;
+        --border-strong-color: #B8C6D1;
+        --focus: #23A1A8;
+        --selection: rgba(35, 161, 168, 0.16);
+
+        --primary-hex: #14757C;
+        --primary-hover: #116168;
+        --primary-active: #0F4E52;
+        --secondary-hover: #EAF1F5;
+        --accent-strong: #B97856;
+
+        --success: #249262;
+        --success-foreground-hex: #FFFFFF;
+        --success-soft: #DDF4E9;
+        --warning: #B27A14;
+        --warning-foreground-hex: #FFFFFF;
+        --warning-soft: #F8EBCB;
+        --info: #3678A8;
+        --info-foreground-hex: #FFFFFF;
+        --info-soft: #DDECF7;
+        --destructive-hex: #C54A56;
+        --destructive-soft: #F9E1E4;
+    }
+}
+
+/* -------------------------------------------------------------------------
+   4. Dark semantic tokens
+   ------------------------------------------------------------------------- */
+@layer base {
+    .dark {
+        /* ---- Shadcn HSL channels ---- */
+        --background: 210 34% 10%;            /* #111A22 */
+        --foreground: 202 24% 94%;            /* #EAF1F5 */
+        --card: 210 33% 13%;                  /* #16202B */
+        --card-foreground: 202 24% 94%;
+        --popover: 210 30% 16%;               /* #1B2834 */
+        --popover-foreground: 202 24% 94%;
+        --primary: 183 40% 51%;               /* #4CB5BA teal-400 */
+        --primary-foreground: 210 34% 10%;
+        --secondary: 210 31% 19%;             /* #223241 slate-800 */
+        --secondary-foreground: 202 24% 94%;
+        --muted: 210 31% 19%;
+        --muted-foreground: 209 19% 74%;      /* #AFC0CC */
+        --accent: 16 25% 18%;                 /* #3A2A23 */
+        --accent-foreground: 19 68% 85%;      /* #F1D2C2 */
+        --destructive: 354 64% 64%;           /* #DE6A76 */
+        --destructive-foreground: 210 34% 10%;
+        --border: 210 26% 23%;                /* #2B3B4A */
+        --input: 207 30% 27%;                 /* #314657 */
+        --ring: 183 40% 55%;
+        --chart-1: 183 40% 51%;
+        --chart-2: 183 28% 63%;
+        --chart-3: 22 53% 69%;
+        --chart-4: 207 52% 63%;
+        --chart-5: 202 24% 80%;
+
+        /* ---- Extended hex semantic tokens ---- */
+        --surface: #16202B;
+        --surface-2: #1B2834;
+        --surface-3: #223241;
+        --border-strong-color: #3A5063;
+        --focus: #7ACACE;
+        --selection: rgba(122, 202, 206, 0.20);
+
+        --primary-hex: #4CB5BA;
+        --primary-hover: #7ACACE;
+        --primary-active: #A9DEE0;
+        --secondary-hover: #2B3B4A;
+        --accent-strong: #DCA784;
+
+        --success: #5EBB87;
+        --success-foreground-hex: #0F1720;
+        --success-soft: rgba(94, 187, 135, 0.18);
+        --warning: #D4A34A;
+        --warning-foreground-hex: #0F1720;
+        --warning-soft: rgba(212, 163, 74, 0.18);
+        --info: #6AA9D4;
+        --info-foreground-hex: #0F1720;
+        --info-soft: rgba(106, 169, 212, 0.18);
+        --destructive-hex: #DE6A76;
+        --destructive-soft: rgba(222, 106, 118, 0.18);
+    }
+}
+
+/* -------------------------------------------------------------------------
+   5. Component alias tokens
+   ------------------------------------------------------------------------- */
+@layer base {
+    :root {
+        --sidebar-bg:                  hsl(var(--card));
+        --sidebar-fg:                  hsl(var(--foreground));
+        --sidebar-active-bg:           hsl(var(--muted));
+        --sidebar-active-fg:           hsl(var(--foreground));
+        --sidebar-active-indicator:    var(--primary-hex);
+
+        --table-row-hover:             var(--surface-2);
+        --table-row-selected:          #D8F0F1;
+        --table-header-bg:             var(--surface-2);
+        --table-header-fg:             hsl(var(--muted-foreground));
+
+        --input-placeholder:           #6A8599;
+        --dialog-overlay:              rgba(15, 23, 32, 0.5);
+        --calendar-today-ring:         var(--primary-hex);
+        --calendar-slot-selected:      #D8F0F1;
+        --badge-premium-bg:            #FAF0EB;
+        --badge-premium-fg:            #6B432B;
+    }
+
+    .dark {
+        --sidebar-bg:                  hsl(var(--card));
+        --sidebar-fg:                  hsl(var(--foreground));
+        --sidebar-active-bg:           var(--surface-2);
+        --sidebar-active-fg:           hsl(var(--foreground));
+        --sidebar-active-indicator:    var(--primary-hex);
+
+        --table-row-hover:             var(--surface-2);
+        --table-row-selected:          #1F3A3F;
+        --table-header-bg:             var(--surface-2);
+        --table-header-fg:             hsl(var(--muted-foreground));
+
+        --input-placeholder:           #93A8B8;
+        --dialog-overlay:              rgba(5, 10, 14, 0.65);
+        --calendar-today-ring:         var(--primary-hex);
+        --calendar-slot-selected:      #234247;
+        --badge-premium-bg:            #3A2A23;
+        --badge-premium-fg:            #F1D2C2;
+    }
+}
+
+/* -------------------------------------------------------------------------
+   6. Base element styles
+   ------------------------------------------------------------------------- */
+html { color-scheme: light; }
+html.dark { color-scheme: dark; }
+
+body {
+    margin: 0;
+    font-family: var(--font-body);
+    color: hsl(var(--foreground));
+    background-color: hsl(var(--background));
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    transition: background-color 180ms ease, color 180ms ease;
+}
+
+code, kbd, samp, pre {
+    font-family: var(--font-mono);
 }
 
 @layer base {
@@ -57,17 +305,45 @@ code {
         @apply bg-background text-foreground;
     }
     ::selection {
-        background: #edf2ee;
-        color: #1f2924;
+        background: var(--selection);
+        color: hsl(var(--foreground));
     }
-    h1,
-    h2,
-    h3,
-    h4 {
-        font-family: "Outfit", sans-serif;
+    h1, h2, h3, h4, h5, h6 {
+        font-family: var(--font-display);
+        letter-spacing: -0.01em;
     }
+    h1 { font-weight: 650; }
+    h2 { font-weight: 650; }
+    h3 { font-weight: 600; }
+    h4 { font-weight: 600; }
 }
 
+/* -------------------------------------------------------------------------
+   7. Shared utilities
+   -------------------------------------------------------------------------
+   Only utilities that cannot be expressed through the semantic Tailwind
+   mapping live here. Everything else goes through `bg-primary`,
+   `text-foreground`, `border-border`, `bg-success-soft`, etc.
+   ------------------------------------------------------------------------- */
+@layer utilities {
+    /* Typography helpers (spec §5) */
+    .font-display       { font-family: var(--font-display); }
+    .font-body          { font-family: var(--font-body); }
+    .font-mono          { font-family: var(--font-mono); }
+
+    /* Accessible focus ring (spec §10) */
+    .focus-ring {
+        outline: none;
+        box-shadow: 0 0 0 2px hsl(var(--background)), 0 0 0 4px var(--focus);
+    }
+
+    /* Tabular numerics for tables, billing, analytics (spec §5) */
+    .tabular-nums { font-variant-numeric: tabular-nums; }
+}
+
+/* -------------------------------------------------------------------------
+   Debug wrapper passthrough (preserved from previous revision)
+   ------------------------------------------------------------------------- */
 @layer base {
     [data-debug-wrapper="true"] {
         display: contents !important;

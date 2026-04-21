@@ -121,6 +121,13 @@ async def create_indexes() -> None:
     await db.patients.create_index("status")
     await db.patients.create_index([("tenant_id", 1), ("status", 1), ("created_at", -1)])
     await db.patients.create_index([("tenant_id", 1), ("location_id", 1)])
+    # Search-driven prefix + contains lookups on plaintext name/phone fields.
+    # MongoDB uses regex-anchored indexes efficiently when the regex is
+    # a prefix (^Jaco) — wildcard searches fall back to a scan but stay
+    # bounded by the _CANDIDATE_CAP in search_router.
+    await db.patients.create_index([("tenant_id", 1), ("last_name", 1)])
+    await db.patients.create_index([("tenant_id", 1), ("first_name", 1)])
+    await db.patients.create_index([("tenant_id", 1), ("phone", 1)])
     await db.medical_records.create_index("patient_id")
     await db.medical_records.create_index([("patient_id", 1), ("recorded_at", -1)])
     await db.medical_records.create_index([("tenant_id", 1), ("patient_id", 1)])
@@ -191,3 +198,169 @@ async def create_indexes() -> None:
     await db.break_glass_events.create_index([("tenant_id", 1), ("actor_id", 1), ("status", 1)])
     await db.break_glass_events.create_index([("tenant_id", 1), ("status", 1), ("activated_at", -1)])
     await db.break_glass_events.create_index("attestation_due_at")
+    # Clinic profile (iteration 21 — clinic hours)
+    await db.clinic_profiles.create_index([("tenant_id", 1), ("location_id", 1)], unique=True)
+    await db.clinic_profiles.create_index([("tenant_id", 1), ("name", 1)])
+    # Billing (iteration 23 — billing foundation)
+    await db.billing_payers.create_index([("tenant_id", 1), ("name", 1)])
+    await db.billing_payers.create_index([("tenant_id", 1), ("status", 1)])
+    await db.patient_insurance_policies.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("status", 1)],
+    )
+    await db.patient_insurance_policies.create_index(
+        [("tenant_id", 1), ("payer_id", 1)],
+    )
+    await db.invoices.create_index([("tenant_id", 1), ("patient_id", 1), ("created_at", -1)])
+    await db.invoices.create_index([("tenant_id", 1), ("status", 1)])
+    await db.invoices.create_index([("tenant_id", 1), ("location_id", 1)])
+    await db.invoice_lines.create_index([("tenant_id", 1), ("invoice_id", 1), ("sequence", 1)])
+    await db.payments.create_index([("tenant_id", 1), ("patient_id", 1), ("received_at", -1)])
+    await db.payments.create_index([("tenant_id", 1), ("status", 1)])
+    await db.payment_allocations.create_index([("tenant_id", 1), ("payment_id", 1)])
+    await db.payment_allocations.create_index([("tenant_id", 1), ("invoice_id", 1)])
+    await db.refunds.create_index([("tenant_id", 1), ("payment_id", 1)])
+    await db.billing_adjustments.create_index([("tenant_id", 1), ("invoice_id", 1)])
+    await db.claims.create_index([("tenant_id", 1), ("patient_id", 1), ("created_at", -1)])
+    await db.claims.create_index([("tenant_id", 1), ("payer_id", 1), ("status", 1)])
+    await db.claim_diagnoses.create_index([("tenant_id", 1), ("claim_id", 1), ("sequence", 1)])
+    await db.claim_lines.create_index([("tenant_id", 1), ("claim_id", 1), ("sequence", 1)])
+    await db.claim_line_modifiers.create_index([("tenant_id", 1), ("claim_line_id", 1), ("sequence", 1)])
+    await db.remittances.create_index([("tenant_id", 1), ("payer_id", 1), ("received_at", -1)])
+    await db.denial_work_items.create_index([("tenant_id", 1), ("status", 1), ("opened_at", -1)])
+    await db.denial_work_items.create_index([("tenant_id", 1), ("claim_id", 1)])
+    await db.billing_code_catalog.create_index(
+        [("tenant_id", 1), ("code_type", 1), ("code", 1)], unique=True,
+    )
+    await db.billing_modifier_catalog.create_index(
+        [("tenant_id", 1), ("code", 1)], unique=True,
+    )
+    # Fee schedules (iteration 25 — Phase 2)
+    await db.fee_schedules.create_index([("tenant_id", 1), ("kind", 1), ("active", 1)])
+    await db.fee_schedules.create_index([("tenant_id", 1), ("payer_id", 1)])
+    await db.fee_schedule_lines.create_index(
+        [("tenant_id", 1), ("fee_schedule_id", 1), ("code_type", 1), ("code", 1)],
+        unique=True,
+    )
+    await db.medical_records.create_index([("tenant_id", 1), ("patient_id", 1), ("recorded_at", -1)])
+    await db.medical_records.create_index([("tenant_id", 1), ("charge_status", 1)])
+    # Claim validation runs (iteration 26 — Phase 3 scrubber)
+    await db.claim_validation_runs.create_index(
+        [("tenant_id", 1), ("claim_id", 1), ("run_at", -1)],
+    )
+    await db.claims.create_index([("tenant_id", 1), ("source_invoice_id", 1)])
+    # Clinical module (Phase 1 — episode/case is the only CRUD'd entity;
+    # other collections ship with indexes so Phase 2+ attaches cleanly).
+    await db.clinical_episode_cases.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("start_date", -1)],
+    )
+    await db.clinical_episode_cases.create_index(
+        [("tenant_id", 1), ("status", 1)],
+    )
+    await db.clinical_episode_cases.create_index(
+        [("tenant_id", 1), ("responsible_provider_id", 1), ("status", 1)],
+    )
+    await db.clinical_notes.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("episode_id", 1), ("created_at", -1)],
+    )
+    await db.clinical_diagnoses.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("episode_id", 1)],
+    )
+    await db.clinical_treatment_plans.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("episode_id", 1)],
+    )
+    await db.clinical_outcome_entries.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("episode_id", 1), ("recorded_on", -1)],
+    )
+    await db.clinical_media.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("episode_id", 1)],
+    )
+    await db.clinical_encounter_links.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("appointment_id", 1)],
+    )
+    await db.clinical_encounter_links.create_index(
+        [("tenant_id", 1), ("episode_id", 1)],
+    )
+    await db.clinical_audit_events.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("created_at", -1)],
+    )
+    await db.clinical_audit_events.create_index(
+        [("tenant_id", 1), ("episode_id", 1), ("created_at", -1)],
+    )
+    # Phase 2 — history (one per patient) + problem list
+    await db.clinical_history.create_index(
+        [("tenant_id", 1), ("patient_id", 1)], unique=True,
+    )
+    await db.clinical_diagnoses.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("status", 1), ("is_primary", -1), ("created_at", -1)],
+    )
+    await db.clinical_diagnoses.create_index(
+        [("tenant_id", 1), ("episode_id", 1)],
+    )
+    # Phase 3 — encounters
+    await db.clinical_encounters.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("date_of_service", -1)],
+    )
+    await db.clinical_encounters.create_index(
+        [("tenant_id", 1), ("appointment_id", 1)],
+    )
+    await db.clinical_encounters.create_index(
+        [("tenant_id", 1), ("status", 1)],
+    )
+    # Phase 4 — Initial Exams (one per encounter)
+    await db.clinical_initial_exams.create_index(
+        [("tenant_id", 1), ("encounter_id", 1)], unique=True,
+    )
+    await db.clinical_initial_exams.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("date_of_service", -1)],
+    )
+    await db.clinical_initial_exams.create_index(
+        [("tenant_id", 1), ("status", 1)],
+    )
+    # Phase 5 — Follow-up / Daily Visit Notes (one per encounter)
+    await db.clinical_follow_up_notes.create_index(
+        [("tenant_id", 1), ("encounter_id", 1)], unique=True,
+    )
+    await db.clinical_follow_up_notes.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("date_of_service", -1)],
+    )
+    await db.clinical_follow_up_notes.create_index(
+        [("tenant_id", 1), ("status", 1)],
+    )
+    await db.clinical_follow_up_notes.create_index(
+        [("tenant_id", 1), ("episode_id", 1)],
+    )
+    # Phase 6 — Treatment Plans + Re-Exams
+    await db.clinical_treatment_plans.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("plan_status", 1)],
+    )
+    await db.clinical_treatment_plans.create_index(
+        [("tenant_id", 1), ("episode_id", 1)],
+    )
+    await db.clinical_reexams.create_index(
+        [("tenant_id", 1), ("encounter_id", 1)], unique=True,
+    )
+    await db.clinical_reexams.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("date_of_service", -1)],
+    )
+    await db.clinical_reexams.create_index(
+        [("tenant_id", 1), ("status", 1)],
+    )
+    # Phase 7 — Clinical Media + Outcomes
+    await db.clinical_media.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("study_date", -1)],
+    )
+    await db.clinical_media.create_index(
+        [("tenant_id", 1), ("category", 1)],
+    )
+    await db.clinical_media.create_index(
+        [("tenant_id", 1), ("episode_id", 1)],
+    )
+    await db.clinical_outcome_entries.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("captured_at", -1)],
+    )
+    await db.clinical_outcome_entries.create_index(
+        [("tenant_id", 1), ("measure_type", 1)],
+    )
+    await db.clinical_outcome_entries.create_index(
+        [("tenant_id", 1), ("linked_reexam_id", 1)],
+    )

@@ -176,6 +176,8 @@ PERMISSIONS: list[dict] = [
     {"resource": "claim", "action": "submit", "sensitivity": "medium", "financial": True},
     {"resource": "claim", "action": "correct_resubmit", "sensitivity": "medium", "financial": True},
     {"resource": "remit", "action": "read", "sensitivity": "medium", "financial": True},
+    {"resource": "remit", "action": "post", "sensitivity": "high", "financial": True},
+    {"resource": "denial", "action": "work", "sensitivity": "medium", "financial": True},
     {"resource": "coding", "action": "update", "sensitivity": "medium"},
     # 9) Documents
     {"resource": "document", "action": "read", "sensitivity": "medium", "phi": True},
@@ -306,6 +308,27 @@ ROLE_GRANTS: dict[str, list[dict]] = {
         g("patient", "update"),
         g("patient", "delete", "all_org", "MFA"),
         g("patient", "export", "all_org", "MFA"),
+        # Billing bootstrap grants — mirror the legacy admin capability so
+        # the default admin can drive invoice / payment / claim CRUD in dev
+        # and smoke tests. High-risk money-moving actions
+        # (payment.refund / adjustment.writeoff / billing.void) are
+        # deliberately NOT granted to SA — only billing_specialist /
+        # clinic_manager carry them, with MFA+APR, per the permission
+        # matrix.
+        g("charge", "create"),
+        g("payment", "collect"),
+        g("payment", "refund", "all_org", "MFA"),
+        g("adjustment", "writeoff", "all_org", "MFA"),
+        g("billing", "void", "all_org", "MFA"),
+        g("insurance", "create"),
+        g("insurance", "update"),
+        g("coding", "update"),
+        g("claim", "read"),
+        g("claim", "create"),
+        g("claim", "submit"),
+        g("claim", "correct_resubmit"),
+        g("remit", "post"),
+        g("denial", "work"),
         g("patient_chart", "read", "phi_full", "MFA|BG"),
         g("patient_chart", "create"),
         g("patient_chart", "update"),
@@ -687,6 +710,7 @@ ROLE_GRANTS: dict[str, list[dict]] = {
         g("billing", "void", "all_org", "MFA|APR"),
         g("claim", "read"), g("claim", "create"),
         g("claim", "submit"), g("claim", "correct_resubmit"),
+        g("remit", "post"), g("denial", "work"),
         g("remit", "read"),
         g("coding", "update"),
         g("document", "read", "phi_limited"),

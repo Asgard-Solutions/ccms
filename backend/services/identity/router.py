@@ -40,7 +40,7 @@ from core.password_policy import (
     reject_password_reuse,
     validate_strength,
 )
-from core.reauth import create_reauth_token
+from core.reauth import create_reauth_token, require_reauth
 from core.security import (
     ACCESS_TOKEN_MINUTES,
     REFRESH_TOKEN_DAYS,
@@ -52,6 +52,9 @@ from core.security import (
 )
 from services.identity.models import (
     AdminUserCreate,
+    LicenseCreate,
+    LicensePublic,
+    LicenseUpdate,
     LoginResult,
     MfaChallenge,
     MfaSetupResponse,
@@ -59,6 +62,13 @@ from services.identity.models import (
     PasswordChange,
     PasswordResetConfirm,
     PasswordResetRequest,
+    PinChange,
+    PinCreate,
+    PinReset,
+    PinStatus,
+    PinVerify,
+    PreferencesUpdate,
+    ProfileUpdate,
     ReauthRequest,
     UserLogin,
     UserPatch,
@@ -118,6 +128,20 @@ def _to_public(user: dict) -> dict:
         "mfa_enabled": bool(user.get("mfa_enabled")),
         "mfa_policy_required": bool(user.get("mfa_policy_required")),
         "password_changed_at": user.get("password_changed_at"),
+        "pin_configured": bool(user.get("pin_hash")),
+        "theme": user.get("theme", "system"),
+        "first_name": user.get("first_name"),
+        "last_name": user.get("last_name"),
+        "display_name": user.get("display_name"),
+        "mobile_phone": user.get("mobile_phone"),
+        "work_phone": user.get("work_phone"),
+        "job_title": user.get("job_title"),
+        "credentials_suffix": user.get("credentials_suffix"),
+        "preferred_signature_name": user.get("preferred_signature_name"),
+        "time_zone": user.get("time_zone"),
+        "npi_number": user.get("npi_number"),
+        "dea_number": user.get("dea_number"),
+        "dea_expires_at": user.get("dea_expires_at"),
         "created_at": user["created_at"],
     }
 
@@ -407,6 +431,764 @@ async def me(user: dict = Depends(get_current_user)):
     return _to_public(user)
 
 
+# ---------------------------------------------------------------------------
+# Sensitive-action failure throttling (shared across PIN / reauth / MFA
+# endpoints). Mirrors the pattern used by `/change-password`:
+#   * a per-user sliding window that gates entry to the handler once the
+#     failure budget is exhausted;
+#   * a per-IP volume ceiling to block scripted abuse from a single
+#     source regardless of which account is targeted.
+#
+# Keyed by endpoint *action* so a run of bad PIN verifies doesn't block
+# an honest password change, and vice-versa.
+# ---------------------------------------------------------------------------
+SENSITIVE_AUTH_FAIL_LIMIT = 5
+SENSITIVE_AUTH_FAIL_WINDOW_SECONDS = 15 * 60  # 15 minutes
+SENSITIVE_AUTH_IP_VOLUME_LIMIT = 60
+SENSITIVE_AUTH_IP_VOLUME_WINDOW_SECONDS = 60
+
+
+def _client_ip(request: Request) -> str:
+    return (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or (
+        request.client.host if request.client else "unknown"
+    )
+
+
+async def _guard_sensitive_auth(
+    *,
+    action: str,
+    user: dict,
+    request: Request,
+    skip_ip_volume: bool = False,
+) -> None:
+    """Refuse further work if the caller has exhausted their per-user
+    failure budget OR the IP has blown past the per-IP volume ceiling.
+
+    `action` is both the audit log action *and* the rate-limit key
+    namespace, so a spam of wrong PINs can't steal budget from a
+    password change on the same account.
+    """
+    ip = _client_ip(request)
+    if not skip_ip_volume and not await rate_limit.is_allowed(
+        f"{action}:vol:{ip}",
+        limit=SENSITIVE_AUTH_IP_VOLUME_LIMIT,
+        window_seconds=SENSITIVE_AUTH_IP_VOLUME_WINDOW_SECONDS,
+    ):
+        await log_audit(
+            action=action,
+            actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure", reason="rate_limited_volume",
+            request=request,
+        )
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many attempts from this address. Please try again shortly.",
+        )
+
+    fail_key = f"{action}:user:{user['id']}"
+    current = await rate_limit.failure_count(
+        fail_key, window_seconds=SENSITIVE_AUTH_FAIL_WINDOW_SECONDS,
+    )
+    if current >= SENSITIVE_AUTH_FAIL_LIMIT:
+        await log_audit(
+            action=action,
+            actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure", reason="locked_out",
+            metadata={"failed_attempts": current},
+            request=request,
+        )
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many failed attempts. Please wait a few minutes and try again.",
+        )
+
+
+async def _record_sensitive_auth_failure(
+    *, action: str, user_id: str,
+) -> None:
+    """Bump the per-user failure counter after a credential mismatch."""
+    await rate_limit.record_failure(
+        f"{action}:user:{user_id}",
+        window_seconds=SENSITIVE_AUTH_FAIL_WINDOW_SECONDS,
+    )
+
+
+@router.patch("/me/preferences", response_model=UserPublic)
+async def update_preferences(
+    payload: PreferencesUpdate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Persist lightweight per-user UI preferences (theme today; locale + density
+    later). Auth-only; no reauth required — these are non-sensitive settings."""
+    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not updates:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "No preference fields supplied."
+        )
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+    db = get_db_write()
+    updated = await db.users.find_one_and_update(
+        {"id": user["id"]},
+        {"$set": updates},
+        projection={"_id": 0},
+        return_document=True,
+    )
+    if not updated:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    await audit_success(
+        user, "user.preferences_updated", request,
+        entity_type="user", entity_id=user["id"],
+        metadata={"fields": sorted(k for k in updates if k != "updated_at")},
+    )
+    return _to_public(updated)
+
+
+_PROFILE_STRING_FIELDS = (
+    "first_name",
+    "last_name",
+    "display_name",
+    "phone",
+    "mobile_phone",
+    "work_phone",
+    "job_title",
+    "credentials_suffix",
+    "preferred_signature_name",
+    "time_zone",
+    "npi_number",
+    "dea_number",
+    "dea_expires_at",
+)
+
+
+def _resolve_display_name(updates: dict, current: dict) -> str | None:
+    """Pick the best full-name string to write into the legacy `name`
+    column so everywhere that reads `user.name` (audit logs, clinic
+    signatures, scheduler chips) stays in sync. When `display_name` is
+    explicitly cleared (empty string → None) we must NOT fall back to
+    the old value still sitting on `current`."""
+    def _effective(key: str) -> str | None:
+        if key in updates:
+            v = updates[key]
+            return v.strip() if isinstance(v, str) else v
+        return current.get(key)
+
+    disp = _effective("display_name")
+    if disp and disp.strip():
+        return disp.strip()
+    first = _effective("first_name") or ""
+    last = _effective("last_name") or ""
+    full = f"{first} {last}".strip()
+    return full or None
+
+
+@router.patch("/me/profile", response_model=UserPublic)
+async def update_profile(
+    payload: ProfileUpdate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Self-service update of the logged-in user's own profile.
+
+    * Email changes require a short-lived reauth token (same gate as
+      other sensitive actions) AND trigger a session-epoch bump so
+      existing JWTs are invalidated — the user must sign in again.
+    * All name-related writes keep the legacy `name` column in sync
+      with `display_name` / `first_name` / `last_name` so audit rows
+      and clinical signatures don't drift.
+    * Empty strings reset a field to null (so users can clear an
+      optional field by sending "").
+    """
+    dumped = payload.model_dump(exclude_unset=True)
+    if not dumped:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "No profile fields supplied.",
+        )
+
+    updates: dict = {}
+    for key in _PROFILE_STRING_FIELDS:
+        if key in dumped:
+            value = dumped[key]
+            if isinstance(value, str):
+                stripped = value.strip()
+                updates[key] = stripped or None
+            else:
+                updates[key] = value
+
+    db = get_db_write()
+    email_change = False
+    if "email" in dumped and dumped["email"]:
+        new_email = str(dumped["email"]).lower().strip()
+        if new_email != (user.get("email") or "").lower():
+            # Per-IP volume guard ONLY for the sensitive email-change
+            # path; benign profile edits (phone, display_name, NPI) do
+            # not hit the limiter so everyday saves stay snappy.
+            await _guard_sensitive_auth(
+                action="auth.profile_email_change",
+                user=user, request=request,
+            )
+            require_reauth(request, user)
+            existing = await db.users.find_one(
+                {"email": new_email, "id": {"$ne": user["id"]}},
+                {"_id": 0, "id": 1},
+            )
+            if existing:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Email already in use by another account.",
+                )
+            updates["email"] = new_email
+            email_change = True
+
+    # Keep the legacy `name` column in sync with display/first/last so
+    # downstream readers (audit, care timeline, clinical signatures)
+    # don't show a stale value.
+    if any(k in updates for k in ("first_name", "last_name", "display_name")):
+        synced = _resolve_display_name(updates, user)
+        if synced:
+            updates["name"] = synced
+
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    if email_change:
+        # Session epoch bump → invalidate every existing access/refresh
+        # token for this user. UI will bounce to login.
+        await _bump_session_epoch(db, user["id"])
+        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    updated = await db.users.find_one_and_update(
+        {"id": user["id"]},
+        {"$set": updates},
+        projection={"_id": 0},
+        return_document=True,
+    )
+    if not updated:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+
+    await audit_success(
+        user, "user.profile_updated", request,
+        entity_type="user", entity_id=user["id"],
+        metadata={
+            "fields": sorted(k for k in updates if k != "updated_at"),
+            "email_changed": email_change,
+        },
+    )
+    return _to_public(updated)
+
+
+# ---------------------------------------------------------------------------
+# Self-service 6-digit PIN — used for fast in-app re-verification.
+# ---------------------------------------------------------------------------
+# Lockout window after too many wrong PIN verifications. Intentionally
+# tighter than the password lockout because the PIN is only 6 digits and
+# therefore has a smaller keyspace (1e6).
+PIN_MAX_FAILED_ATTEMPTS = 5
+PIN_LOCKOUT_MINUTES = 15
+
+
+def _pin_status(user_doc: dict) -> dict:
+    """Project the PIN-facing fields from a user document. Never
+    returns `pin_hash` — only the presence bit + timestamps."""
+    return {
+        "configured": bool(user_doc.get("pin_hash")),
+        "created_at": user_doc.get("pin_created_at"),
+        "updated_at": user_doc.get("pin_updated_at"),
+        "locked_until": user_doc.get("pin_locked_until"),
+        "failed_attempts": int(user_doc.get("pin_failed_attempts") or 0),
+    }
+
+
+def _pin_is_locked(user_doc: dict) -> bool:
+    locked = user_doc.get("pin_locked_until")
+    if not locked:
+        return False
+    try:
+        ts = datetime.fromisoformat(locked)
+    except Exception:
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) < ts
+
+
+@router.get("/me/pin/status", response_model=PinStatus)
+async def get_pin_status(
+    user: dict = Depends(get_current_user),
+):
+    db = get_db_read()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    return _pin_status(full)
+
+
+@router.post("/me/pin", response_model=PinStatus, status_code=201)
+async def create_pin(
+    payload: PinCreate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db_write()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if full.get("pin_hash"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "PIN already configured. Use PATCH to change it.",
+        )
+    await _guard_sensitive_auth(
+        action="user.pin_create", user=user, request=request,
+    )
+    if not verify_password(payload.current_password, full["password_hash"]):
+        await _record_sensitive_auth_failure(
+            action="user.pin_create", user_id=user["id"],
+        )
+        await log_audit(
+            action="user.pin_create",
+            actor_id=user["id"],
+            actor_email=user["email"],
+            actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure",
+            reason="invalid_password",
+            request=request,
+        )
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Current password is incorrect",
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "pin_hash": hash_password(payload.pin),
+            "pin_created_at": now_iso,
+            "pin_updated_at": now_iso,
+            "pin_failed_attempts": 0,
+            "pin_locked_until": None,
+            "updated_at": now_iso,
+        }},
+    )
+    await audit_success(
+        user, "user.pin_created", request,
+        entity_type="user", entity_id=user["id"],
+    )
+    updated = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return _pin_status(updated)
+
+
+@router.patch("/me/pin", response_model=PinStatus)
+async def change_pin(
+    payload: PinChange,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db_write()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if not full.get("pin_hash"):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "No PIN configured. Use POST to create one.",
+        )
+    await _guard_sensitive_auth(
+        action="user.pin_change", user=user, request=request,
+    )
+    if not verify_password(payload.current_password, full["password_hash"]):
+        await _record_sensitive_auth_failure(
+            action="user.pin_change", user_id=user["id"],
+        )
+        await log_audit(
+            action="user.pin_change",
+            actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure", reason="invalid_password", request=request,
+        )
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Current password is incorrect",
+        )
+    if not verify_password(payload.current_pin, full["pin_hash"]):
+        await _record_sensitive_auth_failure(
+            action="user.pin_change", user_id=user["id"],
+        )
+        await log_audit(
+            action="user.pin_change",
+            actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure", reason="invalid_pin", request=request,
+        )
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Current PIN is incorrect",
+        )
+    if payload.new_pin == payload.current_pin:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "New PIN must differ from the current PIN.",
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "pin_hash": hash_password(payload.new_pin),
+            "pin_updated_at": now_iso,
+            "pin_failed_attempts": 0,
+            "pin_locked_until": None,
+            "updated_at": now_iso,
+        }},
+    )
+    await audit_success(
+        user, "user.pin_changed", request,
+        entity_type="user", entity_id=user["id"],
+    )
+    updated = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return _pin_status(updated)
+
+
+@router.post("/me/pin/reset", response_model=PinStatus)
+async def reset_pin(
+    payload: PinReset,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Replace a forgotten PIN. Requires a fresh re-auth token so only
+    a recently-password-verified caller can rotate the PIN without
+    supplying the current one."""
+    require_reauth(request, user)
+
+    db = get_db_write()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "pin_hash": hash_password(payload.new_pin),
+            # If the PIN has never existed, this creates it; otherwise it
+            # is a rotation. Preserve `pin_created_at` iff already set.
+            "pin_created_at": full.get("pin_created_at") or now_iso,
+            "pin_updated_at": now_iso,
+            "pin_failed_attempts": 0,
+            "pin_locked_until": None,
+            "updated_at": now_iso,
+        }},
+    )
+    await audit_success(
+        user, "user.pin_reset", request,
+        entity_type="user", entity_id=user["id"],
+        metadata={"was_configured": bool(full.get("pin_hash"))},
+    )
+    updated = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return _pin_status(updated)
+
+
+@router.delete("/me/pin", response_model=PinStatus)
+async def remove_pin(
+    payload: ReauthRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Remove an existing PIN. Gated on the password as proof-of-presence
+    (same bar as setting one). PIN-only payloads are rejected so an
+    attacker who only has the PIN cannot silently remove it."""
+    if not payload.password:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Password is required to remove a PIN.",
+        )
+    db = get_db_write()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if not full.get("pin_hash"):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "No PIN configured.",
+        )
+    await _guard_sensitive_auth(
+        action="user.pin_remove", user=user, request=request,
+    )
+    if not verify_password(payload.password, full["password_hash"]):
+        await _record_sensitive_auth_failure(
+            action="user.pin_remove", user_id=user["id"],
+        )
+        await log_audit(
+            action="user.pin_remove",
+            actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure", reason="invalid_password", request=request,
+        )
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Current password is incorrect",
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "pin_hash": None,
+            "pin_created_at": None,
+            "pin_updated_at": None,
+            "pin_failed_attempts": 0,
+            "pin_locked_until": None,
+            "updated_at": now_iso,
+        }},
+    )
+    await audit_success(
+        user, "user.pin_removed", request,
+        entity_type="user", entity_id=user["id"],
+    )
+    updated = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return _pin_status(updated)
+
+
+@router.post("/me/pin/verify")
+async def verify_pin(
+    payload: PinVerify,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Verify the caller's PIN for a short-lived elevated action.
+
+    Wrong attempts increment `pin_failed_attempts`; once the threshold
+    is hit the PIN is locked for `PIN_LOCKOUT_MINUTES`. Successful
+    verification resets both counters."""
+    db = get_db_write()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full or not full.get("pin_hash"):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "No PIN configured.",
+        )
+    if _pin_is_locked(full):
+        raise HTTPException(
+            status.HTTP_423_LOCKED,
+            "PIN is temporarily locked due to too many failed attempts. "
+            "Reset your PIN or try again later.",
+        )
+    if not verify_password(payload.pin, full["pin_hash"]):
+        fails = int(full.get("pin_failed_attempts") or 0) + 1
+        update: dict = {
+            "pin_failed_attempts": fails,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        locked = fails >= PIN_MAX_FAILED_ATTEMPTS
+        if locked:
+            update["pin_locked_until"] = (
+                datetime.now(timezone.utc)
+                + timedelta(minutes=PIN_LOCKOUT_MINUTES)
+            ).isoformat()
+        await db.users.update_one({"id": user["id"]}, {"$set": update})
+        await log_audit(
+            action="auth.pin_verify",
+            actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure",
+            reason="locked_out" if locked else "invalid_pin",
+            metadata={"failed_attempts": fails, "locked": locked},
+            request=request,
+        )
+        raise HTTPException(
+            status.HTTP_423_LOCKED if locked else status.HTTP_401_UNAUTHORIZED,
+            "PIN locked after too many wrong attempts." if locked
+            else "Incorrect PIN.",
+        )
+
+    # Success — clear counters.
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "pin_failed_attempts": 0,
+            "pin_locked_until": None,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    await audit_success(
+        user, "auth.pin_verify", request,
+        entity_type="user", entity_id=user["id"],
+    )
+    return {"verified": True}
+
+
+# ---------------------------------------------------------------------------
+# Professional licenses (multi) — doctors + admins.
+# ---------------------------------------------------------------------------
+# Roles allowed to add their own licenses. Staff/patient users get a
+# clean 403 on write (they can still GET their own — trivially empty —
+# list so the UI can hide the section without extra wiring).
+LICENSE_CAPABLE_ROLES = {"admin", "doctor"}
+
+
+def _license_public(doc: dict) -> dict:
+    return {
+        "id": doc["id"],
+        "user_id": doc["user_id"],
+        "license_type": doc["license_type"],
+        "license_number": doc["license_number"],
+        "issuing_state": doc["issuing_state"],
+        "expiration_date": doc["expiration_date"],
+        "specialty": doc.get("specialty"),
+        "board_notes": doc.get("board_notes"),
+        "created_at": doc["created_at"],
+        "updated_at": doc["updated_at"],
+    }
+
+
+def _require_license_capable(user: dict) -> None:
+    if user.get("role") not in LICENSE_CAPABLE_ROLES:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Only clinicians can manage professional licenses on their own profile.",
+        )
+
+
+@router.get("/me/licenses", response_model=list[LicensePublic])
+async def list_my_licenses(user: dict = Depends(get_current_user)):
+    """List the caller's own licenses, newest first. Works for every
+    role so the frontend can uniformly hide the section when empty."""
+    db = get_db_read()
+    cursor = db.professional_licenses.find(
+        {"user_id": user["id"]}, {"_id": 0},
+    ).sort("created_at", -1)
+    rows = [r async for r in cursor]
+    return [_license_public(r) for r in rows]
+
+
+@router.post("/me/licenses", response_model=LicensePublic, status_code=201)
+async def create_my_license(
+    payload: LicenseCreate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    _require_license_capable(user)
+    db = get_db_write()
+
+    # Avoid duplicate rows for (type, state, number) since that's the
+    # real-world uniqueness key for a license.
+    existing = await db.professional_licenses.find_one({
+        "user_id": user["id"],
+        "license_type": payload.license_type,
+        "issuing_state": payload.issuing_state.upper(),
+        "license_number": payload.license_number.strip(),
+    }, {"_id": 0, "id": 1})
+    if existing:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "A license with this type + state + number already exists.",
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "tenant_id": user.get("tenant_id"),
+        "license_type": payload.license_type,
+        "license_number": payload.license_number.strip(),
+        "issuing_state": payload.issuing_state.upper(),
+        "expiration_date": payload.expiration_date,
+        "specialty": (payload.specialty or "").strip() or None,
+        "board_notes": (payload.board_notes or "").strip() or None,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+    await db.professional_licenses.insert_one(doc)
+    await audit_success(
+        user, "user.license_added", request,
+        entity_type="professional_license", entity_id=doc["id"],
+        metadata={
+            "license_type": doc["license_type"],
+            "issuing_state": doc["issuing_state"],
+            # license_number is mildly sensitive — log its length only,
+            # never the value itself.
+            "license_number_length": len(doc["license_number"]),
+        },
+    )
+    return _license_public(doc)
+
+
+@router.patch("/me/licenses/{license_id}", response_model=LicensePublic)
+async def update_my_license(
+    license_id: str,
+    payload: LicenseUpdate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    _require_license_capable(user)
+    db = get_db_write()
+    existing = await db.professional_licenses.find_one(
+        {"id": license_id, "user_id": user["id"]}, {"_id": 0},
+    )
+    if not existing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "License not found")
+
+    dumped = payload.model_dump(exclude_unset=True)
+    if not dumped:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "No fields supplied to update.",
+        )
+
+    updates: dict = {}
+    if "license_type" in dumped:
+        updates["license_type"] = dumped["license_type"]
+    if "license_number" in dumped:
+        updates["license_number"] = (dumped["license_number"] or "").strip()
+    if "issuing_state" in dumped:
+        updates["issuing_state"] = (dumped["issuing_state"] or "").upper()
+    if "expiration_date" in dumped:
+        updates["expiration_date"] = dumped["expiration_date"]
+    if "specialty" in dumped:
+        spec = (dumped["specialty"] or "").strip()
+        updates["specialty"] = spec or None
+    if "board_notes" in dumped:
+        notes = (dumped["board_notes"] or "").strip()
+        updates["board_notes"] = notes or None
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    await db.professional_licenses.update_one(
+        {"id": license_id, "user_id": user["id"]}, {"$set": updates},
+    )
+    fresh = await db.professional_licenses.find_one(
+        {"id": license_id}, {"_id": 0},
+    )
+    await audit_success(
+        user, "user.license_updated", request,
+        entity_type="professional_license", entity_id=license_id,
+        metadata={"fields": sorted(k for k in updates if k != "updated_at")},
+    )
+    return _license_public(fresh)
+
+
+@router.delete("/me/licenses/{license_id}", status_code=204)
+async def delete_my_license(
+    license_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    _require_license_capable(user)
+    db = get_db_write()
+    existing = await db.professional_licenses.find_one(
+        {"id": license_id, "user_id": user["id"]}, {"_id": 0},
+    )
+    if not existing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "License not found")
+    await db.professional_licenses.delete_one(
+        {"id": license_id, "user_id": user["id"]},
+    )
+    await audit_success(
+        user, "user.license_removed", request,
+        entity_type="professional_license", entity_id=license_id,
+        metadata={
+            "license_type": existing["license_type"],
+            "issuing_state": existing["issuing_state"],
+        },
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 @router.get("/me/export")
 async def export_me(request: Request, user: dict = Depends(get_current_user)):
     """Self-service account-data export. Returns the caller's identity
@@ -496,6 +1278,19 @@ async def refresh(request: Request, response: Response):
     return {"message": "Refreshed"}
 
 
+# Failures allowed within the window before `/change-password` returns
+# 429. High enough for honest typos, low enough to block brute-force
+# attempts against `current_password`.
+CHANGE_PASSWORD_FAIL_LIMIT = 5
+CHANGE_PASSWORD_FAIL_WINDOW_SECONDS = 15 * 60  # 15 minutes
+# Volume ceiling per IP across all change-password attempts (success or
+# fail). Honest users change their password at most a handful of times
+# per year; this blocks scripted abuse without punishing anyone. Kept
+# high enough for shared NAT (clinic staff on the same outbound IP).
+CHANGE_PASSWORD_VOLUME_LIMIT = 60
+CHANGE_PASSWORD_VOLUME_WINDOW_SECONDS = 60
+
+
 @router.post("/change-password")
 async def change_password(
     payload: PasswordChange,
@@ -503,14 +1298,81 @@ async def change_password(
     response: Response,
     user: dict = Depends(get_current_user),
 ):
+    ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or (
+        request.client.host if request.client else "unknown"
+    )
+
+    # --- Per-IP volume ceiling (all attempts count). Blocks scripted abuse.
+    if not await rate_limit.is_allowed(
+        f"cp_vol:{ip}",
+        limit=CHANGE_PASSWORD_VOLUME_LIMIT,
+        window_seconds=CHANGE_PASSWORD_VOLUME_WINDOW_SECONDS,
+    ):
+        await log_audit(
+            action="auth.password_change",
+            actor_id=user["id"],
+            actor_email=user["email"],
+            actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure",
+            reason="rate_limited_volume",
+            request=request,
+        )
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many password change attempts from this address. Please try again shortly.",
+        )
+
+    # --- Per-user failure counter (only wrong-current-password bumps it).
+    # Gated at entry: once the limit is hit, further tries return 429
+    # without touching the password hash. The window naturally expires.
+    fail_key = f"cp:{user['id']}"
+    current_fails = await rate_limit.failure_count(
+        fail_key, window_seconds=CHANGE_PASSWORD_FAIL_WINDOW_SECONDS,
+    )
+    if current_fails >= CHANGE_PASSWORD_FAIL_LIMIT:
+        await log_audit(
+            action="auth.password_change",
+            actor_id=user["id"],
+            actor_email=user["email"],
+            actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure",
+            reason="rate_limited_failures",
+            request=request,
+        )
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many failed attempts. Please wait a few minutes and try again.",
+        )
+
     db = get_db()
     full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
     if not full or not verify_password(payload.current_password, full["password_hash"]):
-        await audit_failure(
-            action="auth.password_change", request=request,
-            actor_email=user["email"], reason="wrong_current_password",
+        await rate_limit.record_failure(
+            fail_key, window_seconds=CHANGE_PASSWORD_FAIL_WINDOW_SECONDS,
+        )
+        await log_audit(
+            action="auth.password_change",
+            actor_id=user["id"],
+            actor_email=user["email"],
+            actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure",
+            reason="wrong_current_password",
+            request=request,
         )
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Current password is incorrect")
+
+    # Reject setting the same password (users often fat-finger current
+    # and new into the same value). Message-wise this maps to the
+    # history-reuse response so we don't leak policy internals.
+    if payload.new_password == payload.current_password:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Cannot reuse any of your last {PASSWORD_HISTORY} passwords.",
+        )
+
     try:
         validate_strength(payload.new_password)
         reject_password_reuse(payload.new_password, full.get("password_history") or [])
@@ -544,6 +1406,7 @@ async def change_password(
         actor_id=user["id"],
         actor_email=user["email"],
         actor_role=user["role"],
+        tenant_id=user.get("tenant_id"),
         request=request,
         metadata={"other_sessions_revoked": True},
     )
@@ -557,14 +1420,113 @@ async def reauth(
     response: Response,
     user: dict = Depends(get_current_user),
 ):
+    """Step-up re-authentication.
+
+    Accepts either `password` or `pin`. PIN verification shares its
+    rate-limit + 15-min lockout with `/auth/me/pin/verify`, so the
+    step-up endpoint can't be used to side-step that protection. On
+    success, sets the same 5-min `reauth_token` cookie as before so
+    every existing consumer (interceptor + `require_reauth()` gates)
+    works unchanged.
+
+    `reason` (optional) is copied into the audit metadata for review.
+    """
     db = get_db()
     full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
-    if not full or not verify_password(payload.password, full["password_hash"]):
-        await audit_failure(
-            action="auth.reauth", request=request, actor_email=user["email"],
-            reason="wrong_password",
+    if not full:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired")
+
+    audit_metadata: dict = {"factor": "password"}
+    if payload.reason:
+        audit_metadata["reason"] = payload.reason[:500]
+
+    if payload.pin is not None:
+        audit_metadata["factor"] = "pin"
+        if not full.get("pin_hash"):
+            await log_audit(
+                action="auth.reauth",
+                actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+                tenant_id=user.get("tenant_id"),
+                outcome="failure",
+                reason="pin_not_configured",
+                metadata=audit_metadata,
+                request=request,
+            )
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "No PIN configured for this account. Use password instead.",
+            )
+        if _pin_is_locked(full):
+            await log_audit(
+                action="auth.reauth",
+                actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+                tenant_id=user.get("tenant_id"),
+                outcome="failure",
+                reason="locked_out",
+                metadata=audit_metadata,
+                request=request,
+            )
+            raise HTTPException(
+                status.HTTP_423_LOCKED,
+                "PIN is temporarily locked due to too many failed attempts. "
+                "Reset your PIN or sign in with your password.",
+            )
+        if not verify_password(payload.pin, full["pin_hash"]):
+            fails = int(full.get("pin_failed_attempts") or 0) + 1
+            update = {
+                "pin_failed_attempts": fails,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            locked = fails >= PIN_MAX_FAILED_ATTEMPTS
+            if locked:
+                update["pin_locked_until"] = (
+                    datetime.now(timezone.utc)
+                    + timedelta(minutes=PIN_LOCKOUT_MINUTES)
+                ).isoformat()
+            await db.users.update_one({"id": user["id"]}, {"$set": update})
+            await log_audit(
+                action="auth.reauth",
+                actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+                tenant_id=user.get("tenant_id"),
+                outcome="failure",
+                reason="invalid_pin" if not locked else "locked_out",
+                metadata={**audit_metadata,
+                          "failed_attempts": fails, "locked": locked},
+                request=request,
+            )
+            raise HTTPException(
+                status.HTTP_423_LOCKED if locked else status.HTTP_401_UNAUTHORIZED,
+                "PIN locked after too many wrong attempts." if locked
+                else "Invalid PIN",
+            )
+        # Success — clear PIN counters.
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {
+                "pin_failed_attempts": 0,
+                "pin_locked_until": None,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
         )
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid password")
+    else:
+        await _guard_sensitive_auth(
+            action="auth.reauth", user=user, request=request,
+        )
+        if not verify_password(payload.password, full["password_hash"]):
+            await _record_sensitive_auth_failure(
+                action="auth.reauth", user_id=user["id"],
+            )
+            await log_audit(
+                action="auth.reauth",
+                actor_id=user["id"], actor_email=user["email"],
+                actor_role=user["role"],
+                tenant_id=user.get("tenant_id"),
+                outcome="failure", reason="invalid_password",
+                metadata=audit_metadata,
+                request=request,
+            )
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid password")
+
     token = create_reauth_token(user["id"])
     response.set_cookie("reauth_token", token, **_cookie_kwargs(5 * 60))
     await log_audit(
@@ -572,9 +1534,11 @@ async def reauth(
         actor_id=user["id"],
         actor_email=user["email"],
         actor_role=user["role"],
+        tenant_id=user.get("tenant_id"),
+        metadata=audit_metadata,
         request=request,
     )
-    return {"reauth_token": token}
+    return {"reauth_token": token, "factor": audit_metadata["factor"]}
 
 
 # ---------------- MFA enrolment ----------------
@@ -654,7 +1618,23 @@ async def mfa_disable(
     """Requires current password (step-down)."""
     db = get_db()
     full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
-    if not full or not verify_password(payload.password, full["password_hash"]):
+    if not full:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "User not found")
+    await _guard_sensitive_auth(
+        action="auth.mfa_disable", user=user, request=request,
+    )
+    if not verify_password(payload.password, full["password_hash"]):
+        await _record_sensitive_auth_failure(
+            action="auth.mfa_disable", user_id=user["id"],
+        )
+        await log_audit(
+            action="auth.mfa_disable",
+            actor_id=user["id"], actor_email=user["email"],
+            actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure", reason="invalid_password",
+            request=request,
+        )
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid password")
     new_epoch = int(full.get("session_epoch", 0)) + 1
     await db.users.update_one(

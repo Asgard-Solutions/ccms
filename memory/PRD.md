@@ -1,6 +1,25 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-02-18 (Compliance foundation baseline)
+**Last updated:** 2026-04-21 (Clinical module Phase 8 — Billing Readiness, lifecycle hardening, addenda, audit coverage)
+
+## 0. Design system (binding)
+The Chiro Software design system is authoritative for every UI surface.
+
+- **Palette:** Slate + Teal + Copper (deprecated: sage + stone).
+- **Typography:** Outfit (display), Manrope (body), JetBrains Mono (technical).
+- **Sources of truth:** `/app/docs/theme/`
+  - `CHIRO_SOFTWARE_THEME_STANDARD.md`
+  - `CHIRO_THEME_ENGINEERING_IMPLEMENTATION_SPEC.md`
+  - `CHIRO_UI_REVIEW_AND_COMPLIANCE_CHECKLIST.md`
+- **Implementation:** three-layer CSS tokens in `frontend/src/index.css`
+  (foundation → semantic → component alias), mapped by
+  `frontend/tailwind.config.js` to semantic utilities (`bg-background`,
+  `bg-primary`, `bg-card`, `text-muted-foreground`, `rounded-sm/lg`,
+  `shadow-sm/md`, `font-display/body/mono`).
+- **Enforcement:** no raw hex or raw Tailwind palette (`bg-slate-500`,
+  `bg-blue-600`, `dark:bg-zinc-900`) in feature code. Every interactive
+  element needs a visible focus state. Every new component must ship
+  with light + dark parity.
 
 ## 1. Original problem statement
 Multi-tenant Chiropractic Clinic Management System on a microservices, event-driven architecture. Phase 1 delivered Identity / Patient / Scheduling / Communication. The HIPAA hardening pass added technical safeguards in line with 45 CFR §164.312.
@@ -29,9 +48,948 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### Step-up re-auth supports PIN (2026-04-21)
+- Single refactored `/auth/reauth` endpoint accepts `{password}` OR
+  `{pin}` + optional `{reason}`. Returns the same 5-min reauth_token
+  cookie as before — every downstream `require_reauth()` gate works
+  unchanged.
+- PIN path shares the 5-wrong-attempts → 15-min lockout with
+  `/auth/me/pin/verify` so brute-force protection can't be bypassed.
+- One shared `ReauthDialog` — single source of truth for step-up UX.
+  Users with a PIN see the PIN form by default with a "Use password
+  instead" toggle. Locked-out PIN auto-falls-back to password.
+- `ReauthProvider.requestReauth({requireReason, defaultReason, …})`
+  is the sole reusable entry point; optional reason is copied into
+  audit metadata (`auth.reauth.metadata.reason`).
+- 14 tests in `test_reauth_pin_step_up.py`.
+
+### Security PIN (2026-04-21)
+- New 6-digit PIN section on the existing Security page, sitting
+  between the MFA card and Recent sign-ins. Zero displacement of
+  existing flows.
+- Endpoints (all under `/auth/me/pin`): `GET status`, `POST` create,
+  `PATCH` change, `POST /reset`, `DELETE` remove, `POST /verify`.
+- Defence-in-depth gates: password proof for create/change/remove;
+  reauth token for reset; `current_pin` verification for change;
+  5-wrong-attempt → 15-min lockout on verify.
+- PIN is never returned; `pin_hash` is bcrypt; `/auth/me` gains a
+  `pin_configured` bit only. Audit rows cover every state change plus
+  verify success/failure.
+- Frontend `PinCard.jsx` with masked digit-only inputs, confirm fields,
+  status badge, rotation timestamps, and a lockout banner.
+- 25 pytest cases in `test_pin_security.py` all pass.
+
+### `/auth/change-password` hardening (2026-04-21)
+- Preserved the existing endpoint + UI in Security tab. Added:
+  - Per-user failure rate limit: 5 fails / 15 min → 429 at entry.
+  - Per-IP volume ceiling: 60 attempts / min → 429.
+  - Rejects new == current password with a 400 mirroring the history
+    reuse message (no leakage of policy internals).
+  - Success and failure audit rows now carry `tenant_id`.
+  - New `rate_limit.failure_count()` + `record_failure()` helpers in
+    a distinct `rlfail:` Redis namespace.
+  - Frontend: live policy checklist, show/hide toggles, mismatch /
+    same-as-current hints, disabled-until-valid submit button.
+- 11 pytest cases in `test_password_change_hardening.py`.
+
+### Account Settings — Profile self-service (2026-04-21)
+- `/security` page refactored into a tabbed "My account" surface —
+  Profile tab + Security tab. Existing testids and routes preserved;
+  `/account` added as an alias.
+- Self-service profile fields: `first_name`, `last_name`,
+  `display_name`, `mobile_phone`, `work_phone`, `job_title`,
+  `credentials_suffix`, `preferred_signature_name`, `time_zone`.
+  Email is editable but gated on reauth and bumps session epoch so
+  stale tokens are invalidated.
+- Backend: `PATCH /api/auth/me/profile` with PATCH-semantics; empty
+  strings clear fields; email collision → 409; legacy `name` stays in
+  sync with display_name / first+last.
+- Frontend: `ProfileTab` + `SecurityTab` under `/pages/account/`. 9
+  backend tests (`test_profile_self_service.py`) + end-to-end frontend
+  validation via testing agent (iteration_40) — all green.
+
+### Billing module Phase 9 — Claims from Encounter (2026-04-21)
+**Deliverables**
+- **`POST /api/billing/claims/from-encounter`** (new) — synthesises a
+  `draft` claim skeleton from a documented clinical encounter. Reuses
+  the Phase 8 readiness evaluator (`evaluate_billing_readiness` was
+  extracted from the read-only endpoint into a reusable helper). The
+  endpoint:
+  - auto-loads patient_id, rendering_provider_id, DOS from the encounter
+  - copies active ICD-10 diagnoses for the episode into `claim_diagnoses`
+    (deduped by code, primary first, capped at 12)
+  - maps each documented procedure (`kind`) into a `claim_lines` row
+    with a default CPT hint (`KIND_TO_HINT`), `billed_cents=0`,
+    pointing to the first diagnosis
+  - returns `409` with a structured `blocking` list when readiness is
+    `blocked`, unless `force=true` is passed by an admin
+  - returns `400` when the supplied `policy_id` does not belong to the
+    encounter's patient
+  - emits `billing.claim.created_from_encounter` audit rows
+- **Frontend** (`BillingReadinessPanel`): new "Create claim draft"
+  button + `CreateClaimDialog` (payer + policy selects, POS field,
+  notes, force-override checkbox for admins). Navigates to
+  `/billing/claims/{id}` on success.
+
+**Tests**
+- `/app/backend/tests/test_billing_phase9.py` — 6 passing cases.
+- `/app/backend/tests/test_billing_phase9_nonadmin.py` — 2 cases
+  (added by testing agent) covering non-admin force rejection + doctor
+  happy path.
+
+### Frontend UX hardening — `window.confirm()` sweep (2026-04-21)
+- Replaced every `window.confirm()` and `window.prompt()` in the app
+  (they were being silently blocked inside the preview iframe) with
+  Shadcn `AlertDialog`/`Dialog` flows via a new reusable
+  `ConfirmDialog` wrapper at
+  `/app/frontend/src/components/ConfirmDialog.jsx`.
+- Surfaces fixed: `AddendumPanel` (delete draft), `MediaCard` (delete
+  media), `RoleManagement` (revoke role + revoke override),
+  `PatientInsuranceManager` (deactivate policy), `Elevation` (cancel
+  request), `Privacy` (fulfil delete + transition notes via Dialog).
+
+### Frontend refactor — `ProvidersProvider` context (2026-04-21)
+- New `/app/frontend/src/contexts/ProvidersContext.jsx` hoists the
+  `/auth/providers` fetch to one location with in-flight dedupe.
+- `PatientDetail`, `PatientWizardDialog`, `BookDialog`, and
+  `ProviderFilter` all consume `useProviders()` instead of running
+  their own fetch.
+
+### Clinical module Phase 8 — Billing Readiness + Lifecycle Hardening + Addenda + Audit Coverage (2026-04-21)
+- **Workflow realized**: the chart is now "defensibly billable" — each
+  appointment-linked encounter exposes a read-only Billing Readiness
+  evaluation; signed notes / exams / re-exams are fully immutable and
+  may only be extended through append-only, individually-signed
+  addenda; every create / edit / sign / delete / linkage change is
+  captured in both the global `audit_logs` stream and the
+  patient-scoped `clinical_audit_events` projection.
+- **Backend** under `services/clinical/`:
+  - `addenda_models.py` — `ClinicalAddendumCreate/Update/Public`,
+    `parent_type` enum (`follow_up_note | initial_exam | re_exam`),
+    reason (3-160 chars) + narrative (10-8000 chars), status
+    (`draft | signed`), signed_at / signed_by hydration.
+  - `addenda_router.py` — `GET/POST /patients/{pid}/clinical/{parent_type}/{parent_id}/addenda`,
+    `GET/PATCH/DELETE /patients/{pid}/clinical/addenda/{aid}`,
+    `POST .../addenda/{aid}/sign`, and a chart-level
+    `GET /patients/{pid}/clinical/addenda` list. Strict authorship
+    (option 2a): any writer (admin/doctor) may create; only the
+    addendum author OR an admin may edit / sign / delete that
+    addendum. Parent must be signed (409 otherwise). Post-sign
+    PATCH/DELETE return 409.
+  - `billing_readiness_router.py` — single endpoint
+    `GET /patients/{pid}/clinical/encounters/{eid}/billing-readiness`.
+    Read-only (option 1a): no persistence, no billing mutation.
+    Response shape intentionally future-billing-friendly:
+    `encounter_id, appointment_id, provider_id, provider_name,
+    date_of_service, episode_id, visit_type, visit_type_label,
+    note {kind, id, status, signed_at, signed_by, has_addenda,
+    addendum_count}, diagnoses[], procedures[], treatment_plan,
+    overall_status, checks[], generated_at`. Check keys: `patient_present`,
+    `provider_present`, `dos_present`, `appointment_linked`,
+    `encounter_completed`, `note_exists`, `note_signed`,
+    `signature_present`, `diagnosis_linked`, `treatment_documented`,
+    `objective_findings`, `response_documented`, `plan_linkage`
+    (severity=fail for follow_up/treatment_visit, info otherwise),
+    `reexam_not_overdue`. Overall status derivation: `blocked` if
+    any fail-severity check fails, `warnings` if any warn-severity
+    fails, `ready` otherwise.
+  - `notes_models.py` — `CareTimelineEntry.kind` extended with
+    `addendum`; `FollowUpNotePublic` gains `has_addenda`,
+    `addendum_count`, `latest_addendum_at`.
+  - `exams_models.py` + `reexams_models.py` — same three new
+    addendum-metadata fields on `InitialExamPublic` and
+    `ReExamPublic`.
+  - `notes_router.py` `_hydrate`, `exams_router.py` `_hydrate`,
+    `reexams_router.py` `_hydrate` — each fetch their
+    parent-specific addendum count + latest timestamp so the
+    editor header badges can surface "Signed · +N addendum(s)".
+  - `notes_router.py` care-timeline endpoint — aggregates signed
+    addenda with kind=`addendum`, anchored to the parent artifact's
+    deep-link. Signed-only (drafts don't leak onto the timeline).
+  - `notes_router.py` PATCH — emits specific
+    `follow_up_note.treatment_plan_linkage_changed` and
+    `follow_up_note.diagnosis_linkage_changed` clinical-audit events
+    in addition to the generic `updated` audit, so downstream
+    compliance consumers can filter linkage changes without
+    introspecting the generic payload.
+- **Frontend** under `pages/clinical/`:
+  - `BillingReadinessPanel.jsx` — collapsible; persistent header chip
+    (`ready` green / `warnings` amber / `blocked` red); check rows
+    with pass/fail icons and failure detail; future-billing summary
+    block (encounter / appointment / provider / DOS / visit_type /
+    note status + addendum count / treatment plan / episode /
+    diagnoses[] / procedures[]).
+  - `AddendumPanel.jsx` — beneath each signed note/exam/re-exam.
+    Lists all addenda for that parent. Create dialog (reason +
+    narrative), sign, delete-draft. Post-sign edit/sign/delete
+    buttons disappear (server-side immutability mirrored in UI).
+    Non-author drafts hide author-only actions.
+  - `LifecycleBadge.jsx` — single source of truth for status pills
+    (reused where lifecycle is displayed; existing editor badges
+    append the `· +N addendum` suffix inline).
+  - `EncountersCard.jsx` — mounts `BillingReadinessPanel` under each
+    encounter row.
+  - `FollowUpNoteEditor.jsx`, `InitialExamEditor.jsx`,
+    `ReExamEditor.jsx` — mount `AddendumPanel` at the bottom; status
+    badge now surfaces the addendum suffix when signed; `onChanged`
+    callback refetches the parent artifact after sign/delete so the
+    badge updates without a page reload.
+  - `CareTimelineCard.jsx` — `KIND_META` extended for `addendum`
+    kind (MessageSquarePlus icon); timeline row shows reason as
+    subtitle and deep-links to the parent artifact surface.
+- **Tests**: `/app/backend/tests/test_clinical_phase8.py` —
+  `signed_note_blocks_patch`, `addendum_requires_signed_parent`,
+  `addendum_create_edit_sign_lock`,
+  `addendum_non_author_cannot_sign_but_admin_can`,
+  `billing_readiness_blocked_when_note_draft`,
+  `billing_readiness_ready_when_fully_documented`,
+  `billing_readiness_warns_on_missing_plan`,
+  `timeline_surfaces_signed_addendum`,
+  `audit_events_for_linkage_changes` — all 9 passing. Frontend
+  validated via `testing_agent_v3_fork` iteration 38 (all Phase 8
+  flows pass; minor polish action item resolved with `onChanged`
+  callback).
+- **Guardrails observed**: Billing Readiness stays read-only and
+  evaluative; signed base artifacts stay locked; addenda are
+  append-only + individually signed + immutable once signed; no
+  billing automation, no CPT suggestion, no claim generation in
+  this phase.
+
+### Clinical module Phase 7 — Imaging & Clinical Media + Outcomes + Care Timeline v2 (2026-04-21)
+- **Workflow realized**: providers upload x-rays, MRI/CT reports,
+  ultrasound, clinical photos, outside records, and PDFs to the
+  patient chart; files are immutable after upload, metadata is
+  editable, soft-delete hides from chart but retains audit trail.
+  Functional outcome measures (NDI, Oswestry, Pain VAS, Pain scale,
+  functional index, custom) are recorded ad-hoc from the chart or
+  auto-emitted when a Re-Exam is signed. The Care Timeline is the
+  longitudinal story — it now merges clinical media, standalone
+  outcome entries, and diagnosis change audit events on top of the
+  existing encounters / exams / notes / re-exams / plans stream.
+- **New backend modules** under `services/clinical/`:
+  - `media_models.py` — `ClinicalMediaCreate/Update/Public`, category
+    enum (`xray`, `mri_ct_report`, `ultrasound`, `clinical_photo`,
+    `outside_record`, `other_pdf`), source enum (`in_clinic`,
+    `outside_imaging_center`, `patient_provided`, `records_request`),
+    study_date, body_region, impression_findings, mime validation
+    via `python-magic` (PNG/JPEG/WebP/HEIC + PDF), 25 MB cap.
+  - `media_router.py` — endpoints under `/api`:
+    - `GET/POST /patients/{pid}/clinical/media` (list + multipart
+      upload; objects written via pre-existing
+      `core.object_storage`).
+    - `GET /patients/{pid}/clinical/media/{mid}` (metadata)
+    - `GET /patients/{pid}/clinical/media/{mid}/download` (streaming
+      blob with correct `Content-Type`)
+    - `PATCH /patients/{pid}/clinical/media/{mid}` (metadata only —
+      the binary is immutable)
+    - `DELETE /patients/{pid}/clinical/media/{mid}` (soft-delete +
+      audit event)
+  - `outcomes_models.py` — `OutcomeCreate/Update/Public`, measure
+    enum (`ndi`, `oswestry`, `pain_vas`, `pain_scale`,
+    `functional_index`, `custom`), score/max_score, captured_at,
+    unit, note, source (`provider_charted`, `patient_reported`,
+    `reexam`), optional `reexam_id` link.
+  - `outcomes_router.py` — endpoints under `/api`:
+    - `GET/POST /patients/{pid}/clinical/outcomes`
+    - `GET /patients/{pid}/clinical/outcomes/trends` — groups by
+      `(measure_type, label)`, returns series of `{entry_id, score,
+      captured_at}` sorted chronologically.
+  - `notes_router.py care-timeline endpoint` — extended to aggregate
+    three new entry kinds: `clinical_media` (from `clinical_media`
+    collection, filtered on `deleted_at=None`), `outcome_entry`
+    (from `clinical_outcome_entries` excluding `source=reexam` so
+    the re-exam row isn't duplicated), `diagnosis_change` (derived
+    from `clinical_audit_events` where `event_type` in
+    `diagnosis.created/updated/resolved/activated`), plus
+    `intake_submission` (from `clinical_history.intake_submitted`
+    audit events). Every entry has the same shape: `{kind, id,
+    date_of_service, status, title, subtitle, episode_id,
+    provider_id, provider_name, link_path}`.
+  - **Re-Exam auto-emission**: signing a re-exam now writes one
+    `clinical_outcome_entries` row per outcome in the re-exam, tagged
+    `source=reexam` with `reexam_id` linkage, so the trends endpoint
+    picks them up automatically.
+- **New frontend under `pages/clinical/`**:
+  - `MediaCard.jsx` — filter chips (`all` + 6 categories), 4-col
+    thumbnail grid with image/PDF glyphs, upload dialog (category,
+    source, body region, study date, impression/findings), detail
+    dialog with inline preview (`<img>` for images, `<iframe>` for
+    PDFs), download link, and soft-delete button for writers.
+    Re-auth-aware on 401.
+  - `OutcomesCard.jsx` — two modes: `snapshot` (per-measure chip
+    with latest score, `/max`, and delta-vs-prior badge using
+    `▼`/`▲`) and `trend` (one compact SVG line chart per measure,
+    no charting library — viewBox-scaled, axis ticks + point
+    labels). Record dialog seeds unit/max from the chosen measure.
+  - `CareTimelineCard.jsx` — extended `KIND_META` with icons for
+    `clinical_media` (ImageIcon), `outcome_entry` (Activity),
+    `diagnosis_change` (GitBranch/warning), and `intake_submission`
+    (ClipboardList); extended `STATUS_TONE` for new statuses
+    (`uploaded`, `provider_charted`, `patient_reported`, `reexam`,
+    `created`, `updated`, `resolved`, `activated`, `submitted`).
+  - `TreatmentPlanEditor.jsx` — new read-only "Latest outcomes"
+    section right after "Objective baselines"; pulls
+    `/outcomes/trends`, renders a delta chip per measure, never
+    mutates data.
+  - `ClinicalTab.jsx` — mounts `MediaCard` and `OutcomesCard`,
+    removes the Phase-2 placeholders for Imaging/Outcomes. Only
+    Billing Readiness remains as a placeholder.
+- **Object storage**: reuses pre-existing `core.object_storage`
+  (Emergent LLM-key backed) — no new 3rd-party dependency. Files are
+  referenced by `storage_path` on `clinical_media`; the binary is
+  never returned inline in list/detail responses, only via explicit
+  `/download`.
+- **Testing**: backend `pytest` (`test_clinical_phase7.py`) covers
+  upload → list → download → metadata patch → soft delete and the
+  outcomes + trends flow including re-exam auto-emission. Frontend
+  validated via `testing_agent_v3_fork` (iteration 37) static wiring
+  + self-test via live preview (admin login, upload PNG, record Pain
+  VAS 7 then 4, trend mode SVG render, care timeline merge) — all
+  pass.
+- **Guardrails observed**: re-used `core.object_storage`; auto-emit
+  standalone outcomes on re-exam sign; simple inline SVG charts
+  (no Recharts / Nivo). Treatment plan "Latest outcomes" is
+  read-only and lightweight.
+
+### Clinical module Phase 6 — Treatment Plans + Re-Exams (2026-02-22)
+- **Workflow realized**: provider creates a chart-level **Treatment
+  Plan** (plan of care) for the episode/case with goals, frequency,
+  duration, baselines, discharge criteria. As care progresses, a
+  **Re-Exam** is launched from a `re_evaluation` encounter — it
+  auto-links the active plan + most recent signed Initial Exam +
+  freezes a `baseline_snapshot` for defensible comparison. The
+  re-exam carries a recommendation decision (continue / modify_plan /
+  discharge / transition_maintenance). Signing a
+  `modify_plan` re-exam emits an audit event only — the plan is NOT
+  auto-mutated. Providers then explicitly PATCH the plan (or
+  discharge + create a new one).
+- **New backend modules** under `services/clinical/`:
+  - `treatment_plans_models.py` — `PlannedIntervention`, `PlanGoal`
+    (measure_type: pain_scale/functional/rom/outcome_score/custom;
+    status: active/met/modified/abandoned; baseline_value /
+    target_value), `FunctionalMeasure`, `PlanBaselines`,
+    `TreatmentPlanCreate/Update/SetStatus`, `TreatmentPlanPublic`
+    with live `TreatmentPlanProgress` (visits_completed /
+    total_visits / percent).
+  - `treatment_plans_router.py` — endpoints under `/api`:
+    - `GET/POST /patients/{pid}/clinical/treatment-plans`
+    - `GET/PATCH /patients/{pid}/clinical/treatment-plans/{tpid}`
+    - `POST /patients/{pid}/clinical/treatment-plans/{tpid}/set-status`
+      (transitions active → on_hold / completed / discharged /
+      cancelled with required reason; discharged is reversible back
+      to active)
+    - One-active-plan-per-episode guard → 409 with existing plan id
+      surfaced in detail
+    - PATCH on discharged / completed / cancelled → 409
+    - Progress computed live: signed follow-up notes on same episode
+      since plan `start_date` / `frequency_total_visits` * 100
+  - `reexams_models.py` — `GoalProgressEntry`
+    (status: on_track/improved/plateau/regressed/met),
+    `OutcomeUpdate` (typed: ndi/oswestry/pain_vas/
+    functional_index/custom + score/max_score/note),
+    `RECOMMENDATION` Literal, `ReExamCreate/Update`,
+    `ReExamPublic`, `ReExamNarrative`. Reuses
+    `ExamExamination` + `NewDiagnosisDraft` from Phase 4 for
+    apples-to-apples comparison against the Initial Exam.
+  - `reexams_router.py` — endpoints under `/api`:
+    - `GET/POST /patients/{pid}/clinical/re-exams` (POST from
+      encounter)
+    - `GET/PATCH /patients/{pid}/clinical/re-exams/{rid}`
+    - `POST .../mark-sign-ready` / `.../unmark-sign-ready`
+    - `POST .../sign` — terminal; requires
+      `recommendation_decision` (400 otherwise). Materializes
+      `new_diagnoses` into `clinical_diagnoses` (ICD-10 uppercasing
+      + de-dup; same semantics as Initial Exam). If
+      `recommendation_decision=modify_plan`, emits a second
+      `treatment_plan.revised_recommended` audit event tagging the
+      linked plan; the plan itself is NOT mutated.
+    - `GET .../narrative` — RE-EXAMINATION NOTE header with
+      BASELINE (frozen) / UPDATED OBJECTIVE FINDINGS / GOAL
+      PROGRESS / OUTCOME MEASURES / RECOMMENDATION sections
+    - One-reexam-per-encounter (non-cancelled). Duplicate POST
+      returns 200 + `X-ReExam-Existed: true` header. Cancelled
+      encounter → 409.
+    - At create: `_build_baseline_snapshot` freezes plan goals +
+      plan baselines + plan frequency + initial exam examination /
+      history + prior re-exam snapshot (if any) into an immutable
+      dict on the re-exam document.
+  - **Integrations**:
+    - Summary endpoint now exposes
+      `treatment_plans.{total, open}` (open = active status) and
+      `re_exams.{total, open}` (open = draft + sign_ready).
+    - Follow-up note `_hydrate` resolves the episode's active plan
+      and injects `active_plan_summary` (id, title, frequency,
+      visits progress, top 3 goals) on every GET — read-only.
+    - Care-timeline endpoint now merges `treatment_plan` +
+      `re_exam` kinds alongside encounters + exams + notes with
+      deep-link paths.
+- **Access + audit**: reads `admin|doctor|staff`; writes
+  `admin|doctor` + `require_reauth`. Tenant isolation via
+  `scoped_filter` — cross-tenant probes 404. Every mutation emits a
+  global `audit_logs` row + patient-scoped `clinical_audit_events`
+  (`treatment_plan.created`, `treatment_plan.updated`,
+  `treatment_plan.status_changed`, `re_exam.created`,
+  `re_exam.updated`, `re_exam.signed`,
+  `treatment_plan.revised_recommended`).
+- **Indexes** in `core/db.py`: `clinical_treatment_plans` on
+  `(tenant_id, patient_id, plan_status)` + `(tenant_id, episode_id)`.
+  `clinical_reexams` on `(tenant_id, encounter_id)` UNIQUE +
+  `(tenant_id, patient_id, date_of_service)` + `(tenant_id, status)`.
+- **Frontend**:
+  - `pages/clinical/TreatmentPlansCard.jsx` — chart-level list with
+    status + progress bar; `plan-create-btn` launches new plan.
+  - `pages/clinical/TreatmentPlanEditor.jsx` at
+    `/patients/:pid/clinical/treatment-plans/:tpid` — structured
+    sections (overview, interventions, goals, baselines including
+    functional measures list, home-care, activity/work, discharge,
+    maintenance). `plan-set-status-btn` opens a dialog with required
+    reason. Progress bar reflects live visit count.
+  - `pages/clinical/ReExamsCard.jsx` — chart list with status +
+    decision chips.
+  - `pages/clinical/ReExamEditor.jsx` at
+    `/patients/:pid/clinical/re-exams/:rid` — renders frozen plan
+    snapshot read-only; auto-seeds goal progress rows from the
+    plan's goals with baseline / current / status / note; typed
+    outcome measures editor (NDI / Oswestry / pain_vas / functional
+    index / custom); decision radio + reason; `revised_plan_summary`
+    shown only when `decision=modify_plan`. Sign disabled when no
+    decision or while dirty. Signed banner replaces form post-sign.
+  - `pages/clinical/ClinicalTab.jsx` — adds `stat-treatment-plans`
+    + `stat-reexams` tiles; mounts the two new cards; removes Phase-2
+    placeholders (`clinical-placeholder-treatment-plans`,
+    `clinical-placeholder-re-exams`).
+  - `pages/clinical/EncountersCard.jsx` — `re_evaluation` encounters
+    now emit `encounter-start-reexam-{id}` (routing to Re-Exam, not
+    Initial Exam). `new_patient_exam` continues to route to the
+    Initial Exam editor; `follow_up` / `treatment_visit` continue
+    to route to the Follow-up Note editor.
+  - `pages/clinical/CareTimelineCard.jsx` — supports `treatment_plan`
+    + `re_exam` kinds with distinct icons.
+  - `pages/clinical/FollowUpNoteEditor.jsx` — renders
+    `note-active-plan-strip` (plan title + frequency + visits
+    progress + top 3 goals) at the top when an active plan exists
+    on the episode. Read-only; no edit path.
+  - `App.js` routes `/patients/:pid/clinical/treatment-plans/:tpid`
+    and `/patients/:pid/clinical/re-exams/:rid`.
+- **Tests**: `backend/tests/test_clinical_phase6.py` — **14/14
+  passing**. Phase 5 regression — **12/12 green**.
+- **Frontend E2E** (`iteration_36.json`): **100%** coverage —
+  TreatmentPlanEditor 19/19 testids present, ReExamEditor 21/21
+  testids present, routing and conditional rendering verified.
+
+### Clinical module Phase 5 — Follow-up / Daily Visit Notes + Care Timeline (2026-02-22)
+- **Workflow realized**: daily-visit charting for follow-up / treatment
+  encounters. Provider launches from the calendar → encounter → note.
+  One note per encounter (non-cancelled). Signed notes are immutable
+  and surface in Patient Profile > Clinical + Care Timeline.
+- **New backend surface** `services/clinical/`:
+  - `notes_models.py` — SOAP-structured Pydantic models:
+    `NoteSubjective` (interval history, pain scale 0–10, `pain_change`
+    better/worse/same/fluctuating, functional change, home-care
+    adherence + notes), `NoteObjective` (repeatable
+    `RegionFinding[]` with palpation/ROM summary/notes, reassessment
+    summary, optional Vitals reused from Phase 4), `NoteAssessment`
+    (`response_to_care` improving/plateau/regressing/new_complaint +
+    clinical impression), `NotePlan` (repeatable `TreatmentEntry[]`
+    with kinds adjustment / modality / soft_tissue / exercise /
+    other; segments, technique, modality, region, duration_min;
+    regions_treated chip list; home-care reinforcement; next-visit
+    plan + recommended_interval_days).
+  - `notes_router.py` — endpoints under `/api`:
+    - `GET /patients/{pid}/clinical/notes` (list; `status_in` +
+      `episode_id` filters)
+    - `POST /patients/{pid}/clinical/notes` — create from encounter.
+      Optional `copy_forward_from_note_id` seeds fields from a
+      prior signed note at creation. One-note-per-encounter:
+      duplicate POST returns 200 + `X-Note-Existed: true` header +
+      the existing note.
+    - `GET/PATCH /patients/{pid}/clinical/notes/{nid}` — PATCH
+      blocks on signed (409).
+    - `POST .../copy-forward` — explicit. Non-destructive by default
+      (only fills empty destination fields); `force=true` overwrites.
+      Source must be signed and belong to the same patient (400
+      otherwise). Accumulates `copied_fields` across calls.
+    - `POST .../mark-sign-ready` + `.../unmark-sign-ready` (draft ↔
+      sign_ready, wrong-status → 409).
+    - `POST .../sign` — terminal. Assigns `visit_number` = count of
+      prior signed follow-up notes on the same episode (or patient
+      if no episode) + 1. Double-sign → 409.
+    - `GET .../narrative` — SOAP-formatted rendering with header
+      `FOLLOW-UP / DAILY VISIT NOTE`, sections `SUBJECTIVE (S)` /
+      `OBJECTIVE (O)` / `ASSESSMENT (A)` / `PLAN (P)` and active
+      `DIAGNOSES` block. Empty sections are omitted.
+    - `GET /patients/{pid}/clinical/care-timeline` — chronological
+      merge of encounters + initial exams + follow-up notes, sorted
+      date-desc, with deep-link paths.
+    - `POST /appointments/{aid}/clinical/notes` — convenience launch
+      from the appointment when patient_id is not handy (reuses the
+      latest non-cancelled encounter on that appointment).
+  - Summary endpoint now exposes live `notes.{total, open}` where
+    `open = draft + sign_ready`.
+- **Lifecycle**: `draft → sign_ready → signed`; signed is terminal
+  and immutable in Phase 5. Addendums/amendments intentionally
+  deferred per scope guardrails.
+- **Completeness scoring**: backend computes `completeness.score` +
+  `missing_fields` on every read against the REQUIRED_FIELDS set:
+  `subjective.interval_history`, `subjective.pain_scale_0_10`,
+  `assessment.response_to_care`, `plan.treatment_rendered`,
+  `plan.next_visit_plan`. UI surfaces a meter + chips.
+- **Access + audit**: reads `admin|doctor|staff`; writes
+  `admin|doctor` + `require_reauth`. Tenant isolation via
+  `scoped_filter` — cross-tenant probes 404. Every mutation emits
+  both a global `audit_logs` row AND a patient-scoped
+  `clinical_audit_events` row (events: `follow_up_note.created`,
+  `follow_up_note.updated`, `follow_up_note.copy_forward`,
+  `follow_up_note.signed`).
+- **Indexes** in `core/db.py`: `clinical_follow_up_notes` on
+  `(tenant_id, encounter_id)` UNIQUE,
+  `(tenant_id, patient_id, date_of_service)`,
+  `(tenant_id, status)`, `(tenant_id, episode_id)`.
+- **Frontend**:
+  - `pages/clinical/FollowUpNoteEditor.jsx` — full page at
+    `/patients/:pid/clinical/follow-up/:nid`. Structured widgets
+    for each SOAP section: pain-scale number, pain-change /
+    adherence / response-to-care Selects, repeatable
+    `RegionFinding` rows, vitals (BP + pulse), repeatable
+    `TreatmentEntry` rows with kind-aware inputs (adjustment vs
+    modality), regions-treated chip input, next-visit-plan +
+    recommended-interval-days. Completeness meter header shows
+    `filled/total` + missing-field chips. Save / Copy-forward /
+    Mark sign-ready / Sign / View narrative toolbar. Copied-forward
+    fields show a yellow "Copied forward" badge per-field.
+    Read-only `exam-signed-banner` replaces the form post-sign.
+  - `pages/clinical/FollowUpNotesCard.jsx` — list card on Clinical
+    tab with per-row status / visit # / provider / completeness
+    meter and direct link into editor.
+  - `pages/clinical/CareTimelineCard.jsx` — chronological timeline
+    of encounters + initial exams + follow-up notes with kind-
+    specific icons and deep-link affordance.
+  - `pages/clinical/ClinicalTab.jsx` — stat row now includes
+    `stat-notes` (open count); `FollowUpNotesCard` +
+    `CareTimelineCard` mounted under the Initial Exams card.
+    `clinical-placeholder-follow-notes` and
+    `clinical-placeholder-timeline` placeholders removed (now
+    live).
+  - `pages/clinical/EncountersCard.jsx` — `follow_up` and
+    `treatment_visit` encounters now render an
+    `encounter-start-note-{id}` action that POSTs
+    `/clinical/notes` and navigates to the editor;
+    `new_patient_exam` and `re_evaluation` continue to route to
+    the Initial Exam editor via `encounter-start-exam-{id}`.
+  - `App.js` route:
+    `/patients/:pid/clinical/follow-up/:nid`.
+- **Tests**: `backend/tests/test_clinical_phase5.py` — **12/12
+  passing**: create-from-encounter with auto-fill + empty
+  completeness; one-note-per-encounter idempotency + X-Note-Existed
+  header; cancelled-encounter 409; PATCH structured round-trip
+  with vitals/regions/treatments + 100% completeness; completeness
+  missing-fields surfaced; draft→sign_ready→signed lifecycle with
+  double-sign 409 + PATCH-signed 409 + `visit_number` auto-
+  increment across encounters; copy-forward non-destructive +
+  force; copy-forward rejects unsigned source 400; copy-forward
+  inline at create; narrative renders SUBJECTIVE / OBJECTIVE /
+  ASSESSMENT / PLAN; care-timeline merges + sorts; cross-tenant
+  404; reauth required on create.
+- **Regression**: Phase 1+2+4 (35/35) green.
+- **Infra requirement**: `libmagic1` system package must be present
+  in the container image (python-magic dependency used by patient
+  documents router). If backend returns 502 on boot,
+  `sudo apt-get install -y libmagic1 && sudo supervisorctl restart backend`.
+
+### Clinical module Phase 4 — Initial Exam workflow (2026-02-22)
+- **Workflow realized**: provider launches documentation from the
+  calendar → encounter shell (Phase 3) → `POST /clinical/exams`
+  creates a **single** Initial Exam bound to that encounter. One
+  exam per encounter (idempotent create returns 200 +
+  `X-Exam-Existed: true` header if the exam already exists). The
+  signed exam is the authoritative initial evaluation record and
+  lives under Patient Profile > Clinical for the life of the chart.
+- **New backend service** `services/clinical/` additions:
+  - `exam_template.py` — frozen system default template
+    `default-initial-exam-v1` with three sections (`history`,
+    `examination`, `assessment`). Snapshotted into each exam at
+    create time so template evolution never mutates a signed exam.
+  - `exams_models.py` — Pydantic models: `ExamHistory` (11 fields),
+    `ExamExamination` (vitals + observation/posture/gait/palpation/
+    segmental findings + structured `RangeOfMotion` for cervical/
+    thoracic/lumbar/shoulders/hips + `OrthopedicTest[]` +
+    `MuscleStrengthEntry[]` + neurologic/sensory/reflex narratives),
+    `ExamAssessment` (functional limitations, summary, impression,
+    treatment recommendations), `NewDiagnosisDraft` (ICD-10 drafts
+    materialized at sign time).
+  - `exams_router.py` — endpoints under `/api`:
+    - `GET /clinical/exam-templates/default`
+    - `GET/POST /patients/{pid}/clinical/exams` (list + create from
+      encounter with `prefill_from_chart=true` default)
+    - `GET/PATCH /patients/{pid}/clinical/exams/{eid}` (PATCH blocked
+      on signed; cross-patient diagnosis_ids → 400)
+    - `POST .../prefill` — explicit, non-destructive re-pull from
+      clinical_history + active diagnoses; updates
+      `prefilled_from_chart_at`
+    - `POST .../mark-sign-ready` + `.../unmark-sign-ready` (draft ↔
+      sign_ready)
+    - `POST .../sign` (terminal; materializes `new_diagnoses` into
+      `clinical_diagnoses` with ICD-10 uppercasing + case-insensitive
+      de-dup on `(code, body_region, laterality)` against active
+      problem list + one-primary-per-episode enforcement; records
+      `signed_at` / `signed_by`)
+    - `GET .../narrative` — Initial-Exam-oriented rendering with
+      `INITIAL EXAMINATION` header + HISTORY / EXAMINATION /
+      ASSESSMENT & PLAN sections + structured vitals/ROM/orthopedic
+      tests/muscle strength + DIAGNOSES block. Empty sections are
+      omitted.
+- **Lifecycle**: `draft → sign_ready → signed` (terminal). `signed`
+  is immutable in Phase 4 — amendments/addendums deferred to a later
+  phase. Double-sign → 409. Wrong-status transitions → 409.
+- **Cross-cutting controls** (consistent with earlier phases):
+  - Reads gated by `admin|doctor|staff`; writes by `admin|doctor` +
+    `require_reauth`. Tenant isolation via `scoped_filter`;
+    cross-tenant probes return 404.
+  - Every mutation writes both a global `audit_logs` row and a
+    patient-scoped `clinical_audit_events` row (events:
+    `initial_exam.created`, `initial_exam.updated`,
+    `initial_exam.prefilled`, `initial_exam.signed`).
+  - Summary endpoint now returns live `initial_exams.{total, open}`
+    where `open = draft + sign_ready`.
+- **Encounter → exam linkage**: `EncountersCard` (Phase 3)
+  surfaces a `encounter-start-exam-{enc.id}` button on every
+  in-progress encounter that POSTs `/clinical/exams` and routes to
+  `/patients/{pid}/clinical/exams/{eid}`.
+- **Indexes** in `core/db.py`: `clinical_initial_exams` on
+  `(tenant_id, patient_id, date_of_service)`,
+  `(tenant_id, encounter_id)`, and `(tenant_id, status)`.
+- **Frontend**:
+  - `pages/clinical/InitialExamsCard.jsx` — lists every exam on the
+    Clinical tab with status badge + date + provider + narrative
+    shortcut.
+  - `pages/clinical/InitialExamEditor.jsx` — full editor rendering
+    from the frozen `template_snapshot`. Structured widgets for
+    vitals (`exam-vitals-bp`, `exam-vitals-pulse`, …), ROM
+    (`exam-rom-{region}-{movement}`), orthopedic tests
+    (`exam-ortho-row-{i}`), muscle strength (`exam-ms-row-{i}`),
+    existing/new diagnoses (`exam-existing-dx-{id}`,
+    `exam-new-dx-row-{i}`). Save disabled when clean; sign disabled
+    while dirty (user must save before sign). Narrative dialog shows
+    rendered print-friendly narrative. `exam-signed-banner` replaces
+    the editable form post-sign.
+  - `ClinicalTab.jsx` — summary row leads with live `stat-exams` tile
+    (open count); `InitialExamsCard` mounted below the Encounters
+    card.
+  - `App.js` route: `/patients/:id/clinical/initial-exam/:examId`.
+- **Tests**: `backend/tests/test_clinical_phase4.py` — **11/11
+  passing**: create-from-encounter happy path + auto-fill from
+  encounter/appointment/provider/episode/location + prefill from
+  history + active-diagnosis auto-select + frozen template snapshot;
+  one-exam-per-encounter idempotency via `X-Exam-Existed`;
+  cancelled-encounter reject 409; PATCH merges structured sections +
+  cross-patient diagnosis_ids → 400; explicit `/prefill`
+  non-destructive; mark-sign-ready / unmark / sign transitions;
+  sign-from-draft; double-sign 409; PATCH-signed 409; sign
+  materializes `new_diagnoses` with ICD-10 uppercase + de-dup +
+  primary-uniqueness; narrative contains all expected sections;
+  summary `initial_exams` counts live; cross-tenant probes 404;
+  reauth required on writes.
+- **Regression**: Phase 1+2 (24/24) green. Phase 3 8/9 (1 flaky
+  appt-overlap seed collision in Phase 3's reauth test — pre-existing
+  random-time jitter, not a product bug).
+
+### Clinical module Phase 3 — appointment-launched encounter shell (2026-02-21)
+- **Workflow standard locked in**: providers begin documentation from
+  the appointment/calendar; the appointment is the encounter shell; the
+  resulting clinical record is stored in and viewable from Patient
+  Profile > Clinical.
+- **New backend entity `clinical_encounters`**
+  (`services/clinical/encounters_router.py` + `encounters_models.py`):
+  - Convenience launch on the appointment prefix:
+    - `POST /api/appointments/{aid}/clinical/encounters` — idempotent.
+      Returns `{encounter, existed: bool}` with 201 on new, 200 on reuse.
+    - `GET /api/appointments/{aid}/clinical/encounter` — latest
+      non-cancelled encounter for the appointment.
+  - Authoritative patient-owned surface:
+    - `GET /api/patients/{pid}/clinical/encounters` — list with
+      `status_in` + `episode_id` filters.
+    - `GET/PATCH /api/patients/{pid}/clinical/encounters/{eid}`.
+    - `POST .../encounters/{eid}/complete` and
+      `POST .../encounters/{eid}/cancel`.
+  - Context auto-fill: launch captures a **frozen**
+    `appointment_snapshot` (patient_id, provider_id, location_id,
+    start_time, end_time, status, reason) plus
+    `scheduled_start`, `scheduled_end`, `scheduled_duration_min`,
+    `date_of_service`, `appointment_status_at_launch`. Later edits to
+    the appointment do NOT mutate the snapshot — the chart record is
+    defensibly reproducible.
+  - Four encounter types: `new_patient_exam`, `follow_up`,
+    `re_evaluation`, `treatment_visit`.
+  - Three lifecycle statuses: `in_progress → completed` or `cancelled`.
+- **Exception workflow (cancelled / no-show path)**:
+  - Launching against a `cancelled` appointment without
+    `exception_reason` → 409.
+  - With a reason (≥3 chars) AND a role of `admin|doctor` →
+    encounter created with `is_exception=True`, `exception_reason`,
+    `exception_invoked_by`, `exception_invoked_at` stamped into the
+    encounter. Staff cannot bend the rule (403).
+  - The exception is surfaced visually in the chart as a warning badge.
+- **Appointment → chart linkage**: `GET /api/appointments/{id}` now
+  projects `clinical_encounter_id` + `clinical_encounter_status` so
+  the calendar UI can tell at a glance whether a visit is already
+  launched.
+- **Access + audit**: reads `admin|doctor|staff`; writes
+  `admin|doctor` + `require_reauth`. Every mutation emits both a
+  global `audit_logs` row AND a `clinical_audit_events` row scoped to
+  the patient chart (events: `encounter.launched`, `encounter.updated`,
+  `encounter.completed`, `encounter.cancelled`) — the exception flag
+  and appointment_status_at_launch ride along in the metadata so
+  chart-history UI can show the provenance of every launch decision.
+- **Indexes** in `core/db.py`:
+  `clinical_encounters` on
+  `(tenant_id, patient_id, date_of_service)`,
+  `(tenant_id, appointment_id)`, and
+  `(tenant_id, status)`.
+- **Frontend**
+  - `pages/clinical/EncounterLaunchDialog.jsx` — opened from
+    BookDialog's new **Launch encounter** button (`appt-launch-encounter-btn`).
+    Picks encounter type (auto-inferred from the appointment reason),
+    optional episode (any active / on-hold / closed patient episode),
+    and — for cancelled appointments — a required `exception_reason`.
+    On submit routes to
+    `/patients/{pid}?tab=clinical&encounter={eid}`; if an encounter
+    already exists the dialog shows a banner and "Open in chart" shortcut.
+  - `pages/clinical/EncountersCard.jsx` — new live card on the
+    Clinical tab. Lists encounters with type, status, duration,
+    provider, episode, exception flag. Inline
+    `complete` + `cancel` transitions, plus an **Appointment** deep
+    link that opens the scheduling page on the correct day.
+  - `pages/clinical/ClinicalTab.jsx` — summary row now leads with a
+    live `stat-encounters` tile (in-progress count) and mounts
+    `EncountersCard`.
+  - `pages/PatientDetail.jsx` — tabs are now URL-synced via
+    `?tab=...&encounter=...`; deep-linking from Launch lands the
+    clinician right on the new encounter with its row highlighted.
+  - `pages/scheduling/SchedulingPage.jsx` + `DayView.jsx` — Day view's
+    cancelled-appointment tile now carries a clickable
+    "Canceled · Open" pill (`scheduling-day-appt-open-{id}`) so
+    doctors can still reach cancelled appointments to invoke the
+    exception-launch flow. The slot underneath remains freely
+    re-bookable. Week and Month views already routed cancelled
+    appointments through BookDialog.
+- **Tests** `backend/tests/test_clinical_phase3.py` — **9 tests** (1
+  conditionally skipped when no staff user is seeded):
+  context freeze + idempotent relaunch + chart visibility + cancelled
+  rejection + exception-with-reason + cross-tenant/cross-patient
+  episode 400 + complete/cancel lifecycle + PATCH rules + tenant
+  isolation + reauth requirement + summary reflects encounter counts.
+- **Phase 1 + Phase 2 regression** still 24/24 green. Total clinical
+  test suite: **33/33**.
+
+### Clinical module Phase 2 — Intake & History + Diagnoses (2026-02-21)
+- **Chart-first workflow standard reinforced:** intake-derived history and
+  diagnoses live under the patient chart; future appointment-launched note
+  workflows will read this chart-level data.
+- **New backend routers** under `services/clinical/`:
+  - `history_router.py`:
+    - `GET /api/patients/{pid}/clinical/history` — auto-seeds ONCE from the
+      most recent completed intake form on first access. Each field carries
+      a traceability row in `field_meta[<field>]` with
+      `{source, source_form_id, updated_at, updated_by}`.
+    - `PATCH /clinical/history` — `exclude_unset`; any field present flips
+      its `source` to `"provider_edit"`.
+    - `POST /clinical/history/import` — explicit, non-destructive re-import:
+      provider-edited fields are preserved; returns
+      `imported_fields[]` + `skipped_fields[]` + `source_form_id`.
+      Rejects non-completed forms (409) and no-form-available (409).
+  - `diagnoses_router.py` — full problem-list CRUD at
+    `/api/patients/{pid}/clinical/diagnoses` with create/list/get/patch/
+    resolve/reactivate. Supports ICD-10, label, status (active/resolved),
+    `is_primary`, optional `episode_id` (any episode — active, on-hold, or
+    closed; no restriction for recurrence/PI case cleanup), `body_region`,
+    `laterality` (left/right/bilateral/midline), `chronicity`
+    (acute/subacute/chronic), `onset_date`, `resolved_date`,
+    `resolution_notes`, `notes`. `is_primary=True` is auto-uniqued within
+    `(patient, episode_id-or-null, status=active)` — setting one as primary
+    clears siblings in the same grouping.
+  - Summary endpoint now returns live `diagnoses` counts + `history_present`
+    flag so the UI doesn't need a third round-trip.
+- **Access + audit:** reads gated by `admin|doctor|staff`; writes by
+  `admin|doctor` plus `require_reauth`. Every create/edit/import/resolve/
+  reactivate emits both a global `audit_logs` row and a patient-chart-scoped
+  `clinical_audit_events` row.
+- **Indexes** added in `core/db.py`:
+  `clinical_history` unique on `(tenant_id, patient_id)`;
+  `clinical_diagnoses` on
+  `(tenant_id, patient_id, status, is_primary, created_at)` and
+  `(tenant_id, episode_id)`.
+- **Frontend** new cards on the Clinical tab (`pages/clinical/`):
+  - `IntakeHistoryCard.jsx` — renders every history field with a per-field
+    "FROM INTAKE" / "PROVIDER EDIT" / "NOT SET" badge. Fields cover chief
+    complaint, HPI, onset date, MOI, pain location/radiation, aggravating/
+    relieving factors, severity (0–10), prior treatment, prior chiropractic
+    care, medications, allergies, PMH/PSH/FH/SH, occupation, activity
+    level, accident details, work-comp details, ROS, red-flag screening.
+    "Re-import from intake" button calls the non-destructive import;
+    inline Edit mode lets providers PATCH any subset at once.
+  - `DiagnosesCard.jsx` — Problem List with status + episode filters,
+    add/edit dialog (ICD-10 uppercased live, label, optional episode link
+    to ANY episode, body region, laterality, chronicity, onset date,
+    notes, is_primary checkbox), inline Resolve/Reactivate, primary badge.
+  - `ClinicalTab.jsx` updated: replaces the two Phase-2 placeholder cards
+    with live cards and shows live diagnoses + history stats in the
+    summary row (`stat-diagnoses` count + `stat-history: On file`). Eight
+    future-phase placeholder cards remain.
+- **Tests** `backend/tests/test_clinical_phase2.py` — **15/15 passing**;
+  Phase 1 regression suite still 9/9. Covers auto-seed, empty history,
+  provider-edit flip, exclude_unset, import-skips-provider-edits, draft
+  form rejection, no-form-available rejection, tenant isolation,
+  reauth requirement, full diagnosis lifecycle, primary uniqueness
+  (including orphan vs episode grouping), cross-tenant/cross-patient
+  episode linkage 400, list filters, patient-role blocked,
+  summary reflects history + diagnoses.
+
+### Clinical module Phase 1 — episode/case scaffold (2026-02-21)
+- **Workflow standard locked in:** the **Patient Profile is the authoritative
+  longitudinal home of the clinical record.** Appointments (to be wired in
+  Phase 2+) are the operational encounter launch point, but every clinical
+  artifact lives under the patient and is reachable from the Clinical tab
+  regardless of whether it was authored from the chart or from an encounter.
+- **Backend service** `services/clinical/` with tenant-aware router at
+  `/api/patients/{patient_id}/clinical/*`:
+  - `GET  /clinical/summary` — counts for episodes + zero-shaped
+    placeholders for notes/diagnoses/treatment_plans/outcomes/media/
+    encounter_links so the UI contract stays stable across future phases.
+  - `GET  /clinical/episodes` — list with `status_in` and `case_type`
+    filters; responsible-provider name hydrated in one round-trip.
+  - `POST /clinical/episodes` — create; accepts every case_type
+    (`new_patient_eval`, `injury_episode`, `recurrence`, `maintenance`,
+    `mva`, `workers_comp`, `personal_injury`); rejects cross-tenant
+    responsible_provider_id with 400.
+  - `GET  /clinical/episodes/{id}` — read.
+  - `PATCH /clinical/episodes/{id}` — partial update with `exclude_unset`;
+    blocked on closed/archived episodes (409).
+  - `POST /clinical/episodes/{id}/close` — transitions to `closed` with
+    required reason (≥3 chars) and `end_date`.
+  - `POST /clinical/episodes/{id}/reopen` — transitions back to `active`
+    and clears end_date / closed_reason.
+- **Models** declared in `services/clinical/models.py` for every downstream
+  artifact that Phase 2+ will build on: `ClinicalNoteBase`, `DiagnosisBase`,
+  `TreatmentPlanBase`, `OutcomeEntryBase`, `ClinicalMediaBase`,
+  `EncounterLinkBase`, `ClinicalAuditEventBase`. Their collections ship with
+  `(tenant_id, patient_id, episode_id)` indexes on day one so no migration
+  will be needed when CRUD lands.
+- **Cross-cutting controls:**
+  - `require_role("admin","doctor","staff")` on reads; `("admin","doctor")`
+    on writes. All writes additionally call `require_reauth` — matching the
+    medical-record reauth posture.
+  - Tenant isolation enforced via `scoped_filter` on every query; cross-
+    tenant probes always return 404, never 403.
+  - Every mutation writes a row to a new `clinical_audit_events` collection
+    (patient-scoped projection of the global audit stream) so Phase 2
+    chart-history UI doesn't have to scan the global stream.
+- **Frontend** new tab **Clinical** inside Patient Profile:
+  - `pages/clinical/ClinicalTab.jsx` renders the Clinical Summary stat row
+    (open + total episodes; placeholder `—` for notes/diagnoses until
+    Phase 2), an **Episodes & Cases** section with list / create / close /
+    reopen affordances, and ten dashed **Phase 2** placeholder cards for
+    every downstream section (Intake & History, Diagnoses, Initial Exam,
+    Follow-up Notes, Re-Exams, Treatment Plans, Imaging & Clinical Media,
+    Outcomes, Care Timeline, Billing Readiness).
+  - Create dialog offers every case type with onset date + responsible
+    provider dropdown; close dialog enforces a ≥3-char reason.
+  - Wired into `PatientDetail.jsx` between Intake and Documents; writes
+    use the existing global `ReauthGate` / `ReauthDialog` for step-up.
+- **Indexes added** in `core/db.py` for `clinical_episode_cases`,
+  `clinical_notes`, `clinical_diagnoses`, `clinical_treatment_plans`,
+  `clinical_outcome_entries`, `clinical_media`, `clinical_encounter_links`,
+  and `clinical_audit_events` — each anchored on `tenant_id + patient_id +
+  episode_id` for PostgreSQL-portable query plans.
+- **Tests** `backend/tests/test_clinical_phase1.py` — **9/9 green**:
+  summary shape on fresh patient, every case_type accepted + rejected-
+  unknown, unknown provider 400, tenant isolation (cross-tenant 404 on
+  reads + writes), patient-role blocked, doctor can create/close,
+  PATCH `exclude_unset` + double-close 409 + reopen lifecycle,
+  clinical_audit_events rows emitted.
+
+### Settings navigation split (2026-02-21)
+- `ClinicSettings.jsx` now handles only the clinic profile + hours of
+  operation. The three business catalogs that used to share the same
+  scroll — appointment types, payers, fee schedules — are promoted
+  into their own pages:
+  - `pages/AppointmentTypesPage.jsx` → `/settings/appointment-types`
+  - `pages/PayersPage.jsx` → `/settings/payers`
+  - `pages/FeeSchedulesPage.jsx` → `/settings/fee-schedules`
+- New sidebar entries in `components/layout/navConfig.js` under the
+  collapsible **Settings** group (`nav-appointment-types`, `nav-payers`,
+  `nav-fee-schedules`). All four Settings routes remain admin-only. No
+  API changes; the underlying managers were untouched.
+
+### Versioned intake save wiring + wizard extraction (2026-02-21)
+- `PatientWizardDialog` (scope=`intake`) now PATCHes the new
+  `/api/patients/{id}/intake-forms/{form_id}` endpoint instead of the
+  legacy flat `patient.clinical_intake` blob. Two explicit actions on
+  step 4: `wizard-save-draft-btn` (keeps draft) and
+  `wizard-save-complete-btn` (flips `status="completed"`, sets
+  `captured_at`). Completed forms are immutable (backend 409).
+- `IntakeFormsTab` exposes a per-row `intake-form-edit-<id>` button on
+  drafts only. Parent tracks `editingIntakeForm` so the wizard is
+  seeded with that form's latest `clinical_intake`/`case_details`.
+- `PatientWizardDialog` + its 4 step renderers extracted from
+  `pages/Patients.jsx` to `components/patient-wizard/PatientWizardDialog.jsx`.
+  `Patients.jsx` now owns only the search page. Both importers updated.
+  39/39 logic tests + 5/5 backend intake_forms tests green.
+
 ### Phase 1 (2026-04-19)
 - Identity, Patient CRUD, Scheduling with conflict detection, mock notifications via in-process event bus
 - Sage + stone medical theme, 7 role-aware pages
+
+### Theme system adoption (2026-04-20)
+- Adopted Chiro Software Slate + Teal + Copper design system.
+- Rewrote `frontend/src/index.css` with foundations / semantic / alias
+  token layers and Outfit · Manrope · JetBrains Mono typography.
+- Extended `frontend/tailwind.config.js` with new semantic surfaces,
+  status colors, radius scale, shadow scale, and font families.
+- Preserved legacy `bg-sage`, `surface-raised`, `text-strong`, etc. as
+  aliases pointing to the new palette so all 22 existing pages inherit
+  the new brand without a file-by-file rewrite.
+
+### Theme discipline Phase 2 (2026-04-20)
+- Swept **every** raw hex / raw Tailwind palette class from
+  `frontend/src/**` and replaced with semantic tokens. 51+ instances
+  across 17 files.
+- Added **`scripts/check_theme.py`** — Python CI guardrail that blocks
+  raw `#hex` arbitrary values, forbidden Tailwind palette families
+  (`slate-*`, `stone-*`, `blue-*`, etc.), and inline `style` color
+  usages inside `frontend/src/**`. Exempts the theme layer and shadcn
+  primitives.
+- Wired the guardrail into `.githooks/pre-commit` and a new GitHub
+  Actions workflow `.github/workflows/theme-guard.yml`.
+- Added **Theme compliance** checklist block to
+  `.github/pull_request_template.md`.
+- Verified light/dark parity via screenshots on Login, Dashboard,
+  Patients lookup, Calendar, Audit Log, Compliance.
+
+### Theme discipline Phase 3 — primitive + shell refactor (2026-04-20)
+- Refactored every Shadcn primitive in `components/ui/` (Button,
+  Input, Textarea, Select, Card, Dialog, DropdownMenu, Tabs, Badge,
+  Table, Sonner) to consume semantic tokens, 8px / 12px radii,
+  accessible 2px focus rings off the `--focus` token, tokenized
+  placeholder / overlay / row-hover / row-selected alias tokens, and
+  a copper `premium` badge variant.
+- Fixed the broken Sonner import (was pulling `next-themes` instead
+  of the app's own `ThemeContext`).
+- Added tokenized `success` / `warning` / `info` / `error` variant
+  classes to toasts so state colors stay semantic.
+
+### Theme discipline Phase 4 — legacy alias retirement (2026-04-20)
+- Migrated 762 backwards-compat utility-class usages across
+  `frontend/src/**` to direct semantic Tailwind utilities
+  (`text-foreground`, `text-muted-foreground`, `text-primary`,
+  `text-destructive`, `bg-muted`, `bg-background`, `bg-card`,
+  `bg-primary/10`, `bg-warning-soft`, `bg-destructive-soft`,
+  `border-border`, `border-border-strong`). The sage vocabulary is
+  now fully retired from feature code.
+- AppShell Sidebar now consumes the sidebar alias tokens
+  (`--sidebar-bg/fg/active-bg/active-fg/active-indicator`) instead of
+  inline style + generic classes.
+- All `font-['Outfit']` arbitrary values migrated to the `font-display`
+  utility.
 
 ### Performance + scalability pass (2026-04-19)
 - **Redis** (supervisord-managed, `127.0.0.1:6379`, `maxmemory 128mb allkeys-lru`) for application cache + IP rate-limit buckets
@@ -74,7 +1032,8 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Dependency SCA + SAST in CI — ISO A.8.8 / A.8.28
 
 ### P1 (next features)
-- Billing service subscriber on `appointment.completed`
+- Global retry-after-reauth Axios interceptor that silently replays the
+  last privileged action after reauth confirmation (UX polish)
 - Real Twilio SMS + Resend email (require BAAs)
 - Reporting service for compliance and ops dashboards
 - Patient self-service portal (book / reschedule own appointments)
@@ -83,6 +1042,9 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - CSV evidence export for auditors (`/api/audit-logs/export.csv`)
 - Prometheus alerting rules + runbooks committed to repo
 - Purpose taxonomy (enum) replacing free-text `reason` in audit rows
+- Persist `appointment_type_id` on Appointments (currently drives UI
+  prefill only)
+- Drag-and-drop ordering for Appointment Types in Clinic Settings
 
 ### P2 (polish)
 - Multi-tenancy with `tenant_id` on every entity + JWT claim
@@ -400,8 +1362,59 @@ Backend-only expansion of the patient domain to support richer chiropractic inta
 - **Tests** — `/app/backend/tests/test_phase5_docs_and_consent_pdf.py` — 22 scenarios covering upload/list/download/delete, reauth enforcement, validation (empty, >10 MB, bad MIME, bad category, **spoofed MIME caught by libmagic**, **PDF-declared-as-PNG caught by libmagic**), consent PDF happy path for 5 types, 409 unsigned, 404 missing, reason enforcement for doctor/staff, patient-self. **21 pass / 1 env-skipped (no pre-seeded patient→user link for `patient@ccms.app`).**
 - **Dependency** — `reportlab==4.4.10`, `python-magic==0.4.27` (+ OS `libmagic1`) added to `/app/backend/requirements.txt`.
 
-### Phase 5 hardening follow-ups (2026-04-20, post-main-agent review)
-- **Magic-byte MIME sniffing** on uploads — `documents_router._sniff_mime()` runs libmagic on the first 4 KB and rejects the request if the sniffed MIME is not in the allow-list OR diverges from the declared `Content-Type`. Closes the "declared `image/png`, actually ELF" spoof vector flagged during HIPAA code review.
+### Patient lookup workflow — search-first directory (2026-04-20)
+- **Backend** — new `GET /api/patients/search` in
+  `services/patient/search_router.py`. Plaintext regex on indexed
+  `first_name / last_name / email` + post-decrypt filter on encrypted
+  sub-phones, `address_details`, and DOB. `%` wildcard support with
+  safe translation to regex (placeholder swap before `re.escape`).
+  Multi-format DOB parsing, per-search audit, 2 000-row candidate cap
+  with `truncated_candidates` flag, 50-row hard page limit. New Mongo
+  indexes on `(tenant_id, last_name)`, `(tenant_id, first_name)`,
+  `(tenant_id, phone)`.
+- **Frontend** — `pages/Patients.jsx` rewritten from a full-list dump
+  into a lookup-first page: Quick-lookup (debounced typeahead) and
+  Advanced (4 focused inputs + submit) modes; keyboard ↑ / ↓ / Enter;
+  highlighted matches; "Recently viewed" section (localStorage); "too
+  many candidates" warning; clicking a row opens the patient profile.
+- **Sub-router ordering fix** — patient sub-routers (search / documents
+  / consent_pdf) are now `include_router`ed BEFORE the `/{patient_id}`
+  route so their specific paths take precedence in FastAPI's matcher.
+- **Tests** — `backend/tests/test_patient_search.py` — 26 scenarios:
+  wildcard prefix/suffix/middle, no-wildcard contains, case-insensitive,
+  `%%` rejected, 120-char cap, DOB ISO/US/year-only/invalid, plaintext
+  phone, encrypted sub-phone, phone normalisation, address city + line1,
+  result shape masking, limit clamping, offset pagination, auth 401,
+  tenant scoping. All 26 pass.
+
+### Per-user theming — light / dark / system (2026-04-20)- **Backend** — `theme` field (`light|dark|system`, default `system`) on the
+  users collection. Exposed in `UserPublic` and toggled via new
+  `PATCH /api/auth/me/preferences` (auth-only, no reauth; non-sensitive).
+  New `PreferencesUpdate` Pydantic schema rejects unknown fields.
+- **Frontend** — `ThemeProvider` in `contexts/ThemeContext.jsx` with a
+  `useTheme()` hook. Applies `class="dark"` on `<html>`, sets
+  `color-scheme`, listens to `prefers-color-scheme` when the user picks
+  `system`. `<ThemeToggle />` component (sun/moon dropdown) lives in the
+  top-bar; persists the choice via `PATCH /auth/me/preferences` when
+  authenticated and falls back to localStorage otherwise. `AuthContext`
+  calls `syncFromUser(user)` on every /auth/me result so relogins restore
+  the stored theme with zero flash.
+- **Styling refactor** — introduced a full set of semantic CSS vars +
+  `@layer utilities` helpers (`surface-*`, `text-*`, `bg-sage`,
+  `bg-danger`, `border-subtle`, `border-strong`) in `index.css`. All 23
+  page + component files migrated from hard-coded hex utilities (e.g.
+  `bg-[#FAF9F6]`, `text-[#5C6A61]`) to the semantic tokens so light/dark
+  swap without per-page rewrites.
+- **Tests** — `backend/tests/test_theme_preference.py` — 9 pass: default,
+  light/dark/system swaps, invalid rejected (422), empty payload rejected
+  (400), survives logout/relogin, two users stay independent, unauth 401.
+- **Files** — `backend/services/identity/{models,router}.py`;
+  `frontend/src/{index.css,App.js,contexts/ThemeContext.jsx,
+  contexts/AuthContext.jsx,components/ThemeToggle.jsx,
+  components/layout/AppShell.jsx}` + bulk refactor across `pages/*.jsx`
+  and `components/*.jsx`.
+
+### Phase 5 hardening follow-ups (2026-04-20, post-main-agent review)- **Magic-byte MIME sniffing** on uploads — `documents_router._sniff_mime()` runs libmagic on the first 4 KB and rejects the request if the sniffed MIME is not in the allow-list OR diverges from the declared `Content-Type`. Closes the "declared `image/png`, actually ELF" spoof vector flagged during HIPAA code review.
 - **Streaming upload into `SpooledTemporaryFile`** — `_stream_upload_to_spool()` reads the multipart body in 64 KB chunks, enforces the 10 MB hard cap as it fills, and rolls over to a tmpfile past 1 MB. Cuts the connection the moment the body exceeds the cap so a malicious client can't balloon server memory during concurrent uploads. First 4 KB are captured inline for libmagic without a double-read.
 - **Router split** — `services/patient/router.py` shrank from 984 → **628 lines**:
   * `services/patient/_shared.py` (99 LoC) — shared crypto/reason/now helpers + `_patient_repo`.
@@ -422,8 +1435,1189 @@ Backend-only expansion of the patient domain to support richer chiropractic inta
 - Subdomain-based tenant routing (`acme.ccms.app → tid=acme`) — P2; ingress + middleware work.
 - Unique-per-tenant `location.code` (currently globally unique sparse) — P2.
 
-## 15. Key reference docs
-- `/app/memory/HIPAA_COMPLIANCE.md` — full safeguard inventory (implemented vs. external)
-- `/app/memory/AUTHORIZATION_GUIDE.md` — RBAC + scopes + policy overlays (2026-02-20)
-- `/app/memory/test_credentials.md` — demo accounts
-- `/app/test_reports/iteration_2.json` — testing agent report (24/24)
+## 26. Iteration 20f — Unified Scheduling module (2026-04-20)
+
+Collapses the previous separate `Appointments` table page and `Calendar`
+page into a single operational scheduling experience.
+
+- **Routing & nav**: `/scheduling` is now the sole scheduling route;
+  `/appointments` and `/calendar` redirect to it. `AppShell` sidebar
+  shows one **Scheduling** item (icon `CalendarDays`) for all roles
+  including patient (previously `Calendar` was staff-only).
+- **Shared framework** under `frontend/src/pages/scheduling/`:
+  * `dateHelpers.js` — pure, dep-free: `startOf/endOf{Day,Week,Month,Year}`,
+    `stepDate(view, d, +/-1)`, `visibleRange(view, d)`, `buildMonthGrid`,
+    `groupByDay`, `rangeLabel` (view-aware: "Monday, April 20, 2026" for
+    day, "Apr 20 – 26, 2026" for week, "April 2026" for month, "2026"
+    for year). Monday-first to match the previous Calendar UX.
+  * `useScheduling.js` — centralised state (view / date / visibleRange /
+    providerId filter placeholder) with cancel-on-stale fetching,
+    in-memory cache keyed by
+    `${view}|${rangeStart}|${rangeEnd}|${providerId}`, and an
+    `invalidate()` call that writes issue on the backend must trigger.
+  * `SchedulingToolbar` — title + view toggle (Day/Week/Month/Year) +
+    prev / today / next + primary `+ New appointment` CTA.
+  * `DayView` — table rows with reschedule/cancel affordances
+    (replacing the old `Appointments.jsx` table semantics).
+  * `WeekView` — **Task 3 focus**: 7 columns, each with weekday+date
+    header, prominent count badge (`0` / `N appts`), up to 3 previews,
+    and a `+N more` control that jumps to Day view. Clicking the day
+    header also jumps to Day view; clicking a preview opens the
+    reschedule dialog (`BookDialog`).
+  * `MonthView` — Monday-first grid, per-day count badge, today ring,
+    click-to-open-day.
+  * `YearView` — 12 mini-month grids, per-day density tint
+    (`bg-primary/{15,35}` → `bg-primary`), per-month totals,
+    click-to-open-month.
+  * `BookDialog` — extracted verbatim from the deleted
+    `Appointments.jsx` so behaviour, audit events, and
+    permission prompts are unchanged.
+- **No backend changes.** Range fetching piggy-backs on the existing
+  `GET /api/appointments?from=&to=` endpoint. Auth, tenant scope, RBAC,
+  and audit rows on create/reschedule/cancel all unchanged.
+- **Deleted**: `frontend/src/pages/Appointments.jsx`,
+  `frontend/src/pages/Calendar.jsx`. Dashboard "view all appointments"
+  and "book first" CTAs now point at `/scheduling`.
+- **Verified**: Playwright smoke — login → `/scheduling`, every view
+  toggle works, prev/today/next functional, sidebar nav contains only
+  "Scheduling" (no "Appointments", no "Calendar"), legacy routes
+  redirect correctly, week view renders 7 count badges, clicking a week
+  day opens Day view, `+ New appointment` dialog opens successfully.
+  Lint clean. Theme CI guard (`scripts/check_theme.py`) clean.
+
+### Follow-up / deferred
+- Provider filter UI (state is wired, no dropdown yet).
+- Keyboard navigation across the week/month grids (arrow keys).
+- Drag-to-reschedule in Week/Day views.
+- Dedicated testing-agent sweep for the new module.
+
+
+---
+
+## [2026-04-20] Scheduling polish — cancelled half-column + scoped toggle
+
+### Changes
+- `DayView.jsx`: cancelled appointments now occupy **only the right
+  half** of their column (still `pointer-events-none`), so the left
+  half of the same time band remains a fully clickable booking
+  surface. Active (scheduled) blocks still occupy the full column.
+- `SchedulingToolbar.jsx`: the "Show canceled" toggle is now rendered
+  **only on Day and Week views**. Month and Year already surface
+  cancellations via the per-cell `cnl` pill, so the toggle is not
+  needed there; the underlying `includeCancelled` state still
+  persists across view switches.
+
+### Verified
+- Playwright smoke:
+  - Day-view cancelled block bbox confirms `left ≈ 50%`, `width ≈ 50%`.
+  - Toggle count: `1` on Day & Week, `0` on Month & Year.
+- CI guards: `scripts/check_theme.py` and `scripts/check_docs.py` OK.
+- `CHANGELOG.md` updated under `[Unreleased]`.
+
+
+
+---
+
+## [2026-04-20] Appointment Types + context-aware Book dialog
+
+### Backend
+- **New service** `services/appointment_types/` (tenant-scoped).
+- **Endpoints** under `/api/appointment-types`:
+  - `GET` — list (supports `?active_only=true`)
+  - `POST` — create (admin only)
+  - `PUT /{id}` — update (admin only)
+  - `DELETE /{id}` — soft-delete, sets `is_active=false` (admin only)
+  - `POST /{id}/reactivate` — admin only
+- Case-insensitive uniqueness per tenant on `name`. Duration bounded
+  5–480 minutes. All mutations audit-logged
+  (`appointment_type.created|updated|deactivated|reactivated`).
+- `tests/test_appointment_types.py` — 7/7 passing (CRUD lifecycle,
+  duration bounds, blank-name, uniqueness, RBAC, tenant isolation,
+  `active_only` filter). Regression: all 23 backend scheduling tests
+  still pass.
+
+### Frontend
+- **`useAppointmentTypes`** hook — fetches active types only while
+  the Book dialog is open.
+- **`BookDialog`** — new "Appointment type" dropdown above Reason.
+  Selecting a type: fills Reason with type name + recomputes
+  End = Start + default duration. Start edits keep recomputing End
+  until the user manually edits End (tracked via ref), after which
+  the manual override is preserved across further Start edits.
+  "Custom (free text)" option retains the legacy 30-min behavior.
+  Reschedule mode pre-marks end as manually-set so it never gets
+  overwritten by an accidental type pick.
+- **`AppointmentTypesManager`** — new inline table embedded at the
+  bottom of `ClinicSettings`. Admin can create, edit, deactivate,
+  and reactivate types. Empty-state hint for first-time setup.
+- Context-aware defaults already flow through `defaultStart` on all
+  three views: Day view passes the exact clicked slot, Week view
+  passes the configured clinic-open time for that date, Month view
+  passes 9:00 AM on the clicked date.
+
+### Verified
+- Playwright smoke: creating a 45-min type → opening Book dialog →
+  picking the type set reason to the type name + end to start+45m.
+  Changing start shifted end by the same delta. After manual end
+  edit, further start changes left end untouched. ✅
+- `scripts/check_theme.py` OK. `CHANGELOG.md` updated.
+
+
+
+---
+
+## [2026-04-20] Billing Service foundation (iteration 23)
+
+### Backend
+- **New service** `services/billing/` — the canonical billing domain
+  model. PostgreSQL-ready from day one (UUID PKs, integer-cents money,
+  no embedded child lists, strict tenant scoping).
+- **Entities modelled** (Pydantic + future SQL DDL in
+  `services/billing/models.py`):
+  - `payers`, `patient_insurance_policies`
+  - `invoices` + `invoice_lines`
+  - `payments` + `payment_allocations`
+  - `refunds`, `billing_adjustments` (writeoff / discount / courtesy / contractual)
+  - `claims` + `claim_diagnoses` + `claim_lines` + `claim_line_modifiers`
+  - `remittances`, `denial_work_items`
+- **Lifecycle enums + transition maps** for invoice, payment, claim,
+  remittance, denial. Every mutation goes through
+  `services.billing.transitions.advance()` — illegal transitions raise
+  `TransitionError` / HTTP 409. Terminal states (`void`, `refunded`,
+  `failed`, `closed`) reject further moves.
+- **Endpoints** under `/api/billing` with full authz + audit + tenant
+  scoping:
+  - `GET|POST|PUT /payers`, `POST|GET /insurance-policies`
+  - `POST|GET /invoices`, `GET /invoices/{id}`, `GET /invoices/{id}/lines`,
+    `POST /invoices/{id}/status`
+  - `POST|GET /payments`, `POST /payments/{id}/status`
+  - `POST /refunds`, `POST /adjustments`
+  - `POST|GET /claims`, `POST /claims/{id}/submit`, `POST /claims/{id}/status`
+  - `GET /remittances`, `GET /denial-work-items`
+- **RBAC**: existing canonical permissions (`billing.read`,
+  `charge.create`, `payment.collect/refund`, `adjustment.writeoff`,
+  `billing.void`, `claim.*`, `insurance.*`, `remit.read`, etc.) drive
+  route guards via `require_permission()`. `super_admin` picked up
+  bootstrap grants for `charge.create`, `payment.collect`,
+  `insurance.create/update`, `claim.read/create/submit/correct_resubmit`
+  so the default admin can smoke-test the lifecycle. Money-moving
+  actions (`payment.refund`, `adjustment.writeoff`, `billing.void`)
+  stay MFA+APR behind `billing_specialist` / `clinic_manager`.
+- **Audit events**: `billing.payer.created|updated|list_viewed`,
+  `billing.insurance_policy.created|list_viewed`,
+  `billing.invoice.created|viewed|list_viewed|status_changed`,
+  `billing.payment.created|list_viewed|status_changed`,
+  `billing.refund.created`, `billing.adjustment.created`,
+  `billing.claim.created|list_viewed|submitted|status_changed`,
+  `billing.remittance.list_viewed`, `billing.denial.list_viewed`.
+- **Seed**: `seed_billing()` writes 9 common chiropractic CPT codes and
+  6 CMS modifier codes to the system-default (tenant_id=None) catalog.
+  Idempotent.
+- **Indexes** added for every billing collection keyed on
+  `(tenant_id, ...)` composite indexes for hot-path lookups.
+
+### Tests
+- `tests/test_billing.py` — **31/31 passing**. Covers:
+  - Pure unit: all status-transition maps (legal, illegal,
+    idempotent, terminal), model validation (currency, amount bounds,
+    required fields, line-zero rejection).
+  - Integration: payer CRUD + case-insensitive name uniqueness;
+    invoice create/read/list/status transitions and 409 on illegal
+    transition; payment create with allocations + over-allocation
+    rejection + status transitions; claim create/submit/illegal
+    transition; doctor 403 on payer create; admin 401/403 on
+    refund / writeoff (MFA+APR gate); tenant isolation (Sunrise
+    cannot read Default's invoice/payer); audit row emitted on
+    invoice creation.
+
+### Verified
+- Backend boots cleanly. `seed_billing()` runs on every startup.
+- Existing scheduling / appointment-types / clinic-profile tests
+  still green. `scripts/check_theme.py` OK.
+- NOT yet implemented (deliberately out of scope for v1 foundation):
+  clearinghouse adapters, remittance ingestion (ERA/EDI), payer-rules
+  engine, fee schedule CRUD, billing UI.
+
+
+---
+
+## [2026-04-20] Billing Phase 1 — Invoices, Patient Ledger, Payments (iteration 24)
+
+### Backend
+- `_recompute_invoice_balance()` is now the single source of truth for
+  `invoices.balance_cents` and auto-advances invoice status:
+  live allocations (skipping void/failed payments), proportional refund
+  reversal across the invoices the payment touched, and adjustments
+  are folded into one `applied + adjustments` sum. Auto status:
+  `issued ↔ partially_paid ↔ paid`. New legal transitions
+  `paid → partially_paid` and `paid → issued` support refund-driven
+  reversion.
+- Payments with method `cash` or `check` post as `captured` on create.
+- Refunds post as `processed` immediately, flip payment to
+  `refunded` / `partially_refunded`, re-inflate touched invoice
+  balances, and guard against over-refund against a single payment.
+- New endpoints:
+  - `GET /api/billing/patients/{patient_id}/ledger` — chronological
+    denormalised rows + running balance + per-kind totals.
+  - `POST /api/billing/payments/{payment_id}/allocations` — post-hoc
+    allocation of unallocated payment balance onto invoices.
+  - `POST /api/billing/invoices/{invoice_id}/void?reason=...` —
+    terminal void, MFA-only for super_admin / MFA+APR for billing
+    specialists, blocks future adjustments.
+- RBAC: `super_admin` picked up `payment.refund`,
+  `adjustment.writeoff`, `billing.void` with **MFA** (no APR) so the
+  demo admin can drive the full lifecycle.
+- Read routes (list/get for payers, insurance-policies, invoices +
+  lines, payments, claims, remittances, denial-work-items, ledger)
+  moved from `require_permission` → `require_role("admin", "doctor",
+  "staff")` — consistent with `clinic_profile` / `appointment_types`
+  and avoids browser reauth on every billing page. Mutations still
+  go through `require_permission` with the full authz matrix.
+
+### Frontend
+- `/billing` dashboard, `/billing/invoices` list, `/billing/invoices/:id`
+  detail, `/billing/patients/:id/ledger` standalone, and an embedded
+  `PatientLedgerCard` on `PatientDetail`.
+- `PostPaymentDialog` — multi-invoice allocation with oldest-first
+  auto-allocate, over-allocation guard, method/reference capture.
+- New sidebar nav item "Billing" (admin / doctor / staff).
+- Shared `/utils/money.js` (cents ↔ display) + 6 Jest tests.
+- **Global `ReauthGate`**: a `ReauthProvider` installs an axios
+  response interceptor that detects 401 "Re-authentication required",
+  opens the shared `ReauthDialog`, and replays the original request
+  after the user confirms. Removes every per-feature reauth wrapper
+  — works for billing mutations AND fixes a latent patient-documents
+  401 bug flagged during testing.
+
+### Tests
+- `backend/tests/test_billing.py` — 40/40 passing (21 added for Phase 1).
+- `frontend/src/utils/money.test.js` — 6/6 passing.
+
+### Verified visually (browser E2E)
+- Admin logs in → sidebar shows Billing → dashboard stats accurate
+  ($3,980.00 outstanding / $6,105.00 lifetime / 54 payments).
+- Invoices list with filter + search works.
+- Invoice detail with status pill, totals cards, lines table.
+- Post-payment dialog → submit → ReauthGate fires → enter password →
+  request replayed → toast "Posted $10.00 payment" → invoice status
+  flips ISSUED → PARTIALLY PAID, balance $55.00 → $45.00. ✅
+
+
+---
+
+## [2026-04-20] Billing Phase 2 — Insurance + Encounter Charge Capture (iteration 25)
+
+### Backend
+- New module `services/billing/charge_capture.py` with
+  `resolve_charge_price()` (payer schedule → self-pay schedule →
+  catalog → zero) and `build_charge_candidates()` (dry-run preview).
+- New collections `fee_schedules` and `fee_schedule_lines` with
+  per-tenant unique self-pay constraint + upsert-by-code line writes.
+- New endpoints:
+  - `PUT/DELETE /api/billing/insurance-policies/{id}` (update / soft-deactivate)
+  - `GET/POST /api/billing/fee-schedules`
+  - `GET/PUT /api/billing/fee-schedules/{id}/lines`
+  - `GET /api/billing/encounters/{record_id}/charge-candidates` (preview)
+  - `POST /api/billing/encounters/{record_id}/capture` (commit)
+  - `PUT /api/patients/{pid}/records/{rid}/coding` (procedures + diagnoses + responsibility)
+  - `POST /api/patients/{pid}/records/{rid}/sign` (one-way)
+- Medical record model extended (additively) with `procedures`,
+  `diagnoses`, `responsibility`, `signed_at`, `signed_by`,
+  `charge_status`, `charge_captured_invoice_id`.
+- RBAC: super_admin picks up `coding.update` bootstrap grant. Charge
+  capture uses `charge.create`; fee-schedule CRUD uses
+  `clinic_settings.update`; insurance policy mutations use
+  `insurance.create` / `insurance.update`.
+- **Strict tenant match** on encounter lookups so platform-admin
+  accounts scoped to a tenant cannot capture cross-tenant encounters.
+
+### Frontend
+- `PatientInsuranceManager` (on `PatientDetail` above the ledger).
+- `ChargeCaptureDialog` launched from each medical record row.
+- `PayersManager` + `FeeSchedulesManager` in `ClinicSettings`.
+- Record rows display **Signed** and **Charges captured** status chips.
+
+### Tests
+- `backend/tests/test_billing_phase2.py` — **13 passing** (fee
+  schedule uniqueness, line upsert idempotency, policy update +
+  deactivate, coding locked after sign, idempotent sign, self-pay
+  preview & capture, insurance-missing-policy blocks capture,
+  payer schedule overrides self-pay, tenant isolation, audit).
+- Combined billing suite: **53 passing**.
+
+### Verified visually
+- PatientDetail renders Insurance card + Ledger card + records with
+  "Code & capture" buttons.
+- ClinicSettings shows Payers + Fee schedules sections with
+  functional dialogs.
+- Captures stream chronologically into the patient ledger.
+
+## Iteration 26 — Billing Phase 3 Claims UI wired (2026-04-20)
+
+### Backend (already landed in iteration 25, tests remain at 69/69 passing)
+- Scrubber engine `services/billing/scrubber.py` with blocking errors
+  vs warnings, code linkage via `entity_path`.
+- `POST /api/billing/claims/from-invoice/{invoice_id}` — drafts a
+  claim from a captured insurance/mixed invoice; inherits payer,
+  policy, lines; diagnoses seed from source medical record.
+- `POST /api/billing/claims/{id}/validate` — runs scrubber, writes
+  error/warning counts, auto-transitions draft/validation_failed/ready
+  states, persists each run into `claim_validation_runs`.
+- `GET /api/billing/claims/{id}/detail`, `PUT .../header`,
+  `PUT .../diagnoses`, `PUT .../lines` for authoring.
+- `POST /api/billing/claims/{id}/submit` (reuses transitions).
+
+### Frontend (new this iteration)
+- Routes: `/billing/claims` (Queue) and `/billing/claims/:id` (Detail)
+  in `App.js` under `admin|doctor|staff` RBAC.
+- Sidebar entry **Claims** (FileStack) in `AppShell.jsx`.
+- `BillingDashboard` gains a secondary "Claims queue" button.
+- `InvoiceDetail` gains a **Generate claim** button that calls the
+  from-invoice endpoint and navigates to the new claim. Server rejects
+  self-pay invoices with a 409 surfaced as a toast.
+- Claim Detail edit surfaces: Header (with defensive
+  `claim_type || "professional"` default for Radix Select), Diagnoses
+  (1..12 ICD-10 codes), Service lines (code, date, units, billed, dx
+  pointers, modifiers).
+- Scrubber panel shows error codes with `entity_path` hint; warnings in
+  a separate amber-toned section; clean pass highlights success state.
+
+### Verified
+- All three edit dialogs mount correctly on fresh page loads
+  (screenshot verified: header, diagnoses, lines).
+- Reauth flow properly mediated by `ReauthGate` for validate/submit/
+  update/generate-claim mutations.
+- Seed data has 42 claims (2 ready, 4 validation_failed) and 14
+  invoices eligible for from-invoice generation.
+
+### Known follow-ups
+- Dedupe sonner toasts for rapid self-pay Generate-claim clicks
+  (cosmetic; `toast.error(..., {id: 'gen-claim'})`).
+- `BillingTotal` card on Claims Queue aggregates only the filtered
+  subset — relabel to "Billed (filtered)" for clarity.
+- Persist an "Eligibility reason" inline alert on `InvoiceDetail` when
+  from-invoice returns 409, so the reason doesn't vanish with the
+  toast.
+- Consider splitting Header/Diagnoses/Lines edit dialogs out of
+  `ClaimDetail.jsx` (currently 755 lines) into
+  `pages/billing/dialogs/` for maintainability.
+
+
+## Iteration 27 — Billing Phase 4 claim submission + workflow (2026-04-20)
+
+### Backend (new this iteration)
+- `services/billing/submission.py` — JSON + ANSI X12 837P preview
+  payload builders; `followup_claim_ids()` helper (14-day default).
+- Expanded claim state machine with `pending` state; submissions,
+  outcomes, work queues, timeline, and assignment endpoints.
+- `claim_submissions` collection: one row per manual submission with
+  payload (JSON + 837P preview), method, external_reference,
+  submitter + timestamp, and nullable outcome block populated later.
+
+### Frontend (new this iteration)
+- `ClaimWorkflow.jsx` — assignee editor, submission dialog, outcome
+  dialog (denial code / paid fields auto-shown on relevant outcomes),
+  payload viewer (JSON / 837P preview tabs), submissions table.
+- `ClaimsQueue.jsx` — Tabs (All / Pending submission / Rejected /
+  Follow-up) + compound filter bar (status, payer, age_days,
+  assignee).
+- `useClaims.js` — `useClaimQueue()` hook and helpers
+  (`createClaimSubmission`, `recordSubmissionOutcome`,
+  `fetchClaimTimeline`, `updateClaimAssignment`, …).
+
+### Tests
+- `backend/tests/test_billing_phase4.py` — 22 passing:
+  - Status transition matrix (legal + illegal, including new `pending`)
+  - Payload builders shape + 837P preview segments
+  - Submission lifecycle: ready → submitted, 409 on re-submit
+  - Outcome lifecycle: accepted, rejected (denial_code), paid
+    (paid_cents), idempotency
+  - Timeline merging: history + scrubber runs + submissions + outcomes
+  - Assignment roundtrip audited; unknown assignee → 400
+  - Named queue filtering: pending-submission, rejected, payer_id,
+    unknown queue → 404
+  - Tenant isolation: Sunrise tenant cannot submit or view timeline
+    of default tenant claims
+- Combined Phase 3 + Phase 4 pytest: 38 passing.
+
+### Follow-ups open
+- Bulk submission from queue (select multiple ready claims, submit as
+  a single 837P batch file).
+- Inline eligibility-reason alert on InvoiceDetail when from-invoice
+  returns 409 (the toast-only error is still transient).
+- Denial work queue integration — Phase 5 should tie `/denial-work-items`
+  to the new `rejected/denied` outcomes.
+
+
+## Iteration 28 — Billing Phase 5 remittance + denials + AR (2026-04-20)
+
+### Backend (new this iteration)
+- `services/billing/remittance.py`:
+  - `post_remittance()` — atomic pipeline: remittance header + claims
+    + lines + payment (era_posting) + allocations + contractual
+    adjustments + denial work items. Rolls patient balance via
+    existing `_recompute_invoice_balance` (no hidden mutations).
+  - `compute_ar_buckets()` — 0-30/31-60/61-90/91-120/120+
+    aging rollup.
+  - `render_statement_body()` — deterministic plain-text statement.
+- Router: 7 new endpoints (create/read remittance, denial PUT,
+  aging, aging-by-payer, 3 statement routes).
+- Permission registry: `remit.post`, `denial.work` added to
+  super_admin + billing_specialist.
+- Per user choices:
+  1b — patient responsibility rolls via the invoice balance
+       (no new line minted)
+  2  — denial work items auto-created with `assigned_to_id=null`
+
+### Frontend (new this iteration)
+- `RemittancePosting.jsx` — header + eligible-claims picker +
+  per-row math; live total-paid recompute.
+- `RemittanceDetail.jsx` — drill-down.
+- `DenialsQueue.jsx` — filter bar + inline work dialog (status,
+  assignee, resolution notes).
+- `ArAgingReport.jsx` — overall buckets + per-payer table.
+- `useRemittance.js` — hooks for all of the above.
+- Sidebar: Claims / Denials / AR aging / Post remit.
+
+### Tests
+- `backend/tests/test_billing_phase5.py` — 17 passing:
+  - Aging math (bucket boundaries, date diff, void exclusion)
+  - Statement body (deterministic, full balance)
+  - Remittance posting: full-pay, partial + contractual, denied;
+    mismatched header total rejected; cross-payer rejected
+  - Denial mutations: assign + progress + notes audited; illegal
+    transitions rejected; unknown assignee rejected
+  - AR aging endpoints: bucket invariance; payer breakdown
+  - Statements: generate + list + read
+  - Tenant isolation: sunrise tenant cannot post against default;
+    cross-tenant statement returns 404.
+- Combined Phase 3 + 4 + 5 pytest: 55 passing.
+
+### Follow-ups open
+- Statement generation should become a scheduled job + PDF+email in
+  Phase 6.
+- Denial categories — add a `denial_category` taxonomy so the queue
+  can be grouped by reason (not just status).
+- Bulk post remittance — upload a CSV/835 file; scaffold already
+  relational-ready.
+- Patient-responsibility roll-forward currently stays implicit via
+  invoice balance; if finance wants explicit audit lines, Phase 6
+  can add `invoice_lines.type=patient_responsibility` behind a flag.
+
+## Iteration 29 — Denial taxonomy (2026-04-20)
+
+### Backend
+- `services/billing/denial_categories.py` — 6-category taxonomy
+  (coding / eligibility / authorization / timely_filing / duplicate /
+  other) + ANSI CARC lookup + `normalize_code()` helper.
+- Remittance posting auto-tags new denial work items with derived
+  category; operator can override via PUT.
+- `GET /denial-work-items` accepts `status_in` + `category` filters.
+- `GET /denial-work-items/category-summary` — rollup with stable
+  zero rows for empty categories; `include_closed` toggle.
+
+### Frontend
+- `DenialsQueue.jsx` — category summary strip (6 clickable filter
+  cards) + Category filter dropdown + Category column with
+  color-coded pills (`denialCategoryTone`) + Category override in
+  work dialog.
+- `useRemittance.js` — `useDenialWorkItems({status, category})`,
+  `useDenialCategorySummary()`, `DENIAL_CATEGORY_LABELS`, etc.
+
+### Tests
+- `backend/tests/test_billing_phase5_denial_taxonomy.py` — 14 passing
+  (derivation, normalization, auto-tagging, filter, override,
+  summary aggregation, include_closed toggle).
+- Combined Phase 3 + 4 + 5 + taxonomy: 69 passing.
+
+### Follow-ups open
+- Add category to the `RemittancePosting` UI so operators can
+  pre-tag denied rows during posting (currently derived from code).
+- Historical backfill — a one-time migration script to tag pre-
+  taxonomy denials based on `denial_code`. (Currently those rows
+  show as "Other / unmapped".)
+
+## Iteration 30 — Billing Phase 6: Bulk 835 import + patient statements (2026-02-20)
+
+### Backend
+- `services/billing/remittance_import.py` — X12 835 parser + JSON
+  parser (`schema: ccms.remit.import.v1`, 2 MB cap). Stages uploads,
+  matches claims by `clm01` payer control number (primary) +
+  patient control number (fallback), resolves payer by NM1/name.
+- Preview → commit workflow; commit is blocked when any row is
+  unmatched or the payer is unresolved, so the ledger is never
+  mutated from a bad file.
+- `services/billing/statement_delivery.py` — Reportlab patient
+  statement PDF (clinic header, aged AR summary, per-invoice
+  breakdown) + Resend email delivery. Mock provider is used when
+  `RESEND_API_KEY` is unset so dev/preview stays testable.
+
+### Endpoints
+- `POST /api/billing/remittances/import/json|x12`
+- `GET  /api/billing/remittances/import/{id}`
+- `POST /api/billing/remittances/import/{id}/commit`
+- `GET/POST /api/billing/patients/{id}/statements`
+- `GET  /api/billing/patients/{id}/statements/{stmt_id}/pdf`
+- `POST /api/billing/patients/{id}/statements/{stmt_id}/send`
+
+### Frontend
+- `pages/billing/RemittanceImport.jsx` — dropzone, preview table,
+  match-method pills, commit gated on `unmatched===0 && resolved_payer_id`.
+- `pages/billing/PatientStatementsCard.jsx` — embedded on
+  `PatientLedgerPage`; generate, download PDF, send email.
+- `AppShell.jsx` — "Import 835" nav entry (admin, staff).
+- `useRemittance.js` — hooks: `uploadRemittanceImport`,
+  `commitRemittanceImport`, `listStatements`, `generateStatement`,
+  `emailStatement`, `statementPdfUrl`.
+
+### Tests
+- `backend/tests/test_billing_phase6.py` — 18 passing
+  (JSON import e2e, X12 parsing, unmatched / unresolved / empty-upload
+  rejections, PDF generation, mocked email path, email-missing
+  rejection, cross-tenant isolation for imports and PDFs).
+- Frontend E2E (iteration_29) — Playwright verified every in-scope
+  Phase 6 UI flow end-to-end.
+
+### Follow-ups open (optional)
+- Cache the picked `File` in `RemittanceImport.jsx` so the upload
+  auto-retries after a reauth 401 (currently the user re-picks the
+  file once).
+- Seed one patient with `email` set to exercise the mocked email
+  happy-path end-to-end in the demo environment.
+- Split oversized `services/billing/router.py` (>3100 lines) into
+  `claims_router.py`, `remittances_router.py`,
+  `invoices_router.py` for maintainability.
+
+### Phase 6 status
+- Backend: DONE (18/18 tests pass)
+- Frontend: DONE (Playwright e2e pass)
+- Docs: DONE (this entry + CHANGELOG.md)
+- **Phase 6: CLOSED** ✅
+
+
+---
+
+## 2026-04-21 — Test-suite rate-limit isolation + Professional Licenses verified
+
+### Problem
+Running the full backend test suite (`pytest backend/tests/`) crashed with
+2 failed + 45 errors. Root cause: `core/rate_limit.py` uses in-process
+deques keyed by `login:{ip}` (60 req / 60 s) and per-user change-password
+/ PIN failure counters. Tests across many files do dozens of admin
+logins in <60 s → limiter trips → subsequent fixture setups 429.
+
+### Fix (backend)
+- `core/rate_limit.py`: added `reset_local_state()` and async
+  `reset_redis_state()` (scans `rl:*` + `rlfail:*` keyspaces).
+- `core/debug_router.py` **(new)**: exposes
+  `POST /api/_debug/rate-limit/reset`, gated by `APP_ENV != production`
+  (returns 404 otherwise). No PHI / user state is touched.
+- `server.py`: conditional mount — router is only registered when
+  `APP_ENV != "production"`, so the route is literally absent in prod.
+- `backend/tests/conftest.py` **(new)**: autouse fixture that POSTs the
+  reset endpoint before every test, degrading silently if the endpoint
+  is unavailable.
+
+### Verification
+- Targeted suite (the 5 files affected by the leakage):
+  `test_professional_licenses.py`, `test_password_change_hardening.py`,
+  `test_pin_security.py`, `test_reauth_pin_step_up.py`,
+  `test_profile_self_service.py` — **82/82 pass** (previously 2 pass +
+  45 errors at suite level).
+- Testing agent (iteration_44.json) ran backend + frontend end-to-end:
+  - Doctor walk-through on `/security?tab=licenses`: create →
+    duplicate-409 toast → edit → delete via ConfirmDialog — all pass.
+  - NPI on Profile tab: save / validate / clear — all pass.
+  - Staff role: Licenses trigger hidden; direct API POST → 403; GET →
+    empty list.
+
+### Out of scope / pre-existing
+Other iteration test files (`test_iteration4/5/8/9/11/12/13`) still
+fail — they depend on `redis-cli` being installed and/or a
+`CCMS_BASE_URL` env variable; both are environmental, not regressions
+from this change. Left for a later hardening pass.
+
+### Professional Licenses — status
+- Backend: DONE, validated.
+- Frontend `LicensesTab.jsx` + `ProfileTab.jsx` NPI: DONE, validated.
+- **Task Prompt 5: CLOSED** ✅
+
+### Remaining backlog (unchanged)
+- **P1 — Global retry-after-reauth Axios interceptor** (silently replay
+  last privileged action after ReauthDialog success).
+- **P2** — Persist `appointment_type_id` on Appointments (currently
+  only UI prefill).
+- **P2** — Reorder Appointment Types (drag-drop in Clinic Settings).
+- **P2 / deferred** — Provide `RESEND_API_KEY` for Email delivery
+  (currently MOCKED).
+- **P2 (future)** — Enterprise Auth (WebAuthn, SAML/OIDC, SCIM).
+- **P2 (future)** — PostgreSQL migration.
+- **P2 (future)** — Reporting read-heavy analytics.
+
+---
+
+## 2026-04-21 — Security Hardening Pass (Task Prompt 6)
+
+### Problem
+A consistency/hardening pass on the existing Security Settings (password
+change, MFA, recent sign-ins) plus the new Profile / PIN / Licenses
+additions. Scope: audit coverage, throttling, abuse paths, DRY.
+
+### Fix (backend)
+- **New helpers in `services/identity/router.py`**:
+  `_guard_sensitive_auth(action, user, request)` + `_record_sensitive_auth_failure(action, user_id)`.
+  Shared per-user failure counter (5 / 15 min) and per-IP volume
+  ceiling (60 / 60 s) keyed by action. Reuses `core/rate_limit.py` —
+  no new throttling model.
+- **Wired into**: `create_pin`, `change_pin`, `remove_pin` (all
+  password / PIN mismatches count toward the user budget); `reauth`
+  password path; `mfa_disable`; and the email-change branch of
+  `update_profile` (benign profile edits stay unthrottled — verified
+  with 80-iteration test).
+- **Audit gaps closed**:
+  - `auth.mfa_disable` wrong-password now writes a failure row with
+    `reason=invalid_password`.
+  - `/me/preferences` PATCH writes `user.preferences_updated` with
+    changed field names in metadata (license number / secrets still
+    never logged).
+- **Audit reason vocabulary normalised** across PIN / reauth / password
+  flows: `invalid_password`, `invalid_pin`, `locked_out`,
+  `rate_limited_volume`, `pin_not_configured`, `bad_code`.
+- **Frontend hygiene**: grep-verified — zero `localStorage` /
+  `sessionStorage` usage in `/app/frontend/src/pages/account/` or
+  `ReauthDialog.jsx`. All dialogs clear password / PIN state in a
+  `useEffect(() => !open)` and on successful submit.
+
+### Tests
+- `backend/tests/test_security_hardening.py` **(new, 12 tests)**:
+  PIN create/change/remove lockout, reauth password lockout, benign
+  profile PATCH not throttled, email change returns 401 not 429, MFA
+  disable failure audit, preferences audit, reason normalisation, no
+  secret echo in error bodies.
+- Regression: 82/82 pass across `test_password_change_hardening`,
+  `test_professional_licenses`, `test_pin_security`,
+  `test_reauth_pin_step_up`, `test_profile_self_service`.
+- Broader smoke: 81 pass across billing / clinic_profile /
+  appointment_types / theme_preference.
+
+### Docs
+- `backend/docs/ACCOUNT_SECURITY.md` **(new)**: one-page reference —
+  endpoint matrix, throttling contract, audit reason vocabulary,
+  step-up flow, frontend hygiene, session hardening, data at rest.
+
+### Endpoint behavior changes introduced
+- `/auth/me/pin` (POST/PATCH/DELETE), `/auth/mfa/disable`, `/auth/reauth`
+  password path, and email-change branch of `/auth/me/profile` now
+  return **429** after 5 failed attempts in 15 min per user, or after
+  60 requests in 60 s per IP. Prior behaviour: unlimited 401s.
+- Audit `reason` strings renamed from `wrong_current_password` /
+  `wrong_pin` / `wrong_password` / `pin_locked` → `invalid_password` /
+  `invalid_pin` / `locked_out`. No external integrations depend on
+  these strings (test suite passes).
+
+### Lockout UX
+Locked-out users see a generic 429 with
+"Too many failed attempts. Please wait a few minutes and try again."
+Counter naturally expires after 15 minutes of no further attempts.
+A successful credential verify does not reset the counter — it falls
+off naturally. Matches the pre-existing `/change-password` pattern.
+
+### Task Prompt 6 — CLOSED ✅
+
+### Remaining backlog (unchanged from previous session)
+- **P1** — Global retry-after-reauth Axios interceptor.
+- **P2** — Persist `appointment_type_id` on Appointments.
+- **P2** — Reorder Appointment Types (drag-drop).
+- **P2** — Restore green test suite for pre-existing iteration4/5/8/9/11/12/13 files.
+- **P2 / deferred** — Unmock Resend email delivery.
+- **P2 (future)** — Enterprise Auth (WebAuthn / SAML / OIDC / SCIM).
+- **P2 (future)** — PostgreSQL migration.
+
+
+---
+
+## 2026-04-21 — Account Settings UX Cleanup (Task Prompt 7)
+
+### Problem
+After expanding `/security` into a full Account Settings area (Profile,
+Security, Licenses tabs) the Security tab had six stacked cards and
+was dense; the relationship between Password / MFA / PIN was not
+explicit. No redesign desired — just tighten the hierarchy and copy.
+
+### Fix (frontend only — no backend changes)
+- **`SecurityTab.jsx`** reorganised into two labelled groups:
+  - `signin-methods-group` — Password + MFA + PIN
+  - `session-activity-group` — Recent sign-ins + session hardening card
+- **New compact `security-posture-strip`** at the top: 3 tiles (MFA,
+  PIN, Password age) with status pills and hint copy. Replaces the
+  previous `password-age-banner` (old testid removed; value surfaced
+  via `posture-tile-pwage`).
+- **Terminology pills** make roles explicit:
+  - Password → "Primary login credential"
+  - MFA → "Extra sign-in check"
+  - PIN → "In-app only"  (description strengthens: *does NOT replace
+    your password and cannot be used to sign in*.)
+- **Accessibility pass**: every input now has `id` paired with
+  `<Label htmlFor>`, `aria-describedby` for hints, inline errors use
+  `role="alert"` + `aria-live="polite"`, password show/hide toggles
+  expose `aria-pressed` + `aria-label` + `aria-controls`, MFA code
+  input adds `inputMode="numeric"` + `pattern="\d{6}"` + `maxLength=6`,
+  focus rings on interactive elements, `aria-hidden="true"` on
+  decorative lucide icons.
+- `PinCard.jsx` description updated in-place (header pill + clearer
+  copy). Form logic untouched.
+- No changes to `ProfileTab`, `LicensesTab`, `Security.jsx` container,
+  AuthContext, or any backend surface.
+
+### Verification
+Testing agent (iteration_46.json) logged in as doctor, walked through
+the Security tab, confirmed:
+1. Posture strip + both section groups render in correct DOM order.
+2. All existing `data-testid`s preserved (`pw-*`, `mfa-*`, `pin-*`,
+   `sessions-card`, `session-row-*`).
+3. PIN copy matches the reviewer's terminology guardrails.
+4. 0 unmatched inputs — every input has a `for=id` label.
+5. Password toggle accessibility + MFA code input numeric mode +
+   `aria-live` on inline errors — all present.
+6. No Profile / Licenses regression.
+
+### Task Prompt 7 — CLOSED ✅
+
+### Remaining backlog (unchanged)
+- **P1** — Global retry-after-reauth Axios interceptor.
+- **P2** — Persist `appointment_type_id` on Appointments.
+- **P2** — Reorder Appointment Types (drag-drop).
+- **P2** — Restore green for pre-existing iteration4/5/8/9/11/12/13 files.
+- **P2 / deferred** — Unmock Resend email delivery.
+- **P2 (future)** — Enterprise Auth (WebAuthn / SAML / OIDC / SCIM).
+- **P2 (future)** — PostgreSQL migration.
+
+
+---
+
+## 2026-04-21 — NPI Luhn Validation (Task Prompt 8)
+
+### Problem
+The existing NPI field on My Account > Licenses only enforced "10
+digits". NPI has an official CMS check digit (Luhn over the implicit
+`80840` prefix + first 9 digits); obvious typos like `1234567890` were
+accepted. Need both frontend + backend to enforce structure + checksum
+without implying NPPES registration verification.
+
+### Fix
+- **Shared validator** (backend): `backend/core/npi.py` exposes
+  `is_valid_npi`, `compute_check_digit`, `validate_npi_or_raise`,
+  `NpiValidationError`. Uses the `+24` prefix-constant shortcut (Luhn
+  contribution of literal `"80840"` positions).
+- **Shared validator** (frontend): `frontend/src/utils/npi.js` mirrors
+  the backend contract (`isValidNpi`, `describeNpiError`,
+  `computeCheckDigit`, `NPI_CHECKSUM_DISCLAIMER`).
+- **Backend enforcement**: `ProfileUpdate._validate_npi` delegates to
+  `validate_npi_or_raise`. Invalid NPIs now return 422 with specific
+  messages (`exactly 10 digits`, `digits only`, `checksum`).
+- **Frontend UX**: `NpiCard` uses `describeNpiError` for distinct
+  inline errors (length vs digits-only vs checksum), disables Save
+  until valid, renders `NPI_CHECKSUM_DISCLAIMER` as help text,
+  `aria-invalid` + `aria-describedby` attached. Existing
+  `npi-card` / `npi-input` / `npi-save-btn` testids preserved;
+  `npi-error` + `npi-disclaimer` added.
+- **Audit**: NPI changes continue to flow through `user.profile_updated`
+  with `metadata.fields=["npi_number"]`. Verified in integration test.
+- **Terminology guardrail**: UI never says "NPPES verified" — the
+  disclaimer explicitly states "does not confirm NPPES registration
+  status."
+
+### Tests
+- `backend/tests/test_npi_validation.py` **(new, 30 tests)** — unit
+  (compute_check_digit, is_valid_npi, validate_npi_or_raise), backend
+  PATCH enforcement, whitespace trim, audit trail.
+- `test_professional_licenses.py` updated to use the canonical
+  Luhn-valid example `1234567893` (previously `1234567890`, which now
+  correctly fails).
+- Full regression: **123 passed** across NPI + licenses + profile +
+  password + PIN + reauth + security-hardening suites.
+
+### Canonical examples pinned in tests
+- Valid: `1234567893`, `0000000006`, `1679576722`.
+- Invalid (length OK, checksum fails): `1234567890`, `1234567892`.
+
+### Task Prompt 8 — CLOSED ✅
+
+### Remaining backlog (unchanged)
+- **P1** — Global retry-after-reauth Axios interceptor.
+- **P2** — Persist `appointment_type_id` on Appointments.
+- **P2** — Reorder Appointment Types (drag-drop).
+- **P2** — Restore green for pre-existing iteration4/5/8/9/11/12/13 files.
+- **P2 / deferred** — Unmock Resend email delivery.
+- **P2 (future)** — Enterprise Auth (WebAuthn / SAML / OIDC / SCIM).
+- **P2 (future)** — PostgreSQL migration.
+- **P3 (future)** — Real NPPES registry lookup integration (separate
+  verification story — not covered by this checksum validator).
+
+
+---
+
+## 2026-04-21 — DEA Number Field + Validation (Task Prompt 9)
+
+### Problem
+Prescribing clinicians need to record a DEA registration number on
+their provider profile. Needs **structural + checksum** validation
+(not registry verification) on both frontend and backend, visibly
+caveated that it does not prove federal registration.
+
+### Fix
+- **Shared validator (backend)**: `backend/core/dea.py` — exposes
+  `is_valid_dea`, `compute_dea_check_digit`, `validate_dea_or_raise`,
+  `matches_last_name_initial`, `VALID_REGISTRANT_CODES`
+  (`ABCDEFGHJKLMPRSTUX` — DEA-published set).
+  Checksum spec: `(d1+d3+d5 + 2*(d2+d4+d6)) mod 10 == check_digit`.
+- **Shared validator (frontend)**: `frontend/src/utils/dea.js` —
+  mirrors the backend contract with `isValidDea`, `describeDeaError`,
+  `DEA_CHECKSUM_DISCLAIMER`, `matchesLastNameInitial`.
+- **Data model**: `UserPublic` + `ProfileUpdate` now carry
+  `dea_number` (9 chars, normalised upper) and optional
+  `dea_expires_at` (ISO `YYYY-MM-DD`). Invalid values → 422 with
+  specific error per failure mode.
+- **Backend enforcement**: model_validator `_validate_dea` delegates
+  to `validate_dea_or_raise`; the `_PROFILE_STRING_FIELDS` tuple in
+  the router now includes both DEA fields so the writable allowlist
+  covers them.
+- **Audit**: DEA create/update/clear flow through the existing
+  `user.profile_updated` action with `metadata.fields` listing
+  `dea_number` and/or `dea_expires_at`.
+- **Frontend**: `LicensesTab.jsx` gained a `DeaCard` mounted right
+  below `NpiCard`. Clinician-only (visibility already gated at the
+  Licenses tab level). Auto-uppercases input, strips non-alphanumeric,
+  enforces `maxLength=9`, distinct inline errors by failure mode,
+  `aria-invalid` + `aria-describedby`. Disclaimer:
+  *"Format and checksum are validated locally — this does not confirm
+  federal DEA registration status."* No claim of federal verification.
+
+### Tests & verification
+- `backend/tests/test_dea_validation.py` **(new, 47 tests)** — unit
+  (compute_check_digit, is_valid_dea variants, validate_dea_or_raise
+  error messaging, matches_last_name_initial, registrant-set
+  spot-check), backend PATCH (valid, lowercase-normalisation,
+  checksum failure, invalid registrant, wrong length, non-alnum,
+  empty-clears, ISO expiry, bad expiry format), audit trail.
+- Regression: 107 passed (+1 skipped by design) across DEA, NPI,
+  professional licenses, and profile self-service.
+- Testing agent iteration_48: backend unit + integration + audit +
+  frontend UX all green. Acceptance criteria met exactly.
+
+### Canonical examples pinned in tests
+- **Valid DEAs**: `AB1234563`, `AB9876547`, `BM9999991`, `CF1000001`.
+- **Invalid checksum (same length)**: `AB1234567`, `AB1234560`.
+- **Invalid registrant letter**: `IB1234563`, `NA1234563`, `QA1234563`.
+
+### Task Prompt 9 — CLOSED ✅
+
+### Remaining backlog (unchanged)
+- **P1** — Global retry-after-reauth Axios interceptor.
+- **P2** — Persist `appointment_type_id` on Appointments.
+- **P2** — Reorder Appointment Types (drag-drop).
+- **P2** — Restore green for pre-existing iteration4/5/8/9/11/12/13 files.
+- **P2 / deferred** — Unmock Resend email delivery.
+- **P2 (future)** — Enterprise Auth (WebAuthn / SAML / OIDC / SCIM).
+- **P2 (future)** — PostgreSQL migration.
+- **P3 (future)** — Real registry lookups (NPPES for NPI, DEA registry
+  for DEA). Structural validators pave the way; lookup integrations
+  are separate stories.
+
+
+---
+
+## 2026-04-21 — US Phone Standardisation (Task Prompt 10)
+
+### Problem
+Phone numbers were entered, stored, and displayed inconsistently
+across the app — identity/register (freeform), clinic_profile
+(freeform), patient wizard (freeform), and 10+ display touchpoints
+rendering raw stored strings. No backend validation, no canonical
+storage, no consistent display format.
+
+### Canonical contract
+- **Storage**: 10 digits only (`6155551212`). Leading `+1` / `1` is
+  stripped on write.
+- **Display**: `(XXX) XXX-XXXX` only when the stored value normalises
+  to exactly 10 digits. All other shapes (`+1-555-0102`, 7-digit
+  legacy, empty) echo unchanged so legacy data never gets mangled.
+- **Validation**: strict 422 on malformed input for identity,
+  clinic_profile, and workforce invitation; **soft** normalise (try
+  to canonicalise, preserve input on failure) for patient
+  demographics — avoids retrofit pain on existing patient records.
+
+### Fix
+- **Shared utilities**:
+  - `backend/core/phone.py` — `normalize_us_phone`, `format_us_phone`,
+    `is_valid_us_phone`, `search_normalize_phone`.
+  - `frontend/src/utils/phone.js` — `normalizePhone`,
+    `formatPhoneDisplay`, `isValidPhone`, `searchNormalize`,
+    `formatAsTyped` (live-format helper for inputs).
+- **Frontend control**: `components/PhoneInput.jsx` — drop-in
+  controlled `tel` input that live-formats to `(XXX) XXX-XXXX` as the
+  user types.
+- **Strict backend validators**:
+  `services/identity/models.py::ProfileUpdate._validate_phones`,
+  `UserRegister._normalize_phone`, `AdminUserCreate._normalize_phone`,
+  `services/clinic_profile/models.py::_normalize_phones` (on
+  Create + Update), `services/workforce/models.py::_normalize_phone`
+  (on InviteCreate + InviteAccept). All gated on
+  `__pydantic_fields_set__` so empty PATCH bodies still return 400.
+- **Soft patient validators**: `services/patient/models.py`
+  `_normalize_phone_soft` on Demographics, ContactInfo,
+  EmergencyContactInfo, GuarantorInfo, CaseDetails, and top-level
+  PatientCreate/PatientUpdate — canonicalises when possible,
+  preserves unchanged when not (retrofit-safe).
+- **Frontend wire-up**:
+  - `ProfileTab.jsx` — mobile/work phone use `PhoneInput`; submit
+    normalises; load uses `formatAsTyped`.
+  - `ClinicSettings.jsx` — primary/secondary same pattern.
+  - `Register.jsx` — `PhoneInput` + normalise on submit.
+  - `PatientWizardDialog.jsx` — new `PhoneField` swapped into all
+    ~10 phone inputs (mobile, home, work, EC primary/alt, employer,
+    guarantor, guarantor employer, adjuster, attorney).
+  - `patientWizardLogic.js` — new `cleanPhone` used in `toApiPayload`;
+    new `_coercePhone` used in `payloadToForm` so editing an existing
+    patient opens with pretty-formatted values.
+- **Display formatters wrapped** around every phone render in
+  `PatientDetail.jsx`, `Patients.jsx` (search results table),
+  `scheduling/DayView.jsx` (appointment cards).
+- **Search input**: `Patients.jsx` phone filter runs
+  `searchNormalize` before the API call, so formatted and
+  unformatted queries hit the same URL.
+
+### Tests
+- `backend/tests/test_phone_utils.py` **(new, 32 tests)** — unit
+  (normalize / is_valid / format / search_normalize) + integration
+  (profile PATCH, register, admin-create, patient search formatted
+  vs unformatted parity).
+- `frontend/src/utils/phone.test.js` **(new, 7 tests)** — unit
+  for all four exported helpers.
+- Updated 3 test assertions in `test_profile_self_service.py` and
+  `test_clinic_profile.py` to expect canonical digits instead of the
+  old permissive display.
+- Full regression: **232 tests pass** (157 phone-related group +
+  75 clinical/auth + 39 wizard logic + 7 phone frontend unit) with
+  only the 1 expected test skipped by design.
+- Testing agent iteration_49 confirmed end-to-end live-format,
+  canonical-storage round-trip, search normalisation, and no
+  regressions across Profile / Clinic Settings / Register / Patient
+  Wizard / PatientDetail / Patients search / DayView.
+
+### Behaviour changes to flag
+- **New 422**: identity & clinic_profile & workforce PATCH/POST now
+  reject malformed phone input (previously silently stored).
+- **Stored values**: new writes strip formatting — downstream
+  consumers (claims, billing, messaging) should migrate to use the
+  shared `format_us_phone` / `formatPhoneDisplay` for display.
+- **Legacy seed `+1-555-0102` values**: render unchanged (8 digits
+  after stripping the leading 1). Verified by the permissive display
+  formatter test.
+
+### Task Prompt 10 — CLOSED ✅
+
+### Remaining backlog (unchanged)
+- **P1** — Global retry-after-reauth Axios interceptor.
+- **P2** — Persist `appointment_type_id` on Appointments.
+- **P2** — Reorder Appointment Types (drag-drop).
+- **P2** — Restore green for pre-existing iteration4/5/8/9/11/12/13 files.
+- **P2 / deferred** — Unmock Resend email delivery.
+- **P2 (future)** — Enterprise Auth (WebAuthn / SAML / OIDC / SCIM).
+- **P2 (future)** — PostgreSQL migration.
+- **P3 (future)** — Real registry lookups (NPPES, DEA).
+- **P3 (future)** — International phone support (current contract is
+  US-only by spec).
+
+
+## 2026-04-21 — Reports Module (Phase 0 + Phase 1 Framework + 10 P0 Reports)
+
+Built an end-to-end Reports section with tenant-scoped, permission-aware,
+audited reporting and secure export. Entry point: `/reports` (new
+**Insights** sidebar group).
+
+### Backend framework
+- **`services/reports/definitions.py`** — `ReportDefinition` + `Column`,
+  `Filter`, `SortOption`, `QueryContext`, `RunResult`, `register()` +
+  `resolve_columns/sort` helpers.
+- **`services/reports/builtin.py`** — registers 10 initial reports:
+  * Operational: `appointments_list` (PHI), `provider_productivity`,
+    `patient_roster` (PHI)
+  * Clinical: `unsigned_clinical_notes` (PHI)
+  * Financial: `claims_list` (PHI), `invoices_list` (PHI),
+    `payments_received` (PHI), `denials_log`
+  * Compliance: `audit_activity`, `license_expiration`
+- **`services/reports/router.py`** — `GET /catalog`, `GET /{name}`,
+  `POST /{name}/run`, saved-view CRUD, `POST /{name}/export`. Every
+  request is permission-gated via `services.authz.policy` and audited
+  (`report.generated`, `report.export_requested`, `report.view_*`).
+- **`services/reports/views.py`** — per-user + tenant-shared saved views
+  with `is_default` uniqueness per (user,report). Collection:
+  `report_saved_views`.
+- **`services/reports/export_writer.py`** — CSV, Excel (openpyxl), PDF
+  (reportlab). PHI exports wrapped in **AES-256 password-protected ZIP**
+  via `pyzipper`; one-time password surfaced exactly once in the
+  `/api/exports/{id}` polling response.
+
+### Frontend
+- **`pages/reports/ReportsLandingPage.jsx`** — categorized catalog,
+  PHI badges, empty state, loading skeletons.
+- **`pages/reports/ReportViewer.jsx`** — filter panel, sortable columns,
+  column picker, saved-views dropdown, export menu, pagination,
+  aggregates strip. One-time password reveal dialog for PHI exports.
+- **`components/layout/navConfig.js`** — new `insights` group.
+- **`App.js`** — `/reports` and `/reports/:name` routes.
+
+### Security model
+* `reporting.read` / `reporting.read_financial` / `reporting.read_clinical`
+  for viewing.
+* `reporting.export` + `reporting.export_phi` for exporting PHI (admin
+  role key only; `super_admin` can view but NOT export PHI — confirmed
+  as 403 with actionable error).
+* PHI exports encrypted AES-256; password hashed (sha256) in audit,
+  plaintext wiped on first reveal.
+
+### Tests
+- 9 framework unit tests + 14 API E2E tests (testing agent iteration 50):
+  23/23 passing.
+- Additional deps: `openpyxl==3.1.5`, `pyzipper==0.3.6` (added to
+  `requirements.txt`).
+
+### Packages added
+`openpyxl==3.1.5`, `pyzipper==0.3.6`
+
+
+## 2026-04-21 — Reports Phase 2 (HIPAA-grade export hardening)
+
+Tightened the Phase-1 export pipeline to guarantee that any file labelled
+`password_protected=true` is *genuinely* cryptographically protected.
+
+### Backend
+
+- **PDF native AES-128 encryption** via `reportlab.pdfencrypt`
+  (`StandardEncryption`). `protection_kind="pdf_native"`. PDF readers
+  prompt for the password on open — no ZIP wrapper. `canModify=0`,
+  `canAnnotate=0`.
+- **CSV + XLSX** stay AES-256 ZIP (pyzipper) because open-source libs
+  cannot natively encrypt xlsx; `protection_kind="aes_zip"`.
+- **Password at rest** encrypted with AES-GCM via `core.crypto.encrypt_text`
+  (`password_enc` field on the `exports` row). Plaintext *never*
+  persists; legacy `password_plain` field migrated out.
+- **Filenames** `{title_slug}-{YYYYMMDD-HHMM}.{ext}` — slug strips
+  `/:?` and similar unsafe characters.
+- **`reason`** (≤500 chars) accepted on `POST /reports/{name}/export`
+  — persisted on the export row and emitted in the
+  `report.export_requested` audit event for HIPAA minimum-necessary
+  review.
+- **`protection_kind`** field surfaced in `GET /exports/{id}` response.
+- Audit events unchanged (`report.export_requested`,
+  `report.export_generated`, `export.password_revealed`,
+  `export.downloaded`); **no plaintext password ever appears in logs or
+  audit metadata**.
+
+### Frontend
+
+- **Pre-export PHI consent dialog** (`PhiConsentDialog`) — shown before
+  every HIPAA export. Explains the protection technique (native PDF vs
+  AES-256 ZIP) and captures the caller's purpose-of-export.
+- Post-export result dialog copy now tailors to `protection_kind`.
+- Non-PHI exports bypass the consent dialog entirely.
+
+### Tests
+
+- 14 framework unit tests + 7 Phase-2 API/E2E tests = **21/21 passing**
+  (`test_reports_framework.py`, `test_reports_phase2_e2e.py`).
+- Frontend Playwright run: all four PHI consent scenarios pass
+  (`test_reports/iteration_52.json`).
+
+### Files touched
+
+```
+backend/services/reports/export_writer.py     # PDF native encryption, filenames, protection_kind
+backend/services/exports/__init__.py          # password_enc at rest, reason, protection_kind
+backend/services/reports/router.py            # ExportRequest.reason
+backend/tests/test_reports_framework.py       # +5 Phase-2 unit tests
+backend/tests/test_reports_phase2_e2e.py      # +7 API E2E tests (new)
+frontend/src/pages/reports/ReportViewer.jsx   # PhiConsentDialog + protection-aware copy
+```
+
+
+## 2026-04-21 — Reports Phase 3-9 (catalog expansion, views, docs, tests)
+
+### Catalog — now **22 reports across 7 categories**
+
+| Category      | Count | Reports                                                                                  |
+| ------------- | ----- | ---------------------------------------------------------------------------------------- |
+| Operational   | 3     | appointments_list, patient_roster, provider_productivity                                 |
+| Clinical      | 2     | unsigned_clinical_notes, notes_by_provider                                               |
+| Financial     | 6     | claims_list, invoices_list, payments_received, denials_log, payments_by_method_summary, patient_balance |
+| Compliance    | 5     | audit_activity, phi_access_activity, failed_logins, export_history, license_expiration   |
+| Patient       | 3     | new_patients, patient_contact_completeness, active_patients_summary                      |
+| Scheduling    | 1     | cancellations_no_shows                                                                   |
+| Workforce     | 2     | user_last_login, workforce_invitations                                                   |
+
+### New framework capabilities
+- **Saved-view column whitelist** (`views._validate_columns_against_definition`)
+  — rejects forged column keys at POST/PATCH with 400.
+- **Column reorder** — up/down arrows on selected columns in the picker.
+  Preserves user-chosen order across sorts and paging.
+- **Reset View** button — clears filters, columns, sort, and active
+  saved view back to the report's defaults.
+- **Object-valued aggregates** — `AggregatesBar` flattens
+  `{by_status: {active: 156, deleted: 3}}` into per-sub-key tiles.
+
+### Deferred reports (need data not yet captured)
+- Referral source
+- Patient insurance coverage summary
+- Birthday / age cohort (can be derived, no stakeholder demand yet)
+- CPT / procedure utilisation
+- ICD / diagnosis distribution
+- Appointment-type volume (blocked on P2 appointment_type_id persistence)
+
+### Tests
+- **88/88 pytests green**: framework 14 + phase2 e2e 7 + catalog 50 +
+  phase3-9 e2e 17.
+- Frontend flows re-verified via testing agent (iteration 53) — UI
+  column reorder, Reset, tenant isolation, PHI consent gate.
+
+### Documentation
+- `/app/backend/services/reports/README.md` — full architecture note,
+  how-to-add-a-report, permission matrix, PHI export protection rules
+  per format, audit event taxonomy, storage/cleanup operational notes.
+
+### Security
+- Every report is permission-gated (resource + action) and tenant-scoped
+  via `core.tenancy`.
+- Audit events for every run/export/view/download.
+- `/api/exports/{id}/download` uses HMAC-signed short-lived tokens —
+  no public or unscoped URLs.
+- PHI exports use native PDF encryption (AES-128) for PDF and
+  AES-256 password-protected ZIP for CSV/XLSX.
+
+
+
+## 2026-04-21 — Reports expansion to 33 reports
+
+Closed the remaining gaps from the product wishlist. Added 11 reports
+mapping cleanly to existing data:
+
+**Clinical** — `missing_documentation`, `addendum_activity`,
+`treatment_plan_status`, `icd_diagnoses_distribution`.
+
+**Financial** — `billing_adjustments` (write-offs/discounts/courtesy/
+contractual), `cpt_procedure_utilisation`.
+
+**Patient** — `patient_age_cohort` (0-12, 13-17, 18-34, 35-54, 55-74,
+75+), `patient_responsibility_summary` (self-pay / insurance / mixed).
+
+**Scheduling** — `daily_appointment_production`,
+`appointment_status_summary`.
+
+**Compliance** — `break_glass_usage`.
+
+**Catalog now: 33 reports × 7 categories.** Test suite: 110/110 green.
+
+Remaining deferred items (no backing data yet): referral source,
+communication consent per patient, appointment-type volume (blocked on
+`appointment_type_id` persistence), open time slots, provider schedule
+utilisation, collections summary.

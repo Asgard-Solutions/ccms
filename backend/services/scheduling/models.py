@@ -51,6 +51,7 @@ class AppointmentPublic(BaseModel):
     location_id: str | None = None
     patient_id: str
     patient_name: str | None = None
+    patient_phone: str | None = None
     provider_id: str
     provider_name: str | None = None
     start_time: str
@@ -61,3 +62,6 @@ class AppointmentPublic(BaseModel):
     created_by: str
     created_at: str
     updated_at: str
+    # Phase 3 — populated by GET /appointments/{id} when an encounter exists.
+    clinical_encounter_id: str | None = None
+    clinical_encounter_status: str | None = None

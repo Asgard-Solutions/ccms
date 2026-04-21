@@ -1,0 +1,68 @@
+{
+  "summary": "Phase 3 Clinical (appointment-first encounter launch) validated end-to-end. Backend pytest /app/backend/tests/test_clinical_phase3.py 9/9 passing against the public external URL (happy path with context freeze, idempotent relaunch keeps encounter_type, appointment GET surfaces clinical_encounter_id/status, episode linkage + cross-tenant/cross-patient 400, cancelled-without-reason 409, cancelled-with-reason 201 + is_exception=true + exception_invoked_by/at + appointment_status_at_launch='cancelled', staff cannot invoke exception (403/404), PATCH/complete/cancel lifecycle with all 409 guardrails, cancel→relaunch allowed, reauth required 401, tenant isolation 404 on read+write, patient role blocked). Regression Phase 1+2: 24/24 still green. Frontend E2E (group-admin@sunrise.ccms.app): scheduling month view → click scheduling-month-appt-{id} → BookDialog reschedule mode → appt-launch-encounter-btn visible → encounter-launch-dialog renders with encounter-type-select + encounter-launch-submit-btn → Start visit → 'Encounter launched' toast + router push to /patients/{pid}?tab=clinical&encounter={eid} → PatientDetail ?tab= param auto-activates tab-clinical → clinical-encounters-card renders the new encounter row (type label 'New patient exam', 'in progress' badge, provider name, status at launch, Complete/Cancel inline actions) and stat-encounters shows 'In-progress visits 1'. The encounter-filter-status select is present. One UX gap identified in DayView for the cancelled-path exception workflow (see frontend_issues).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "DayView.jsx (scheduling day view)",
+        "issue": "Cancelled appointment tiles are rendered as a `pointer-events-none` presentation div (DayView.jsx lines 440-470) with NO onClick handler, so the user CANNOT click a cancelled appointment in Day view to open BookDialog and therefore cannot reach the exception-launch workflow from this view. The exception flow is only reachable from MonthView (which keeps cancelled tiles as clickable buttons, MonthView.jsx lines 130-143). This directly contradicts the spec 'For a cancelled appointment, dialog shows encounter-exception-banner and requires encounter-exception-reason...'. Fix: make the cancelled tile in DayView a clickable button with pointer-events-auto + onClick={()=>onOpenAppointment(appt)} while keeping the 'slot is re-bookable underneath' UX (e.g. click on the tile edge/chevron opens the appt, click on the empty slot area still creates a new one). Or surface a discrete 'launch encounter from cancelled appt' affordance.",
+        "selector": "scheduling-day-appt-{id} (data-cancelled='true')",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Privileged clinical writes (POST /clinical/encounters, PATCH, complete, cancel) hitting the global ReauthGate",
+        "issue": "Known UX wrinkle tracked since iteration 29/30/31/32: on first submit the axios interceptor gets 401, the 'Confirm it's you' modal fires, after reauth the original request is NOT auto-retried — user must re-click submit. In this iteration the test flow pre-seeded reauth via /api/auth/reauth before any write so the happy path did not surface the wrinkle. Still a backlog queue-and-retry item.",
+        "affected_selectors": ["encounter-launch-submit-btn", "encounter-complete-btn", "encounter-cancel-btn"]
+      }
+    ],
+    "design_issues": []
+  },
+  "verified_flows": [
+    "Backend pytest /app/backend/tests/test_clinical_phase3.py — 9/9 passing against https://multi-tenant-clinic-2.preview.emergentagent.com/api",
+    "Backend pytest /app/backend/tests/test_clinical_phase1.py + test_clinical_phase2.py — 24/24 regression green",
+    "POST /appointments/{aid}/clinical/encounters 201 + existed=false + snapshot frozen; idempotent relaunch 200 existed=true same id, encounter_type NOT altered; appointment PATCH after launch does NOT mutate encounter.appointment_snapshot",
+    "GET /appointments/{aid} surfaces clinical_encounter_id + clinical_encounter_status",
+    "Cancelled appt without reason → 409; with reason → 201 is_exception=true + exception_invoked_by + exception_invoked_at + appointment_status_at_launch='cancelled'",
+    "Staff role exception launch → 403/404",
+    "Episode linkage: valid hydrates episode_title; cross-patient/tenant 400",
+    "Lifecycle: PATCH in_progress OK; complete → completed_at+completed_by; double-complete 409; PATCH completed 409; cancel completed 409; cancel in_progress then re-launch OK",
+    "GET /patients/{pid}/clinical/encounters filters + tenant isolation 404 cross-tenant",
+    "GET /patients/{pid}/clinical/summary — encounters.total + open live; stat-encounters reflects open count",
+    "Reauth required on launch/PATCH/complete/cancel → 401 without reauth cookie",
+    "Frontend: scheduling-month-appt-{id} click → BookDialog 'Reschedule appointment' with appt-launch-encounter-btn visible",
+    "Frontend: appt-launch-encounter-btn opens encounter-launch-dialog (encounter-type-select, encounter-launch-submit-btn)",
+    "Frontend: Start visit submit → 'Encounter launched' toast + redirect to /patients/{pid}?tab=clinical&encounter={eid}",
+    "Frontend: PatientDetail ?tab=clinical URL param auto-activates tab-clinical",
+    "Frontend: clinical-encounters-card renders new row with type label 'New patient exam', 'in progress' badge, provider name, status at launch, Complete/Cancel inline actions; stat-encounters shows 'In-progress visits 1'; encounter-filter-status present",
+    "Frontend: direct navigation /patients/{pid}?tab=clinical&encounter={eid} auto-selects tab and highlights the row"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_clinical_phase3.py",
+    "/app/backend/tests/test_clinical_phase1.py",
+    "/app/backend/tests/test_clinical_phase2.py",
+    "/app/test_reports/pytest/iter33_phase3.xml"
+  ],
+  "action_items": [
+    "HIGH: In /app/frontend/src/pages/scheduling/DayView.jsx (lines ~440-470), cancelled appointment tiles are pointer-events-none presentation divs with no onClick. Make them clickable (or add a discrete affordance) so operators can open BookDialog for a cancelled appointment and reach the exception-launch workflow from Day view — currently only Month view permits this.",
+    "OPTIONAL UX: Global 'queue-and-retry-after-reauth' hook in axios interceptor (tracked from iter 29/30/31/32) so encounter-launch-submit-btn/PATCH/complete/cancel auto-retry after reauth instead of requiring a user re-click.",
+    "OPTIONAL: Consider disabling encounter-launch-submit-btn while the POST is in flight to avoid double-submission on slow networks."
+  ],
+  "critical_code_review_comments": [
+    "services/clinical/encounters_router.py — clean happy path + exception branch; is_exception + exception_invoked_by/at + appointment_status_at_launch correctly captured at launch and frozen.",
+    "services/clinical/encounters_models.py — appointment_snapshot dict captured once on launch; relaunch reuses existing encounter via (appointment_id, status != cancelled) lookup — idempotency guaranteed.",
+    "services/scheduling/router.py AppointmentPublic — clinical_encounter_id + clinical_encounter_status hydrated on GET /appointments/{id}; verified it reflects live after launch.",
+    "frontend/pages/scheduling/DayView.jsx — cancelled tile is presentation-only with pointer-events-none (lines 440-470); MonthView.jsx keeps cancelled tiles clickable (lines 130-143). Inconsistency blocks the exception-launch workflow from Day view.",
+    "frontend/pages/scheduling/BookDialog.jsx — appt-launch-encounter-btn correctly surfaces whenever mode==='reschedule' (any initial appt). Good.",
+    "frontend/pages/clinical/EncounterLaunchDialog.jsx + EncountersCard.jsx + ClinicalTab.jsx — stat-encounters first tile, filter select, row metadata, Complete/Cancel inline actions all wired to the new encounters API. Cards mount cleanly from the ?tab= URL param driven by PatientDetail."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100% (33/33: 9 Phase3 + 24 Phase1+2)", "frontend": "~95% — all happy-path encounter flows verified; cancelled-path exception workflow reachable from Month view per code inspection, but blocked from Day view by a pointer-events-none regression" },
+  "test_credentials": "group-admin@sunrise.ccms.app / Sunrise@ComplianceClinic1 (primary E2E); admin@ccms.app / Admin@ComplianceClinic1 (Default tenant cross-tenant probe); patient@ccms.app / Patient@ComplianceClinic1 (patient RBAC probe); eastside-staff@sunrise.ccms.app / Sunrise@ComplianceClinic1 (staff exception-block probe)",
+  "seed_data_creation": "E2E created ~4 Sunrise-tenant patients + 4 future appointments (2 scheduled, 2 cancelled) via /api/patients + /api/appointments + /api/appointments/{id}/cancel. Two encounters launched (one in_progress on patient 20e309be…, one from the earlier encounter-card probe on patient 29be274e…). All transient test data; no seeded fixtures altered.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Phase 3 backend is GA-worthy (9/9 + 24 regression). Frontend happy-path launch is fully green end-to-end from scheduling → BookDialog → EncounterLaunchDialog → PatientDetail ?tab=clinical&encounter=. The only frontend gap is the DayView cancelled-tile click behavior — fix by making the scheduling-day-appt-{id} button clickable for cancelled appts too (or add a 'launch from cancelled' entry point). Month view already handles this correctly. When seeding future appointments for UI tests, scatter start-minute jitter (see _book_appointment in test_clinical_phase3.py) because the scheduling API strictly rejects overlapping provider+window windows (409). Global ReauthGate retry-after-reauth is still backlog.",
+  "rca of the issue": "Cancelled-path exception launch unreachable from Day view. Root cause: DayView.jsx renders cancelled appointments with className including 'pointer-events-none' and role='presentation', with no onClick handler. This was a deliberate design to keep the underlying time-slot click-through-able for re-booking, but it prevents opening the appointment record for the exception-launch flow. Repro: group-admin in Day view with show-cancelled toggle on → click a cancelled appt tile → nothing happens → exception-launch workflow cannot be invoked from this view. Mitigation: either attach onClick to the tile and stopPropagation while leaving a visible empty re-book affordance elsewhere, or add a small explicit 'Open record' button inside the tile that calls onOpenAppointment(appt)."
+}

@@ -19,6 +19,7 @@ dnspython==2.8.0
 ecdsa==0.19.2
 email-validator==2.3.0
 emergentintegrations==0.1.0
+et_xmlfile==2.0.0
 fastapi==0.110.1
 fastuuid==0.14.0
 filelock==3.25.2
@@ -64,6 +65,7 @@ mypy_extensions==1.1.0
 numpy==2.4.4
 oauthlib==3.3.1
 openai==1.99.9
+openpyxl==3.1.5
 packaging==26.0
 pandas==3.0.2
 passlib==1.7.4
@@ -79,6 +81,7 @@ pyasn1==0.6.3
 pyasn1_modules==0.4.2
 pycodestyle==2.14.0
 pycparser==3.0
+pycryptodomex==3.23.0
 pydantic==2.12.5
 pydantic_core==2.41.5
 pyflakes==3.4.0
@@ -96,12 +99,14 @@ python-magic==0.4.27
 python-multipart==0.0.24
 pytokens==0.4.1
 PyYAML==6.0.3
+pyzipper==0.3.6
 redis==7.4.0
 referencing==0.37.0
 regex==2026.4.4
 reportlab==4.4.10
 requests==2.33.1
 requests-oauthlib==2.0.0
+resend==2.29.0
 rich==14.3.3
 rpds-py==0.30.0
 rsa==4.9.1

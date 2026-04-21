@@ -21,7 +21,28 @@ continue to work exactly as before.
 """
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+
+
+def _normalize_phone_soft(value: str | None) -> str | None:
+    """Patient demographics retrofit rule.
+
+    Attempt to normalise a US phone to 10-digit canonical. If the value
+    is non-empty but doesn't parse cleanly, **preserve it unchanged**
+    rather than 422 — so editing a legacy record with a pre-existing
+    "555-1234" value doesn't block the save. The frontend wizard runs
+    strict `normalizePhone()` on user-entered values before submit, so
+    only retrofitted data ends up in this branch. All other profile
+    endpoints (identity, clinic_profile, workforce) remain strict.
+    """
+    from core.phone import normalize_us_phone
+
+    if value in (None, ""):
+        return None
+    try:
+        return normalize_us_phone(value)
+    except ValueError:
+        return value
 
 Gender = Literal["male", "female", "non-binary", "other", "prefer-not-to-say"]
 RecordType = Literal["assessment", "treatment", "note", "diagnosis"]
@@ -56,6 +77,11 @@ class Demographics(BaseModel):
     employer: str | None = None
     employer_phone: str | None = None
 
+    @model_validator(mode="after")
+    def _normalize_phones(self):
+        self.employer_phone = _normalize_phone_soft(self.employer_phone)
+        return self
+
 
 class ContactInfo(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -69,6 +95,13 @@ class ContactInfo(BaseModel):
     sms_consent: bool | None = None
     email_consent: bool | None = None
     voicemail_consent: bool | None = None
+
+    @model_validator(mode="after")
+    def _normalize_phones(self):
+        self.phone = _normalize_phone_soft(self.phone)
+        self.phone_alt = _normalize_phone_soft(self.phone_alt)
+        self.phone_work = _normalize_phone_soft(self.phone_work)
+        return self
 
 
 class AddressInfo(BaseModel):
@@ -89,6 +122,12 @@ class EmergencyContactInfo(BaseModel):
     phone_alt: str | None = None
     email: EmailStr | None = None
     address: str | None = None
+
+    @model_validator(mode="after")
+    def _normalize_phones(self):
+        self.phone = _normalize_phone_soft(self.phone)
+        self.phone_alt = _normalize_phone_soft(self.phone_alt)
+        return self
 
 
 class AdminInfo(BaseModel):
@@ -114,6 +153,12 @@ class GuarantorInfo(BaseModel):
     employer: str | None = None
     employer_phone: str | None = None
     ssn_last4: str | None = Field(default=None, max_length=4)
+
+    @model_validator(mode="after")
+    def _normalize_phones(self):
+        self.phone = _normalize_phone_soft(self.phone)
+        self.employer_phone = _normalize_phone_soft(self.employer_phone)
+        return self
 
 
 class InsurancePlan(BaseModel):
@@ -180,6 +225,12 @@ class CaseDetails(BaseModel):
     return_to_work_status: str | None = None
     notes: str | None = None
 
+    @model_validator(mode="after")
+    def _normalize_phones(self):
+        self.attorney_phone = _normalize_phone_soft(self.attorney_phone)
+        self.adjuster_phone = _normalize_phone_soft(self.adjuster_phone)
+        return self
+
 
 class ConsentRecord(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -236,6 +287,11 @@ class PatientCreate(BaseModel):
     case_details: CaseDetails | None = None
     consents: ConsentsInfo | None = None
 
+    @model_validator(mode="after")
+    def _normalize_top_phone(self):
+        self.phone = _normalize_phone_soft(self.phone)
+        return self
+
 
 class PatientUpdate(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -259,6 +315,11 @@ class PatientUpdate(BaseModel):
     clinical_intake: ClinicalIntake | None = None
     case_details: CaseDetails | None = None
     consents: ConsentsInfo | None = None
+
+    @model_validator(mode="after")
+    def _normalize_top_phone(self):
+        self.phone = _normalize_phone_soft(self.phone)
+        return self
 
 
 class PatientPublic(BaseModel):
@@ -301,6 +362,34 @@ class PatientPublic(BaseModel):
     updated_at: str
 
 
+class RecordProcedure(BaseModel):
+    """A billable procedure attached to a medical record (for charge capture)."""
+    model_config = ConfigDict(extra="forbid")
+    code_type: Literal["cpt", "hcpcs", "custom"] = "cpt"
+    code: str = Field(min_length=1, max_length=20)
+    units: int = Field(default=1, ge=1, le=99)
+    modifiers: list[str] = Field(default_factory=list, max_length=4)
+
+
+class RecordDiagnosis(BaseModel):
+    """An ICD-10 diagnosis attached to a medical record."""
+    model_config = ConfigDict(extra="forbid")
+    sequence: int = Field(ge=1, le=12)
+    code: str = Field(min_length=1, max_length=12)
+
+
+ResponsibilityMode = Literal["self_pay", "insurance", "mixed"]
+ChargeStatus = Literal["not_captured", "pending_capture", "captured", "voided"]
+
+
+class MedicalRecordCoding(BaseModel):
+    """Updatable coding payload for a medical record."""
+    model_config = ConfigDict(extra="forbid")
+    procedures: list[RecordProcedure] = Field(default_factory=list, max_length=20)
+    diagnoses: list[RecordDiagnosis] = Field(default_factory=list, max_length=12)
+    responsibility: ResponsibilityMode = "self_pay"
+
+
 class MedicalRecordCreate(BaseModel):
     record_type: RecordType
     title: str = Field(min_length=1, max_length=200)
@@ -321,3 +410,12 @@ class MedicalRecordPublic(BaseModel):
     recorded_by: str
     recorded_by_name: str | None = None
     recorded_at: str
+    # Charge-capture fields (iteration 25 — Phase 2). All optional so
+    # legacy records render unchanged.
+    procedures: list[RecordProcedure] = Field(default_factory=list)
+    diagnoses: list[RecordDiagnosis] = Field(default_factory=list)
+    responsibility: ResponsibilityMode | None = None
+    signed_at: str | None = None
+    signed_by: str | None = None
+    charge_status: ChargeStatus | None = None
+    charge_captured_invoice_id: str | None = None

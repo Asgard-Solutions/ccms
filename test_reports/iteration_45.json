@@ -1,0 +1,36 @@
+{
+  "summary": "Validated Security Hardening pass (Task Prompt 6). Backend: all 12 tests in tests/test_security_hardening.py PASS (30s) — covering per-user lockout on PIN create/change/remove + /auth/reauth, benign /me/profile PATCH NOT throttled (80 iterations green), email change without reauth returns 401 (not 429), MFA disable wrong-password audits action=auth.mfa_disable outcome=failure reason=invalid_password, /me/preferences writes user.preferences_updated with metadata.fields=['theme'], and audit reasons are machine-readable (invalid_password/invalid_pin/locked_out). Response bodies never echo submitted sentinels. Regression: 82/82 pass across test_password_change_hardening, test_professional_licenses, test_pin_security, test_reauth_pin_step_up, test_profile_self_service (2m13s). Frontend smoke: /security page renders all three tabs (Profile, Security, Licenses) for doctor@ccms.app; Password card, Two-factor auth, Security PIN (Set PIN), Recent sign-ins all present; sensitive keys absent from localStorage/sessionStorage (regex /pin|password|pwd|secret/i returned empty for both). Source-level grep over /app/frontend/src/pages/account/ and components/ReauthDialog.jsx confirms ZERO localStorage/sessionStorage references — structurally impossible to persist PIN/password state across unmount.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_security_hardening.py",
+    "/app/backend/tests/test_password_change_hardening.py",
+    "/app/backend/tests/test_professional_licenses.py",
+    "/app/backend/tests/test_pin_security.py",
+    "/app/backend/tests/test_reauth_pin_step_up.py",
+    "/app/backend/tests/test_profile_self_service.py",
+    "/app/test_reports/pytest/iteration_45_security_hardening.xml",
+    "/app/test_reports/pytest/iteration_45_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "router.py `_guard_sensitive_auth` correctly reuses core/rate_limit (failure_count + is_allowed with 5-count / 15-minute window per-user) without duplicating limiter code — matches the 'reuse core/rate_limit.py' constraint.",
+    "_record_sensitive_auth_failure is invoked AFTER raising the HTTPException path in create_pin/change_pin/remove_pin/reauth/mfa_disable; failure is recorded only for invalid_password / invalid_pin, not for transient validation errors, which preserves accurate counters.",
+    "update_profile gates the per-IP volume ceiling branch behind `email in payload` — benign first_name/last_name/display_name edits stay unthrottled (verified by the 80-iteration test). Good surgical placement.",
+    "Audit rows normalise reason strings via a small enum (`invalid_password`, `invalid_pin`, `locked_out`) — machine-readable and assertion-friendly (tests match on exact string).",
+    "Frontend: ReauthDialog and Create/Change/Reset/Remove PinDialog all clear local state on open→false (confirmed by grep + dialog re-open test showing empty input values). Zero localStorage/sessionStorage usage in /pages/account/ + ReauthDialog.jsx — PIN/password material cannot outlive the modal tree.",
+    "No PRD-level new risks introduced; hardening pass is additive and behind existing auth gates."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (94/94 — 12 new + 82 regression)", "frontend": "100% (three tabs render, sections present, zero sensitive storage keys, source grep clean)"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 ; doctor@ccms.app / Doctor@ComplianceClinic1",
+  "seed_data_creation": "12 throwaway users (email pattern hardening_{uuid}@ccms.app) created by the new hardening tests via admin POST /api/auth/users — not cleaned up explicitly but isolated by unique-suffix; previous iterations created similar test users, no PHI involved.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run order: `export REACT_APP_BACKEND_URL=https://multi-tenant-clinic-2.preview.emergentagent.com`, then `cd /app/backend && python -m pytest tests/test_security_hardening.py` (30s, 12 tests). Regression file set runs ~2m13s; use background execution (nohup + &) because it exceeds the 120s bash foreground timeout. conftest.py autouse fixture pings POST /api/_debug/rate-limit/reset before each test so rate-limit buckets are clean — do NOT remove. The out-of-scope test_iteration4/5/8/9/11/12/13 files need redis-cli or CCMS_BASE_URL and were correctly skipped.",
+  "rca of the issue": "N/A — no functional bug. All acceptance criteria for Task Prompt 6 met: per-user 5→lockout on 4 sensitive endpoints, benign profile PATCH not throttled, email-change branch 401 without reauth, MFA disable + preferences audit rows with machine-readable reasons, no secret echoes, frontend state hygiene confirmed via source grep and /security page smoke test."
+}

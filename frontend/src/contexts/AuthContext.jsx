@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { api, formatApiError } from "../api/client";
+import { useTheme } from "./ThemeContext";
 
 const AuthContext = createContext(null);
 
@@ -12,6 +13,15 @@ export function AuthProvider({ children }) {
   const [idleWarning, setIdleWarning] = useState(false);
   const idleTimer = useRef(null);
   const warnTimer = useRef(null);
+  const { syncFromUser } = useTheme();
+
+  // Keep the theme engine aligned with the authenticated user. We depend on
+  // `user?.theme` (not the full user object) so local theme toggles cannot
+  // trigger a false re-sync that rolls us back to the persisted value.
+  useEffect(() => {
+    if (user) syncFromUser(user);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.theme, syncFromUser]);
 
   const fetchMe = useCallback(async () => {
     try {
@@ -95,8 +105,13 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
-  const reauth = useCallback(async (password) => {
-    const { data } = await api.post("/auth/reauth", { password });
+  const reauth = useCallback(async (payload) => {
+    // Backwards-compatible: accept a raw password string for legacy
+    // call sites, or a {password} / {pin} / {password|pin, reason}
+    // object for step-up verification.
+    const body =
+      typeof payload === "string" ? { password: payload } : payload;
+    const { data } = await api.post("/auth/reauth", body);
     return data;
   }, []);
 

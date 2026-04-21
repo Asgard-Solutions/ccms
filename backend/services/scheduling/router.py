@@ -53,15 +53,20 @@ async def _hydrate(apps: list[dict]) -> list[dict]:
         )
     }
     patients = {
-        p["id"]: f"{p['first_name']} {p['last_name']}"
+        p["id"]: {
+            "name": f"{p['first_name']} {p['last_name']}",
+            "phone": p.get("phone"),
+        }
         async for p in db.patients.find(
             {"id": {"$in": patient_ids}},
-            {"_id": 0, "id": 1, "first_name": 1, "last_name": 1},
+            {"_id": 0, "id": 1, "first_name": 1, "last_name": 1, "phone": 1},
         )
     }
     for a in apps:
         a["provider_name"] = providers.get(a["provider_id"])
-        a["patient_name"] = patients.get(a["patient_id"])
+        info = patients.get(a["patient_id"]) or {}
+        a["patient_name"] = info.get("name")
+        a["patient_phone"] = info.get("phone")
     return apps
 
 
@@ -180,10 +185,112 @@ async def list_appointments(
     appt_status: str | None = Query(default=None, alias="status"),
     from_date: str | None = Query(default=None, alias="from"),
     to_date: str | None = Query(default=None, alias="to"),
+    include_cancelled: bool = Query(
+        default=True,
+        description="When False, cancelled appointments are excluded from the results.",
+    ),
 ):
     db = get_db_read()
     q: dict = {}
 
+    if user["role"] == "patient":
+        patient_record = await db.patients.find_one(
+            {"user_id": user["id"]}, {"_id": 0, "id": 1}
+        )
+        if not patient_record:
+            return []
+        q["patient_id"] = patient_record["id"]
+    elif user["role"] == "doctor":
+        if not provider_id and not patient_id:
+            q["provider_id"] = user["id"]
+
+    if provider_id:
+        q["provider_id"] = provider_id
+    if patient_id:
+        q["patient_id"] = patient_id
+    if location_id:
+        q["location_id"] = location_id
+    if appt_status:
+        q["status"] = appt_status
+    elif not include_cancelled:
+        q["status"] = {"$ne": "cancelled"}
+    if from_date or to_date:
+        range_q: dict = {}
+        if from_date:
+            range_q["$gte"] = from_date
+        if to_date:
+            range_q["$lte"] = to_date
+        q["start_time"] = range_q
+
+    # Tenant + location isolation
+    q = scoped_filter(q, ctx, location_scoped=True)
+    if q.get("__deny__"):
+        return []
+
+    async def _fetch():
+        cursor = db.appointments.find(q, {"_id": 0}).sort("start_time", 1)
+        apps = [decrypt_fields(a, ENCRYPTED) async for a in cursor]
+        return await _hydrate(apps)
+
+    cache_key = cache_keys.appointments_query(
+        user["role"],
+        {
+            "provider_id": provider_id,
+            "patient_id": patient_id,
+            "location_id": location_id,
+            "status": appt_status,
+            "include_cancelled": include_cancelled,
+            "from": from_date,
+            "to": to_date,
+            "tenant": ctx.tenant_id or "platform",
+            # Doctors auto-scope to themselves; bake that into the cache key.
+            "doctor_self": user["id"] if (user["role"] == "doctor" and not provider_id and not patient_id) else None,
+            "patient_self": user["id"] if user["role"] == "patient" else None,
+        },
+    )
+    return await cache.get_or_set(cache_key, 30, _fetch)
+
+
+@router.get("/counts")
+async def appointment_counts(
+    request: Request,
+    user: dict = Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
+    provider_id: str | None = None,
+    patient_id: str | None = None,
+    location_id: str | None = None,
+    appt_status: str | None = Query(default=None, alias="status"),
+    from_date: str | None = Query(default=None, alias="from"),
+    to_date: str | None = Query(default=None, alias="to"),
+    tz: str = Query(default="UTC", description="IANA timezone for local-day bucketing"),
+    include_samples: int = Query(default=0, ge=0, le=10,
+                                 description="Sample appointments per date (0..10)"),
+    include_cancelled: bool = Query(
+        default=False,
+        description="When True, samples include cancelled appts. `count` is always "
+                    "active-only; `cancelled_count` is always returned.",
+    ),
+):
+    """Return appointment counts grouped by local date.
+
+    Response shape per row:
+      {
+        "date": "YYYY-MM-DD",
+        "count": <active-only count>,             # scheduled + completed
+        "cancelled_count": <cancelled count>,     # always returned for UX
+        "samples": [<N earliest appointments>]    # respects include_cancelled
+      }
+
+    `count` never includes cancelled appointments because the operational
+    day-to-day question ("how busy are we?") shouldn't inflate with history.
+    The frontend can combine `count` + `cancelled_count` into a
+    "5 scheduled, 2 canceled" secondary indicator when the user has the
+    Show-canceled toggle on.
+    """
+    db = get_db_read()
+    q: dict = {}
+
+    # Role-scoped auto-filters (same policy as list_appointments).
     if user["role"] == "patient":
         patient_record = await db.patients.find_one(
             {"user_id": user["id"]}, {"_id": 0, "id": 1}
@@ -211,18 +318,86 @@ async def list_appointments(
             range_q["$lte"] = to_date
         q["start_time"] = range_q
 
-    # Tenant + location isolation
     q = scoped_filter(q, ctx, location_scoped=True)
     if q.get("__deny__"):
         return []
 
-    async def _fetch():
-        cursor = db.appointments.find(q, {"_id": 0}).sort("start_time", 1)
-        apps = [decrypt_fields(a, ENCRYPTED) async for a in cursor]
-        return await _hydrate(apps)
+    async def _aggregate():
+        pipeline = [
+            {"$match": q},
+            {"$sort": {"start_time": 1}},
+            {"$addFields": {
+                "_parsed_start": {"$dateFromString": {"dateString": "$start_time"}},
+            }},
+            {"$addFields": {
+                "_local_date": {"$dateToString": {
+                    "format": "%Y-%m-%d",
+                    "date": "$_parsed_start",
+                    "timezone": tz,
+                }},
+                "_is_cancelled": {"$eq": ["$status", "cancelled"]},
+            }},
+            {"$group": {
+                "_id": "$_local_date",
+                "count": {"$sum": {"$cond": ["$_is_cancelled", 0, 1]}},
+                "cancelled_count": {"$sum": {"$cond": ["$_is_cancelled", 1, 0]}},
+                "samples": {"$push": {
+                    "id": "$id",
+                    "start_time": "$start_time",
+                    "end_time": "$end_time",
+                    "patient_id": "$patient_id",
+                    "provider_id": "$provider_id",
+                    "status": "$status",
+                }},
+            }},
+            {"$project": {
+                "_id": 0,
+                "date": "$_id",
+                "count": 1,
+                "cancelled_count": 1,
+                "samples": ({"$slice": [
+                    ({"$filter": {
+                        "input": "$samples",
+                        "as": "s",
+                        "cond": {"$ne": ["$$s.status", "cancelled"]},
+                    }} if not include_cancelled else "$samples"),
+                    include_samples,
+                ]} if include_samples > 0 else {"$literal": []}),
+            }},
+            {"$sort": {"date": 1}},
+        ]
+        rows = [doc async for doc in db.appointments.aggregate(pipeline)]
+
+        # Hydrate patient/provider names on samples (if any).
+        if include_samples > 0 and rows:
+            pids: set[str] = set()
+            prids: set[str] = set()
+            for r in rows:
+                for s in r["samples"]:
+                    pids.add(s["patient_id"])
+                    prids.add(s["provider_id"])
+            patients = {
+                p["id"]: f"{p['first_name']} {p['last_name']}"
+                async for p in db.patients.find(
+                    {"id": {"$in": list(pids)}},
+                    {"_id": 0, "id": 1, "first_name": 1, "last_name": 1},
+                )
+            } if pids else {}
+            providers = {
+                u["id"]: u["name"]
+                async for u in db.users.find(
+                    {"id": {"$in": list(prids)}},
+                    {"_id": 0, "id": 1, "name": 1},
+                )
+            } if prids else {}
+            for r in rows:
+                for s in r["samples"]:
+                    s["patient_name"] = patients.get(s["patient_id"])
+                    s["provider_name"] = providers.get(s["provider_id"])
+        return rows
 
     cache_key = cache_keys.appointments_query(
-        user["role"],
+        user["role"] + ":counts",
         {
             "provider_id": provider_id,
             "patient_id": patient_id,
@@ -230,13 +405,15 @@ async def list_appointments(
             "status": appt_status,
             "from": from_date,
             "to": to_date,
+            "tz": tz,
+            "samples": include_samples,
+            "include_cancelled": include_cancelled,
             "tenant": ctx.tenant_id or "platform",
-            # Doctors auto-scope to themselves; bake that into the cache key.
             "doctor_self": user["id"] if (user["role"] == "doctor" and not provider_id and not patient_id) else None,
             "patient_self": user["id"] if user["role"] == "patient" else None,
         },
     )
-    return await cache.get_or_set(cache_key, 30, _fetch)
+    return await cache.get_or_set(cache_key, 30, _aggregate)
 
 
 @router.get("/{appointment_id}", response_model=AppointmentPublic)
@@ -260,10 +437,22 @@ async def get_appointment(
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
     a = decrypt_fields(a, ENCRYPTED)
     (hydrated,) = await _hydrate([a])
+    # Attach clinical encounter linkage (read-only projection).
+    enc = await db.clinical_encounters.find_one(
+        {
+            "tenant_id": a.get("tenant_id"),
+            "appointment_id": appointment_id,
+            "status": {"$ne": "cancelled"},
+        },
+        {"_id": 0, "id": 1, "status": 1},
+    )
+    if enc:
+        hydrated["clinical_encounter_id"] = enc["id"]
+        hydrated["clinical_encounter_status"] = enc["status"]
     return hydrated
 
 
-@router.put("/{appointment_id}", response_model=AppointmentPublic)
+@router.patch("/{appointment_id}", response_model=AppointmentPublic)
 async def update_appointment(
     appointment_id: str,
     payload: AppointmentUpdate,

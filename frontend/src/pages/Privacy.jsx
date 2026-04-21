@@ -15,6 +15,16 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Skeleton } from "../components/ui/skeleton";
+import { Textarea } from "../components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 const REQUEST_TYPES = ["export", "delete", "correct", "restrict", "opt_out"];
 const STATUS_FLOW = {
@@ -26,19 +36,19 @@ const STATUS_FLOW = {
   withdrawn: [],
 };
 const STATUS_CHIP = {
-  received: "bg-[#EDF2EE] text-[#526B58]",
-  in_review: "bg-[#FDF6ED] text-[#B5823E]",
-  approved: "bg-[#E8EEF3] text-[#425D7A]",
-  fulfilled: "bg-[#E4ECE6] text-[#3F6147]",
-  rejected: "bg-[#FBF1EE] text-[#C76D54]",
-  withdrawn: "bg-stone-100 text-stone-600",
+  received: "bg-primary/10 text-primary",
+  in_review: "bg-warning-soft text-warning",
+  approved: "bg-info-soft text-info",
+  fulfilled: "bg-success-soft text-success",
+  rejected: "bg-destructive-soft text-destructive",
+  withdrawn: "bg-muted text-muted-foreground",
 };
 
 function StatusChip({ s }) {
   return (
     <span
       className={`inline-block rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
-        STATUS_CHIP[s] || "bg-stone-100"
+        STATUS_CHIP[s] || "bg-muted"
       }`}
     >
       {s}
@@ -61,8 +71,8 @@ function InventoryTab() {
   if (!data) return <Skeleton className="h-80 w-full" />;
   return (
     <div data-testid="inventory-tab" className="space-y-4">
-      <div className="rounded-sm border border-stone-200 bg-[#FAF9F6] p-4 text-xs text-[#5C6A61]">
-        <div className="font-semibold uppercase tracking-[0.15em] text-[#1F2924]">
+      <div className="rounded-sm border border-border bg-background p-4 text-xs text-muted-foreground">
+        <div className="font-semibold uppercase tracking-[0.15em] text-foreground">
           Retention settings
         </div>
         <div className="mt-1">
@@ -76,41 +86,41 @@ function InventoryTab() {
           <div
             key={c.id}
             data-testid={`inventory-${c.id}`}
-            className="rounded-sm border border-stone-200 bg-white p-4"
+            className="rounded-sm border border-border bg-card p-4"
           >
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-[11px] uppercase tracking-[0.15em] text-[#5C6A61]">
+                <div className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
                   {c.ccpa_category}
                 </div>
-                <div className="font-['Outfit'] text-lg font-medium">{c.name}</div>
+                <div className="font-display text-lg font-medium">{c.name}</div>
               </div>
               {c.phi && (
-                <span className="rounded-sm bg-[#FDF6ED] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[#D4A373]">
+                <span className="rounded-sm bg-warning-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-warning">
                   PHI
                 </span>
               )}
             </div>
             <dl className="mt-3 space-y-2 text-xs">
               <div>
-                <dt className="font-semibold text-[#1F2924]">Collected</dt>
-                <dd className="text-[#5C6A61]">{c.collected.join(", ")}</dd>
+                <dt className="font-semibold text-foreground">Collected</dt>
+                <dd className="text-muted-foreground">{c.collected.join(", ")}</dd>
               </div>
               <div>
-                <dt className="font-semibold text-[#1F2924]">Purpose</dt>
-                <dd className="text-[#5C6A61]">{c.purpose}</dd>
+                <dt className="font-semibold text-foreground">Purpose</dt>
+                <dd className="text-muted-foreground">{c.purpose}</dd>
               </div>
               <div>
-                <dt className="font-semibold text-[#1F2924]">Access</dt>
-                <dd className="text-[#5C6A61]">{c.access_roles.join(", ")}</dd>
+                <dt className="font-semibold text-foreground">Access</dt>
+                <dd className="text-muted-foreground">{c.access_roles.join(", ")}</dd>
               </div>
               <div>
-                <dt className="font-semibold text-[#1F2924]">Retention</dt>
-                <dd className="text-[#5C6A61]">{c.retention_default}</dd>
+                <dt className="font-semibold text-foreground">Retention</dt>
+                <dd className="text-muted-foreground">{c.retention_default}</dd>
               </div>
               <div>
-                <dt className="font-semibold text-[#1F2924]">At rest</dt>
-                <dd className="text-[#5C6A61]">{c.encrypted_at_rest}</dd>
+                <dt className="font-semibold text-foreground">At rest</dt>
+                <dd className="text-muted-foreground">{c.encrypted_at_rest}</dd>
               </div>
             </dl>
           </div>
@@ -157,11 +167,11 @@ function NewRequestForm({ onCreated }) {
     <form
       onSubmit={submit}
       data-testid="new-request-form"
-      className="space-y-3 rounded-sm border border-stone-200 bg-white p-4"
+      className="space-y-3 rounded-sm border border-border bg-card p-4"
     >
-      <div className="flex items-center gap-2 text-[#1F2924]">
+      <div className="flex items-center gap-2 text-foreground">
         <Inbox className="h-4 w-4" />
-        <span className="font-['Outfit'] text-lg font-medium">Log a new privacy request</span>
+        <span className="font-display text-lg font-medium">Log a new privacy request</span>
       </div>
       <div className="grid gap-3 md:grid-cols-4">
         <div>
@@ -170,7 +180,7 @@ function NewRequestForm({ onCreated }) {
             data-testid="new-request-type"
             value={requestType}
             onChange={(e) => setRequestType(e.target.value)}
-            className="h-9 w-full rounded-sm border border-stone-200 bg-white px-2 text-sm"
+            className="h-9 w-full rounded-sm border border-border bg-card px-2 text-sm"
           >
             {REQUEST_TYPES.map((t) => (
               <option key={t} value={t}>
@@ -204,7 +214,7 @@ function NewRequestForm({ onCreated }) {
             type="submit"
             data-testid="new-request-submit"
             disabled={submitting}
-            className="h-9 w-full rounded-sm bg-[#1F2924] text-white hover:bg-[#0F1A15]"
+            className="h-9 w-full rounded-sm bg-primary text-primary-foreground hover:bg-[var(--primary-hover)]"
           >
             {submitting ? "Logging…" : "Log request"}
           </Button>
@@ -226,21 +236,26 @@ function NewRequestForm({ onCreated }) {
 
 function RequestRow({ r, onChanged }) {
   const [busy, setBusy] = useState(false);
+  const [transitionTo, setTransitionTo] = useState(null);
+  const [transitionNotes, setTransitionNotes] = useState("");
+  const [confirmFulfill, setConfirmFulfill] = useState(false);
   const nextStates = STATUS_FLOW[r.status] || [];
 
-  async function transition(next) {
-    const response_notes = window.prompt(
-      `Transition to "${next}". Add a response note (no PHI):`,
-      r.response_notes || "",
-    );
-    if (response_notes === null) return;
+  function openTransition(next) {
+    setTransitionTo(next);
+    setTransitionNotes(r.response_notes || "");
+  }
+
+  async function submitTransition() {
+    if (!transitionTo) return;
     setBusy(true);
     try {
       await api.patch(`/privacy/requests/${r.id}`, {
-        status: next,
-        response_notes,
+        status: transitionTo,
+        response_notes: transitionNotes,
       });
-      toast.success(`Moved to ${next}`);
+      toast.success(`Moved to ${transitionTo}`);
+      setTransitionTo(null);
       onChanged();
     } catch (err) {
       toast.error(formatApiError(err));
@@ -250,7 +265,6 @@ function RequestRow({ r, onChanged }) {
   }
 
   async function fulfillDelete() {
-    if (!window.confirm("Fulfil this delete request? This requires recent re-authentication.")) return;
     setBusy(true);
     try {
       await api.post(`/privacy/requests/${r.id}/fulfill-delete`);
@@ -258,6 +272,7 @@ function RequestRow({ r, onChanged }) {
       onChanged();
     } catch (err) {
       toast.error(formatApiError(err));
+      throw err;
     } finally {
       setBusy(false);
     }
@@ -266,11 +281,11 @@ function RequestRow({ r, onChanged }) {
   return (
     <tr
       data-testid={`request-row-${r.id}`}
-      className="border-b border-stone-100 last:border-0 align-top"
+      className="border-b border-border last:border-0 align-top"
     >
       <td className="px-3 py-3">
         <div>{formatDateTime(r.created_at)}</div>
-        <div className="text-[11px] text-[#5C6A61]">{relativeFromNow(r.created_at)}</div>
+        <div className="text-[11px] text-muted-foreground">{relativeFromNow(r.created_at)}</div>
       </td>
       <td className="px-3 py-3">
         <div className="font-mono text-xs">{r.request_type}</div>
@@ -278,16 +293,16 @@ function RequestRow({ r, onChanged }) {
           <StatusChip s={r.status} />
         </div>
       </td>
-      <td className="px-3 py-3 font-mono text-[11px] text-[#5C6A61]">
+      <td className="px-3 py-3 font-mono text-[11px] text-muted-foreground">
         <div>subj: {r.subject_user_id?.slice(0, 8)}…</div>
         {r.subject_patient_id && <div>pat: {r.subject_patient_id.slice(0, 8)}…</div>}
       </td>
-      <td className="px-3 py-3 text-xs text-[#5C6A61]">
-        <div className="font-semibold text-[#1F2924]">Notes</div>
+      <td className="px-3 py-3 text-xs text-muted-foreground">
+        <div className="font-semibold text-foreground">Notes</div>
         <div>{r.notes || "—"}</div>
         {r.response_notes && (
           <>
-            <div className="mt-2 font-semibold text-[#1F2924]">Response</div>
+            <div className="mt-2 font-semibold text-foreground">Response</div>
             <div>{r.response_notes}</div>
           </>
         )}
@@ -298,9 +313,9 @@ function RequestRow({ r, onChanged }) {
             <button
               key={ns}
               data-testid={`transition-${r.id}-${ns}`}
-              onClick={() => transition(ns)}
+              onClick={() => openTransition(ns)}
               disabled={busy}
-              className="rounded-sm border border-stone-200 bg-white px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-[#5C6A61] hover:bg-[#F5F5F0]"
+              className="rounded-sm border border-border bg-card px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground hover:bg-muted"
             >
               → {ns}
             </button>
@@ -308,14 +323,66 @@ function RequestRow({ r, onChanged }) {
           {r.request_type === "delete" && r.subject_patient_id && r.status === "approved" && (
             <button
               data-testid={`fulfill-delete-${r.id}`}
-              onClick={fulfillDelete}
+              onClick={() => setConfirmFulfill(true)}
               disabled={busy}
-              className="rounded-sm border border-[#C76D54] bg-[#FBF1EE] px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-[#C76D54]"
+              className="rounded-sm border border-destructive bg-destructive-soft px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-destructive"
             >
               Fulfil delete
             </button>
           )}
         </div>
+        <Dialog open={!!transitionTo} onOpenChange={(v) => !v && setTransitionTo(null)}>
+          <DialogContent
+            data-testid={`transition-dialog-${r.id}`}
+            className="rounded-sm"
+          >
+            <DialogHeader>
+              <DialogTitle className="font-display">
+                Transition to &ldquo;{transitionTo}&rdquo;
+              </DialogTitle>
+              <DialogDescription>
+                Add a response note (no PHI). This is audited and visible to
+                the subject.
+              </DialogDescription>
+            </DialogHeader>
+            <Textarea
+              data-testid={`transition-notes-${r.id}`}
+              value={transitionNotes}
+              onChange={(e) => setTransitionNotes(e.target.value)}
+              rows={4}
+              placeholder="e.g. Verified identity via secondary channel; no PHI included."
+              className="rounded-sm"
+            />
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setTransitionTo(null)}
+                className="rounded-sm"
+                disabled={busy}
+              >
+                Cancel
+              </Button>
+              <Button
+                data-testid={`transition-submit-${r.id}`}
+                onClick={submitTransition}
+                disabled={busy}
+                className="rounded-sm"
+              >
+                {busy ? "Saving…" : "Save transition"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <ConfirmDialog
+          open={confirmFulfill}
+          onOpenChange={setConfirmFulfill}
+          title="Fulfil this delete request?"
+          description="This requires recent re-authentication. The subject record will be marked for erasure per retention policy."
+          confirmLabel="Fulfil delete"
+          destructive
+          onConfirm={fulfillDelete}
+          testId={`fulfill-delete-confirm-${r.id}`}
+        />
       </td>
     </tr>
   );
@@ -354,7 +421,7 @@ function RequestsTab() {
           data-testid="filter-status"
           value={statusFilter}
           onChange={(e) => setStatusFilter(e.target.value)}
-          className="h-9 rounded-sm border border-stone-200 bg-white px-2 text-sm"
+          className="h-9 rounded-sm border border-border bg-card px-2 text-sm"
         >
           <option value="">All statuses</option>
           {Object.keys(STATUS_FLOW).map((s) => (
@@ -367,7 +434,7 @@ function RequestsTab() {
           data-testid="filter-type"
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value)}
-          className="h-9 rounded-sm border border-stone-200 bg-white px-2 text-sm"
+          className="h-9 rounded-sm border border-border bg-card px-2 text-sm"
         >
           <option value="">All types</option>
           {REQUEST_TYPES.map((t) => (
@@ -376,7 +443,7 @@ function RequestsTab() {
             </option>
           ))}
         </select>
-        <span className="ml-auto text-xs text-[#5C6A61]">
+        <span className="ml-auto text-xs text-muted-foreground">
           {rows ? `${rows.length} requests` : "loading…"}
         </span>
       </div>
@@ -384,14 +451,14 @@ function RequestsTab() {
       {rows === null ? (
         <Skeleton className="h-48 rounded-sm" />
       ) : rows.length === 0 ? (
-        <div className="rounded-sm border border-dashed border-stone-200 bg-white p-12 text-center">
-          <ClipboardList className="mx-auto h-10 w-10 text-[#A3AFA7]" />
-          <p className="mt-3 font-['Outfit'] text-base">No privacy requests logged yet.</p>
+        <div className="rounded-sm border border-dashed border-border bg-card p-12 text-center">
+          <ClipboardList className="mx-auto h-10 w-10 text-muted-foreground/70" />
+          <p className="mt-3 font-display text-base">No privacy requests logged yet.</p>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-sm border border-stone-200 bg-white">
+        <div className="overflow-x-auto rounded-sm border border-border bg-card">
           <table className="w-full min-w-[880px] text-left text-sm">
-            <thead className="border-b border-stone-200 bg-[#FAF9F6] text-[11px] uppercase tracking-wider text-[#5C6A61]">
+            <thead className="border-b border-border bg-background text-[11px] uppercase tracking-wider text-muted-foreground">
               <tr>
                 <th className="px-3 py-3 font-medium">Created</th>
                 <th className="px-3 py-3 font-medium">Type / status</th>
@@ -422,20 +489,20 @@ export default function Privacy() {
   return (
     <div data-testid="privacy-page" className="space-y-8 animate-in fade-in duration-300">
       <header>
-        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
           Compliance
         </span>
-        <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight">
+        <h1 className="mt-2 font-display text-4xl font-medium tracking-tight">
           Privacy operations
         </h1>
-        <p className="mt-2 max-w-3xl text-sm text-[#5C6A61]">
+        <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
           Admin intake for CCPA-style data-subject requests (access, correction,
           deletion, restriction, opt-out) and a structured inventory of the
           data categories CCMS handles.
         </p>
         <div
           data-testid="privacy-disclaimer"
-          className="mt-4 flex items-start gap-2 rounded-sm border border-[#EDE0C7] bg-[#FDF6ED] p-3 text-xs text-[#8A6C33]"
+          className="mt-4 flex items-start gap-2 rounded-sm border border-border bg-warning-soft p-3 text-xs text-warning"
         >
           <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
           <span>
@@ -458,8 +525,8 @@ export default function Privacy() {
               onClick={() => setTab(t.v)}
               className={`inline-flex items-center gap-2 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors ${
                 tab === t.v
-                  ? "bg-[#1F2924] text-white"
-                  : "border border-stone-200 bg-white text-[#5C6A61] hover:bg-[#F5F5F0]"
+                  ? "bg-primary text-primary-foreground"
+                  : "border border-border bg-card text-muted-foreground hover:bg-muted"
               }`}
             >
               <Icon className="h-4 w-4" />
@@ -471,10 +538,10 @@ export default function Privacy() {
 
       {tab === "requests" ? <RequestsTab /> : <InventoryTab />}
 
-      <div className="rounded-sm border border-stone-200 bg-white p-4 text-xs text-[#5C6A61]">
-        <div className="flex items-center gap-2 text-[#1F2924]">
+      <div className="rounded-sm border border-border bg-card p-4 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 text-foreground">
           <FileText className="h-4 w-4" />
-          <span className="font-['Outfit'] text-sm font-medium">Reference</span>
+          <span className="font-display text-sm font-medium">Reference</span>
         </div>
         <ul className="mt-2 list-disc space-y-1 pl-5">
           <li><code>/app/memory/PRIVACY_AND_RETENTION.md</code> — full workflow and retention model</li>

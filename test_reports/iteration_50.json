@@ -1,0 +1,44 @@
+{
+  "summary": "Reports Section — full E2E verification. Backend: 23/23 pytest pass (9 framework + 14 new API E2E). Frontend: all critical flows verified via Playwright — landing page (10 reports, 4 categories), viewer with columns/filters/pagination, non-PHI CSV export end-to-end with download URL + token, saved views CRUD, PHI export 403 gate with proper user-facing error, and PIN/password reauth dialog. No regressions found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_reports_framework.py",
+    "/app/backend/tests/test_reports_api_e2e.py",
+    "/app/test_reports/pytest/reports_api_e2e.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "services/reports/builtin.py is 904 lines — consider splitting per-category (clinical/financial/compliance/operational) for maintainability, but not a blocker.",
+    "Report run cache key mixes user id only when tenant_scope_all is False — reasonable, but make sure PHI previews are not cached across users. Current design caches per-user when not scope_all; acceptable.",
+    "ExportRequest uses pattern='^(csv|excel|pdf)$' — matches export_formats declared in public metadata. Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_reports_api_e2e.py (new)"
+  ],
+  "success_rate": {"backend": "100% (23/23)", "frontend": "100% critical flows"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (requires /api/auth/reauth after login; UI ReauthDialog supports 'Use password instead' link)",
+  "seed_data_creation": "Test saved view named TEST_UIView_1 created via UI and 1 via pytest; pytest test deletes its own view. UI test view left behind — safe to ignore or cleanup.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Reports nav entry lives at /reports. Reauth cookie is mandatory for all /api/reports/* and /api/exports/*. For curl: POST /api/auth/login then POST /api/auth/reauth {password}. Tenant context may set X-Tenant-Id/X-Location-Id automatically from platform admin context. PHI reports (patient_roster, appointments_list, claims_list, invoices_list, payments_received, unsigned_clinical_notes) require reporting.export_phi for export which admin/super_admin DOES NOT hold by design.",
+  "verification_summary": {
+    "GET /api/reports/catalog": "PASS (10 reports across 4 categories for admin)",
+    "GET /api/reports/{name}": "PASS (contract fields present)",
+    "POST /api/reports/{name}/run": "PASS for appointments_list, claims_list, audit_activity, provider_productivity, invoices_list, denials_log",
+    "POST /api/reports/denials_log/export (non-PHI)": "PASS — status transitions to ready, CSV streams with attachment disposition and text/csv mime",
+    "POST /api/reports/patient_roster/export (PHI gate)": "PASS — 403 with 'Exports of PHI reports require reporting.export_phi permission.'",
+    "Saved views CRUD": "PASS (create 201, list, patch is_default+name, delete 204, list absent)",
+    "Audit trail report.generated": "PASS (visible in /api/audit-logs?action=report.generated)",
+    "UI reports-landing + card navigation": "PASS",
+    "UI export dialog + download button": "PASS",
+    "UI save-view dialog (name/default/shared) + submit": "PASS"
+  }
+}

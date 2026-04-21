@@ -1,0 +1,52 @@
+{
+  "summary": "Phase 2 Reports hardening — narrow verification. Backend: 14/14 framework pytests + 7/7 new Phase 2 E2E tests pass. PDF native /Encrypt encryption confirmed, ZIP AES-256 for CSV/XLSX confirmed, `reason` field accepted and persisted, `protection_kind` surfaced in /api/exports/{id}, PHI 403 gate intact, no plaintext `password_plain` values in DB, `password_enc` stored with 'enc:' prefix. Frontend: CRITICAL WIRING BUG — the export dropdown bypasses the new PhiConsentDialog for PHI reports; export fires immediately and surfaces the 403 error in the result dialog. Non-PHI flow works (straight to result dialog).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "db.exports", "issue": "5 legacy rows still carry a null `password_plain` field (created 2026-04-21T17:05..17:16). No plaintext leakage — all values are None — but the field should not exist per the new invariant. One-off `$unset:{password_plain:''}` migration recommended."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "ReportViewer — Export dropdown menu",
+        "issue": "DropdownMenuItem onClick is wired to handleExport(fmt) directly (line 379). It must call requestExportFormat(fmt) so the PhiConsentDialog gate runs for PHI reports. Result: on PHI reports (e.g. /reports/appointments_list) clicking Export → CSV/PDF/EXCEL bypasses the consent dialog entirely, submits the export immediately, and shows the 403 'Exports of PHI reports require reporting.export_phi permission.' in the result dialog. `phi-consent-dialog`, `phi-consent-reason`, `phi-consent-cancel`, `phi-consent-confirm` are reachable in code but never rendered via the main Export button. Reproduced on Appointments report with admin login.",
+        "selector": "[data-testid='report-export-csv'] / [data-testid='report-export-pdf'] / [data-testid='report-export-excel']",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "PHI Export consent",
+        "issue": "Because the consent dialog never opens, the UX contract for the Phase 2 feature is broken — `reason` is never captured from the UI and AES-256 ZIP / native PDF copy is never shown to the user. Backend happily accepts `reason` when supplied; the issue is 100% client-side wiring.",
+        "affected_selectors": ["phi-consent-dialog", "phi-consent-reason", "phi-consent-confirm", "phi-consent-cancel"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_reports_framework.py",
+    "/app/backend/tests/test_reports_phase2_e2e.py",
+    "/app/test_reports/pytest/iteration_51_framework.xml",
+    "/app/test_reports/pytest/iteration_51_phase2_e2e.xml"
+  ],
+  "action_items": [
+    "[CRITICAL] In /app/frontend/src/pages/reports/ReportViewer.jsx line 379, change `onClick={() => handleExport(fmt)}` to `onClick={() => requestExportFormat(fmt)}` so PHI reports open the PhiConsentDialog before firing the export.",
+    "[Minor] Ship a one-off migration to $unset the legacy null `password_plain` field from the 5 existing exports rows so the strict 'field must not exist' invariant holds everywhere."
+  ],
+  "critical_code_review_comments": [
+    "export_writer.py _write_pdf hardcodes `canPrint=1, canCopy=1, canAnnotate=0, canModify=0` — copying is still allowed which is surprising for a 'HIPAA-grade' export; confirm with product whether copy should also be blocked.",
+    "services/exports/__init__.py get_export reveals the one-time password on the FIRST poll by the original actor and then $unsets password_enc. This means if the requester's first poll hits while status is still pending, one_time_password is never surfaced. Current guard requires status=='ready' so that is fine — but a subsequent poll after the first successful reveal will correctly return one_time_password=null because password_enc is absent. Double-checked: behaviour matches the invariant.",
+    "create_report_export writes password_enc:None on non-PHI exports — no issue, but worth storing only when truthy to keep rows lean."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_reports_phase2_e2e.py (new)"
+  ],
+  "success_rate": {"backend": "100% (21/21: 14 framework + 7 phase2 e2e)", "frontend": "50% (non-PHI export dialog OK; PHI consent dialog dead)"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (reauth required — UI defaults to PIN, click 'Use password instead')",
+  "seed_data_creation": "Several TEST_ denials_log CSV/PDF export rows created for Phase 2 assertions (harmless; non-PHI, no PHI leakage; will self-expire via EXPORT_TTL).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent fixes ReportViewer.jsx:379 to call requestExportFormat(fmt), re-run this Playwright flow: login → /reports/appointments_list → reauth (password) → Export → CSV → expect phi-consent-dialog visible with 'AES-256' copy, phi-consent-reason input, phi-consent-cancel, phi-consent-confirm. Then PDF → expect 'natively encrypted' copy. Then /reports/denials_log → Export → CSV must skip consent dialog and go straight to result dialog. Backend pytest regression: `pytest /app/backend/tests/test_reports_framework.py /app/backend/tests/test_reports_phase2_e2e.py -v` — both suites are 21/21 green on this iteration.",
+  "rca of the issue": "The Export dropdown (ReportViewer.jsx:376-388) was refactored in Phase 2 to gate PHI exports behind a new PhiConsentDialog. A helper `requestExportFormat(format)` was added (line 238) that checks meta.contains_phi and either opens the dialog or runs handleExport directly. However the DropdownMenuItem.onClick was left wired to the OLD handler `handleExport(fmt)` on line 379, so the helper is never called from the main UI path — the consent dialog is effectively dead. Mitigation: one-line change `onClick={() => requestExportFormat(fmt)}` reinstates the intended flow."
+}

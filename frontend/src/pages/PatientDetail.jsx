@@ -1,14 +1,23 @@
-import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft, Download, Eye, EyeOff, FileText, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, formatApiError } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
+import { useProviders } from "../contexts/ProvidersContext";
 import { formatDate, formatDateTime, relativeFromNow } from "../utils/time";
-import { PatientWizardDialog } from "./Patients";
+import { formatPhoneDisplay } from "../utils/phone";
+import { PatientWizardDialog } from "../components/patient-wizard/PatientWizardDialog";
 import { payloadToForm } from "./patientWizardLogic";
 import { Button } from "../components/ui/button";
 import { Skeleton } from "../components/ui/skeleton";
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "../components/ui/tabs";
+import DateRangeFilter, { isInRange } from "../components/DateRangeFilter";
 import {
   Dialog,
   DialogContent,
@@ -39,6 +48,10 @@ import {
 import BreakGlassDialog from "../components/BreakGlassDialog";
 import ReauthDialog from "../components/ReauthDialog";
 import PatientDocumentsCard from "../components/PatientDocumentsCard";
+import PatientLedgerCard from "./billing/PatientLedgerCard";
+import PatientInsuranceManager from "./billing/PatientInsuranceManager";
+import ChargeCaptureDialog from "./billing/ChargeCaptureDialog";
+import ClinicalTab from "./clinical/ClinicalTab";
 
 // ---------------------------------------------------------------------------
 // Expanded-intake section renderers (Phase 4).
@@ -60,8 +73,8 @@ function Row({ label, children, testId }) {
   if (!hasValue(children)) return null;
   return (
     <div className="grid grid-cols-1 gap-0.5 sm:grid-cols-[200px_1fr] sm:gap-4" data-testid={testId}>
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-[#5C6A61]">{label}</span>
-      <span className="text-sm leading-relaxed text-[#1F2924] break-words">
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</span>
+      <span className="text-sm leading-relaxed text-foreground break-words">
         {Array.isArray(children) ? children.join(", ") : children}
       </span>
     </div>
@@ -72,11 +85,11 @@ function IntakeCard({ title, hint, testId, children }) {
   return (
     <div
       data-testid={testId}
-      className="rounded-sm border border-stone-200 bg-white p-6"
+      className="rounded-sm border border-border bg-card p-6"
     >
-      <div className="mb-4 border-b border-stone-200 pb-2">
-        <h3 className="font-['Outfit'] text-lg font-medium text-[#1F2924]">{title}</h3>
-        {hint && <p className="mt-0.5 text-xs text-[#5C6A61]">{hint}</p>}
+      <div className="mb-4 border-b border-border pb-2">
+        <h3 className="font-display text-lg font-medium text-foreground">{title}</h3>
+        {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
       </div>
       <div className="space-y-3">{children}</div>
     </div>
@@ -97,6 +110,75 @@ function formatAddressObj(a) {
   return line || null;
 }
 
+// ---------------------------------------------------------------------------
+// PatientOverview — read-only mirror of the Edit Patient wizard. Renders the
+// same section hierarchy (Identity → Contact → Address → Emergency → Care
+// assignment → Employment → Responsible party → Insurance) so the Overview
+// tab and the Edit modal feel like two views of the same object.
+// ---------------------------------------------------------------------------
+
+function OverviewField({ label, value, testId, full = false }) {
+  return (
+    <div
+      data-testid={testId}
+      className={full ? "sm:col-span-3" : ""}
+    >
+      <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 text-sm text-foreground">
+        {hasValue(value) ? value : <span className="text-muted-foreground">—</span>}
+      </div>
+    </div>
+  );
+}
+
+function OverviewSection({ title, hint, children, testId }) {
+  return (
+    <section
+      data-testid={testId}
+      className="rounded-sm border border-border bg-card p-6"
+    >
+      <header className="mb-4 border-b border-border pb-2">
+        <h3 className="font-display text-lg font-medium text-foreground">{title}</h3>
+        {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
+      </header>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+function InsuranceRow({ label, carrier, plan, memberId, planType, testId }) {
+  if (!hasValue(carrier) && !hasValue(plan) && !hasValue(memberId)) return null;
+  const badge = planType ? (
+    <span className="ml-2 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      {planType}
+    </span>
+  ) : null;
+  return (
+    <div
+      data-testid={testId}
+      className="rounded-sm border border-border bg-background p-3"
+    >
+      <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+        {label}
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-x-2 text-sm text-foreground">
+        <span className="font-medium">{carrier || "—"}</span>
+        {hasValue(plan) && <span className="text-muted-foreground">· {plan}</span>}
+        {badge}
+      </div>
+      {hasValue(memberId) && (
+        <div className="mt-0.5 text-xs text-muted-foreground">
+          Member ID <span className="text-foreground">{memberId}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function InsurancePlanBlock({ plan, label, testId }) {
   if (!plan || typeof plan !== "object") return null;
   const fields = [
@@ -115,18 +197,207 @@ function InsurancePlanBlock({ plan, label, testId }) {
   ].filter(([, v]) => hasValue(v));
   if (!fields.length) return null;
   return (
-    <div data-testid={testId} className="rounded-sm border border-stone-200 bg-[#FAF9F6] p-4">
-      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-[#5C6A61]">
+    <div data-testid={testId} className="rounded-sm border border-border bg-background p-4">
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         {label}
       </div>
       <div className="space-y-1.5">
         {fields.map(([k, v]) => (
           <div key={k} className="grid grid-cols-[140px_1fr] gap-3 text-sm">
-            <span className="text-[#5C6A61]">{k}</span>
-            <span className="text-[#1F2924]">{v}</span>
+            <span className="text-muted-foreground">{k}</span>
+            <span className="text-foreground">{v}</span>
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+function PatientOverview({ patient, providers, onEdit, canEdit }) {
+  const demo = patient.demographics || {};
+  const contact = patient.contact || {};
+  const addr = patient.address_details || {};
+  const ec = patient.emergency_contact_details || {};
+  const admin = patient.admin || {};
+  const g = patient.guarantor || {};
+  const ins = patient.insurance || {};
+  const primary = ins.primary || {};
+  const secondary = ins.secondary || {};
+
+  const providerId = admin.primary_provider_id;
+  const providerLabel =
+    (providers || []).find((p) => p.id === providerId)?.name || providerId || null;
+
+  const consentSummary = [
+    contact.sms_consent && "SMS",
+    contact.email_consent && "Email",
+    contact.voicemail_consent && "Voicemail",
+  ].filter(Boolean).join(" · ") || null;
+
+  const addressLine = formatAddressObj(addr) || patient.address || null;
+  const guarantorSame = g && (g.same_as_patient === true ||
+    (Object.keys(g).length === 0 && !patient.guarantor));
+  const guarantorName = [g.first_name, g.last_name].filter(Boolean).join(" ");
+
+  return (
+    <div data-testid="patient-overview" className="space-y-6">
+      {canEdit && (
+        <div className="flex items-center justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onEdit}
+            data-testid="overview-edit-patient-btn"
+            className="rounded-sm"
+          >
+            <Pencil className="mr-2 h-3.5 w-3.5" /> Edit patient info
+          </Button>
+        </div>
+      )}
+
+      <OverviewSection
+        title="Identity"
+        hint="Legal name first; preferred name appears in the patient portal."
+        testId="overview-identity"
+      >
+        <OverviewField label="First name" value={demo.first_name || patient.first_name} testId="ov-first-name" />
+        <OverviewField label="Middle name" value={demo.middle_name} testId="ov-middle-name" />
+        <OverviewField label="Last name" value={demo.last_name || patient.last_name} testId="ov-last-name" />
+        <OverviewField label="Preferred name" value={demo.preferred_name} testId="ov-preferred-name" />
+        <OverviewField
+          label="Date of birth"
+          value={demo.date_of_birth || patient.date_of_birth
+            ? (patient.unmasked ? formatDate(demo.date_of_birth || patient.date_of_birth) : (demo.date_of_birth || patient.date_of_birth))
+            : null}
+          testId="ov-dob"
+        />
+        <OverviewField label="Sex at birth" value={demo.sex_at_birth} testId="ov-sex" />
+        <OverviewField label="Gender identity" value={demo.gender || patient.gender} testId="ov-gender" />
+        <OverviewField label="Pronouns" value={demo.pronouns} testId="ov-pronouns" />
+        <OverviewField label="Marital status" value={demo.marital_status} testId="ov-marital" />
+        <OverviewField label="Preferred language" value={demo.language} testId="ov-language" />
+      </OverviewSection>
+
+      <OverviewSection
+        title="Contact"
+        hint="Default contact details — patients may update these in the portal."
+        testId="overview-contact"
+      >
+        <OverviewField label="Mobile phone" value={formatPhoneDisplay(contact.phone || patient.phone)} testId="ov-mobile" />
+        <OverviewField label="Home phone" value={formatPhoneDisplay(contact.phone_alt)} testId="ov-home" />
+        <OverviewField label="Work phone" value={formatPhoneDisplay(contact.phone_work)} testId="ov-work" />
+        <OverviewField label="Email" value={contact.email || patient.email} testId="ov-email" />
+        <OverviewField label="Preferred contact method" value={contact.preferred_contact_method} testId="ov-pcm" />
+        <OverviewField label="Communication consents" value={consentSummary} testId="ov-comm-consents" />
+      </OverviewSection>
+
+      <OverviewSection title="Address" testId="overview-address">
+        <OverviewField label="Address" value={addressLine} testId="ov-address" full />
+      </OverviewSection>
+
+      <OverviewSection
+        title="Emergency contact"
+        hint="Someone we can reach if the patient is unresponsive."
+        testId="overview-emergency"
+      >
+        <OverviewField label="Name" value={ec.name || patient.emergency_contact} testId="ov-ec-name" />
+        <OverviewField label="Relationship" value={ec.relationship} testId="ov-ec-rel" />
+        <OverviewField label="Phone" value={formatPhoneDisplay(ec.phone)} testId="ov-ec-phone" />
+        <OverviewField label="Alt phone" value={formatPhoneDisplay(ec.phone_alt)} testId="ov-ec-alt" />
+        <OverviewField label="Email" value={ec.email} testId="ov-ec-email" />
+      </OverviewSection>
+
+      <OverviewSection
+        title="Care assignment"
+        hint="Who sees this patient and where."
+        testId="overview-care"
+      >
+        <OverviewField label="Assigned provider" value={providerLabel} testId="ov-provider" />
+        <OverviewField label="Preferred location" value={patient.location_id} testId="ov-location" />
+        <OverviewField label="Referral source" value={admin.referral_source} testId="ov-referral" />
+      </OverviewSection>
+
+      <OverviewSection title="Employment" testId="overview-employment">
+        <OverviewField label="Occupation" value={demo.occupation} testId="ov-occupation" />
+        <OverviewField label="Employer" value={demo.employer} testId="ov-employer" />
+        <OverviewField label="Employer phone" value={formatPhoneDisplay(demo.employer_phone)} testId="ov-employer-phone" />
+      </OverviewSection>
+
+      <OverviewSection
+        title="Responsible party / Guarantor"
+        hint="Person financially responsible for this account."
+        testId="overview-guarantor"
+      >
+        {guarantorSame ? (
+          <OverviewField
+            label="Status"
+            value="Same as patient"
+            testId="ov-guarantor-same"
+            full
+          />
+        ) : (
+          <>
+            <OverviewField label="Name" value={guarantorName || null} testId="ov-g-name" />
+            <OverviewField label="Relationship" value={g.relationship} testId="ov-g-rel" />
+            <OverviewField label="Date of birth" value={g.date_of_birth} testId="ov-g-dob" />
+            <OverviewField label="Phone" value={formatPhoneDisplay(g.phone)} testId="ov-g-phone" />
+            <OverviewField label="Email" value={g.email} testId="ov-g-email" />
+            <OverviewField label="Address" value={g.address} testId="ov-g-addr" />
+            <OverviewField label="Employer" value={g.employer} testId="ov-g-employer" />
+            <OverviewField label="Employer phone" value={formatPhoneDisplay(g.employer_phone)} testId="ov-g-employer-phone" />
+          </>
+        )}
+      </OverviewSection>
+
+      <section
+        data-testid="overview-insurance-summary"
+        className="rounded-sm border border-border bg-card p-6"
+      >
+        <header className="mb-4 border-b border-border pb-2 flex items-center justify-between">
+          <div>
+            <h3 className="font-display text-lg font-medium text-foreground">Insurance</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Summary only — full plan management lives on the Insurance tab.
+            </p>
+          </div>
+        </header>
+        {(!hasValue(primary.carrier) && !hasValue(secondary.carrier)) ? (
+          <p className="text-sm text-muted-foreground">No insurance on file.</p>
+        ) : (
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <InsuranceRow
+              label="Primary"
+              carrier={primary.carrier}
+              plan={primary.plan_name}
+              memberId={primary.member_id}
+              planType={primary.plan_type}
+              testId="ov-insurance-primary"
+            />
+            <InsuranceRow
+              label="Secondary"
+              carrier={secondary.carrier}
+              plan={secondary.plan_name}
+              memberId={secondary.member_id}
+              planType={secondary.plan_type}
+              testId="ov-insurance-secondary"
+            />
+          </div>
+        )}
+      </section>
+
+      {hasValue(patient.notes) && (
+        <section
+          data-testid="overview-intake-notes"
+          className="rounded-sm border border-border bg-card p-6"
+        >
+          <header className="mb-3 border-b border-border pb-2">
+            <h3 className="font-display text-lg font-medium text-foreground">Intake notes</h3>
+          </header>
+          <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+            {patient.notes}
+          </p>
+        </section>
+      )}
     </div>
   );
 }
@@ -139,9 +410,9 @@ function ConsentLine({ label, consent, consentType, onDownloadPdf }) {
       className="flex items-start justify-between gap-4 text-sm"
       data-testid={consentType ? `consent-row-${consentType}` : undefined}
     >
-      <span className="text-[#1F2924]">{label}</span>
+      <span className="text-foreground">{label}</span>
       <div className="flex items-center gap-2">
-        <span className="text-right text-xs text-[#5C6A61]">{meta || "Accepted"}</span>
+        <span className="text-right text-xs text-muted-foreground">{meta || "Accepted"}</span>
         {onDownloadPdf && consentType && (
           <Button
             type="button"
@@ -149,7 +420,7 @@ function ConsentLine({ label, consent, consentType, onDownloadPdf }) {
             size="sm"
             onClick={() => onDownloadPdf(consentType)}
             data-testid={`consent-pdf-${consentType}`}
-            className="h-6 px-2 text-[11px] font-semibold uppercase tracking-wider text-[#526B58] hover:bg-[#EDF2EE]"
+            className="h-6 px-2 text-[11px] font-semibold uppercase tracking-wider text-primary hover:bg-primary/10"
           >
             <Download className="mr-1 h-3 w-3" /> PDF
           </Button>
@@ -158,6 +429,224 @@ function ConsentLine({ label, consent, consentType, onDownloadPdf }) {
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// IntakeFormsTab — list of clinical intake forms for a patient. The backend
+// currently stores a single intake blob on the patient record; the UI already
+// treats it as a versioned list so switching to a multi-form backend (one row
+// per encounter) later is a drop-in.
+// ---------------------------------------------------------------------------
+
+function IntakeFormRow({ form, onEdit, canEdit }) {
+  const painAreas = Array.isArray(form.pain_locations) ? form.pain_locations : [];
+  const symptoms = Array.isArray(form.symptoms) ? form.symptoms : [];
+  const caseLabel = form.case_type ? form.case_type.replace(/_/g, " ") : null;
+  const isDraft = form.version_label?.startsWith("Draft");
+  return (
+    <li
+      data-testid={`intake-form-${form.id}`}
+      className="relative rounded-sm border border-border bg-card p-5"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-sm bg-muted px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              {form.version_label}
+            </span>
+            {caseLabel && (
+              <span className="rounded-sm bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
+                {caseLabel}
+              </span>
+            )}
+            {typeof form.pain_level === "number" && (
+              <span className="rounded-sm bg-warning-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-warning">
+                Pain {form.pain_level}/10
+              </span>
+            )}
+          </div>
+          <h3 className="mt-2 font-display text-lg font-medium text-foreground">
+            {form.chief_complaint || "No chief complaint recorded"}
+          </h3>
+        </div>
+        <div className="flex flex-col items-end gap-2">
+          <div className="text-right text-xs text-muted-foreground">
+            {form.captured_at ? formatDateTime(form.captured_at) : "Date unknown"}
+          </div>
+          {canEdit && isDraft && onEdit && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onEdit(form)}
+              data-testid={`intake-form-edit-${form.id}`}
+              className="rounded-sm"
+            >
+              <Pencil className="mr-1 h-3 w-3" /> Edit draft
+            </Button>
+          )}
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Onset</div>
+          <div className="text-foreground">
+            {form.complaint_onset
+              ? formatDate(form.complaint_onset)
+              : form.onset_type || <span className="text-muted-foreground">—</span>}
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Pain areas</div>
+          <div className="text-foreground">
+            {painAreas.length > 0
+              ? painAreas.slice(0, 4).join(", ") + (painAreas.length > 4 ? "…" : "")
+              : <span className="text-muted-foreground">—</span>}
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Symptoms</div>
+          <div className="text-foreground">
+            {symptoms.length > 0
+              ? `${symptoms.length} reported`
+              : <span className="text-muted-foreground">—</span>}
+          </div>
+        </div>
+      </div>
+
+      {form.notes && (
+        <p className="mt-3 whitespace-pre-wrap text-sm text-muted-foreground">
+          {form.notes}
+        </p>
+      )}
+    </li>
+  );
+}
+
+function IntakeFormsTab({ patientId, patient, range, onNew, onEdit, onRangeChange, canEdit, refreshKey }) {
+  const [forms, setForms] = useState(null);
+  const [creating, setCreating] = useState(false);
+
+  const refresh = useCallback(async () => {
+    try {
+      const { data } = await api.get(`/patients/${patientId}/intake-forms`);
+      setForms(data || []);
+    } catch (err) {
+      setForms([]);
+      toast.error(formatApiError(err));
+    }
+  }, [patientId]);
+
+  useEffect(() => { refresh(); }, [refresh, refreshKey]);
+
+  async function handleNew() {
+    setCreating(true);
+    try {
+      // Seed the new draft from the patient's most-recent intake so the
+      // wizard opens pre-filled with what we already know.
+      const { data } = await api.post(
+        `/patients/${patientId}/intake-forms`,
+        { seed_from_patient: true },
+      );
+      toast.success(`Intake draft v${data.version} created`);
+      await refresh();
+      // Let parent decide whether to open the wizard for further edits.
+      onNew?.(data);
+    } catch (err) {
+      toast.error(formatApiError(err));
+    } finally { setCreating(false); }
+  }
+
+  const rows = (forms || []).map((f) => ({
+    id: f.id,
+    version_label:
+      f.status === "draft" ? `Draft · v${f.version}` : `v${f.version}`,
+    captured_at: f.captured_at || f.updated_at || f.created_at,
+    chief_complaint: f.clinical_intake?.chief_complaint,
+    complaint_onset: f.clinical_intake?.complaint_onset,
+    onset_type: f.clinical_intake?.onset_type,
+    pain_level: typeof f.clinical_intake?.pain_level === "number"
+      ? f.clinical_intake.pain_level : null,
+    pain_locations: f.clinical_intake?.pain_locations,
+    symptoms: f.clinical_intake?.symptoms,
+    notes: f.notes || f.clinical_intake?.notes,
+    case_type: f.case_details?.case_type,
+    // Keep the original form object around so parent can open the wizard
+    // seeded with its latest clinical + case data.
+    _raw: f,
+  }));
+
+  const filteredForms = rows.filter(
+    (f) => !f.captured_at || isInRange(f.captured_at, range),
+  );
+
+  return (
+    <section data-testid="patient-intake-forms" className="space-y-6">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+            Clinical intake
+          </span>
+          <h2 className="mt-1 font-display text-2xl font-medium tracking-tight">
+            Intake forms
+          </h2>
+          <p className="mt-1 max-w-xl text-xs text-muted-foreground">
+            Every intake captured for this patient — chief complaint, pain, symptoms,
+            and case details. Each save creates a new versioned draft.
+          </p>
+        </div>
+        {canEdit && (
+          <Button
+            onClick={handleNew}
+            disabled={creating}
+            data-testid="intake-new-form-btn"
+            className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            {creating ? "Creating…" : "New intake form"}
+          </Button>
+        )}
+      </div>
+
+      <DateRangeFilter
+        testId="intake-date-range"
+        onChange={onRangeChange}
+      />
+
+      {!patient.unmasked && (
+        <p className="text-xs text-muted-foreground">
+          Clinical details are hidden by default — unmask above to reveal the structured intake data.
+        </p>
+      )}
+
+      {forms === null ? (
+        <div className="rounded-sm border border-dashed border-border bg-card p-12 text-center text-sm text-muted-foreground">
+          Loading intake forms…
+        </div>
+      ) : filteredForms.length === 0 ? (
+        <div
+          data-testid="intake-forms-empty"
+          className="rounded-sm border border-dashed border-border bg-card p-12 text-center text-sm text-muted-foreground"
+        >
+          {rows.length === 0
+            ? "No intake forms captured yet."
+            : "No intake forms in the selected range."}
+        </div>
+      ) : (
+        <ul className="space-y-3">
+          {filteredForms.map((f) => (
+            <IntakeFormRow
+              key={f.id}
+              form={f}
+              canEdit={canEdit}
+              onEdit={() => onEdit?.(f._raw)}
+            />
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 
 function IntakeSections({ patient, onDownloadConsent }) {
   const demo = patient.demographics || {};
@@ -195,14 +684,14 @@ function IntakeSections({ patient, onDownloadConsent }) {
   return (
     <section data-testid="patient-intake-sections" className="space-y-6">
       <div>
-        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+        <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
           Expanded intake
         </span>
-        <h2 className="mt-1 font-['Outfit'] text-2xl font-medium tracking-tight">
+        <h2 className="mt-1 font-display text-2xl font-medium tracking-tight">
           Intake sections
         </h2>
         {!patient.unmasked && (
-          <p className="mt-1 text-xs text-[#5C6A61]">
+          <p className="mt-1 text-xs text-muted-foreground">
             Sections below are hidden by default — unmask above to reveal the structured intake data.
           </p>
         )}
@@ -223,16 +712,16 @@ function IntakeSections({ patient, onDownloadConsent }) {
             <Row label="Language">{demo.language}</Row>
             <Row label="Occupation">{demo.occupation}</Row>
             <Row label="Employer">{demo.employer}</Row>
-            <Row label="Employer phone">{demo.employer_phone}</Row>
+            <Row label="Employer phone">{formatPhoneDisplay(demo.employer_phone)}</Row>
             <Row label="SSN (last 4)">{demo.ssn_last4 ? `•••• ${demo.ssn_last4}` : null}</Row>
           </IntakeCard>
         )}
 
         {hasValue(contact) && (
           <IntakeCard title="Contact" testId="intake-contact">
-            <Row label="Mobile phone">{contact.phone || patient.phone}</Row>
-            <Row label="Home phone">{contact.phone_alt}</Row>
-            <Row label="Work phone">{contact.phone_work}</Row>
+            <Row label="Mobile phone">{formatPhoneDisplay(contact.phone || patient.phone)}</Row>
+            <Row label="Home phone">{formatPhoneDisplay(contact.phone_alt)}</Row>
+            <Row label="Work phone">{formatPhoneDisplay(contact.phone_work)}</Row>
             <Row label="Email">{contact.email || patient.email}</Row>
             <Row label="Preferred method">{contact.preferred_contact_method}</Row>
             <Row label="SMS consent">
@@ -263,8 +752,8 @@ function IntakeSections({ patient, onDownloadConsent }) {
           <IntakeCard title="Emergency contact" testId="intake-emergency-contact">
             <Row label="Name">{ec.name}</Row>
             <Row label="Relationship">{ec.relationship}</Row>
-            <Row label="Primary phone">{ec.phone}</Row>
-            <Row label="Alternate phone">{ec.phone_alt}</Row>
+            <Row label="Primary phone">{formatPhoneDisplay(ec.phone)}</Row>
+            <Row label="Alternate phone">{formatPhoneDisplay(ec.phone_alt)}</Row>
             <Row label="Email">{ec.email}</Row>
             <Row label="Address">{ec.address}</Row>
             {/* Legacy fallback: when structured details are absent but the scalar is, show it. */}
@@ -300,11 +789,11 @@ function IntakeSections({ patient, onDownloadConsent }) {
                 </Row>
                 <Row label="Relationship">{guarantor.relationship}</Row>
                 <Row label="Date of birth">{guarantor.date_of_birth}</Row>
-                <Row label="Phone">{guarantor.phone}</Row>
+                <Row label="Phone">{formatPhoneDisplay(guarantor.phone)}</Row>
                 <Row label="Email">{guarantor.email}</Row>
                 <Row label="Address">{guarantor.address}</Row>
                 <Row label="Employer">{guarantor.employer}</Row>
-                <Row label="Employer phone">{guarantor.employer_phone}</Row>
+                <Row label="Employer phone">{formatPhoneDisplay(guarantor.employer_phone)}</Row>
               </>
             )}
           </IntakeCard>
@@ -358,9 +847,9 @@ function IntakeSections({ patient, onDownloadConsent }) {
             <Row label="Auto carrier">{caseDetails.auto_carrier}</Row>
             <Row label="Claim #">{caseDetails.claim_number}</Row>
             <Row label="Adjuster name">{caseDetails.adjuster_name}</Row>
-            <Row label="Adjuster phone">{caseDetails.adjuster_phone}</Row>
+            <Row label="Adjuster phone">{formatPhoneDisplay(caseDetails.adjuster_phone)}</Row>
             <Row label="Attorney name">{caseDetails.attorney_name}</Row>
-            <Row label="Attorney phone">{caseDetails.attorney_phone}</Row>
+            <Row label="Attorney phone">{formatPhoneDisplay(caseDetails.attorney_phone)}</Row>
             <Row label="Attorney email">{caseDetails.attorney_email}</Row>
             <Row label="Employer for claim">{caseDetails.employer_for_claim}</Row>
             <Row label="Workers' comp carrier">{caseDetails.work_comp_carrier}</Row>
@@ -435,7 +924,7 @@ function RecordDialog({ open, onClose, patientId, onAdded, onReauthNeeded }) {
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent data-testid="record-create-dialog" className="max-w-lg rounded-sm">
         <DialogHeader>
-          <DialogTitle className="font-['Outfit']">Add medical record</DialogTitle>
+          <DialogTitle className="font-display">Add medical record</DialogTitle>
         </DialogHeader>
         <form onSubmit={submit} className="space-y-4">
           <div className="space-y-1"><Label>Type</Label>
@@ -462,7 +951,7 @@ function RecordDialog({ open, onClose, patientId, onAdded, onReauthNeeded }) {
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose} className="rounded-sm">Cancel</Button>
             <Button type="submit" disabled={submitting} data-testid="record-submit-btn"
-              className="rounded-sm bg-[#7B9A82] hover:bg-[#65826C]">
+              className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]">
               {submitting ? "Saving…" : "Add record"}
             </Button>
           </DialogFooter>
@@ -476,6 +965,13 @@ export default function PatientDetail() {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => searchParams.get("tab") || "overview");
+  useEffect(() => {
+    const urlTab = searchParams.get("tab");
+    if (urlTab && urlTab !== tab) setTab(urlTab);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
   const canAddRecord = user.role === "admin" || user.role === "doctor";
   const canDelete = user.role === "admin";
   const canEditIntake = ["admin", "doctor", "staff"].includes(user.role);
@@ -495,6 +991,23 @@ export default function PatientDetail() {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleteReason, setDeleteReason] = useState("");
   const [editWizardOpen, setEditWizardOpen] = useState(false);
+  const [intakeWizardOpen, setIntakeWizardOpen] = useState(false);
+  const [editingIntakeForm, setEditingIntakeForm] = useState(null);
+  const [intakeRefreshKey, setIntakeRefreshKey] = useState(0);
+  const [chargeRecord, setChargeRecord] = useState(null);
+  const { providers } = useProviders();
+  const [recordsRange, setRecordsRange] = useState(null);
+  const [appointmentsRange, setAppointmentsRange] = useState(null);
+  const [intakeRange, setIntakeRange] = useState(null);
+
+  const filteredRecords = useMemo(
+    () => (records || []).filter((r) => isInRange(r.recorded_at, recordsRange)),
+    [records, recordsRange],
+  );
+  const filteredAppointments = useMemo(
+    () => (appointments || []).filter((a) => isInRange(a.start_time, appointmentsRange)),
+    [appointments, appointmentsRange],
+  );
 
   const load = useCallback(
     async ({ withUnmask = false, breakGlassReason = null } = {}) => {
@@ -578,6 +1091,54 @@ export default function PatientDetail() {
     }
   }
 
+  async function openEditPatientWizard() {
+    if (patient.unmasked) {
+      setEditWizardOpen(true);
+      return;
+    }
+    if (canUnmask) {
+      try {
+        setUnmask(true);
+        await load({ withUnmask: true, breakGlassReason: reason });
+        setEditWizardOpen(true);
+      } catch (err) {
+        setUnmask(false);
+        toast.error(formatApiError(err));
+      }
+      return;
+    }
+    toast.message("Break-glass required to edit patient", {
+      description: "Enter a reason above to unmask this record before editing.",
+    });
+  }
+
+  async function openIntakeWizard(intakeForm) {
+    if (!intakeForm) {
+      toast.error("No intake form selected.");
+      return;
+    }
+    if (patient.unmasked) {
+      setEditingIntakeForm(intakeForm);
+      setIntakeWizardOpen(true);
+      return;
+    }
+    if (canUnmask) {
+      try {
+        setUnmask(true);
+        await load({ withUnmask: true, breakGlassReason: reason });
+        setEditingIntakeForm(intakeForm);
+        setIntakeWizardOpen(true);
+      } catch (err) {
+        setUnmask(false);
+        toast.error(formatApiError(err));
+      }
+      return;
+    }
+    toast.message("Break-glass required to edit intake", {
+      description: "Enter a reason above to unmask this record before editing.",
+    });
+  }
+
   if (reasonRequired && !reason) {
     return (
       <BreakGlassDialog
@@ -606,7 +1167,7 @@ export default function PatientDetail() {
   return (
     <div data-testid="patient-detail-page" className="space-y-10 animate-in fade-in duration-300">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Button variant="ghost" asChild className="text-[#526B58]">
+        <Button variant="ghost" asChild className="text-primary">
           <Link to="/patients" data-testid="patient-back-link">
             <ArrowLeft className="mr-2 h-4 w-4" /> All patients
           </Link>
@@ -627,40 +1188,6 @@ export default function PatientDetail() {
               {unmask ? "Mask" : "Unmask (audited)"}
             </Button>
           )}
-          {canEditIntake && (
-            <Button
-              variant="outline"
-              onClick={async () => {
-                if (patient.unmasked) {
-                  setEditWizardOpen(true);
-                  return;
-                }
-                // Inline unmask flow — if the staff member is allowed to
-                // unmask (admin), flip it automatically and open the wizard
-                // right after the patient reloads. Audit trail still fires.
-                if (canUnmask) {
-                  try {
-                    setUnmask(true);
-                    await load({ withUnmask: true, breakGlassReason: reason });
-                    setEditWizardOpen(true);
-                  } catch (err) {
-                    setUnmask(false);
-                    toast.error(formatApiError(err));
-                  }
-                  return;
-                }
-                // Non-admin clinicians still need break-glass — nudge them
-                // to supply a reason instead of silently failing.
-                toast.message("Break-glass required to edit intake", {
-                  description: "Enter a reason above to unmask this record before editing.",
-                });
-              }}
-              data-testid="patient-edit-intake-btn"
-              className="rounded-sm"
-            >
-              <Pencil className="mr-2 h-4 w-4" /> Edit intake
-            </Button>
-          )}
           {canExport && (
             <Button
               variant="outline"
@@ -676,7 +1203,7 @@ export default function PatientDetail() {
               variant="outline"
               onClick={() => setDeleteConfirm(true)}
               data-testid="patient-delete-btn"
-              className="rounded-sm border-[#C76D54] text-[#C76D54] hover:bg-[#FBF1EE]"
+              className="rounded-sm border-destructive text-destructive hover:bg-destructive-soft"
             >
               <Trash2 className="mr-2 h-4 w-4" /> Soft-delete
             </Button>
@@ -686,21 +1213,21 @@ export default function PatientDetail() {
 
       <header className="flex flex-wrap items-start justify-between gap-6">
         <div>
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
             Patient profile {patient.unmasked ? "" : "· masked"}
           </span>
-          <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight text-[#1F2924]">
+          <h1 className="mt-2 font-display text-4xl font-medium tracking-tight text-foreground">
             {patient.unmasked
               ? `${patient.first_name} ${patient.last_name}`
               : patient.display_name_masked || "—"}
           </h1>
-          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-[#5C6A61]">
+          <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground">
             {patient.date_of_birth && <span>DOB {patient.unmasked ? formatDate(patient.date_of_birth) : patient.date_of_birth}</span>}
-            {patient.phone && <span>{patient.phone}</span>}
+            {patient.phone && <span>{formatPhoneDisplay(patient.phone)}</span>}
             {patient.email && <span>{patient.email}</span>}
             {patient.gender && <span>{patient.gender}</span>}
             {patient.status === "deleted" && (
-              <span className="rounded-sm bg-[#FBF1EE] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[#C76D54]">
+              <span className="rounded-sm bg-destructive-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-destructive">
                 Deleted · retained until {patient.retention_until ? formatDate(patient.retention_until) : "—"}
               </span>
             )}
@@ -708,115 +1235,209 @@ export default function PatientDetail() {
         </div>
       </header>
 
-      <section className="grid grid-cols-1 gap-6 md:grid-cols-3">
-        <div className="rounded-sm border border-stone-200 bg-white p-6">
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">Address</span>
-          <p className="mt-3 text-sm leading-relaxed text-[#1F2924]">{patient.address || "—"}</p>
-        </div>
-        <div className="rounded-sm border border-stone-200 bg-white p-6">
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">Emergency contact</span>
-          <p className="mt-3 text-sm leading-relaxed text-[#1F2924]">{patient.emergency_contact || "—"}</p>
-        </div>
-        <div className="rounded-sm border border-stone-200 bg-white p-6">
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">Intake notes</span>
-          <p className="mt-3 text-sm leading-relaxed text-[#1F2924]">{patient.notes || "—"}</p>
-        </div>
-      </section>
+      <Tabs
+        value={tab}
+        onValueChange={(v) => {
+          setTab(v);
+          // keep URL in sync so deep-links (e.g. ?tab=clinical) survive
+          const next = new URLSearchParams(searchParams);
+          if (v === "overview") next.delete("tab");
+          else next.set("tab", v);
+          setSearchParams(next, { replace: true });
+        }}
+        data-testid="patient-detail-tabs"
+      >
+        <TabsList
+          data-testid="patient-detail-tablist"
+          className="flex h-auto w-full flex-wrap justify-start gap-1 rounded-sm bg-muted/60 p-1"
+        >
+          <TabsTrigger value="overview" data-testid="tab-overview" className="rounded-sm">Overview</TabsTrigger>
+          <TabsTrigger value="intake" data-testid="tab-intake" className="rounded-sm">Intake</TabsTrigger>
+          <TabsTrigger value="clinical" data-testid="tab-clinical" className="rounded-sm">Clinical</TabsTrigger>
+          <TabsTrigger value="documents" data-testid="tab-documents" className="rounded-sm">Documents &amp; Attachments</TabsTrigger>
+          <TabsTrigger value="records" data-testid="tab-records" className="rounded-sm">Medical Records</TabsTrigger>
+          <TabsTrigger value="appointments" data-testid="tab-appointments" className="rounded-sm">Appointments</TabsTrigger>
+          <TabsTrigger value="insurance" data-testid="tab-insurance" className="rounded-sm">Insurance</TabsTrigger>
+          <TabsTrigger value="billing" data-testid="tab-billing" className="rounded-sm">Billing &amp; Ledger</TabsTrigger>
+        </TabsList>
 
-      <IntakeSections patient={patient} onDownloadConsent={downloadConsentPdf} />
+        <TabsContent value="overview" className="mt-6">
+          <PatientOverview
+            patient={patient}
+            providers={providers}
+            canEdit={canEditIntake}
+            onEdit={openEditPatientWizard}
+          />
+        </TabsContent>
 
-      <PatientDocumentsCard patientId={id} canEdit={canEditIntake} />
+        <TabsContent value="intake" className="mt-6 space-y-6">
+          <IntakeFormsTab
+            patientId={id}
+            patient={patient}
+            range={intakeRange}
+            onRangeChange={setIntakeRange}
+            canEdit={canEditIntake}
+            onNew={openIntakeWizard}
+            onEdit={openIntakeWizard}
+            refreshKey={intakeRefreshKey}
+          />
+        </TabsContent>
 
-      <section>
-        <div className="mb-4 flex items-end justify-between">
-          <div>
-            <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">Clinical history</span>
-            <h2 className="mt-1 font-['Outfit'] text-2xl font-medium tracking-tight">Medical records</h2>
-          </div>
-          {canAddRecord && (
-            <Button
-              onClick={() => setRecDialog(true)}
-              data-testid="record-new-btn"
-              className="rounded-sm bg-[#7B9A82] hover:bg-[#65826C]"
-            >
-              <Plus className="mr-2 h-4 w-4" /> Add record
-            </Button>
-          )}
-        </div>
+        <TabsContent value="documents" className="mt-6 space-y-6">
+          <IntakeSections patient={patient} onDownloadConsent={downloadConsentPdf} />
+          <PatientDocumentsCard patientId={id} canEdit={canEditIntake} />
+        </TabsContent>
 
-        {records === null ? (
-          <Skeleton className="h-32" />
-        ) : records.length === 0 ? (
-          <div className="rounded-sm border border-dashed border-stone-200 bg-white p-12 text-center text-sm text-[#5C6A61]">
-            No medical records yet.
-          </div>
-        ) : (
-          <ol className="relative space-y-4 border-l border-stone-200 pl-6">
-            {records.map((r) => (
-              <li key={r.id} data-testid={`record-${r.id}`} className="relative rounded-sm border border-stone-200 bg-white p-5">
-                <span className="absolute -left-[33px] top-5 flex h-5 w-5 items-center justify-center rounded-sm bg-[#EDF2EE] text-[#526B58]">
-                  <FileText className="h-3 w-3" />
-                </span>
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <span className="rounded-sm bg-[#F5F5F0] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[#5C6A61]">
-                      {r.record_type}
+        <TabsContent value="clinical" className="mt-6">
+          <ClinicalTab
+            patientId={id}
+            providers={providers}
+            canWrite={canAddRecord}
+            currentUser={user}
+            onReauthNeeded={() => {
+              setReauthIntent("clinical");
+              setReauthOpen(true);
+            }}
+          />
+        </TabsContent>
+
+        <TabsContent value="records" className="mt-6">
+          <section>
+            <div className="mb-4 flex items-end justify-between gap-4">
+              <div>
+                <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Clinical history</span>
+                <h2 className="mt-1 font-display text-2xl font-medium tracking-tight">Medical records</h2>
+              </div>
+              {canAddRecord && (
+                <Button
+                  onClick={() => setRecDialog(true)}
+                  data-testid="record-new-btn"
+                  className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
+                >
+                  <Plus className="mr-2 h-4 w-4" /> Add record
+                </Button>
+              )}
+            </div>
+
+            <DateRangeFilter
+              testId="records-date-range"
+              onChange={setRecordsRange}
+              className="mb-4"
+            />
+
+            {records === null ? (
+              <Skeleton className="h-32" />
+            ) : filteredRecords.length === 0 ? (
+              <div className="rounded-sm border border-dashed border-border bg-card p-12 text-center text-sm text-muted-foreground">
+                {records.length === 0
+                  ? "No medical records yet."
+                  : "No medical records in the selected range."}
+              </div>
+            ) : (
+              <ol className="relative space-y-4 border-l border-border pl-6">
+                {filteredRecords.map((r) => (
+                  <li key={r.id} data-testid={`record-${r.id}`} className="relative rounded-sm border border-border bg-card p-5">
+                    <span className="absolute -left-[33px] top-5 flex h-5 w-5 items-center justify-center rounded-sm bg-primary/10 text-primary">
+                      <FileText className="h-3 w-3" />
                     </span>
-                    <h3 className="mt-2 font-['Outfit'] text-lg font-medium text-[#1F2924]">{r.title}</h3>
-                  </div>
-                  <div className="text-xs text-[#5C6A61]">
-                    {formatDateTime(r.recorded_at)} · {r.recorded_by_name || "—"}
-                  </div>
-                </div>
-                {r.description && <p className="mt-3 text-sm leading-relaxed text-[#1F2924]">{r.description}</p>}
-                <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
-                  {r.diagnosis && (
-                    <div><span className="text-[11px] uppercase tracking-wider text-[#5C6A61]">Diagnosis</span>
-                      <div className="text-[#1F2924]">{r.diagnosis}</div></div>
-                  )}
-                  {r.treatment && (
-                    <div><span className="text-[11px] uppercase tracking-wider text-[#5C6A61]">Treatment</span>
-                      <div className="text-[#1F2924]">{r.treatment}</div></div>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ol>
-        )}
-      </section>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <span className="rounded-sm bg-muted px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          {r.record_type}
+                        </span>
+                        {r.signed_at && (
+                          <span className="ml-2 rounded-sm bg-success-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-success">
+                            Signed
+                          </span>
+                        )}
+                        {r.charge_status === "captured" && (
+                          <span className="ml-2 rounded-sm bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
+                            Charges captured
+                          </span>
+                        )}
+                        <h3 className="mt-2 font-display text-lg font-medium text-foreground">{r.title}</h3>
+                      </div>
+                      <div className="flex flex-col items-end gap-2">
+                        <div className="text-xs text-muted-foreground">
+                          {formatDateTime(r.recorded_at)} · {r.recorded_by_name || "—"}
+                        </div>
+                        <Button
+                          size="sm" variant="outline"
+                          onClick={() => setChargeRecord(r)}
+                          data-testid={`record-charge-capture-${r.id}`}
+                        >
+                          {r.charge_status === "captured" ? "View captured" : "Code & capture"}
+                        </Button>
+                      </div>
+                    </div>
+                    {r.description && <p className="mt-3 text-sm leading-relaxed text-foreground">{r.description}</p>}
+                    <div className="mt-3 grid grid-cols-2 gap-4 text-sm">
+                      {r.diagnosis && (
+                        <div><span className="text-[11px] uppercase tracking-wider text-muted-foreground">Diagnosis</span>
+                          <div className="text-foreground">{r.diagnosis}</div></div>
+                      )}
+                      {r.treatment && (
+                        <div><span className="text-[11px] uppercase tracking-wider text-muted-foreground">Treatment</span>
+                          <div className="text-foreground">{r.treatment}</div></div>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+        </TabsContent>
 
-      <section>
-        <div className="mb-4">
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">Scheduling</span>
-          <h2 className="mt-1 font-['Outfit'] text-2xl font-medium tracking-tight">Appointments</h2>
-        </div>
-        {appointments === null ? (
-          <Skeleton className="h-24" />
-        ) : appointments.length === 0 ? (
-          <div className="rounded-sm border border-dashed border-stone-200 bg-white p-10 text-center text-sm text-[#5C6A61]">
-            No appointments for this patient.
-          </div>
-        ) : (
-          <ul className="space-y-2">
-            {appointments.map((a) => (
-              <li key={a.id} className="flex items-center justify-between rounded-sm border border-stone-200 bg-white px-5 py-4 text-sm">
-                <div>
-                  <div className="font-medium text-[#1F2924]">{formatDateTime(a.start_time)}</div>
-                  <div className="text-xs text-[#5C6A61]">
-                    with {a.provider_name} · {relativeFromNow(a.start_time)}
-                  </div>
-                </div>
-                <span className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
-                  a.status === "cancelled" ? "bg-[#FBF1EE] text-[#C76D54]"
-                    : a.status === "completed" ? "bg-[#F5F5F0] text-[#5C6A61]"
-                    : "bg-[#EDF2EE] text-[#526B58]"}`}>
-                  {a.status}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+        <TabsContent value="appointments" className="mt-6">
+          <section>
+            <div className="mb-4">
+              <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">Scheduling</span>
+              <h2 className="mt-1 font-display text-2xl font-medium tracking-tight">Appointments</h2>
+            </div>
+            <DateRangeFilter
+              testId="appointments-date-range"
+              onChange={setAppointmentsRange}
+              className="mb-4"
+            />
+            {appointments === null ? (
+              <Skeleton className="h-24" />
+            ) : filteredAppointments.length === 0 ? (
+              <div className="rounded-sm border border-dashed border-border bg-card p-10 text-center text-sm text-muted-foreground">
+                {appointments.length === 0
+                  ? "No appointments for this patient."
+                  : "No appointments in the selected range."}
+              </div>
+            ) : (
+              <ul className="space-y-2">
+                {filteredAppointments.map((a) => (
+                  <li key={a.id} className="flex items-center justify-between rounded-sm border border-border bg-card px-5 py-4 text-sm">
+                    <div>
+                      <div className="font-medium text-foreground">{formatDateTime(a.start_time)}</div>
+                      <div className="text-xs text-muted-foreground">
+                        with {a.provider_name} · {relativeFromNow(a.start_time)}
+                      </div>
+                    </div>
+                    <span className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
+                      a.status === "cancelled" ? "bg-destructive-soft text-destructive"
+                        : a.status === "completed" ? "bg-muted text-muted-foreground"
+                        : "bg-primary/10 text-primary"}`}>
+                      {a.status}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </TabsContent>
+
+        <TabsContent value="insurance" className="mt-6">
+          <PatientInsuranceManager patientId={id} />
+        </TabsContent>
+
+        <TabsContent value="billing" className="mt-6">
+          <PatientLedgerCard patientId={id} />
+        </TabsContent>
+      </Tabs>
 
       {canAddRecord && (
         <RecordDialog
@@ -831,6 +1452,14 @@ export default function PatientDetail() {
           }}
         />
       )}
+
+      <ChargeCaptureDialog
+        open={!!chargeRecord}
+        onOpenChange={(v) => !v && setChargeRecord(null)}
+        record={chargeRecord}
+        patientId={id}
+        onUpdated={() => load({ reason, unmask })}
+      />
 
       <ReauthDialog
         open={reauthOpen}
@@ -851,7 +1480,7 @@ export default function PatientDetail() {
       <AlertDialog open={deleteConfirm} onOpenChange={(v) => !v && setDeleteConfirm(false)}>
         <AlertDialogContent data-testid="patient-delete-confirm" className="rounded-sm">
           <AlertDialogHeader>
-            <AlertDialogTitle className="font-['Outfit']">Soft-delete patient?</AlertDialogTitle>
+            <AlertDialogTitle className="font-display">Soft-delete patient?</AlertDialogTitle>
             <AlertDialogDescription>
               The record will be archived and retained for 7 years, per our retention policy. It will
               disappear from the active list but stay recoverable for compliance.
@@ -873,7 +1502,7 @@ export default function PatientDetail() {
               data-testid="patient-delete-confirm-btn"
               disabled={deleteReason.trim().length < 8}
               onClick={softDelete}
-              className="rounded-sm bg-[#C76D54] hover:bg-[#B35F47]"
+              className="rounded-sm bg-destructive hover:brightness-95"
             >
               Soft-delete
             </AlertDialogAction>
@@ -882,17 +1511,48 @@ export default function PatientDetail() {
       </AlertDialog>
 
       {canEditIntake && (
-        <PatientWizardDialog
-          open={editWizardOpen}
-          onClose={() => setEditWizardOpen(false)}
-          mode="edit"
-          patientId={id}
-          initialForm={payloadToForm(patient)}
-          userId={user.id}
-          tenantId={user.tenant_id}
-          onSaved={() => load({ withUnmask: unmask, breakGlassReason: reason })}
-        />
+        <>
+          <PatientWizardDialog
+            open={editWizardOpen}
+            onClose={() => setEditWizardOpen(false)}
+            mode="edit"
+            scope="patient"
+            patientId={id}
+            initialForm={payloadToForm(patient)}
+            userId={user.id}
+            tenantId={user.tenant_id}
+            onSaved={() => load({ withUnmask: unmask, breakGlassReason: reason })}
+          />
+          <PatientWizardDialog
+            open={intakeWizardOpen}
+            onClose={() => {
+              setIntakeWizardOpen(false);
+              setEditingIntakeForm(null);
+            }}
+            mode="edit"
+            scope="intake"
+            patientId={id}
+            intakeFormId={editingIntakeForm?.id}
+            intakeFormStatus={editingIntakeForm?.status}
+            initialForm={
+              editingIntakeForm
+                ? payloadToForm({
+                    ...patient,
+                    clinical_intake: editingIntakeForm.clinical_intake,
+                    case_details: editingIntakeForm.case_details,
+                  })
+                : payloadToForm(patient)
+            }
+            userId={user.id}
+            tenantId={user.tenant_id}
+            onSaved={() => {
+              setIntakeRefreshKey((k) => k + 1);
+              load({ withUnmask: unmask, breakGlassReason: reason });
+            }}
+          />
+        </>
       )}
     </div>
   );
 }
+

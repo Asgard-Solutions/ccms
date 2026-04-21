@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 53 - Phase 3-9 Reports expansion. Backend: 71/71 regression pytest green + 17/17 new Phase 3-9 smoke tests green (catalog shape 22/7cats exact, all 12 new reports POST /run OK, saved-view column whitelist on POST+PATCH returns 400 'Unknown columns...', tenant isolation verified with sunrise group-admin, PHI/non-PHI catalog flags). Frontend: column reorder up/down arrows work correctly with boundary-disable, Reset button restores default column order, payments_by_method_summary total aggregate renders as $7,915.00. FOUND 1 FE BUG: active_patients_summary 'by_status' aggregate (object-valued) is silently dropped by AggregatesBar because it only handles `typeof v === number`. Backend returns `{by_status: {active: 156, deleted: 3}}` correctly, but UI filters it out.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "ReportViewer.AggregatesBar (frontend/src/pages/reports/ReportViewer.jsx lines 797-830)",
+        "issue": "Aggregates with object values (e.g. by_status={active:156,deleted:3}) are silently dropped. The loop only keeps entries where typeof v === 'number', so for active_patients_summary the aggregates strip renders nothing even though the backend returned the data. Review-request item #6 ('Aggregates strip shows by_status counts for active_patients_summary') is therefore NOT met on the UI.",
+        "selector": "[data-testid=report-aggregates]",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration53_reports_phase3_9.py",
+    "/app/test_reports/pytest/iteration_53_phase3_9.xml",
+    "/app/test_reports/pytest/iteration_53_regression.xml"
+  ],
+  "action_items": [
+    "Extend AggregatesBar in ReportViewer.jsx to render object-valued aggregates. Suggested: when typeof v === 'object', iterate v's entries and emit one tile per sub-key (e.g. 'by_status: active' -> 156, 'by_status: deleted' -> 3). Alternatively, flatten on the backend into by_status_active / by_status_deleted numeric keys."
+  ],
+  "critical_code_review_comments": [
+    "AggregatesBar silently discards non-number aggregates. Prefer explicit rendering or a console.warn so regressions in aggregate shape don't go unnoticed.",
+    "Saved-view PATCH endpoint lives at /api/reports/views/{view_id} (not nested under the report slug). The README/docs should make this explicit to avoid integration confusion - caught this in test authoring.",
+    "Reports endpoints are re-auth protected (good HIPAA posture). Backend tests must go login -> /api/auth/reauth. Already done in test_reports_phase2_e2e.py; the new iter53 file follows the same pattern."
+  ],
+  "updated_files": ["/app/backend/tests/test_iteration53_reports_phase3_9.py"],
+  "success_rate": {"backend": "100% (88/88: 71 regression + 17 new)", "frontend": "83% (5/6 review items verified in UI; by_status aggregate rendering fails)"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (reauth via 'Use password instead' in PIN dialog). Tenant B: group-admin@sunrise.ccms.app / Sunrise@ComplianceClinic1",
+  "seed_data_creation": "Ephemeral saved views prefixed TEST_* were created and deleted in the same test.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 3-9 backend (catalog, 12 new reports, view whitelist, tenant isolation) is fully green. Column reorder + Reset UI work. Only remaining issue: AggregatesBar doesn't render object-valued aggregates like by_status. After E1 fixes that, retest active_patients_summary page to confirm the aggregates strip shows the active/deleted counts. Regression commands: `cd /app/backend && python -m pytest tests/test_reports_framework.py tests/test_reports_phase2_e2e.py tests/test_reports_catalog.py tests/test_iteration53_reports_phase3_9.py -q`.",
+  "rca of the issue": "ReportViewer.jsx:AggregatesBar (lines 802-812) iterates Object.entries(aggregates) but only pushes entries where typeof v === 'number'. For active_patients_summary the backend emits aggregates={by_status: {active: 156, deleted: 3}}. Since the value is an object the loop skips it, entries.length stays 0, and AggregatesBar returns null. The data-testid='report-aggregates' element is therefore not rendered. Reproduction: login as admin, navigate to /reports/active_patients_summary, observe the page has no aggregates strip even though curl POST /api/reports/active_patients_summary/run returns the by_status dict. Mitigation: add an `else if (typeof v === 'object' && v)` branch that flattens per sub-key, e.g. entries.push({key: `${k}.${sub}`, label: `${k.replace('_',' ')}: ${sub}`, value: num.toLocaleString()})."
+}

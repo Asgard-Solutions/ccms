@@ -57,13 +57,13 @@ export default function Notifications() {
     <div data-testid="notifications-page" className="space-y-8 animate-in fade-in duration-300">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
             Communication service
           </span>
-          <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight">
+          <h1 className="mt-2 font-display text-4xl font-medium tracking-tight">
             Notification log
           </h1>
-          <p className="mt-2 max-w-2xl text-sm text-[#5C6A61]">
+          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
             Mock email and SMS messages. Recipient addresses and body content
             are masked by default — administrators can unmask with a reason.
           </p>
@@ -89,8 +89,8 @@ export default function Notifications() {
             onClick={() => setFilter(f.v)}
             className={`rounded-sm border px-4 py-1.5 text-sm font-medium transition-colors ${
               filter === f.v
-                ? "border-[#7B9A82] bg-[#EDF2EE] text-[#526B58]"
-                : "border-stone-200 bg-white text-[#5C6A61] hover:bg-[#F5F5F0]"
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border bg-card text-muted-foreground hover:bg-muted"
             }`}
           >
             {f.l}
@@ -103,10 +103,10 @@ export default function Notifications() {
           {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-20 rounded-sm" />)}
         </div>
       ) : items.length === 0 ? (
-        <div className="rounded-sm border border-dashed border-stone-200 bg-white p-16 text-center">
-          <BellRing className="mx-auto h-10 w-10 text-[#A3AFA7]" />
-          <p className="mt-4 font-['Outfit'] text-lg">No notifications yet</p>
-          <p className="mt-1 text-sm text-[#5C6A61]">
+        <div className="rounded-sm border border-dashed border-border bg-card p-16 text-center">
+          <BellRing className="mx-auto h-10 w-10 text-muted-foreground/70" />
+          <p className="mt-4 font-display text-lg">No notifications yet</p>
+          <p className="mt-1 text-sm text-muted-foreground">
             Book, reschedule, or cancel an appointment to see the event bus in
             action.
           </p>
@@ -115,37 +115,37 @@ export default function Notifications() {
         <div className="space-y-8">
           {Array.from(grouped.entries()).map(([day, list]) => (
             <div key={day}>
-              <div className="mb-3 text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+              <div className="mb-3 text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
                 {day}
               </div>
               <ul className="space-y-2">
                 {list.map((n) => (
-                  <li key={n.id} data-testid={`notif-${n.id}`} className="rounded-sm border border-stone-200 bg-white p-5">
+                  <li key={n.id} data-testid={`notif-${n.id}`} className="rounded-sm border border-border bg-card p-5">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
-                        <span className="rounded-sm bg-[#EDF2EE] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[#526B58]">
+                        <span className="rounded-sm bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary">
                           {n.event_type}
                         </span>
-                        <span className="rounded-sm bg-[#F5F5F0] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[#5C6A61]">
+                        <span className="rounded-sm bg-muted px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
                           {n.channel}
                         </span>
-                        <span className="text-xs text-[#5C6A61]">→ {n.to_address || "—"}</span>
+                        <span className="text-xs text-muted-foreground">→ {n.to_address || "—"}</span>
                         {n.unmasked && (
-                          <span className="rounded-sm bg-[#FDF6ED] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-[#D4A373]">
+                          <span className="rounded-sm bg-warning-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-warning">
                             Unmasked
                           </span>
                         )}
                       </div>
-                      <span className="text-xs text-[#5C6A61]">
+                      <span className="text-xs text-muted-foreground">
                         {formatDateTime(n.created_at)} · {relativeFromNow(n.created_at)}
                       </span>
                     </div>
                     {n.subject && (
-                      <div className="mt-3 font-['Outfit'] text-base font-medium text-[#1F2924]">
+                      <div className="mt-3 font-display text-base font-medium text-foreground">
                         {n.subject}
                       </div>
                     )}
-                    <p className="mt-1 text-sm leading-relaxed text-[#5C6A61]">{n.body || "—"}</p>
+                    <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{n.body || "—"}</p>
                   </li>
                 ))}
               </ul>

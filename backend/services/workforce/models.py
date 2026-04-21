@@ -3,7 +3,18 @@ from __future__ import annotations
 
 from typing import Literal, Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+
+
+def _normalize_phone_field(value: str | None) -> str | None:
+    from core.phone import normalize_us_phone
+
+    if value in (None, ""):
+        return None
+    try:
+        return normalize_us_phone(value)
+    except ValueError as exc:
+        raise ValueError(f"Phone: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -19,11 +30,21 @@ class InviteCreate(BaseModel):
     phone: str | None = None
     ttl_hours: int = Field(default=72, ge=1, le=168)
 
+    @model_validator(mode="after")
+    def _normalize_phone(self):
+        self.phone = _normalize_phone_field(self.phone)
+        return self
+
 
 class InviteAccept(BaseModel):
     token: str = Field(min_length=20)
     password: str = Field(min_length=12, max_length=128)
     phone: str | None = None
+
+    @model_validator(mode="after")
+    def _normalize_phone(self):
+        self.phone = _normalize_phone_field(self.phone)
+        return self
 
 
 # ---------------------------------------------------------------------------

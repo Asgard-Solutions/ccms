@@ -21,6 +21,7 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import { UserCog, UserPlus, Trash2, Shield, KeyRound, Users } from "lucide-react";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
   const [rows, setRows] = useState([]);
@@ -30,6 +31,7 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
     reason: "",
     expires_at: "",
   });
+  const [confirmRevoke, setConfirmRevoke] = useState(null);
 
   const load = async () => {
     if (!user) return;
@@ -71,13 +73,13 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
   };
 
   const revoke = async (id) => {
-    if (!window.confirm("Revoke this override?")) return;
     try {
       await api.delete(`/authz/users/${user.id}/overrides/${id}`);
       toast.success("Override revoked");
       load();
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Revoke failed");
+      throw err;
     }
   };
 
@@ -98,10 +100,10 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3 rounded-sm border border-stone-200 p-3">
+        <div className="space-y-3 rounded-sm border border-border p-3">
           <div className="grid gap-2 sm:grid-cols-2">
             <div>
-              <label className="text-xs uppercase tracking-wider text-[#5C6A61]">
+              <label className="text-xs uppercase tracking-wider text-muted-foreground">
                 Permission
               </label>
               <Input
@@ -120,7 +122,7 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
               </datalist>
             </div>
             <div>
-              <label className="text-xs uppercase tracking-wider text-[#5C6A61]">
+              <label className="text-xs uppercase tracking-wider text-muted-foreground">
                 Scope
               </label>
               <Select
@@ -150,7 +152,7 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
             </div>
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wider text-[#5C6A61]">
+            <label className="text-xs uppercase tracking-wider text-muted-foreground">
               Reason (min 10 chars)
             </label>
             <Input
@@ -161,7 +163,7 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
             />
           </div>
           <div>
-            <label className="text-xs uppercase tracking-wider text-[#5C6A61]">
+            <label className="text-xs uppercase tracking-wider text-muted-foreground">
               Expires (ISO datetime — leave blank for permanent)
             </label>
             <Input
@@ -177,20 +179,20 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
             disabled={
               !form.permission_key || form.reason.trim().length < 10
             }
-            className="bg-[#7B9A82] hover:bg-[#65826C]"
+            className="bg-primary hover:bg-[var(--primary-hover)]"
           >
             Grant override
           </Button>
         </div>
 
         <div className="mt-4">
-          <div className="mb-2 text-xs uppercase tracking-wider text-[#5C6A61]">
+          <div className="mb-2 text-xs uppercase tracking-wider text-muted-foreground">
             Existing overrides
           </div>
           {rows.length === 0 ? (
-            <div className="text-sm text-[#5C6A61]">No overrides.</div>
+            <div className="text-sm text-muted-foreground">No overrides.</div>
           ) : (
-            <ul className="divide-y divide-stone-100">
+            <ul className="divide-y divide-border">
               {rows.map((o) => (
                 <li
                   key={o.id}
@@ -199,10 +201,10 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
                 >
                   <div>
                     <div className="font-mono text-[11px]">{o.permission_key}</div>
-                    <div className="text-xs text-[#5C6A61]">
+                    <div className="text-xs text-muted-foreground">
                       scope: {o.scope} · {o.reason}
                     </div>
-                    <div className="text-[10px] text-stone-400">
+                    <div className="text-[10px] text-muted-foreground/70">
                       granted by {o.granted_by_email} · {new Date(o.created_at).toLocaleString()}
                       {o.expires_at && ` · expires ${o.expires_at}`}
                     </div>
@@ -213,13 +215,13 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
                         data-testid={`override-revoke-btn-${o.id}`}
                         size="sm"
                         variant="ghost"
-                        className="rounded-sm text-[#B8715C]"
-                        onClick={() => revoke(o.id)}
+                        className="rounded-sm text-destructive"
+                        onClick={() => setConfirmRevoke(o)}
                       >
                         <Trash2 className="mr-1 h-3 w-3" /> Revoke
                       </Button>
                     ) : (
-                      <Badge className="bg-stone-100 text-stone-500">revoked</Badge>
+                      <Badge className="bg-muted text-muted-foreground">revoked</Badge>
                     )}
                   </div>
                 </li>
@@ -227,6 +229,22 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
             </ul>
           )}
         </div>
+        <ConfirmDialog
+          open={!!confirmRevoke}
+          onOpenChange={(v) => !v && setConfirmRevoke(null)}
+          title="Revoke this override?"
+          description={
+            confirmRevoke
+              ? `Permission "${confirmRevoke.permission_key}" (scope: ${confirmRevoke.scope}) will be revoked for ${user?.email}.`
+              : undefined
+          }
+          confirmLabel="Revoke"
+          destructive
+          onConfirm={async () => {
+            if (confirmRevoke) await revoke(confirmRevoke.id);
+          }}
+          testId="override-revoke-confirm"
+        />
       </DialogContent>
     </Dialog>
   );
@@ -241,6 +259,7 @@ export default function RoleManagement() {
   const [overridesUser, setOverridesUser] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
   const [pendingRole, setPendingRole] = useState("");
+  const [confirmRevokeRole, setConfirmRevokeRole] = useState(null);
 
   const load = async () => {
     try {
@@ -282,13 +301,13 @@ export default function RoleManagement() {
   };
 
   const revokeRole = async (user, roleKey) => {
-    if (!window.confirm(`Revoke role "${roleKey}" from ${user.email}?`)) return;
     try {
       await api.delete(`/authz/users/${user.id}/roles/${roleKey}`);
       toast.success("Role revoked");
       load();
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Revoke failed");
+      throw err;
     }
   };
 
@@ -296,15 +315,15 @@ export default function RoleManagement() {
     <div data-testid="role-management-page" className="space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="font-['Outfit'] text-3xl font-medium text-[#1F2924]">
+          <h1 className="font-display text-3xl font-medium text-foreground">
             Role management
           </h1>
-          <p className="mt-1 max-w-2xl text-sm text-[#5C6A61]">
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Assign baseline roles to users. Each assignment bumps the user's
             session epoch so existing tokens are revoked immediately.
           </p>
         </div>
-        <Badge className="bg-[#EDF2EE] text-[#526B58]">
+        <Badge className="bg-primary/10 text-primary">
           <Shield className="mr-1 h-3 w-3" />
           {roles.length} roles · {users.length} users
         </Badge>
@@ -313,13 +332,13 @@ export default function RoleManagement() {
       <Card className="rounded-sm">
         <CardHeader>
           <CardTitle className="text-base font-normal flex items-center gap-2">
-            <Users className="h-4 w-4 text-[#5C6A61]" /> Users & role assignments
+            <Users className="h-4 w-4 text-muted-foreground" /> Users & role assignments
           </CardTitle>
         </CardHeader>
         <CardContent className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wider text-[#5C6A61]">
+              <tr className="text-left text-[11px] uppercase tracking-wider text-muted-foreground">
                 <th className="px-3 py-2">User</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Legacy role</th>
@@ -333,7 +352,7 @@ export default function RoleManagement() {
                   key={u.id}
                   user={u}
                   onAssign={() => openAssign(u)}
-                  onRevoke={(rk) => revokeRole(u, rk)}
+                  onRevoke={(rk) => setConfirmRevokeRole({ user: u, roleKey: rk })}
                   onOverrides={() => setOverridesUser(u)}
                 />
               ))}
@@ -351,26 +370,26 @@ export default function RoleManagement() {
             <div
               key={r.key}
               data-testid={`role-card-${r.key}`}
-              className="flex items-start justify-between rounded-sm border border-stone-200 px-4 py-3"
+              className="flex items-start justify-between rounded-sm border border-border px-4 py-3"
             >
               <div>
-                <div className="font-medium text-[#1F2924]">
+                <div className="font-medium text-foreground">
                   {r.name}{" "}
-                  <span className="text-[11px] uppercase tracking-wider text-[#5C6A61]">
+                  <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
                     · {r.abbr}
                   </span>
                 </div>
-                <div className="text-sm text-[#5C6A61]">{r.description}</div>
+                <div className="text-sm text-muted-foreground">{r.description}</div>
                 {r.privileged && (
-                  <Badge className="mt-1 bg-[#FDF0EA] text-[#B8715C]">privileged</Badge>
+                  <Badge className="mt-1 bg-accent text-accent-foreground">privileged</Badge>
                 )}
                 {r.service_account && (
-                  <Badge className="mt-1 ml-1 bg-[#EDF2EE] text-[#526B58]">
+                  <Badge className="mt-1 ml-1 bg-primary/10 text-primary">
                     service account
                   </Badge>
                 )}
               </div>
-              <div className="text-right text-xs text-[#5C6A61]">
+              <div className="text-right text-xs text-muted-foreground">
                 {r.grants?.length || 0} grants
               </div>
             </div>
@@ -408,7 +427,7 @@ export default function RoleManagement() {
               data-testid="assign-role-confirm"
               onClick={assignRole}
               disabled={!pendingRole}
-              className="bg-[#7B9A82] hover:bg-[#65826C]"
+              className="bg-primary hover:bg-[var(--primary-hover)]"
             >
               <UserPlus className="mr-2 h-4 w-4" />
               Assign
@@ -422,6 +441,24 @@ export default function RoleManagement() {
         open={!!overridesUser}
         onOpenChange={(o) => !o && setOverridesUser(null)}
         permissions={permissions}
+      />
+
+      <ConfirmDialog
+        open={!!confirmRevokeRole}
+        onOpenChange={(v) => !v && setConfirmRevokeRole(null)}
+        title="Revoke role?"
+        description={
+          confirmRevokeRole
+            ? `Remove role "${confirmRevokeRole.roleKey}" from ${confirmRevokeRole.user.email}? All active sessions will be revoked.`
+            : undefined
+        }
+        confirmLabel="Revoke role"
+        destructive
+        onConfirm={async () => {
+          if (confirmRevokeRole)
+            await revokeRole(confirmRevokeRole.user, confirmRevokeRole.roleKey);
+        }}
+        testId="role-revoke-confirm"
       />
     </div>
   );
@@ -447,25 +484,25 @@ function UserRow({ user, onAssign, onRevoke, onOverrides }) {
   return (
     <tr
       data-testid={`user-row-${user.id}`}
-      className="border-t border-stone-100 align-top"
+      className="border-t border-border align-top"
     >
       <td className="px-3 py-2">
-        <div className="font-medium text-[#1F2924]">{user.name}</div>
-        <div className="text-xs text-[#5C6A61]">{user.email}</div>
+        <div className="font-medium text-foreground">{user.name}</div>
+        <div className="text-xs text-muted-foreground">{user.email}</div>
       </td>
       <td className="px-3 py-2">
         <Badge
           className={
             user.status === "disabled"
-              ? "bg-[#FDE8E3] text-[#B8715C]"
-              : "bg-[#EDF2EE] text-[#526B58]"
+              ? "bg-destructive-soft text-destructive"
+              : "bg-primary/10 text-primary"
           }
         >
           {user.status || "active"}
         </Badge>
       </td>
-      <td className="px-3 py-2 text-sm text-[#5C6A61]">{user.role}</td>
-      <td className="px-3 py-2 text-xs text-[#5C6A61]">
+      <td className="px-3 py-2 text-sm text-muted-foreground">{user.role}</td>
+      <td className="px-3 py-2 text-xs text-muted-foreground">
         {userRoles.length ? userRoles.join(", ") : "via legacy role"}
       </td>
       <td className="px-3 py-2">
@@ -485,7 +522,7 @@ function UserRow({ user, onAssign, onRevoke, onOverrides }) {
             size="sm"
             variant="ghost"
             onClick={onOverrides}
-            className="rounded-sm text-[#5C6A61]"
+            className="rounded-sm text-muted-foreground"
           >
             <KeyRound className="mr-1 h-3 w-3" />
             Overrides

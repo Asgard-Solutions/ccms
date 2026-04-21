@@ -114,6 +114,10 @@ Environment variables are sourced from `/app/backend/.env` and
 - **Document vault** — insurance cards, IDs, referrals, imaging. Streaming
   uploads to `SpooledTemporaryFile`, 10 MB hard cap, declared-vs-sniffed MIME
   cross-check, reauth-gated, audited.
+- **Per-user theming** — Light / Dark / System preference picker in the
+  top-bar, persisted to the user's profile and synced on every login.
+  Dark mode is driven by CSS variables + semantic utility classes for
+  zero-flash, per-page rewrites.
 - **Signed consent PDFs** — ReportLab renders a one-page signed consent on
   demand; supports HIPAA / treatment / financial / telehealth / photo-release
   + custom consents in `consents.additional`.

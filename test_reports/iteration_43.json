@@ -1,0 +1,32 @@
+{
+  "summary": "End-to-end validation of the refactored step-up re-auth flow (ReauthDialog + POST /api/auth/reauth) for the 6-digit Security PIN. Backend: 15/15 pytest cases pass against the preview URL (14 in the provided test_reauth_pin_step_up.py + 1 new case I added for DELETE /auth/me/pin rejecting pin-only payloads). Frontend: Walked a freshly-seeded staff user with a configured PIN through the Account > Security > Reset PIN flow; the global ReauthGate interceptor correctly intercepts the 401, pops the new ReauthDialog in PIN mode, digit stripping + 6-char cap work, toggles between PIN and password render and switch modes, and the success toast shows 'PIN confirmed — you have 5 minutes.' followed by the downstream 'Security PIN reset.' toast.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_reauth_pin_step_up.py",
+    "/app/test_reports/pytest/iteration_43_reauth_pin.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "identity/router.py reauth handler correctly branches on payload.pin vs password, reuses the shared pin_failed_attempts / pin_locked_until counter with /auth/me/pin/verify, and emits a single auth.reauth success audit row with metadata={factor, reason}. ObjectId is excluded via projection {_id:0}.",
+    "ReauthRequest.model_validator enforces 'exactly one of password/pin'; tests confirm 422 for both-at-once and neither, and 422 for wrong-shape PINs (non-digit, <6, >6).",
+    "DELETE /auth/me/pin now receives the shared ReauthRequest but explicitly rejects pin-only payloads with a 400 and the message 'Password is required to remove a PIN.' — defence-in-depth preserved. Added a regression test for this.",
+    "ReauthDialog.jsx: default mode correctly derived from user.pin_configured; data-reauth-mode is exposed on the DialogContent for testability; 423 response auto-falls-back to password mode and re-fetches /auth/me so UI state stays consistent; optional reason input only rendered when requireReason || reason truthy; submit button disabled-state tracks /^\\d{6}$/.test(pin) for pin mode and password.length>0 for password mode.",
+    "Toast strings match the spec exactly: 'PIN confirmed — you have 5 minutes.' vs 'Identity confirmed — you have 5 minutes.' (driven by response.data.factor from the backend).",
+    "Lockout sharing is genuine: 4 wrong PINs via /auth/reauth + 1 wrong via /auth/me/pin/verify trips the 423 — proving the counter lives on the user document, not per-endpoint."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_reauth_pin_step_up.py (added test_delete_pin_rejects_pin_only_payload)"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100% (dialog open in pin mode, digit strip, toggle pin<->password, 6-digit gating of submit, PIN confirmed toast, downstream pin/reset succeeded)"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 ; throwaway staff reauthui_ce4ef8b3@ccms.app / Reauth1@Strong_ce4ef8b3! with PIN 246813 (rotated to 987654 during test)",
+  "seed_data_creation": "Created one throwaway staff user via POST /api/auth/users and set a PIN via POST /api/auth/me/pin for the UI walkthrough; each pytest function seeds its own user.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend tests require REACT_APP_BACKEND_URL to be exported before invoking pytest (Secure cookies will not be set on http://localhost). The global ReauthGate in ReauthProvider intercepts 401 with detail='Re-authentication required for this action.' — you can reproduce the flow quickly by (1) configuring a PIN via /auth/me/pin, (2) visiting /account > Security tab, (3) clicking data-testid=pin-reset-btn and submitting the reset dialog. The new ReauthDialog exposes data-reauth-mode=pin|password on its DialogContent for assertions. Reason input (data-testid=reauth-reason-input) is only rendered when requireReason=true or a defaultReason is supplied via useReauth().requestReauth({requireReason:true,defaultReason:'…'}).",
+  "rca of the issue": "N/A — no functional bug observed. All 15 backend cases green, all frontend assertions green."
+}

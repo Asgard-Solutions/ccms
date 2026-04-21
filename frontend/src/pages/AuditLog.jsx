@@ -20,13 +20,13 @@ const QUICK_FILTERS = [
 
 function outcomeChip(outcome) {
   const map = {
-    success: "bg-[#EDF2EE] text-[#526B58]",
-    failure: "bg-[#FBF1EE] text-[#C76D54]",
+    success: "bg-primary/10 text-primary",
+    failure: "bg-destructive-soft text-destructive",
   };
   return (
     <span
       className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
-        map[outcome] || "bg-stone-100"
+        map[outcome] || "bg-muted"
       }`}
     >
       {outcome}
@@ -129,13 +129,13 @@ export default function AuditLog() {
     <div data-testid="audit-page" className="space-y-8 animate-in fade-in duration-300">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+          <span className="text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
             Compliance
           </span>
-          <h1 className="mt-2 font-['Outfit'] text-4xl font-medium tracking-tight">
+          <h1 className="mt-2 font-display text-4xl font-medium tracking-tight">
             Audit log
           </h1>
-          <p className="mt-2 max-w-2xl text-sm text-[#5C6A61]">
+          <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
             Every login, view, mutation, unmask and break-glass event. Retained
             for 7 years in line with HIPAA technical safeguard recommendations.
           </p>
@@ -144,7 +144,7 @@ export default function AuditLog() {
           data-testid="audit-export-csv"
           onClick={downloadCsv}
           disabled={exporting}
-          className="rounded-sm bg-[#1F2924] text-white hover:bg-[#0F1A15]"
+          className="rounded-sm bg-primary text-primary-foreground hover:bg-[var(--primary-hover)]"
         >
           <Download className="mr-2 h-4 w-4" />
           {exporting ? "Exporting…" : "Export CSV"}
@@ -159,8 +159,8 @@ export default function AuditLog() {
             onClick={() => setFilter(f.v)}
             className={`rounded-sm border px-3 py-1.5 text-sm font-medium transition-colors ${
               filter === f.v
-                ? "border-[#7B9A82] bg-[#EDF2EE] text-[#526B58]"
-                : "border-stone-200 bg-white text-[#5C6A61] hover:bg-[#F5F5F0]"
+                ? "border-primary bg-primary/10 text-primary"
+                : "border-border bg-card text-muted-foreground hover:bg-muted"
             }`}
           >
             {f.l}
@@ -168,13 +168,13 @@ export default function AuditLog() {
         ))}
       </div>
 
-      <div className="rounded-sm border border-stone-200 bg-white p-4">
-        <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.15em] text-[#5C6A61]">
+      <div className="rounded-sm border border-border bg-card p-4">
+        <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.15em] text-muted-foreground">
           <Filter className="h-3.5 w-3.5" /> Advanced filters
         </div>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-5">
           <div>
-            <Label className="text-[11px] text-[#5C6A61]">Actor email</Label>
+            <Label className="text-[11px] text-muted-foreground">Actor email</Label>
             <Input
               data-testid="audit-actor-email"
               value={actorEmail}
@@ -184,7 +184,7 @@ export default function AuditLog() {
             />
           </div>
           <div>
-            <Label className="text-[11px] text-[#5C6A61]">Entity id</Label>
+            <Label className="text-[11px] text-muted-foreground">Entity id</Label>
             <Input
               data-testid="audit-entity-id"
               value={entityId}
@@ -194,7 +194,7 @@ export default function AuditLog() {
             />
           </div>
           <div>
-            <Label className="text-[11px] text-[#5C6A61]">From (UTC)</Label>
+            <Label className="text-[11px] text-muted-foreground">From (UTC)</Label>
             <Input
               data-testid="audit-date-from"
               type="datetime-local"
@@ -204,7 +204,7 @@ export default function AuditLog() {
             />
           </div>
           <div>
-            <Label className="text-[11px] text-[#5C6A61]">To (UTC)</Label>
+            <Label className="text-[11px] text-muted-foreground">To (UTC)</Label>
             <Input
               data-testid="audit-date-to"
               type="datetime-local"
@@ -214,12 +214,12 @@ export default function AuditLog() {
             />
           </div>
           <div>
-            <Label className="text-[11px] text-[#5C6A61]">Limit</Label>
+            <Label className="text-[11px] text-muted-foreground">Limit</Label>
             <select
               data-testid="audit-limit"
               value={limit}
               onChange={(e) => setLimit(Number(e.target.value))}
-              className="h-9 w-full rounded-sm border border-stone-200 bg-white px-2 text-sm"
+              className="h-9 w-full rounded-sm border border-border bg-card px-2 text-sm"
             >
               <option value={50}>50</option>
               <option value={100}>100</option>
@@ -230,13 +230,13 @@ export default function AuditLog() {
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <div className="relative max-w-xs flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#A3AFA7]" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground/70" />
             <Input
               data-testid="audit-search"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="actor, action, entity id, reason…"
-              className="h-9 rounded-sm border-stone-200 pl-9"
+              className="h-9 rounded-sm border-border pl-9"
             />
           </div>
           <Button
@@ -247,7 +247,7 @@ export default function AuditLog() {
           >
             Reset
           </Button>
-          <span data-testid="audit-result-count" className="ml-auto text-xs text-[#5C6A61]">
+          <span data-testid="audit-result-count" className="ml-auto text-xs text-muted-foreground">
             {filtered ? `${filtered.length} of ${rows?.length ?? 0} rows (capped at ${limit})` : "loading…"}
           </span>
         </div>
@@ -256,14 +256,14 @@ export default function AuditLog() {
       {filtered === null ? (
         <Skeleton className="h-80 rounded-sm" />
       ) : filtered.length === 0 ? (
-        <div className="rounded-sm border border-dashed border-stone-200 bg-white p-16 text-center">
-          <Shield className="mx-auto h-10 w-10 text-[#A3AFA7]" />
-          <p className="mt-4 font-['Outfit'] text-lg">No matching audit entries</p>
+        <div className="rounded-sm border border-dashed border-border bg-card p-16 text-center">
+          <Shield className="mx-auto h-10 w-10 text-muted-foreground/70" />
+          <p className="mt-4 font-display text-lg">No matching audit entries</p>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-sm border border-stone-200 bg-white">
+        <div className="overflow-hidden rounded-sm border border-border bg-card">
           <table className="w-full text-left text-sm">
-            <thead className="border-b border-stone-200 bg-[#FAF9F6] text-xs font-semibold uppercase tracking-wider text-[#5C6A61]">
+            <thead className="border-b border-border bg-background text-xs font-semibold uppercase tracking-wider text-muted-foreground">
               <tr>
                 <th className="px-4 py-3">When</th>
                 <th className="px-4 py-3">Action</th>
@@ -279,28 +279,28 @@ export default function AuditLog() {
                 <tr
                   key={r.id}
                   data-testid={`audit-row-${r.id}`}
-                  className="border-b border-stone-100 last:border-b-0 hover:bg-[#F5F5F0]/50"
+                  className="border-b border-border last:border-b-0 hover:bg-muted/50"
                 >
-                  <td className="px-4 py-3 align-top text-[#1F2924]">
+                  <td className="px-4 py-3 align-top text-foreground">
                     <div>{formatDateTime(r.created_at)}</div>
-                    <div className="text-xs text-[#5C6A61]">{relativeFromNow(r.created_at)}</div>
+                    <div className="text-xs text-muted-foreground">{relativeFromNow(r.created_at)}</div>
                   </td>
                   <td className="px-4 py-3 align-top">
                     <code className="font-mono text-xs">{r.action}</code>
                   </td>
                   <td className="px-4 py-3 align-top">
                     <div>{r.actor_email || "—"}</div>
-                    <div className="text-[11px] uppercase tracking-wider text-[#5C6A61]">
+                    <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
                       {r.actor_role || ""}
                     </div>
                     {r.ip && (
-                      <div className="mt-1 font-mono text-[10px] text-[#A3AFA7]">{r.ip}</div>
+                      <div className="mt-1 font-mono text-[10px] text-muted-foreground/70">{r.ip}</div>
                     )}
                   </td>
                   <td className="px-4 py-3 align-top">
                     {r.entity_type ? (
                       <>
-                        <div className="text-xs text-[#5C6A61]">{r.entity_type}</div>
+                        <div className="text-xs text-muted-foreground">{r.entity_type}</div>
                         <div className="truncate font-mono text-[11px]">
                           {r.entity_id ? (
                             r.entity_type === "patient" ? (
@@ -319,15 +319,15 @@ export default function AuditLog() {
                         </div>
                       </>
                     ) : (
-                      <span className="text-[#A3AFA7]">—</span>
+                      <span className="text-muted-foreground/70">—</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 align-top text-xs text-[#5C6A61]">
+                  <td className="px-4 py-3 align-top text-xs text-muted-foreground">
                     {r.reason ? (
-                      <span className="text-[#1F2924]">“{r.reason}”</span>
+                      <span className="text-foreground">“{r.reason}”</span>
                     ) : null}
                     {r.metadata && Object.keys(r.metadata).length > 0 && (
-                      <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11px] text-[#5C6A61]">
+                      <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[11px] text-muted-foreground">
                         {JSON.stringify(r.metadata, null, 0)}
                       </pre>
                     )}
@@ -335,11 +335,11 @@ export default function AuditLog() {
                   <td className="px-4 py-3 align-top">{outcomeChip(r.outcome)}</td>
                   <td className="px-4 py-3 align-top">
                     {r.phi_accessed ? (
-                      <span className="rounded-sm bg-[#FDF6ED] px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-[#D4A373]">
+                      <span className="rounded-sm bg-warning-soft px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-warning">
                         PHI
                       </span>
                     ) : (
-                      <span className="text-[#A3AFA7]">—</span>
+                      <span className="text-muted-foreground/70">—</span>
                     )}
                   </td>
                 </tr>

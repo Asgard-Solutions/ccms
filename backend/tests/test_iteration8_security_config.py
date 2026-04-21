@@ -20,7 +20,7 @@ import sys
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://clinic-intake-wiz.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://multi-tenant-clinic-2.preview.emergentagent.com").rstrip("/")
 API = f"{BASE_URL}/api"
 
 ADMIN = ("admin@ccms.app", "Admin@ComplianceClinic1")
@@ -208,7 +208,7 @@ class TestDOBEncryption:
         assert rexp.json()["patient"]["date_of_birth"] == "1985-06-15"
 
         # PUT update with a new DOB, re-encrypts + reads back correctly
-        rp = admin_session.put(
+        rp = admin_session.patch(
             f"{API}/patients/{pid}",
             json={"date_of_birth": "1990-01-02"},
             timeout=10,

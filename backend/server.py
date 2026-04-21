@@ -22,7 +22,25 @@ from core.logging_setup import configure as configure_logging  # noqa: E402
 from core.security_headers import install as install_security_headers  # noqa: E402
 from core.redis_client import close as close_redis, ping as redis_ping  # noqa: E402
 from services.audit.router import router as audit_router  # noqa: E402
+from services.clinic_profile.router import router as clinic_profile_router  # noqa: E402
+from services.clinical.router import router as clinical_router  # noqa: E402
+from services.clinical.history_router import router as clinical_history_router  # noqa: E402
+from services.clinical.diagnoses_router import router as clinical_diagnoses_router  # noqa: E402
+from services.clinical.encounters_router import appt_router as clinical_encounters_appt_router  # noqa: E402
+from services.clinical.encounters_router import patient_router as clinical_encounters_patient_router  # noqa: E402
+from services.clinical.exams_router import router as clinical_exams_router  # noqa: E402
+from services.clinical.notes_router import patient_router as clinical_notes_patient_router  # noqa: E402
+from services.clinical.notes_router import appt_router as clinical_notes_appt_router  # noqa: E402
+from services.clinical.treatment_plans_router import router as clinical_plans_router  # noqa: E402
+from services.clinical.reexams_router import router as clinical_reexams_router  # noqa: E402
+from services.clinical.media_router import router as clinical_media_router  # noqa: E402
+from services.clinical.outcomes_router import router as clinical_outcomes_router  # noqa: E402
+from services.clinical.addenda_router import router as clinical_addenda_router  # noqa: E402
+from services.clinical.billing_readiness_router import router as clinical_billing_readiness_router  # noqa: E402
+from services.appointment_types.router import router as appointment_types_router  # noqa: E402
 from services.authz.router import router as authz_router  # noqa: E402
+from services.billing.router import router as billing_router  # noqa: E402
+from services.billing.seed import seed_billing  # noqa: E402
 from services.authz.reporting import router as authz_reports_router  # noqa: E402
 from services.authz.seed import seed_authz  # noqa: E402
 from services.communication.router import router as communication_router  # noqa: E402
@@ -81,7 +99,32 @@ api_router.include_router(exports_router)
 api_router.include_router(compliance_ops_router)
 api_router.include_router(infra_router)
 api_router.include_router(workforce_router)
+api_router.include_router(clinic_profile_router)
+api_router.include_router(clinical_router)
+api_router.include_router(clinical_history_router)
+api_router.include_router(clinical_diagnoses_router)
+api_router.include_router(clinical_encounters_appt_router)
+api_router.include_router(clinical_encounters_patient_router)
+api_router.include_router(clinical_exams_router)
+api_router.include_router(clinical_notes_patient_router)
+api_router.include_router(clinical_notes_appt_router)
+api_router.include_router(clinical_plans_router)
+api_router.include_router(clinical_reexams_router)
+api_router.include_router(clinical_media_router)
+api_router.include_router(clinical_outcomes_router)
+api_router.include_router(clinical_addenda_router)
+api_router.include_router(clinical_billing_readiness_router)
+api_router.include_router(appointment_types_router)
+api_router.include_router(billing_router)
 api_router.include_router(metrics_router)  # GET /api/metrics
+
+# Non-production debug endpoints (rate-limit reset for integration tests).
+# Router itself returns 404 when APP_ENV=production, but we also avoid
+# advertising the route entirely in that mode.
+if (os.environ.get("APP_ENV") or "dev").strip().lower() != "production":
+    from core.debug_router import router as debug_router  # noqa: E402
+
+    api_router.include_router(debug_router)
 
 app.include_router(api_router)
 
@@ -154,6 +197,7 @@ async def on_startup():
     await seed_identity()
     await seed_authz()
     await seed_compliance_ops()
+    await seed_billing()
     # Purge expired export artifacts (best-effort — errors are logged).
     try:
         await cleanup_expired_exports()

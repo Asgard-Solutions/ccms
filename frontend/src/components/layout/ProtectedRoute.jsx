@@ -9,10 +9,10 @@ export default function ProtectedRoute({ children, roles }) {
     return (
       <div
         data-testid="auth-loading"
-        className="flex min-h-screen items-center justify-center bg-[#FAF9F6]"
+        className="flex min-h-screen items-center justify-center bg-background"
       >
-        <div className="flex items-center gap-3 text-sm text-[#5C6A61]">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-[#7B9A82]" />
+        <div className="flex items-center gap-3 text-sm text-muted-foreground">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-primary" />
           Loading your clinic…
         </div>
       </div>

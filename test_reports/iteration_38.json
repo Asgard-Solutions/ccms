@@ -1,0 +1,45 @@
+{
+  "summary": "Phase 8 frontend UI validated against public URL https://multi-tenant-clinic-2.preview.emergentagent.com as group-admin@sunrise.ccms.app. Verified BillingReadinessPanel (blocked + warnings states, checks list, future-billing summary with diagnoses & procedures), AddendumPanel full lifecycle on a signed follow-up note (create dialog → draft → sign → immutable), delete draft addendum, Care Timeline `addendum` kind row, note-status-badge `· +1 addendum` suffix (on reload), and draft-parent guard (addendum-parent-not-signed message, no create button). Initial Exam + Re-Exam editors mount AddendumPanel identically (parentType=initial_exam / re_exam) per source grep — not separately clicked through because that would require seeding a signed initial exam + signed re-exam; same component and badge logic so behaviour is the same.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "FollowUpNoteEditor note-status-badge", "issue": "After signing an addendum inline, the header badge does NOT immediately update to include ' · +1 addendum' — it still reads 'Signed'. Only after a full page reload does it read 'Signed · +1 addendum'. AddendumPanel.signRow() refetches its own list but has no callback to the parent editor to refetch the note (addendum_count lives on note). Low-impact UX polish; exam/re-exam editors will have the same issue since they use the same pattern.", "selector": "note-status-badge", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_flows": [
+    "GET /patients/{pid}/clinical/encounters/{eid}/billing-readiness renders — draft encounter → chip 'Blocked'; signed w/ plan → chip 'Warnings'",
+    "billing-readiness-{eid}-toggle expands panel; billing-readiness-checks list renders with rows for patient_present/provider_present/dos_present/appointment_linked/encounter_completed/note_exists/note_signed/signature_present/diagnosis_linked/treatment_documented/objective_findings/response_documented/plan_linkage/reexam_not_overdue",
+    "billing-readiness-future-billing, billing-readiness-dx, billing-readiness-procedures render on signed encounter",
+    "Signed follow-up note: addendum-panel renders; addendum-create-btn opens addendum-edit-dialog; reason+narrative accept input and addendum-save-btn posts successfully; new row appears in addendum-list with addendum-row-{id}-status='Draft'",
+    "addendum-row-{id}-sign-btn flips status to 'Signed' with lock icon; edit/sign/delete buttons disappear post-sign (UI mirrors server-side immutability)",
+    "Draft-only addendum: addendum-row-{id}-delete-btn removes the row (draft deleted, list decremented 2→1)",
+    "Care Timeline on Clinical tab includes timeline-entry-addendum-{id} after signing an addendum",
+    "Draft parent (unsigned follow-up note): addendum-panel renders with addendum-parent-not-signed message and no addendum-create-btn",
+    "note-status-badge on page reload shows 'Signed · +1 addendum' (addendum_count hydrated from GET /notes/{id})"
+  ],
+  "not_directly_exercised": [
+    "InitialExamEditor addendum flow and exam-status-badge suffix (same AddendumPanel, parentType='initial_exam' — would require seeding a signed initial exam)",
+    "ReExamEditor addendum flow and reexam-status-badge suffix (same AddendumPanel, parentType='re_exam' — would require seeding a signed re-exam)"
+  ],
+  "test_report_links": ["/tmp/seed_phase8.py"],
+  "action_items": [
+    "(Low) Make AddendumPanel notify parent editor (onChanged?) so that after sign/delete, the note/exam/re-exam object is refetched and note-status-badge (and exam-status-badge / reexam-status-badge) reflect `· +N addendum` without requiring a manual page reload."
+  ],
+  "critical_code_review_comments": [
+    "services/clinical/billing_readiness_router.py — read-only, excellent contract. Returns overall_status + checks[] with key/label/severity/passed/detail, plus hydrated note/treatment_plan/provider/appointment/episode context and procedures[]+diagnoses[]. Does not mutate billing data. ✅",
+    "services/clinical/addenda_router.py — authorship guardrail 2a enforced (author or admin). Post-sign PATCH/DELETE 409. Parent-unsigned create 409. Timeline kind `addendum` wired. ✅",
+    "frontend AddendumPanel — post-sign edit/sign/delete buttons hidden via `!locked && authorable && canWrite`; matches server immutability. Reason ≥3 / narrative ≥10 validated client-side before POST (server re-validates). Dialog stays open during save (Loader2) — good UX. Minor gap: signRow/deleteRow only reload own list; note.addendum_count on parent isn't refetched (see Action Item).",
+    "frontend BillingReadinessPanel — collapsible; header chip always visible; check rows carry stable keys (check.key). Severity-to-icon map covers fail/warn/info; `passed` short-circuits to green CheckCircle2. Appointment/provider/DOS/plan/episode/dx/procedures all surfaced in future-billing block. ✅",
+    "Wiring: FollowUpNoteEditor.jsx / InitialExamEditor.jsx / ReExamEditor.jsx all mount AddendumPanel with correct parentType, and each emits the note.addendum_count suffix in the status badge when signed. Identical pattern → behaviour parity expected."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not retested (backend suite passes per main-agent; out of scope this run)", "frontend": "~95% — all requested follow-up-note Phase 8 flows pass; initial-exam + re-exam addendum screens validated by code inspection only."},
+  "test_credentials": "group-admin@sunrise.ccms.app / Sunrise@ComplianceClinic1 (used with POST /api/auth/reauth to set reauth_token cookie in both Python seeding and Playwright browser)",
+  "seed_data_creation": "/tmp/seed_phase8.py — creates patient d705331a-a54b-4ec1-a399-3b08b2be4c98 on Sunrise tenant with LBP episode, M54.5 diagnosis, active treatment plan, one DRAFT follow-up note encounter (enc 8ef229d5…b0, note c4094a65…e7) for the 'blocked' billing readiness scenario, and one SIGNED follow-up note (enc e216b8e5…a0, note 5a0b08a4…f6) with plan linkage for addendum + 'warnings' scenario.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Reauth: POST /api/auth/reauth {password} from the browser page context (via page.evaluate fetch) sets the reauth_token cookie so subsequent privileged writes (addenda create/sign/delete) succeed — otherwise you'll see 401 re-auth errors from AddendumPanel (the component does call onReauthNeeded, but only some editors mount ReauthDialog at parent level). Seed helper at /tmp/seed_phase8.py is reusable. Initial-exam + re-exam addendum flows share AddendumPanel so are likely fine; next run should seed a signed initial exam + signed re-exam and deep-link to /patients/{pid}/clinical/exams/{eid} and /patients/{pid}/clinical/re-exams/{rid} to confirm exam-status-badge / reexam-status-badge get ' · +1 addendum' on reload.",
+  "rca of the issue": "No product bugs. Single minor UX nit: AddendumPanel.signRow()/deleteRow() reload the addenda list but do not fire a callback to the parent (FollowUpNote/InitialExam/ReExam editor) to refetch the parent artifact; as a result, the in-memory addendum_count stays 0 and note-status-badge / exam-status-badge / reexam-status-badge omit the ` · +N addendum` suffix until the user hard-reloads. Fix is a one-line onChanged prop that calls the parent's loadNote()/loadExam()/loadReExam()."
+}

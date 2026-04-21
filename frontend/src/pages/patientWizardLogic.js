@@ -78,6 +78,18 @@ function cleanStr(v) {
   return s === "" ? undefined : s;
 }
 
+// Strip US phone formatting → 10 digits. Blanks stay blank; values that
+// don't normalise cleanly pass through unchanged so the user doesn't
+// silently lose a legacy sub-format they typed.
+function cleanPhone(v) {
+  const s = cleanStr(v);
+  if (!s) return undefined;
+  const digits = s.replace(/\D+/g, "");
+  const trimmed =
+    digits.length === 11 && digits[0] === "1" ? digits.slice(1) : digits;
+  return trimmed.length === 10 ? trimmed : s;
+}
+
 function compactObj(obj) {
   const out = {};
   Object.entries(obj).forEach(([k, v]) => {
@@ -339,13 +351,13 @@ function buildPayload(form, _today = new Date()) {
     language: cleanStr(f.preferredLanguage),
     occupation: cleanStr(f.occupation),
     employer: cleanStr(f.employerName),
-    employer_phone: cleanStr(f.employerPhone),
+    employer_phone: cleanPhone(f.employerPhone),
   });
 
   const contact = compactObj({
-    phone: cleanStr(f.mobilePhone),
-    phone_alt: cleanStr(f.homePhone),
-    phone_work: cleanStr(f.workPhone),
+    phone: cleanPhone(f.mobilePhone),
+    phone_alt: cleanPhone(f.homePhone),
+    phone_work: cleanPhone(f.workPhone),
     email: cleanStr(f.email),
     preferred_contact_method: cleanStr(f.preferredContactMethod),
     sms_consent: f.smsConsent || undefined,
@@ -365,8 +377,8 @@ function buildPayload(form, _today = new Date()) {
   const emergencyContact = compactObj({
     name: cleanStr(f.emergencyContactName),
     relationship: cleanStr(f.emergencyContactRelationship),
-    phone: cleanStr(f.emergencyContactPhone),
-    phone_alt: cleanStr(f.emergencyContactAltPhone),
+    phone: cleanPhone(f.emergencyContactPhone),
+    phone_alt: cleanPhone(f.emergencyContactAltPhone),
     email: cleanStr(f.emergencyContactEmail),
   });
 
@@ -388,11 +400,11 @@ function buildPayload(form, _today = new Date()) {
       last_name: gName.last_name,
       relationship: cleanStr(f.guarantorRelationship),
       date_of_birth: cleanStr(f.guarantorDateOfBirth),
-      phone: cleanStr(f.guarantorPhone),
+      phone: cleanPhone(f.guarantorPhone),
       email: cleanStr(f.guarantorEmail),
       address: cleanStr(f.guarantorAddress),
       employer: cleanStr(f.guarantorEmployerName),
-      employer_phone: cleanStr(f.guarantorEmployerPhone),
+      employer_phone: cleanPhone(f.guarantorEmployerPhone),
     });
     if (!guarantor) guarantor = { same_as_patient: false };
   }
@@ -455,7 +467,7 @@ function buildPayload(form, _today = new Date()) {
       date_of_injury: cleanStr(f.accidentDate),
       auto_carrier: cleanStr(f.autoCarrier),
       adjuster_name: cleanStr(f.adjusterName),
-      adjuster_phone: cleanStr(f.adjusterPhone),
+      adjuster_phone: cleanPhone(f.adjusterPhone),
     });
   }
   if (vis.showWorkComp) {
@@ -465,13 +477,13 @@ function buildPayload(form, _today = new Date()) {
       // Shared with PI if both toggles are on.
       claim_number: cleanStr(f.claimNumber) || caseBase.claim_number,
       adjuster_name: caseBase.adjuster_name || cleanStr(f.adjusterName),
-      adjuster_phone: caseBase.adjuster_phone || cleanStr(f.adjusterPhone),
+      adjuster_phone: caseBase.adjuster_phone || cleanPhone(f.adjusterPhone),
     });
   }
   if (vis.showPersonalInjury) {
     Object.assign(caseBase, {
       attorney_name: cleanStr(f.attorneyName),
-      attorney_phone: cleanStr(f.attorneyPhone),
+      attorney_phone: cleanPhone(f.attorneyPhone),
       attorney_email: cleanStr(f.attorneyEmail),
       claim_number: cleanStr(f.claimNumber) || caseBase.claim_number,
     });
@@ -569,6 +581,18 @@ function _coerceStr(v) {
   return v === null || v === undefined ? "" : String(v);
 }
 
+// Display-ready phone coercion used by `payloadToForm` — turns a stored
+// 10-digit canonical value into `(XXX) XXX-XXXX` so the user sees pretty
+// values the moment the wizard opens. Non-canonical legacy values (e.g.
+// `+1-555-0102`) pass through unchanged so the field is still editable.
+function _coercePhone(v) {
+  const s = _coerceStr(v);
+  if (!s) return "";
+  const digits = s.replace(/\D+/g, "");
+  const d = digits.length === 11 && digits[0] === "1" ? digits.slice(1) : digits;
+  return d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : s;
+}
+
 function _consentAccepted(c) {
   return Boolean(c && c.accepted === true);
 }
@@ -634,11 +658,11 @@ function payloadToForm(patient) {
     preferredLanguage: _coerceStr(demo.language),
     occupation: _coerceStr(demo.occupation),
     employerName: _coerceStr(demo.employer),
-    employerPhone: _coerceStr(demo.employer_phone),
+    employerPhone: _coercePhone(demo.employer_phone),
     // Contact
-    mobilePhone: _coerceStr(contact.phone || patient.phone),
-    homePhone: _coerceStr(contact.phone_alt),
-    workPhone: _coerceStr(contact.phone_work),
+    mobilePhone: _coercePhone(contact.phone || patient.phone),
+    homePhone: _coercePhone(contact.phone_alt),
+    workPhone: _coercePhone(contact.phone_work),
     email: _coerceStr(contact.email || patient.email),
     preferredContactMethod: _coerceStr(contact.preferred_contact_method),
     smsConsent: Boolean(contact.sms_consent),
@@ -654,8 +678,8 @@ function payloadToForm(patient) {
     // Emergency contact
     emergencyContactName: _coerceStr(ec.name),
     emergencyContactRelationship: _coerceStr(ec.relationship),
-    emergencyContactPhone: _coerceStr(ec.phone),
-    emergencyContactAltPhone: _coerceStr(ec.phone_alt),
+    emergencyContactPhone: _coercePhone(ec.phone),
+    emergencyContactAltPhone: _coercePhone(ec.phone_alt),
     emergencyContactEmail: _coerceStr(ec.email),
     // Administrative
     assignedProviderId: _coerceStr(admin.primary_provider_id),
@@ -669,11 +693,11 @@ function payloadToForm(patient) {
     guarantorFullName: [g.first_name, g.last_name].filter(Boolean).join(" "),
     guarantorRelationship: _coerceStr(g.relationship),
     guarantorDateOfBirth: _coerceStr(g.date_of_birth),
-    guarantorPhone: _coerceStr(g.phone),
+    guarantorPhone: _coercePhone(g.phone),
     guarantorEmail: _coerceStr(g.email),
     guarantorAddress: _coerceStr(g.address),
     guarantorEmployerName: _coerceStr(g.employer),
-    guarantorEmployerPhone: _coerceStr(g.employer_phone),
+    guarantorEmployerPhone: _coercePhone(g.employer_phone),
     // Insurance
     hasInsurance: Boolean(ins && (Object.keys(primary).length || Object.keys(secondary).length)),
     primaryCarrier: _coerceStr(primary.carrier),
@@ -719,9 +743,9 @@ function payloadToForm(patient) {
     claimNumber: _coerceStr(cd.claim_number),
     autoCarrier: _coerceStr(cd.auto_carrier),
     adjusterName: _coerceStr(cd.adjuster_name),
-    adjusterPhone: _coerceStr(cd.adjuster_phone),
+    adjusterPhone: _coercePhone(cd.adjuster_phone),
     attorneyName: _coerceStr(cd.attorney_name),
-    attorneyPhone: _coerceStr(cd.attorney_phone),
+    attorneyPhone: _coercePhone(cd.attorney_phone),
     attorneyEmail: _coerceStr(cd.attorney_email),
     employerAtInjury: _coerceStr(cd.employer_for_claim),
     workCompCarrier: _coerceStr(cd.work_comp_carrier),

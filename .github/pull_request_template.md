@@ -57,3 +57,15 @@ Tick every box that applies. If a box is unticked, justify in the
 
 ## Screenshots / recordings
 <!-- UI changes: attach a before/after screenshot or a short clip. -->
+
+## Theme compliance (for any UI change)
+<!-- Required whenever frontend/src/** is modified. -->
+- [ ] `scripts/check_theme.py` passes (no raw hex, no raw palette classes)
+- [ ] Verified in **light** theme
+- [ ] Verified in **dark** theme
+- [ ] Focus states visible on every new interactive element
+- [ ] Uses semantic tokens only (`bg-primary`, `bg-card`,
+      `text-muted-foreground`, `bg-success-soft`, `border-border`, …)
+- [ ] No one-off color introduced; any new visual state consumes an
+      existing token or adds one centrally under review
+- [ ] Reviewed against `docs/theme/CHIRO_UI_REVIEW_AND_COMPLIANCE_CHECKLIST.md`

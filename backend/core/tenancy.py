@@ -203,6 +203,24 @@ def tenant_db(tenant_id: str | None) -> AsyncIOMotorDatabase:
     return _router.get_db(tenant_id)
 
 
+def reset_router_for_tests() -> None:
+    """Drop cached Motor clients so the next call rebuilds them on the
+    current event loop. Intended solely for pytest — Motor clients are
+    pinned to the loop they were created on, which breaks parametrised
+    `asyncio.run(...)` tests that spin up a fresh loop per case.
+
+    Also resets the `core.db` read/write clients for the same reason.
+    """
+    global _router
+    _router = TenantDatabaseRouter()
+    try:
+        from core import db as _db
+        _db._read_client = None
+        _db._write_client = None
+    except Exception:  # pragma: no cover
+        pass
+
+
 def tenant_router() -> TenantDatabaseRouter:
     return _router
 

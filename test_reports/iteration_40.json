@@ -1,0 +1,41 @@
+{
+  "summary": "End-to-end test of Account Settings (Profile + Security tabs) on /security. All 9 backend tests in test_profile_self_service.py pass against the public preview URL. Frontend tabs, deep-links, form fields, save round-trip, and regression of Security-tab cards (password/MFA/sessions/hardening) all verified. Admin profile reset to {display_name='Platform Admin', rest null} at end of run.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "/security -> Profile tab (bottom action row)",
+        "issues": [
+          "The sticky 'Made with Emergent' preview badge (bottom-right) visually overlaps the Save changes button footer. In the preview environment a real user click at the far-right edge of 'Save changes' can be intercepted by the badge. Consider adding extra bottom padding / margin on the profile-form action row (or bottom-right safe-area) so the Save button is never in the same pixels as the floating preview badge. Prod users won't hit this, but it makes manual QA in preview annoying."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_profile_self_service.py",
+    "/app/test_reports/pytest/iteration_40.xml"
+  ],
+  "action_items": [
+    "Optional: add `pb-16` (or similar) to the profile-form action row, or reposition save button to the left, so the preview-only 'Made with Emergent' badge does not overlap it. No functional bug — works in prod; affects QA/screenshot clarity only."
+  ],
+  "critical_code_review_comments": [
+    "ProfileTab builds a dirty-diff correctly (empty string trimmed -> backend treats as null). Good.",
+    "AuthContext.refresh() is awaited after PATCH — keeps the sidebar/header in sync with the saved display_name. Good.",
+    "Email-change flow relies on the shared reauth cookie already being present (users hit the header reauth modal before saving). The error-path message surfaced on 401+'re-auth' from the backend is clear. Consider auto-popping the reauth modal from the Profile form itself when the user changes only the email field, instead of asking them to 'Re-enter your password from the sidebar' — it's a UX papercut, not a bug.",
+    "Backend `_to_public` correctly syncs the legacy `name` column (display_name > first_name+last_name) and email collisions are 409 as expected.",
+    "Select value sentinel (__no_tz__) is handled. Good guard against shadcn SelectItem's empty-value constraint."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (used). Disposable users created via /api/auth/users during email-rotation test are left in DB with display_name 'Profile Test' and rotated emails 'profile_rotated_<hex>@ccms.app' — they don't affect any downstream suite because they are unique per run.",
+  "seed_data_creation": "Each run of test_email_change_with_reauth_succeeds_and_rotates_session creates a throwaway staff user via /api/auth/users and rotates their email. They are never used again. Admin profile (admin@ccms.app) was fully restored to blanks + display_name='Platform Admin'. Verified via /api/auth/me at end of run.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend must be pointed at the HTTPS preview URL (REACT_APP_BACKEND_URL) — auth cookies are set with `Secure`, so tests hitting http://localhost:8001 receive 401 because requests.Session won't replay a Secure cookie over plain HTTP. The existing pytest already reads the env var; just export it or rely on the shell env. When interacting with the save button in Playwright within the Emergent preview, the floating 'Made with Emergent' badge overlaps the bottom-right Save button; use `page.evaluate(btn.click())` instead of `page.click(force=True)` to avoid overlay interception. The admin profile was left clean (display_name='Platform Admin', everything else null).",
+  "rca_of_the_issue": "N/A — all tests pass. Only design note: preview-env overlay coincides with Save button pixel region. Not a prod defect."
+}

@@ -1,0 +1,40 @@
+{
+  "summary": "Validated Professional Licenses (Task Prompt 5) end-to-end. Backend: all 82 tests across the 5 affected files (test_professional_licenses, test_password_change_hardening, test_pin_security, test_reauth_pin_step_up, test_profile_self_service) pass against the HTTPS preview URL — confirming the new conftest.py rate-limit reset fixture + /api/_debug/rate-limit/reset endpoint work and the prior rate-limit leakage is gone. Frontend: Doctor role walk-through of /security?tab=licenses — add (DC/CA-987654/CA/2027-12-31/Sports medicine), duplicate rejected with 409 and toast 'A license with this type + state + number already exists.', edit persists across reload (Diversified technique + 2028-12-31), delete via ConfirmDialog removes the row. NPI card: saves 1234567890, persists across reload, non-digit input '12345abcde' is stripped to '12345' with inline 'NPI must be exactly 10 digits' error, empty save clears value and persists as ''. Staff role: Licenses tab trigger is not rendered (UI hides), direct API POST returns 403, GET returns 200 with empty list.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "LicensesTab — NpiCard & LicensesTab", "issues": ["Review request specifies NPI lives on the Profile tab, but the implementation places NpiCard inside LicensesTab.jsx (alongside the licenses card). Behaviour is correct and persists, but the spec/UI placement mismatch is worth flagging — consider adding a brief note on ProfileTab pointing clinicians to the Licenses tab for NPI, or moving the NpiCard into ProfileTab."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_professional_licenses.py",
+    "/app/backend/tests/test_password_change_hardening.py",
+    "/app/backend/tests/test_pin_security.py",
+    "/app/backend/tests/test_reauth_pin_step_up.py",
+    "/app/backend/tests/test_profile_self_service.py",
+    "/app/test_reports/pytest/iteration_44_licenses.xml"
+  ],
+  "action_items": [
+    "Optional: align UX with review-request spec — move NpiCard into ProfileTab (or add a ProfileTab hint linking to the Licenses tab) so NPI is discoverable under Profile as described in the handoff.",
+    "Minor console warning: react-select is switching from uncontrolled to controlled when issuing_state starts empty. Use '' or a sentinel rather than `form.issuing_state || undefined` in LicensesTab.jsx LicenseDialog (line 216). Non-blocking."
+  ],
+  "critical_code_review_comments": [
+    "core/debug_router.py correctly 404s under APP_ENV=production and does not touch PHI — only rate-limit counters. The `prefix=/_debug` + FastAPI app router prefix produces /api/_debug/rate-limit/reset which matches the conftest URL.",
+    "backend/tests/conftest.py uses `autouse=True` at module level with BASE_URL from REACT_APP_BACKEND_URL — correct for HTTPS preview so Secure cookies are returned on the subsequent login inside each test.",
+    "LicensesTab.jsx load() is idempotent and called after every mutation + on mount; no optimistic state, so the rows you see are always what the backend has. formatApiError surfaces the backend's 409 detail verbatim.",
+    "LicensesTab LicenseDialog `valid` gate enforces /^[A-Za-z]{2}$/ on state and /^\\d{4}-\\d{2}-\\d{2}$/ on expiration before enabling submit — matches ProfessionalLicense Pydantic validator on the backend, so users won't hit a 422 surprise.",
+    "ProfileTab handles the 401 re-auth path for email changes with a specific toast; works for NPI too (NPI via PATCH /auth/me/profile is non-PHI and doesn't trigger reauth, verified by test_profile_self_service + the UI walk-through).",
+    "NpiCard button is correctly gated by `dirty && valid && !saving` — the 'Save NPI' button stays disabled when the input equals the stored value, preventing no-op writes.",
+    "Staff-role UX is clean: the Licenses TabsTrigger is conditionally rendered under `isClinician` in Security.jsx — no broken tab, no 403 flash, and if they URL-hack to /security?tab=licenses the content panel is also conditional, so the tab silently falls back to Profile."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (82/82)", "frontend": "100% (doctor: add/dup-409/edit-persist/delete/NPI save+clear; staff: tab hidden + API 403 on write + 200 empty on read)"},
+  "test_credentials": "doctor@ccms.app / Doctor@ComplianceClinic1 ; staff@ccms.app / Staff@ComplianceClinic1 ; admin@ccms.app / Admin@ComplianceClinic1",
+  "seed_data_creation": "None persistent — doctor license rows created during the UI test were deleted as part of the test teardown; NPI value on doctor@ccms.app was cleared back to '' at the end of the run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Before running backend pytest, always: `export REACT_APP_BACKEND_URL=https://multi-tenant-clinic-2.preview.emergentagent.com` — conftest.py resets rate-limit state via POST $REACT_APP_BACKEND_URL/api/_debug/rate-limit/reset. The full 82-test run takes ~2m28s (exceeds the 120s foreground bash timeout), but every test logs individually to stdout — look at the junit XML at /app/test_reports/pytest/iteration_44_licenses.xml for the authoritative pass/fail. Duplicate-license error string is 'A license with this type + state + number already exists.' — use that exact text for toast assertions.",
+  "rca of the issue": "N/A — no functional bug observed. All 82 backend cases green, doctor+staff UI flows green. Only non-blocking items: (1) NPI card is under Licenses tab, not Profile tab as the handoff copy stated; (2) one benign uncontrolled->controlled React warning on the issuing_state <Select> when the dialog opens with a blank state."
+}

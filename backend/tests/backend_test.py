@@ -671,7 +671,7 @@ class TestSchedulingLifecycle:
         # reschedule
         ns = (datetime.fromisoformat(start) + timedelta(hours=1)).isoformat()
         ne = (datetime.fromisoformat(end) + timedelta(hours=1)).isoformat()
-        r = admin_session.put(f"{API}/appointments/{aid}", json={"start_time": ns, "end_time": ne}, timeout=10)
+        r = admin_session.patch(f"{API}/appointments/{aid}", json={"start_time": ns, "end_time": ne}, timeout=10)
         assert r.status_code == 200
 
         # cancel

@@ -19,13 +19,13 @@ function StatCard({ icon: Icon, label, value, sub, testId }) {
   return (
     <Card data-testid={testId} className="rounded-sm">
       <CardHeader className="pb-2">
-        <CardTitle className="flex items-center gap-2 text-sm font-normal text-[#5C6A61]">
+        <CardTitle className="flex items-center gap-2 text-sm font-normal text-muted-foreground">
           <Icon className="h-4 w-4" /> {label}
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="font-['Outfit'] text-3xl font-medium text-[#1F2924]">{value}</div>
-        {sub && <div className="mt-1 text-xs text-[#5C6A61]">{sub}</div>}
+        <div className="font-display text-3xl font-medium text-foreground">{value}</div>
+        {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
   );
@@ -39,22 +39,22 @@ function EventList({ title, rows, emptyText, testId }) {
       </CardHeader>
       <CardContent>
         {!rows?.length ? (
-          <div className="text-sm text-[#5C6A61]">{emptyText}</div>
+          <div className="text-sm text-muted-foreground">{emptyText}</div>
         ) : (
-          <ul className="divide-y divide-stone-100 text-sm">
+          <ul className="divide-y divide-border text-sm">
             {rows.slice(0, 15).map((r, i) => (
               <li key={i} className="py-2">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <div className="font-mono text-[11px] text-[#1F2924]">{r.action}</div>
-                    <div className="text-xs text-[#5C6A61]">
+                    <div className="font-mono text-[11px] text-foreground">{r.action}</div>
+                    <div className="text-xs text-muted-foreground">
                       {r.actor_email || "—"} {r.entity_type ? `· ${r.entity_type}:${r.entity_id}` : ""}
                     </div>
                     {r.reason && (
-                      <div className="text-[11px] text-[#B8715C]">{r.reason}</div>
+                      <div className="text-[11px] text-destructive">{r.reason}</div>
                     )}
                   </div>
-                  <time className="shrink-0 text-[11px] text-stone-400">
+                  <time className="shrink-0 text-[11px] text-muted-foreground/70">
                     {new Date(r.created_at).toLocaleString()}
                   </time>
                 </div>
@@ -132,10 +132,10 @@ export default function AccessReview() {
     <div data-testid="access-review-page" className="space-y-6">
       <header className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="font-['Outfit'] text-3xl font-medium text-[#1F2924]">
+          <h1 className="font-display text-3xl font-medium text-foreground">
             Access review
           </h1>
-          <p className="mt-1 max-w-2xl text-sm text-[#5C6A61]">
+          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             Compliance evidence snapshot. Highlights privileged users, recent
             role changes, PHI access, exports, break-glass events and failed
             authorizations. Back-end reports require MFA re-auth.
@@ -186,14 +186,14 @@ export default function AccessReview() {
       <Card data-testid="privileged-users-card" className="rounded-sm">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base font-normal">
-            <ShieldCheck className="h-4 w-4 text-[#5C6A61]" /> Privileged users
-            <Badge className="bg-[#FDF0EA] text-[#B8715C]">{privileged.length}</Badge>
+            <ShieldCheck className="h-4 w-4 text-muted-foreground" /> Privileged users
+            <Badge className="bg-accent text-accent-foreground">{privileged.length}</Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <table className="min-w-full text-sm">
             <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wider text-[#5C6A61]">
+              <tr className="text-left text-[11px] uppercase tracking-wider text-muted-foreground">
                 <th className="px-2 py-1">Email</th>
                 <th className="px-2 py-1">Name</th>
                 <th className="px-2 py-1">Role</th>
@@ -203,14 +203,14 @@ export default function AccessReview() {
             </thead>
             <tbody>
               {privileged.map((u, i) => (
-                <tr key={i} className="border-t border-stone-100">
+                <tr key={i} className="border-t border-border">
                   <td className="px-2 py-1 font-mono text-[11px]">{u.email}</td>
                   <td className="px-2 py-1">{u.name}</td>
                   <td className="px-2 py-1 text-xs">{u.role_key}</td>
                   <td className="px-2 py-1">
-                    <Badge className="bg-[#EDF2EE] text-[#526B58]">{u.status || "active"}</Badge>
+                    <Badge className="bg-primary/10 text-primary">{u.status || "active"}</Badge>
                   </td>
-                  <td className="px-2 py-1 text-xs text-[#5C6A61]">
+                  <td className="px-2 py-1 text-xs text-muted-foreground">
                     {u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "—"}
                   </td>
                 </tr>
@@ -285,7 +285,7 @@ export default function AccessReview() {
               data-testid="access-review-reauth-submit"
               onClick={submitReauth}
               disabled={!reauthPassword || reauthBusy}
-              className="bg-[#7B9A82] hover:bg-[#65826C]"
+              className="bg-primary hover:bg-[var(--primary-hover)]"
             >
               <Lock className="mr-2 h-4 w-4" />
               Confirm

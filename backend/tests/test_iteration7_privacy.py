@@ -387,7 +387,7 @@ class TestConsentsAndPrefs:
         assert j["marketing_opt_in"] is False
 
     def test_comm_prefs_partial_update(self, patient_sess):
-        r = patient_sess.put(
+        r = patient_sess.patch(
             f"{BASE_URL}/api/privacy/communication-preferences",
             json={"sms_opt_in": True},
             timeout=10,
@@ -396,7 +396,7 @@ class TestConsentsAndPrefs:
         j = r.json()
         assert j["sms_opt_in"] is True
         # email_opt_in unchanged from prior state
-        r2 = patient_sess.put(
+        r2 = patient_sess.patch(
             f"{BASE_URL}/api/privacy/communication-preferences",
             json={"sms_opt_in": False},
             timeout=10,

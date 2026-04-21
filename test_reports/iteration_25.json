@@ -1,0 +1,51 @@
+{
+  "summary": "CCMS Billing Phase 2 (Insurance Setup + Encounter Charge Capture + Fee Schedules) validated end-to-end. Backend: 13/13 test_billing_phase2.py PASS and 40/40 test_billing.py (Phase 1) PASS — zero regressions. Frontend: PatientInsuranceManager renders above ledger card, Add policy flow replays via ReauthGate and successfully creates a policy (12 → 13 rows). ChargeCaptureDialog opens from each medical record, preview shows price_source='self_pay_schedule' with correct $60.00 total for CPT 98940, SIGNED + CAPTURED chips render on already-processed records. ClinicSettings `/settings/clinic` renders Payers (80 rows) + Fee schedules (7 rows) managers at the bottom; Edit rates dialog + Add row + Save rates toast 'Saved 2 rates' after ReauthGate replay. No blockers found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "PatientInsuranceManager on patient detail",
+        "issues": [
+          "The test patient (450d80b2…) has accumulated 12+ policies from prior iterations — cosmetically noisy list. Consider adding a 'hide inactive' toggle or collapsing inactive policies behind a 'Show N inactive' disclosure.",
+          "Payer picker in Add policy dialog shows 80 options with no search/filter; scalability concern once payer catalog grows. Recommend a combobox/search input."
+        ]
+      },
+      {
+        "screen": "ClinicSettings → Fee schedules",
+        "issues": [
+          "Fee schedule rows show raw UUID-ish names ('Payer-1d4403', 'Zenith-d432b1') because tests created them. Recommend a 'Hide test data' or sortable table with created_at."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_billing_phase2.py",
+    "/app/backend/tests/test_billing.py",
+    "/app/test_reports/pytest/iter25_phase2.xml",
+    "/app/test_reports/pytest/iter25_phase1.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "test_billing_phase2.py leaks state across runs — each execution creates additional fee schedules, payers, records, and insurance policies on the fixture patient without teardown. After ~25 iterations the tenant has 80 payers and 12 primary policies on the first patient. Add a fixture-level cleanup (delete TEST_ / P2Payer / _unique-named resources after session) or scope schedules/payers to a throw-away sub-tenant. Not a failure, but hygiene.",
+    "charge_capture.py resolve_charge_price cascade (payer_schedule > self_pay > catalog > zero) works, but when responsibility='insurance' and no payer schedule line matches a code, the preview still shows the charge at $0 with price_source='none'. Consider either (a) surfacing a 'missing payer rate for 97110' warning, or (b) falling back to self_pay with an explicit 'insurance-but-priced-at-self-pay' warning so billers don't miss underpricing.",
+    "ChargeCaptureDialog: when a record is already SIGNED, coding editor fields render as read-only inputs but the 'Add procedure' / 'Add diagnosis' buttons are fully hidden. That is safer, but there is no user-facing explanation ('Record is signed — coding locked'). Add a hint/chip near the Coding section title.",
+    "PatientInsuranceManager: payer dropdown fetches full payer catalog on dialog open with no pagination. At >100 payers this will degrade; switch to async search against /api/billing/payers?search= or virtualize the options list.",
+    "FeeSchedulesManager 'Edit rates' mutates all lines via a single PUT — no optimistic concurrency check. If two admins edit the same schedule simultaneously, last-writer-wins silently. Consider version or updated_at check."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (53/53 pytest tests — 13 Phase 2 + 40 Phase 1)",
+    "frontend": "100% (insurance add policy, charge-capture dialog open + preview + signed/captured chips, payers manager, fee schedules manager + edit rates + reauth replay — all green)"
+  },
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (used in browser + pytest). group-admin@sunrise.ccms.app for tenant isolation test in pytest.",
+  "seed_data_creation": "Incidental: Playwright adds 1 insurance policy (payer auto-picked, member M-UI-001) and 1 fee-schedule line (CPT 97110 $55) on the test patient per UI run. Backend pytest creates many fee schedules + payers + records. No cleanup implemented — see code-review note.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 2 is functionally complete and green. If iteration 26 adds new surface area (claims submission, ERA posting, patient statements), keep using the `admin@ccms.app` credentials + the pre-seeded patient ID `450d80b2-4b25-4b4b-8f49-8f73696498f7` which already has 12+ insurance policies + many captured invoices. The ReauthGate flow auto-replays on both mutation-intent clicks (pre-flight) and on 401 (post-flight retry) — when writing Playwright, after clicking a mutation button always immediately check for an `input[type='password']` inside a dialog titled 'Confirm it's you' and submit with the admin password. `button:has-text('Confirm')` works for the confirm action.",
+  "rca of the issue": "No new issues found in iteration 25. The iteration 20 ReauthGate blocker is fully resolved — ReauthGate now intercepts mutation clicks before dispatching the API call AND retries on 401, and was validated on: insurance policy create, fee schedule rate save, and (by prior test-traced data) charge capture."
+}

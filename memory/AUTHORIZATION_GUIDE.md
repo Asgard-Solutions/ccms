@@ -193,3 +193,25 @@ Semantics:
 
 - `tests/test_iteration12_authz.py` — matrix + core policy engine (15 tests).
 - `tests/test_iteration13_migration_overrides.py` — router migration + overrides end-to-end (9 tests). Covers: admin patient list still works, audit log now requires MFA reauth, patient cannot delete, doctor still creates appointments, grant-then-revoke override flow bumps session_epoch and is reflected in `/me/permissions`, non-admin cannot grant overrides, unknown permission rejected, no double-audit from migrated routes (`authz.allow` not written alongside `patient.created`).
+
+## 12. Billing foundation bootstrap grants (iteration 23)
+
+With the billing service foundation landing, `super_admin` picked up the
+following demo/bootstrap grants so an admin session can drive the billing
+lifecycle end-to-end in development and smoke tests:
+
+- `charge.create`
+- `payment.collect`
+- `insurance.create`, `insurance.update`
+- `claim.read`, `claim.create`, `claim.submit`, `claim.correct_resubmit`
+
+Permissions that are **still not granted to super_admin** and must be
+exercised via `billing_specialist` or `clinic_manager` (with MFA+APR):
+
+- `payment.refund`
+- `adjustment.writeoff`
+- `billing.void`
+
+Segregation-of-duties production tenants should migrate these grants off
+super_admin by inserting `role_permissions` rows with `custom=true`
+(idempotent seed preserves them).
