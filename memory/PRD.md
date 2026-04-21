@@ -2830,3 +2830,55 @@ can be assigned to them with single-occupancy guards.
 
 **Out of scope (by request):** advanced shared-room logic beyond
 extensibility hooks; deep checkout expansion beyond room visibility.
+
+
+
+## 2026-04-22 — Provider Workflow (Phase 5)
+
+Providers now have a minimal-click worklist that drives
+ready_for_provider → in_progress → ready_for_checkout / completed
+with a clean handoff to checkout.
+
+**New UI — `/scheduling/provider-queue`** (ProviderQueuePage), role
+admin | doctor | staff, nav "My Queue" under Operations.
+
+Two sections:
+  - **Up Next** — `status=ready_for_provider`, sorted oldest-first by
+    ready-for-provider time. One-click **Start visit**.
+  - **In Progress** — `status=in_progress`, sorted oldest-first by
+    visit_started_at. Two actions: **Ready for checkout** or
+    **Complete**.
+
+Each row shows:
+  - Patient name, appointment time, appointment type
+  - Intake badge (not started / in progress / completed)
+  - Room badge when assigned
+  - Three timing indicators per row (Checked in · ago · Roomed · ago ·
+    Ready · ago, plus Visit started · ago once in progress)
+
+Defaults to the logged-in provider's own queue when the user is a
+provider; admin/staff may switch. Silent 20s polling keeps the view
+fresh.
+
+**Permissions**
+All provider transitions reuse `appointment.update` — front desk,
+providers, and admins share the grant; patient-portal role is blocked
+at the authz layer. Current role grants already include FD / PR / CM
+/ SA.
+
+**Backend behaviour (unchanged — validated by new tests)**
+  * Start Visit (`start-visit`): `ready_for_provider → in_progress`;
+    `checked_in → in_progress` only via `override=true`.
+  * Ready for Checkout: `in_progress → ready_for_checkout`.
+  * Complete Visit: `in_progress` OR `ready_for_checkout → completed`.
+  * Checkout: `completed → checked_out` (no override needed — clean
+    handoff).
+
+**Tests**
+- `test_provider_workflow.py` — 7/7 green covering happy path,
+  complete-direct-from-in-progress, rejection paths (wrong state,
+  pre-start complete, out-of-state ready_for_checkout), patient-portal
+  deny, and admin/provider share the same grant.
+
+**Out of scope (by request):** financial/billing features, full
+checkout UI beyond the handoff state support already present.

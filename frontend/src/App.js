@@ -18,6 +18,7 @@ import TreatmentPlanEditor from "./pages/clinical/TreatmentPlanEditor";
 import ReExamEditor from "./pages/clinical/ReExamEditor";
 import Scheduling from "./pages/Scheduling";
 import FlowBoardPage from "./pages/scheduling/FlowBoardPage";
+import ProviderQueuePage from "./pages/scheduling/ProviderQueuePage";
 import Notifications from "./pages/Notifications";
 import Security from "./pages/Security";
 import AuditLog from "./pages/AuditLog";
@@ -79,6 +80,7 @@ export default function App() {
               <Route path="/patients/:pid/clinical/re-exams/:rid" element={<Shell roles={["admin", "doctor", "staff"]}><ReExamEditor /></Shell>} />
               <Route path="/scheduling" element={<Shell><Scheduling /></Shell>} />
               <Route path="/scheduling/flow-board" element={<Shell roles={["admin", "doctor", "staff"]}><FlowBoardPage /></Shell>} />
+              <Route path="/scheduling/provider-queue" element={<Shell roles={["admin", "doctor", "staff"]}><ProviderQueuePage /></Shell>} />
               <Route path="/settings/clinic" element={<Shell roles={["admin"]}><ClinicSettings /></Shell>} />
               <Route path="/settings/appointment-types" element={<Shell roles={["admin"]}><AppointmentTypesPage /></Shell>} />
               <Route path="/settings/rooms" element={<Shell roles={["admin"]}><RoomsManagerPage /></Shell>} />
