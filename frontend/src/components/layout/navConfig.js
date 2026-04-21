@@ -257,8 +257,15 @@ export const NAV_GROUPS = [
         roles: ["admin"],
       },
       {
-        to: "/roles",
+        to: "/admin/roles",
         label: "Roles",
+        testId: "nav-admin-roles",
+        icon: UserCog,
+        roles: ["admin"],
+      },
+      {
+        to: "/roles",
+        label: "Advanced: Role matrix",
         testId: "nav-roles",
         icon: UserCog,
         roles: ["admin"],

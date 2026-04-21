@@ -31,6 +31,7 @@ import PermissionMatrix from "./pages/PermissionMatrix";
 import RoleManagement from "./pages/RoleManagement";
 import AccessReview from "./pages/AccessReview";
 import AdminUsersPage from "./pages/admin/AdminUsersPage";
+import AdminRolesPage from "./pages/admin/AdminRolesPage";
 import Elevation from "./pages/Elevation";
 import ThemePreview from "./pages/ThemePreview";
 import ClinicSettings from "./pages/ClinicSettings";
@@ -110,6 +111,7 @@ export default function App() {
               <Route path="/privacy" element={<Shell roles={["admin"]}><Privacy /></Shell>} />
               <Route path="/security-config" element={<Shell roles={["admin"]}><SecurityConfig /></Shell>} />
               <Route path="/admin/users" element={<Shell roles={["admin"]}><AdminUsersPage /></Shell>} />
+              <Route path="/admin/roles" element={<Shell roles={["admin"]}><AdminRolesPage /></Shell>} />
               <Route path="/roles" element={<Shell roles={["admin"]}><RoleManagement /></Shell>} />
               <Route path="/permissions" element={<Shell roles={["admin"]}><PermissionMatrix /></Shell>} />
               <Route path="/access-review" element={<Shell roles={["admin"]}><AccessReview /></Shell>} />

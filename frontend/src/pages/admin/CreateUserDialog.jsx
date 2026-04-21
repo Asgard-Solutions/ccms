@@ -55,7 +55,7 @@ function mapRoleKeyToLegacy(roleKey) {
   return table[roleKey] || "staff";
 }
 
-export default function CreateUserDialog({ open, onClose, onCreated, roles }) {
+export default function CreateUserDialog({ open, onClose, onCreated, roles: rolesProp }) {
   const [step, setStep] = useState("profile");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [profile, setProfile] = useState({
@@ -64,6 +64,10 @@ export default function CreateUserDialog({ open, onClose, onCreated, roles }) {
   const [roleKeys, setRoleKeys] = useState([]);
   const [explanation, setExplanation] = useState(null);
   const [submitting, setSubmitting] = useState(false);
+  // Lazy-load roles only when the user advances to step 2, to avoid
+  // a PIN step-up prompt firing the instant "Add user" is clicked.
+  const [roles, setRoles] = useState(rolesProp || []);
+  const [rolesLoaded, setRolesLoaded] = useState((rolesProp || []).length > 0);
 
   useEffect(() => {
     if (open) {
@@ -113,8 +117,17 @@ export default function CreateUserDialog({ open, onClose, onCreated, roles }) {
   );
 
   function next() {
-    if (step === "profile" && profileValid) setStep("roles");
-    else if (step === "roles" && roleKeys.length > 0) setStep("review");
+    if (step === "profile" && profileValid) {
+      setStep("roles");
+      // Lazy-fetch roles on first advance into step 2.
+      if (!rolesLoaded) {
+        api.get("/authz/roles", { params: { include_user_counts: true } })
+          .then((res) => { setRoles(res.data); setRolesLoaded(true); })
+          .catch(() => { setRolesLoaded(true); });
+      }
+    } else if (step === "roles" && roleKeys.length > 0) {
+      setStep("review");
+    }
   }
   function back() {
     if (step === "roles") setStep("profile");

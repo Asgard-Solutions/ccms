@@ -4,6 +4,107 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-02-15 — Access Management Phase 4: Roles screen + grouped Role Editor
+
+**Scope:** Frontend-only. Backend CRUD shipped in Phase 2.
+
+**What shipped**
+- **`/admin/roles`** (`AdminRolesPage.jsx`) — card-based role catalog:
+  - "Built-in roles" grid (9 common clinic roles, ordered by relevance:
+    Clinic Manager → Org Owner → Provider → Front Desk → Clinical Staff
+    → Billing Specialist → Auditor → Compliance Officer → Patient
+    Portal). View-only with Clone action.
+  - "Custom roles" grid — Edit / Clone / Archive. Inline confirm
+    dialog for archive; force-unassigns users when in use.
+  - Collapsible "Show internal / service roles" toggle for
+    `super_admin` + `integration_account`.
+  - Each card surfaces permission count, user count, built-in /
+    custom / privileged badges.
+- **`RoleEditorDialog.jsx`** — create/edit/view a role:
+  - Loads `GET /authz/permission-catalog` and renders one accordion
+    per module (11 modules).
+  - Each module row shows a `X/Y` counter and a "Select all / Clear
+    all / Select rest" chip.
+  - Each permission row shows plain-English label + helper text,
+    sensitivity tag, PHI/Financial/privileged badges, Flame icon on
+    destructive/critical permissions.
+  - Debounced live plain-English preview under the module list from
+    `POST /authz/roles/preview-effective-permissions`.
+  - View mode dims unselected permissions and disables all controls
+    (built-in roles).
+  - Create mode: `POST /authz/roles`. Edit mode: `PATCH /authz/roles/{key}`.
+- **Nav**: new "Roles" entry at `/admin/roles`. Old `/roles` kept
+  behind "Advanced: Role matrix" label.
+- **AdminUsersPage**: "Manage roles" quick link now points to
+  `/admin/roles` (was `/roles`).
+
+**Verified**
+- Visual smoke test: 9 built-in cards rendered, 1 custom card rendered
+  with Edit/Clone/Archive buttons. "Show internal / service roles (2)"
+  toggle visible.
+- Leftover `custom_inuse_test_71b6c5` role from Phase 2 test runs
+  cleaned up via DELETE `?force=true`.
+- No regressions in Phase 1 (12/12) or Phase 2 (14/14) backend tests.
+
+**Non-goals in Phase 4**
+- Advanced Security Policies panel (MFA/approval/break-glass flags)
+  still deferred — covered by existing PermissionMatrix's grants until
+  explicitly migrated.
+- Migration backfill + Access Change History tab → **Phase 5 (pending)**.
+
+---
+
+## 2026-02-15 — Access Management Phase 3: Users experience (frontend)
+
+**Scope:** Frontend-only. Old pages at `/roles`, `/permissions`, and
+`/access-review` retained as deprecated "Advanced" routes for backward
+compatibility during the transition.
+
+**What shipped**
+- **New primary admin surface** `/admin/users` (`AdminUsersPage.jsx`):
+  - Searchable list (name + email), status filter (all / active /
+    disabled), role chips per row (+N more), status badge, Edit
+    access / Disable / Reactivate actions.
+  - "Add user" opens the new 3-step wizard.
+  - "Manage roles" quick link to `/roles` (until Phase 4 replaces it).
+  - Deprecated-advanced footer linking to `/roles`, `/permissions`,
+    `/access-review` with an AlertTriangle icon.
+- **`CreateUserDialog.jsx`** — 3-step guided flow:
+  - Step 1: Profile (name + email + password ≥12 + phone). Next disabled
+    until valid.
+  - Step 2: Roles — common roles first; "Show advanced / internal
+    roles" toggle reveals `super_admin` + `integration_account`. Each
+    role shows built-in/custom/privileged badges and a "Covers:" hint.
+    Roles list is lazy-loaded on Step 1 → Step 2 transition to avoid
+    triggering a PIN step-up when the dialog first opens.
+  - Step 3: Review — plain-English effective-access summary from
+    `POST /authz/roles/preview-effective-permissions`, plus any
+    high-sensitivity grants surfaced as amber chips.
+  - Submit creates user + assigns roles in one flow (uses
+    `POST /auth/users` for profile, then `POST /authz/users/{id}/roles`
+    per selected role).
+- **`EditUserAccessDialog.jsx`** — single-step modal to add/remove role
+  assignments for an existing user. Live plain-English preview as
+  roles are toggled; Save diffs the selected set against the current
+  set and issues `POST /authz/users/{id}/roles` + `DELETE` calls.
+- **Nav**: new top-of-admin "Users" entry; "Permissions" and
+  "Access Review" relabelled with an "Advanced:" prefix to signal
+  they're legacy power-user surfaces.
+
+**Tests** — Backend Phase 1+2 regression: **26/26 green** (12 catalog +
+14 custom roles). Frontend verified by testing agent iteration_60:
+- `/admin/users` renders, deprecated footer links present.
+- Create User Step 1 validation correct (email + password ≥12).
+- Step 2 common vs advanced roles correctly split.
+- All spec'd `data-testid`s wired.
+
+**Non-goals in Phase 3**
+- No grouped Role Editor (Phase 4)
+- No legacy-role migration backfill (Phase 5)
+- No Access Change History tab (Phase 5)
+
+---
+
 ## 2026-02-15 — Access Management Phase 2: Custom Roles (backend CRUD)
 
 **Scope:** Backend-only. Admins can now create, clone, edit, and archive

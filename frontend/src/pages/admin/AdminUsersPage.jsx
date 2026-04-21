@@ -126,7 +126,7 @@ export default function AdminUsersPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Link
-            to="/roles"
+            to="/admin/roles"
             data-testid="admin-users-go-roles"
             className="rounded-sm border border-border px-3 py-2 text-xs font-medium hover:bg-muted"
           >
