@@ -1,6 +1,6 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-02-21 (Versioned intake save wiring + wizard extraction)
+**Last updated:** 2026-02-21 (Settings nav split: Appointment Types, Payers, Fee Schedules promoted to dedicated pages)
 
 ## 0. Design system (binding)
 The Chiro Software design system is authoritative for every UI surface.
@@ -48,6 +48,19 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### Settings navigation split (2026-02-21)
+- `ClinicSettings.jsx` now handles only the clinic profile + hours of
+  operation. The three business catalogs that used to share the same
+  scroll — appointment types, payers, fee schedules — are promoted
+  into their own pages:
+  - `pages/AppointmentTypesPage.jsx` → `/settings/appointment-types`
+  - `pages/PayersPage.jsx` → `/settings/payers`
+  - `pages/FeeSchedulesPage.jsx` → `/settings/fee-schedules`
+- New sidebar entries in `components/layout/navConfig.js` under the
+  collapsible **Settings** group (`nav-appointment-types`, `nav-payers`,
+  `nav-fee-schedules`). All four Settings routes remain admin-only. No
+  API changes; the underlying managers were untouched.
+
 ### Versioned intake save wiring + wizard extraction (2026-02-21)
 - `PatientWizardDialog` (scope=`intake`) now PATCHes the new
   `/api/patients/{id}/intake-forms/{form_id}` endpoint instead of the

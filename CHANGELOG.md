@@ -11,6 +11,30 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+### Changed
+- **Settings navigation split — standalone pages for Appointment Types,
+  Payers, and Fee Schedules (2026-02-21).** `ClinicSettings.jsx` is now
+  focused exclusively on clinic profile (identity, contact, address,
+  timezone, notes) plus hours of operation. The three business-catalog
+  managers that previously lived in the same page — `AppointmentTypesManager`,
+  `PayersManager`, and `FeeSchedulesManager` — have been promoted to
+  dedicated pages with their own routes, sidebar entries, and
+  deep-linkable URLs:
+  - `pages/AppointmentTypesPage.jsx` → `/settings/appointment-types`
+    (testid `appointment-types-page`, sidebar testid
+    `nav-appointment-types`, `ClipboardList` icon).
+  - `pages/PayersPage.jsx` → `/settings/payers`
+    (testid `payers-page`, sidebar testid `nav-payers`, `Landmark` icon).
+  - `pages/FeeSchedulesPage.jsx` → `/settings/fee-schedules`
+    (testid `fee-schedules-page`, sidebar testid `nav-fee-schedules`,
+    `Coins` icon).
+  All four pages remain admin-only and sit inside the collapsible
+  **Settings** group in `components/layout/navConfig.js`. Routes are
+  registered in `App.js` behind `Shell roles={["admin"]}`. No API
+  changes, no behavior changes to the underlying managers — purely a
+  navigation + IA refactor so each catalog is directly addressable and
+  Clinic Settings stops scrolling past three separate tables.
+
 ### Added
 - **Versioned intake save wiring + wizard extraction (2026-02-21).**
   - `PatientWizardDialog` (scope=`intake`) now saves through
