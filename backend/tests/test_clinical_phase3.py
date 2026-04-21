@@ -376,7 +376,8 @@ def test_cancel_encounter_allows_relaunch(admin):
 def test_writes_require_reauth(admin):
     p = _new_patient(admin)
     provider_id = _pick_provider(admin)
-    appt = _book_appointment(admin, patient_id=p["id"], provider_id=provider_id, hour_offset=12)
+    # widen offset range to reduce any leftover-booking collisions
+    appt = _book_appointment(admin, patient_id=p["id"], provider_id=provider_id, hour_offset=random.randint(30, 60))
     s = _login(*GROUP_ADMIN, reauth=False)
     r = s.post(
         f"{API}/appointments/{appt['id']}/clinical/encounters",
