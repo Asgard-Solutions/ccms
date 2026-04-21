@@ -59,6 +59,11 @@ from services.identity.models import (
     PasswordChange,
     PasswordResetConfirm,
     PasswordResetRequest,
+    PinChange,
+    PinCreate,
+    PinReset,
+    PinStatus,
+    PinVerify,
     PreferencesUpdate,
     ProfileUpdate,
     ReauthRequest,
@@ -120,6 +125,7 @@ def _to_public(user: dict) -> dict:
         "mfa_enabled": bool(user.get("mfa_enabled")),
         "mfa_policy_required": bool(user.get("mfa_policy_required")),
         "password_changed_at": user.get("password_changed_at"),
+        "pin_configured": bool(user.get("pin_hash")),
         "theme": user.get("theme", "system"),
         "first_name": user.get("first_name"),
         "last_name": user.get("last_name"),
@@ -570,6 +576,315 @@ async def update_profile(
         },
     )
     return _to_public(updated)
+
+
+# ---------------------------------------------------------------------------
+# Self-service 6-digit PIN — used for fast in-app re-verification.
+# ---------------------------------------------------------------------------
+# Lockout window after too many wrong PIN verifications. Intentionally
+# tighter than the password lockout because the PIN is only 6 digits and
+# therefore has a smaller keyspace (1e6).
+PIN_MAX_FAILED_ATTEMPTS = 5
+PIN_LOCKOUT_MINUTES = 15
+
+
+def _pin_status(user_doc: dict) -> dict:
+    """Project the PIN-facing fields from a user document. Never
+    returns `pin_hash` — only the presence bit + timestamps."""
+    return {
+        "configured": bool(user_doc.get("pin_hash")),
+        "created_at": user_doc.get("pin_created_at"),
+        "updated_at": user_doc.get("pin_updated_at"),
+        "locked_until": user_doc.get("pin_locked_until"),
+        "failed_attempts": int(user_doc.get("pin_failed_attempts") or 0),
+    }
+
+
+def _pin_is_locked(user_doc: dict) -> bool:
+    locked = user_doc.get("pin_locked_until")
+    if not locked:
+        return False
+    try:
+        ts = datetime.fromisoformat(locked)
+    except Exception:
+        return False
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) < ts
+
+
+@router.get("/me/pin/status", response_model=PinStatus)
+async def get_pin_status(
+    user: dict = Depends(get_current_user),
+):
+    db = get_db_read()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    return _pin_status(full)
+
+
+@router.post("/me/pin", response_model=PinStatus, status_code=201)
+async def create_pin(
+    payload: PinCreate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db_write()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if full.get("pin_hash"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "PIN already configured. Use PATCH to change it.",
+        )
+    if not verify_password(payload.current_password, full["password_hash"]):
+        await log_audit(
+            action="user.pin_create",
+            actor_id=user["id"],
+            actor_email=user["email"],
+            actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure",
+            reason="wrong_current_password",
+            request=request,
+        )
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Current password is incorrect",
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "pin_hash": hash_password(payload.pin),
+            "pin_created_at": now_iso,
+            "pin_updated_at": now_iso,
+            "pin_failed_attempts": 0,
+            "pin_locked_until": None,
+            "updated_at": now_iso,
+        }},
+    )
+    await audit_success(
+        user, "user.pin_created", request,
+        entity_type="user", entity_id=user["id"],
+    )
+    updated = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return _pin_status(updated)
+
+
+@router.patch("/me/pin", response_model=PinStatus)
+async def change_pin(
+    payload: PinChange,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    db = get_db_write()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if not full.get("pin_hash"):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "No PIN configured. Use POST to create one.",
+        )
+    if not verify_password(payload.current_password, full["password_hash"]):
+        await log_audit(
+            action="user.pin_change",
+            actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure", reason="wrong_current_password", request=request,
+        )
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Current password is incorrect",
+        )
+    if not verify_password(payload.current_pin, full["pin_hash"]):
+        await log_audit(
+            action="user.pin_change",
+            actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure", reason="wrong_current_pin", request=request,
+        )
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Current PIN is incorrect",
+        )
+    if payload.new_pin == payload.current_pin:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "New PIN must differ from the current PIN.",
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "pin_hash": hash_password(payload.new_pin),
+            "pin_updated_at": now_iso,
+            "pin_failed_attempts": 0,
+            "pin_locked_until": None,
+            "updated_at": now_iso,
+        }},
+    )
+    await audit_success(
+        user, "user.pin_changed", request,
+        entity_type="user", entity_id=user["id"],
+    )
+    updated = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return _pin_status(updated)
+
+
+@router.post("/me/pin/reset", response_model=PinStatus)
+async def reset_pin(
+    payload: PinReset,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Replace a forgotten PIN. Requires a fresh re-auth token so only
+    a recently-password-verified caller can rotate the PIN without
+    supplying the current one."""
+    require_reauth(request, user)
+
+    db = get_db_write()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "pin_hash": hash_password(payload.new_pin),
+            # If the PIN has never existed, this creates it; otherwise it
+            # is a rotation. Preserve `pin_created_at` iff already set.
+            "pin_created_at": full.get("pin_created_at") or now_iso,
+            "pin_updated_at": now_iso,
+            "pin_failed_attempts": 0,
+            "pin_locked_until": None,
+            "updated_at": now_iso,
+        }},
+    )
+    await audit_success(
+        user, "user.pin_reset", request,
+        entity_type="user", entity_id=user["id"],
+        metadata={"was_configured": bool(full.get("pin_hash"))},
+    )
+    updated = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return _pin_status(updated)
+
+
+@router.delete("/me/pin", response_model=PinStatus)
+async def remove_pin(
+    payload: ReauthRequest,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Remove an existing PIN. Gated on the password as proof-of-presence
+    (same bar as setting one)."""
+    db = get_db_write()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if not full.get("pin_hash"):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "No PIN configured.",
+        )
+    if not verify_password(payload.password, full["password_hash"]):
+        await log_audit(
+            action="user.pin_remove",
+            actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure", reason="wrong_current_password", request=request,
+        )
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, "Current password is incorrect",
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "pin_hash": None,
+            "pin_created_at": None,
+            "pin_updated_at": None,
+            "pin_failed_attempts": 0,
+            "pin_locked_until": None,
+            "updated_at": now_iso,
+        }},
+    )
+    await audit_success(
+        user, "user.pin_removed", request,
+        entity_type="user", entity_id=user["id"],
+    )
+    updated = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    return _pin_status(updated)
+
+
+@router.post("/me/pin/verify")
+async def verify_pin(
+    payload: PinVerify,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Verify the caller's PIN for a short-lived elevated action.
+
+    Wrong attempts increment `pin_failed_attempts`; once the threshold
+    is hit the PIN is locked for `PIN_LOCKOUT_MINUTES`. Successful
+    verification resets both counters."""
+    db = get_db_write()
+    full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    if not full or not full.get("pin_hash"):
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, "No PIN configured.",
+        )
+    if _pin_is_locked(full):
+        raise HTTPException(
+            status.HTTP_423_LOCKED,
+            "PIN is temporarily locked due to too many failed attempts. "
+            "Reset your PIN or try again later.",
+        )
+    if not verify_password(payload.pin, full["pin_hash"]):
+        fails = int(full.get("pin_failed_attempts") or 0) + 1
+        update: dict = {
+            "pin_failed_attempts": fails,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        locked = fails >= PIN_MAX_FAILED_ATTEMPTS
+        if locked:
+            update["pin_locked_until"] = (
+                datetime.now(timezone.utc)
+                + timedelta(minutes=PIN_LOCKOUT_MINUTES)
+            ).isoformat()
+        await db.users.update_one({"id": user["id"]}, {"$set": update})
+        await log_audit(
+            action="auth.pin_verify",
+            actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure",
+            reason="locked_out" if locked else "wrong_pin",
+            metadata={"failed_attempts": fails, "locked": locked},
+            request=request,
+        )
+        raise HTTPException(
+            status.HTTP_423_LOCKED if locked else status.HTTP_401_UNAUTHORIZED,
+            "PIN locked after too many wrong attempts." if locked
+            else "Incorrect PIN.",
+        )
+
+    # Success — clear counters.
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {
+            "pin_failed_attempts": 0,
+            "pin_locked_until": None,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    await audit_success(
+        user, "auth.pin_verify", request,
+        entity_type="user", entity_id=user["id"],
+    )
+    return {"verified": True}
 
 
 @router.get("/me/export")

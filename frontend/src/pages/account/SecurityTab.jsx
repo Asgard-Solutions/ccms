@@ -26,6 +26,7 @@ import { formatDateTime, relativeFromNow } from "../../utils/time";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
+import PinCard from "./PinCard";
 
 // Mirrors backend/core/password_policy.py. Kept in sync so UI hints
 // never diverge from enforcement.
@@ -597,6 +598,7 @@ export default function SecurityTab() {
 
       <PasswordChangeCard />
       <MfaCard />
+      <PinCard />
       <RecentSignInsCard />
 
       <div className="rounded-sm border border-border bg-card p-6 text-sm text-muted-foreground">

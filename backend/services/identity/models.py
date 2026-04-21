@@ -34,6 +34,7 @@ class UserPublic(BaseModel):
     mfa_enabled: bool = False
     mfa_policy_required: bool = False
     password_changed_at: str | None = None
+    pin_configured: bool = False
     theme: Theme = "system"
     # Self-service profile fields (editable via PATCH /auth/me/profile).
     first_name: str | None = None
@@ -127,6 +128,56 @@ class PreferencesUpdate(BaseModel):
     All fields optional; only keys that are present are written."""
     model_config = ConfigDict(extra="forbid")
     theme: Theme | None = None
+
+
+_PIN_FIELD = Field(
+    min_length=6, max_length=6, pattern=r"^\d{6}$",
+    description="Exactly 6 digits. Stored as a bcrypt hash, never returned.",
+)
+
+
+class PinCreate(BaseModel):
+    """Set a brand-new PIN. Requires the caller's current password as
+    proof-of-presence — the same gate as `/change-password`."""
+    model_config = ConfigDict(extra="forbid")
+    current_password: str
+    pin: str = _PIN_FIELD
+
+
+class PinChange(BaseModel):
+    """Rotate an existing PIN. Requires both the current password AND
+    the current PIN (defence-in-depth: if the password is somehow leaked
+    the PIN still holds; if the PIN is compromised a password check
+    stops silent rotation)."""
+    model_config = ConfigDict(extra="forbid")
+    current_password: str
+    current_pin: str = _PIN_FIELD
+    new_pin: str = _PIN_FIELD
+
+
+class PinReset(BaseModel):
+    """Wipe the existing PIN and replace it. Path used when the user
+    forgot their PIN. Relies on a fresh re-auth token (enforced at the
+    route layer) rather than `current_pin`."""
+    model_config = ConfigDict(extra="forbid")
+    new_pin: str = _PIN_FIELD
+
+
+class PinVerify(BaseModel):
+    """Verify the PIN for a short-lived elevated session — same shape
+    as `/reauth` but digit-only."""
+    model_config = ConfigDict(extra="forbid")
+    pin: str = _PIN_FIELD
+
+
+class PinStatus(BaseModel):
+    """Response for `GET /auth/me/pin/status` — surfaces only whether
+    a PIN exists and when it was last rotated; never the PIN itself."""
+    configured: bool
+    created_at: str | None = None
+    updated_at: str | None = None
+    locked_until: str | None = None
+    failed_attempts: int = 0
 
 
 class ProfileUpdate(BaseModel):
