@@ -11,6 +11,32 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+### Changed
+- **`/auth/change-password` hardened (2026-04-21).** Preserved the
+  existing endpoint contract and UI placement (inside the Security tab
+  of the Account Settings page); layered in production-grade controls:
+  - **Per-user failure rate limit** — 5 wrong-current-password attempts
+    within 15 minutes gate the endpoint at 429, even on correct input
+    (entry-gated), deterring brute force against `current_password`.
+  - **Per-IP volume ceiling** — 60 attempts/min rejects scripted abuse
+    while remaining lenient for shared NAT (clinic staff behind one
+    outbound IP).
+  - **Same-as-current rejection** — the new password can't equal the
+    current one; same 400 "cannot reuse" message as the history check.
+  - **Audit rows tenant-tagged** — both success
+    (`auth.password_changed`) and failure (`auth.password_change`)
+    rows now carry `tenant_id` so admin `/audit-logs` queries return
+    them under tenant scoping.
+  - Added `rate_limit.failure_count()` + `record_failure()` helpers so
+    failures bump their own namespace (`rlfail:`) separate from volume
+    limiters (`rl:`).
+  - Frontend (`SecurityTab`): live policy checklist with per-rule
+    green-check feedback, show/hide password toggles, confirm-mismatch
+    + same-as-current inline hints, submit disabled until all rules
+    pass, and a stronger success toast ("Password updated. All other
+    sessions signed out.").
+  - 11 new pytest cases in `test_password_change_hardening.py`.
+
 ### Added
 - **Account Settings — Profile self-service (2026-04-21).** Refactored
   the existing `/security` page into a tabbed **My Account** surface

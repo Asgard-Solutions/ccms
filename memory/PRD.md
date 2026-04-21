@@ -48,6 +48,19 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### `/auth/change-password` hardening (2026-04-21)
+- Preserved the existing endpoint + UI in Security tab. Added:
+  - Per-user failure rate limit: 5 fails / 15 min → 429 at entry.
+  - Per-IP volume ceiling: 60 attempts / min → 429.
+  - Rejects new == current password with a 400 mirroring the history
+    reuse message (no leakage of policy internals).
+  - Success and failure audit rows now carry `tenant_id`.
+  - New `rate_limit.failure_count()` + `record_failure()` helpers in
+    a distinct `rlfail:` Redis namespace.
+  - Frontend: live policy checklist, show/hide toggles, mismatch /
+    same-as-current hints, disabled-until-valid submit button.
+- 11 pytest cases in `test_password_change_hardening.py`.
+
 ### Account Settings — Profile self-service (2026-04-21)
 - `/security` page refactored into a tabbed "My account" surface —
   Profile tab + Security tab. Existing testids and routes preserved;
