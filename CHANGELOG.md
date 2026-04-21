@@ -12,6 +12,29 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Account Settings — Profile self-service (2026-04-21).** Refactored
+  the existing `/security` page into a tabbed **My Account** surface
+  with two tabs: **Profile** (new self-service profile editor) and
+  **Security** (existing password / MFA / sign-ins / hardening cards,
+  unchanged). All prior testids and deep links continue to work.
+  - **Backend**: new `ProfileUpdate` model + `PATCH /api/auth/me/profile`
+    endpoint. Honours partial patch semantics; empty string clears a
+    field; email changes require a short-lived reauth token and
+    trigger a session-epoch bump so stale JWTs 401 immediately.
+    Collisions return 409. Legacy `name` column is kept in sync with
+    `display_name` → `first + last` so audit rows and clinical
+    signatures don't drift.
+    `UserPublic` now includes `first_name`, `last_name`,
+    `display_name`, `mobile_phone`, `work_phone`, `job_title`,
+    `credentials_suffix`, `preferred_signature_name`, `time_zone`.
+  - **Frontend**: `Security.jsx` rewritten as a Tabs shell (keeps the
+    old route). New `/pages/account/ProfileTab.jsx` hosts the editable
+    form; `/pages/account/SecurityTab.jsx` owns the original password /
+    MFA / sessions cards. Sidebar item relabelled **My account**; user
+    dropdown menu item same. `/account` route alias added. 9 backend
+    tests in `test_profile_self_service.py`.
+
+### Added — previous
 - **Billing — Phase 9 Claims-from-Encounter (2026-04-21).** New
   `POST /api/billing/claims/from-encounter` synthesises a draft claim
   skeleton from a documented clinical encounter. Reuses the Phase 8

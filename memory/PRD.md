@@ -48,6 +48,22 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### Account Settings — Profile self-service (2026-04-21)
+- `/security` page refactored into a tabbed "My account" surface —
+  Profile tab + Security tab. Existing testids and routes preserved;
+  `/account` added as an alias.
+- Self-service profile fields: `first_name`, `last_name`,
+  `display_name`, `mobile_phone`, `work_phone`, `job_title`,
+  `credentials_suffix`, `preferred_signature_name`, `time_zone`.
+  Email is editable but gated on reauth and bumps session epoch so
+  stale tokens are invalidated.
+- Backend: `PATCH /api/auth/me/profile` with PATCH-semantics; empty
+  strings clear fields; email collision → 409; legacy `name` stays in
+  sync with display_name / first+last.
+- Frontend: `ProfileTab` + `SecurityTab` under `/pages/account/`. 9
+  backend tests (`test_profile_self_service.py`) + end-to-end frontend
+  validation via testing agent (iteration_40) — all green.
+
 ### Billing module Phase 9 — Claims from Encounter (2026-04-21)
 **Deliverables**
 - **`POST /api/billing/claims/from-encounter`** (new) — synthesises a
