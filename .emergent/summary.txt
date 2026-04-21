@@ -4,19 +4,18 @@ PRODUCT REQUIREMENTS:
 - JWT-based custom auth with strict RBAC.
 - 100% HIPAA compliant (PHI masking, audit logs, MFA, reauth).
 - Multi-tenancy: Shared DB schema with strict  and  isolation.
-- Current feature requested: Build a comprehensive, production-ready Reports module (Phases 1-9) supporting filterable results, column selection, saved custom views, and exports (CSV, Excel, PDF) with HIPAA-compliant password protection for sensitive PHI.
+- Current feature requested: Implement the operational End-to-End Appointment Workflow (Check-in, Flow Board, Room Management, Provider Workflow, Checkout) and establish Event-Bus Hooks for payment, invoice, and follow-ups.
 
 **User's preferred language**: English (INSTRUCT: Next agent MUST respond in English only)
 
 **what currently exists?** 
-A highly secure, HIPAA-compliant MVP of the CCMS. Security layers feature MFA, sliding-window rate limiting, and strictly validated NPI/DEA numbers. 
-*Newly added*: A comprehensive Reports module containing 33 high-value reports mapped to current models across 7 categories (Clinical, Compliance, Financial, Operational, Patient, Scheduling). Features include dynamic column picking, saved views, drag/drop column reordering, and a robust HIPAA-grade export pipeline (native PDF encryption and password-protected ZIP archives for CSV/Excel).
+A highly secure, HIPAA-compliant MVP of the CCMS. The system has a robust Reports module, custom RBAC, and newly built complete end-to-end appointment operations workflow. This includes complex state-machine transitions (Scheduled → Checked In → Ready for Provider → In Progress → Ready for Checkout → Checked Out), a live Patient Flow Board, configurable Room Management, a Provider Queue, a Checkout dashboard, and an Event Bus () generating follow-up suggestions and draft invoices on checkout.
 
 **Last working item**:
-    - Last item agent was working: Building the comprehensive Reports Module (Phases 1-9), including backend framework, export service, frontend viewer, and building 33 individual reports natively mapping to existing collections.
-    - Status: USER VERIFICATION PENDING
-    - Agent Testing Done: Y
-    - Which testing method agent to use? NA (testing_agent_v3_fork was already used successfully across iterations 50-53, verifying all backend logic and frontend UI flows).
+    - Last item agent was working: Wiring the Book follow-up button to consume URL parameters inside  and auto-dismiss the follow-up suggestion, plus adding payment collection, invoice enrichment, and document generation hooks to the  payload.
+    - Status: IN PROGRESS
+    - Agent Testing Done: N
+    - Which testing method agent to use? both (Use testing_agent_v3_fork for full E2E validation after hook implementations)
     - User Testing Done: N
 
 **All Pending/In progress Issue list**:  
@@ -36,126 +35,159 @@ A highly secure, HIPAA-compliant MVP of the CCMS. Security layers feature MFA, s
      - Status: BLOCKED (User Deferred)
 
 **In progress Task List**:
-  None. 
+  Task 1: BookDialog URL Param Wiring + Auto-dismiss Follow-up (P0)
+     - Where to resume: Modify  and its parent components (like ) to parse URL parameters (e.g., ) when opened. Pre-fill the form and trigger an endpoint to dismiss the follow-up suggestion on successful booking.
+     - What will be achieved with this? One-click loop for front-desk staff to book follow-ups straight from the Checkout Dashboard without re-entering patient details.
+     - Status: IN PROGRESS
+     - Should Test frontend/backend/both after fix? Frontend
+     - Blocked on something: None
+     
+  Task 2: Additional  Hooks (P0)
+     - Where to resume: Expand  and related routers.
+     - What will be achieved with this? Add payment collection, invoice enrichment, document print/email, and automated follow-up booking on top of the checkout payload and  rows.
+     - Status: NOT STARTED
+     - Should Test frontend/backend/both after fix? both
+     - Blocked on something: None
 
 **Upcoming and Future Tasks**
     Upcoming Tasks:
-    - Task 1: **Automated/Scheduled Email Reports** (P1) (Proposed enhancement: email saved report views on a daily/weekly/monthly cadence using the secure ZIP framework, delivering the decryption password via Twilio SMS so PHI never rides via email).
-    - Task 2: **Persist  on Appointments** (P2) (Currently only drives UI prefill durations, needs DB persistence).
-    - Task 3: **Reorder Appointment Types** (P2) (Add drag-and-drop or ordering logic in Clinic Settings).
+    - Task 1: **Automated/Scheduled Email Reports** (P1) (Email saved report views on a daily/weekly/monthly cadence using secure ZIP framework via Twilio SMS for password).
+    - Task 2: **Reorder Appointment Types** (P2) (Add drag-and-drop or ordering logic in Clinic Settings).
     
     Future Tasks:
-    - Task 4: **Enterprise Auth Integrations** (P2) (WebAuthn/passkeys, SAML/OIDC SSO, SCIM scaffolding).
-    - Task 5: **PostgreSQL Migration** (P2) (Executing the planned migration from MongoDB to PostgreSQL).
-    - Task 6: **Reporting Service Read-Heavy Analytics** (P2) (Analytics leveraging the replica abstractions).
+    - Task 3: **Enterprise Auth Integrations** (P2) (WebAuthn/passkeys, SAML/OIDC SSO, SCIM scaffolding).
+    - Task 4: **PostgreSQL Migration** (P2) (Executing the planned migration from MongoDB to PostgreSQL).
+    - Task 5: **Reporting Service Read-Heavy Analytics** (P2) (Analytics leveraging the replica abstractions).
 
 **Completed work in this session**
-- Reports Architecture & Frontend Viewer Framework (DONE)
-- HIPAA-grade Export Protection with Native PDF encryption and Password-protected ZIPs (DONE)
-- Pre-export PHI consent dialog flow in Frontend (DONE)
-- 33 Core Reports built mapping to actual schema (DONE)
-- Saved Views & Column Picker UI with Drag/Drop Reorder (DONE)
-- Backend Test-suite expansion for Reports (88 new tests added/passing) (DONE)
+- Appointment Workflow Backbone Phase 1 (State machine transitions & endpoints) (DONE)
+- Check-In + Intake Integration Phase 2 (Intake gating on provider handoff) (DONE)
+- Patient Flow Board Phase 3 (UI mapping to waiting room, roomed, ready for checkout) (DONE)
+- Room Management + Room Assignment Phase 4 (CRUD for rooms, conflict validation) (DONE)
+- Provider Workflow Phase 5 (My Queue UI) (DONE)
+- Checkout Workflow Phase 6 (Checkout dashboard and endpoints) (DONE)
+- Polish, Hardening & UX Phase 7 ( styling, comprehensive regression testing) (DONE)
+-  persistence and Checkout Hooks (Draft Invoices & Follow-ups via event bus) (DONE)
 
 **Earlier issues found/mentioned but not fixed**
-   - None identified.
+   - None
 
 **Known issue recurrence from previous fork**
-  - Issue recurrence in previous fork:  system library missing for Python  module crashing the backend. 
-  - Recurrence count: 4 
-  - Status: RESOLVED 
+  - Issue recurrence in previous fork:  system library missing for Python  module crashing the backend.
+  - Recurrence count: 5 (Agent hit this again in message 43, fixed it via Reading package lists...
+Building dependency tree...
+Reading state information...
+The following additional packages will be installed:
+  libmagic-mgc
+Suggested packages:
+  file
+The following NEW packages will be installed:
+  libmagic-mgc libmagic1
+0 upgraded, 2 newly installed, 0 to remove and 0 not upgraded.
+Need to get 403 kB of archives.
+After this operation, 8587 kB of additional disk space will be used.
+Do you want to continue? [Y/n] Abort.)
+  - Status: RESOLVED (Watch out for it if backend restarts cleanly but fails on )
 
 **Code Architecture**
 /app/
 ├── backend/
 │   ├── core/
-│   │   ├── crypto.py (AES-256-GCM encryption used for password storage)
-│   │   ├── db.py (Connection pooling / read replica setup)
+│   │   ├── event_bus.py (Pub/Sub for application events)
 │   ├── services/
-│   │   ├── reports/
-│   │   │   ├── router.py, definitions.py, export_writer.py, views.py, builtin*.py
-│   │   │   ├── README.md, DESIGN.md
-│   │   ├── exports/
-│   │   │   ├── __init__.py (Updated with report handling & PDF/ZIP encryption pipeline)
-│   ├── tests/ (test_reports_framework.py, test_reports_catalog.py, etc.)
+│   │   ├── rooms/ (CRUD for Clinic Rooms)
+│   │   ├── scheduling/
+│   │   │   ├── workflow.py (State machine transitions)
+│   │   │   ├── rooms.py (Room assignments logic)
+│   │   │   ├── checkout_hooks.py (Event handlers for checkout)
+│   │   │   ├── WORKFLOW.md (Documentation)
 ├── frontend/
 │   ├── src/
-│   │   ├── pages/reports/
-│   │   │   ├── ReportsLandingPage.jsx
-│   │   │   ├── ReportViewer.jsx
-│   │   │   ├── reportsApi.js, formatters.js
+│   │   ├── pages/scheduling/
+│   │   │   ├── FlowBoardPage.jsx
+│   │   │   ├── ProviderQueuePage.jsx
+│   │   │   ├── CheckoutPage.jsx
+│   │   │   ├── AppointmentWorkflowPanel.jsx
+│   │   │   ├── RoomAssignmentControl.jsx
+│   │   │   ├── statusMeta.js
 
 **Key Technical Concepts**
-HIPAA compliance, AES-256-GCM encryption at-rest, PDF native encryption (), Password-protected ZIPs (), Dynamic query building, Tenant-scoped reporting queries, Pytest async event loop isolation.
+Event-driven architecture (), State Machine Transitions for Appointment Lifecycle, Tenant-scoped room assignments, Conflict Validation checking active states.
 
 **key DB schema**
-  - report_views: 
-  - exports: Updated to include  (pdf_native, zip_aes) and  (encrypted one-time password).
+  - : Extended with workflow state fields, , , , .
+  - : .
+  - : Audit trail for room occupancy.
+  - : Stubs created via event bus on checkout.
+  - : Created via event bus on checkout.
 
 **changes in tech stack**
-  - Added , , , ,  to  for export generation and HIPAA encryption.
+  - No new libraries; used native Python pub/sub implementation ().
 
 **All files of reference** 
-  -  (Entire reports service created)
-  -  (Frontend components and API created)
-  -  (Updated to handle report stream and passwords)
-  -  (Updated)
-  -  (Updated read_client scope)
-  - , , 
+  - 
+  - 
+  - 
+  - 
 
 **Areas that need refactoring**
-None. 
+None explicitly identified.
 
 **key api endpoints**
-- 
-- 
+- , , 
+- , 
+- , 
 - 
 - 
 
 **Critical Info for New Agent** 
-- **PHI / HIPAA Export Protection:** Reports containing PHI automatically trigger a consent dialog () requiring the user to state an export reason. The backend generates a secure one-time password, encrypts it at rest, and delivers the file either via Native PDF encryption or AES-256 ZIP (for CSV/Excel). DO NOT fake encryption or send plain CSV files containing PHI. 
-- **Database Reads:** Reports queries run against  to simulate reporting analytics hitting read-replicas. 
-- **Reauth UX:** The  frontend component will intercept actions needing step-up authentication.
+- **Event Bus:** Hooks for follow-ups and draft invoices are triggered synchronously via  inside . If you add payment/invoice/document hooks, wire them to listen to this event.
+- **Workflow State:** The backend actively enforces allowed state transitions (e.g., cannot start visit if intake is missing unless  is passed with a ).
+- **BookDialog URL Params:** You are in the middle of wiring  to consume URL parameters so that clicking Book follow-up from the Checkout page pre-fills the dialog and auto-dismisses the suggestion.
+- **Appointments DB Response:** Always remember to use Pydantic models to strip out  and ensure ObjectIds don't crash JSON serialization.
 
 **documents and test reports created in this job** 
-  - /app/backend/services/reports/DESIGN.md
-  - /app/backend/services/reports/README.md
+  - /app/backend/services/scheduling/WORKFLOW.md
+  - /app/test_reports/iteration_54.json
+  - /app/test_reports/iteration_55.json
+  - /app/test_reports/iteration_56.json
+  - /app/test_reports/iteration_57.json
+  - /app/test_reports/iteration_58.json
   - /app/memory/PRD.md
-  - /app/test_reports/iteration_50.json (Reports E2E)
-  - /app/test_reports/iteration_51.json (Phase 2 Reports hardening)
-  - /app/test_reports/iteration_52.json (Consent Dialog UI fix retest)
-  - /app/test_reports/iteration_53.json (Phase 3-9 Expansion tests)
 
 **Last 10 User Messages and any pending HUMAN messages** 
- - User requested to build the remaining Reports phases 3-9 mapping to existing data. (COMPLETED)
- - User requested Phase 2: Exports + HIPAA Safe Export Handling. (COMPLETED)
- - User requested Phase 0-1: Reports Architecture & Framework. (COMPLETED)
- - User requested to confirm plan. (COMPLETED)
+ - *User*: yes proceed with wire the Book follow-up button to consume those URL params inside BookDialog and the Payment collection, invoice enrichment, document print/email, automated follow-up booking — all plug into the appointment.checkout payload + the billing_invoices_stub / follow_up_suggestions anchor rows without touching the hot path. (Agent started viewing  but has not implemented it yet).
+ - *Agent*: Finished  persistence + Follow-up hooks.
+ - *User*: Requested  persistence and Checkout hooks.
+ - *Agent*: Finished Polish, Hardening & UX Refinement.
+ - *User*: Requested Polish, Hardening, and UX Refinement.
 
 **Project Health Check:**
-Healthy. 110 backend test cases passed cleanly, and all end-to-end UI flows verified successfully via Playwright (testing subagent).
+Healthy. 65 scheduling backend tests passing. E2E tests passing.
 
 **3rd Party Integrations** 
-  -  Object Storage — uses Emergent LLM Key.
-  -  (Email) — requires User API Key () - *Deferred*.
-  -  (SMS) - Proposed for future automated report password delivery.
+  -  Object Storage
+  -  (Email) - Deferred
+  -  (SMS) - Proposed for future
 
 **Testing status**
-  - Testing agent used after significant changes: YES (iterations 50-53)
+  - Testing agent used after significant changes: YES
   - Troubleshoot agent used after agent stuck in loop: NO
-  - Test files created: , , 
-  - Known regressions: None
+  - Test files created: , , , , .
+  - Known regressions: None currently active.
 
 **Credentials to test flow:**
 Check  (e.g., ).
 
 **What agent forgot to execute**
-None. All 9 phases of the reports requested were successfully built, tested, and validated.
+The agent just received the instruction to wire  to consume URL parameters and add extended checkout hooks (Payment collection, invoice enrichment, document print/email), but only executed file views before the context window ended. You must start by implementing these features.
 
 **Debugging checklist for current issue**
-    Issue: None currently active.
-
-    If interacting with reports/exports:
+    Issue: Wire Book Follow-up from Checkout Page into 
     Frontend files to check: 
-    Backend files to check: , 
-    Database collections to check: , </analysis>
+      - 
+      - 
+      - 
+    Backend files to check:
+      - 
+      -  (for dismissing suggestions)</analysis>
