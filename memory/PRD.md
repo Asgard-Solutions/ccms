@@ -2770,3 +2770,63 @@ drive, patient-portal denial. `retest_needed=false`.
 
 **Out of scope (by request):** room master/settings management, room
 conflict validation, checkout detail UI beyond workflow visibility.
+
+
+
+## 2026-04-22 — Room Management + Assignment (Workflow Phase 4)
+
+Rooms are now first-class clinic-configurable entities and appointments
+can be assigned to them with single-occupancy guards.
+
+**Backend**
+- New service `services/rooms/` — Pydantic models + tenant-scoped
+  CRUD router at `/api/rooms`.
+  - Fixed `RoomType` literal: `exam`, `consult`, `xray`, `therapy`, `other`.
+  - Case-insensitive unique name per (tenant, location).
+  - Hard-delete blocked when the room has assignment history (deactivate
+    instead — preserves audit trail). Occupied rooms cannot be deleted.
+- Appointment schema adds `current_room_id`, `room_assigned_at`,
+  `room_assigned_by_user_id`; hydrator also surfaces
+  `current_room_name` / `current_room_type`.
+- New endpoints:
+  - `POST /api/appointments/{id}/room` — assign/change (with
+    `{room_id, reason, force}`).
+  - `POST /api/appointments/{id}/clear-room?return_to_waiting=...` — clear
+    the room; optionally send the patient back to waiting_room.
+  - `GET /api/appointments/{id}/room-history` — chronological trail.
+- New collection `appointment_room_history` (PG-ready table schema in
+  `services/rooms/models.py` docstring).
+- Single-occupancy guard runs on every assign. Conflict → 409.
+  `force=true` + non-blank `reason` overrides and records
+  `forced=True` in both history + audit.
+- Every transition emits `appointment.room_assigned`,
+  `appointment.room_changed`, `appointment.room_cleared` on the event bus
+  and a dedicated audit row with `forced`, `reason`, `tenant_id`.
+
+**Frontend**
+- `/settings/rooms` (RoomsManagerPage, admin-only) — create, rename,
+  deactivate/reactivate, re-type, sort_order, notes, hard-delete when
+  unused.
+- New `RoomAssignmentControl` component reused in three places:
+  - Patient Flow Board rows (Waiting Room / Roomed / Ready for Provider
+    / In Progress). Shows "No room" or "Room: X" + explicit "Override"
+    pill when the last assignment was forced.
+  - `AppointmentWorkflowPanel` inside `BookDialog` (reschedule mode).
+  - Calendar `DayView` card — inline `Room · <name>` line when set.
+- Picker popover lists active rooms for the appointment's location with
+  live occupancy badges (Occupied / Current) computed from the current
+  board snapshot. Conflicts prompt for an override reason inline.
+- Nav: new "Rooms" item under Settings (admin-only).
+
+**Tests**
+- `test_rooms.py` — 11/11 green covering CRUD, name uniqueness,
+  hard-delete protection, assignment + history, change-room history,
+  clear/return-to-waiting, single-occupancy 409, forced-override,
+  inactive-room / terminal-appointment rejections, patient-portal denial.
+- **Testing-agent iteration 56:** full E2E validated — pytest against
+  live preview + live-UI drive of RoomsManagerPage (reauth flow,
+  create, list). RoomAssignmentControl testids + role gating verified.
+  `retest_needed=false`.
+
+**Out of scope (by request):** advanced shared-room logic beyond
+extensibility hooks; deep checkout expansion beyond room visibility.
