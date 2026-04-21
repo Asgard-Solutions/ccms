@@ -2941,3 +2941,59 @@ minimal-click front-desk UX.
 Payment processing buildout, invoice engine changes. The event-bus
 payload and checkout_notes/summary fields are the hook points for
 those phases.
+
+
+
+## 2026-04-22 — Polish & Hardening (Workflow Phase 7)
+
+Consistency + reversal coverage + UX polish + documentation.
+
+**Critical regression fix**
+`_check_conflict` was filtering `status == 'scheduled'`, meaning a
+`checked_in` or `in_progress` appointment silently allowed a second
+booking at the same provider/time. Now uses `status $nin [cancelled,
+canceled, no_show, checked_out]` — every active status blocks; every
+terminal status frees the slot. New test
+`test_active_non_scheduled_status_still_blocks_rebooking` guards this.
+
+**New reversals**
+- `POST /appointments/{id}/undo-ready-for-provider` — reverts to
+  `checked_in` and clears `ready_for_provider_at/_by`.
+- `POST /appointments/{id}/undo-ready-for-checkout` — reverts to
+  `in_progress` and clears `ready_for_checkout_at/_by`.
+- `undo-check-in` now additionally clears all downstream forward
+  stamps so the patient can walk the workflow cleanly a second time.
+
+**Workflow engine**
+`TransitionSpec.clear_stamps` added so any undo/reset transition can
+declare which fields to null out in the same atomic write.
+
+**Frontend polish**
+- New shared `statusMeta.js` — single source of truth for labels,
+  icons, badge variants, and left-border tones. Reused by DayView,
+  FlowBoard, AppointmentWorkflowPanel, and Checkout.
+- Calendar DayView: status-tinted left border + status label pill per
+  card; cancelled cards remain clickable with `line-through`.
+- Flow Board: overdue pills (Waiting long / Overdue / Provider delay /
+  Checkout delay) at 15m / 30m / 10m / 10m thresholds — always text +
+  icon, never color-alone. Status badge now uses canonical labels
+  with lucide icon.
+
+**Cancellation semantics**
+Cancelled appointments:
+  - stay visible in list + detail
+  - never block a rebook (verified by
+    `test_cancelled_slot_unblocks_future_booking`)
+  - render with strike-through + destructive border on the calendar
+
+**Docs**
+`services/scheduling/WORKFLOW.md` rewritten to cover every Phase-1→7
+endpoint, validation rule, audit/event contract, permissions, and UX
+rule in one place.
+
+**Tests**
+- `test_workflow_hardening.py` — 5/5 green.
+- Full scheduling regression — **58/58 green** in isolation runs.
+- **Testing-agent iteration 58**: pytest green on live preview, UI
+  verified (status-tinted calendar cards + overdue pills + statusMeta
+  canonical labels). `retest_needed=false`.
