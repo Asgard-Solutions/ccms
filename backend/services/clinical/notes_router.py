@@ -1100,6 +1100,125 @@ async def get_care_timeline(
             "link_path": f"/patients/{patient_id}/clinical/treatment-plans/{p['id']}",
         })
 
+    # Phase 7 — clinical media (exclude soft-deleted)
+    media = [
+        d async for d in db.clinical_media.find(
+            {**q, "deleted_at": None}, {"_id": 0, "storage_path": 0},
+        ).sort("study_date", -1).limit(limit)
+    ]
+    CAT_TITLE = {
+        "xray": "X-ray", "mri_ct_report": "MRI/CT report",
+        "ultrasound": "Ultrasound", "clinical_photo": "Clinical photo",
+        "outside_record": "Outside record", "other_pdf": "Document",
+    }
+    for m in media:
+        sub_bits = []
+        if m.get("body_region"):
+            sub_bits.append(m["body_region"])
+        if m.get("source"):
+            sub_bits.append(m["source"].replace("_", " "))
+        entries.append({
+            "kind": "clinical_media",
+            "id": m["id"],
+            "date_of_service": m.get("study_date") or m.get("uploaded_at"),
+            "status": "uploaded",
+            "title": CAT_TITLE.get(m["category"], "Media"),
+            "subtitle": " · ".join(sub_bits) if sub_bits else m.get("original_filename"),
+            "episode_id": m.get("episode_id"),
+            "provider_id": None,
+            "provider_name": None,
+            "link_path": f"/patients/{patient_id}/clinical/media/{m['id']}",
+        })
+
+    # Phase 7 — non-reexam outcomes (reexam-sourced entries are already
+    # represented by the re_exam timeline row, keep timeline readable).
+    outcomes = [
+        d async for d in db.clinical_outcome_entries.find(
+            {**q, "source": {"$ne": "reexam"}}, {"_id": 0},
+        ).sort("captured_at", -1).limit(limit)
+    ]
+    for o in outcomes:
+        score = o.get("score")
+        mx = o.get("max_score")
+        val = f"{score}" + (f"/{mx}" if mx is not None else "")
+        entries.append({
+            "kind": "outcome_entry",
+            "id": o["id"],
+            "date_of_service": o.get("captured_at"),
+            "status": o.get("source"),
+            "title": f"{o.get('label') or o['measure_type']} · {val}",
+            "subtitle": o.get("note") or None,
+            "episode_id": o.get("episode_id"),
+            "provider_id": None,
+            "provider_name": None,
+            "link_path": None,
+        })
+
+    # Phase 7 — derived diagnosis-change events from clinical_audit_events
+    dx_events = [
+        d async for d in db.clinical_audit_events.find(
+            {
+                "tenant_id": ctx.tenant_id,
+                "patient_id": patient_id,
+                "event_type": {"$in": [
+                    "diagnosis.created", "diagnosis.updated",
+                    "diagnosis.resolved", "diagnosis.activated",
+                ]},
+            },
+            {"_id": 0},
+        ).sort("at", -1).limit(limit)
+    ]
+    for ev in dx_events:
+        meta = ev.get("metadata") or {}
+        title_bits = []
+        if meta.get("icd10_code"):
+            title_bits.append(meta["icd10_code"])
+        if meta.get("label"):
+            title_bits.append(meta["label"])
+        action = ev["event_type"].split(".", 1)[1] if "." in ev["event_type"] else "changed"
+        entries.append({
+            "kind": "diagnosis_change",
+            "id": ev.get("id") or ev.get("entity_id") or f"dx-{ev.get('at')}",
+            "date_of_service": ev.get("at"),
+            "status": action,
+            "title": f"Diagnosis {action}" + (
+                f" · {' — '.join(title_bits)}" if title_bits else ""
+            ),
+            "subtitle": None,
+            "episode_id": ev.get("episode_id"),
+            "provider_id": ev.get("actor_id"),
+            "provider_name": prov_map.get(ev.get("actor_id")),
+            "link_path": None,
+        })
+
+    # Phase 7 — derived intake submission from clinical_audit_events (optional)
+    intake_events = [
+        d async for d in db.clinical_audit_events.find(
+            {
+                "tenant_id": ctx.tenant_id,
+                "patient_id": patient_id,
+                "event_type": {"$in": [
+                    "clinical_history.intake_submitted",
+                    "clinical_history.intake_received",
+                ]},
+            },
+            {"_id": 0},
+        ).sort("at", -1).limit(limit)
+    ]
+    for ev in intake_events:
+        entries.append({
+            "kind": "intake_submission",
+            "id": ev.get("id") or ev.get("entity_id") or f"intake-{ev.get('at')}",
+            "date_of_service": ev.get("at"),
+            "status": "submitted",
+            "title": "Intake submitted",
+            "subtitle": None,
+            "episode_id": ev.get("episode_id"),
+            "provider_id": None,
+            "provider_name": None,
+            "link_path": None,
+        })
+
     entries.sort(key=lambda r: (r.get("date_of_service") or ""), reverse=True)
     entries = entries[:limit]
 

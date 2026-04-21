@@ -33,6 +33,8 @@ from services.clinical.notes_router import patient_router as clinical_notes_pati
 from services.clinical.notes_router import appt_router as clinical_notes_appt_router  # noqa: E402
 from services.clinical.treatment_plans_router import router as clinical_plans_router  # noqa: E402
 from services.clinical.reexams_router import router as clinical_reexams_router  # noqa: E402
+from services.clinical.media_router import router as clinical_media_router  # noqa: E402
+from services.clinical.outcomes_router import router as clinical_outcomes_router  # noqa: E402
 from services.appointment_types.router import router as appointment_types_router  # noqa: E402
 from services.authz.router import router as authz_router  # noqa: E402
 from services.billing.router import router as billing_router  # noqa: E402
@@ -106,6 +108,8 @@ api_router.include_router(clinical_notes_patient_router)
 api_router.include_router(clinical_notes_appt_router)
 api_router.include_router(clinical_plans_router)
 api_router.include_router(clinical_reexams_router)
+api_router.include_router(clinical_media_router)
+api_router.include_router(clinical_outcomes_router)
 api_router.include_router(appointment_types_router)
 api_router.include_router(billing_router)
 api_router.include_router(metrics_router)  # GET /api/metrics

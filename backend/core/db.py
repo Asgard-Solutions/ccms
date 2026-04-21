@@ -345,3 +345,22 @@ async def create_indexes() -> None:
     await db.clinical_reexams.create_index(
         [("tenant_id", 1), ("status", 1)],
     )
+    # Phase 7 — Clinical Media + Outcomes
+    await db.clinical_media.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("study_date", -1)],
+    )
+    await db.clinical_media.create_index(
+        [("tenant_id", 1), ("category", 1)],
+    )
+    await db.clinical_media.create_index(
+        [("tenant_id", 1), ("episode_id", 1)],
+    )
+    await db.clinical_outcome_entries.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("captured_at", -1)],
+    )
+    await db.clinical_outcome_entries.create_index(
+        [("tenant_id", 1), ("measure_type", 1)],
+    )
+    await db.clinical_outcome_entries.create_index(
+        [("tenant_id", 1), ("linked_reexam_id", 1)],
+    )

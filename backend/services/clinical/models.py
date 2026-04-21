@@ -187,6 +187,7 @@ class ClinicalSummary(BaseModel):
     encounters: ClinicalSectionCount = Field(default_factory=ClinicalSectionCount)
     initial_exams: ClinicalSectionCount = Field(default_factory=ClinicalSectionCount)
     re_exams: ClinicalSectionCount = Field(default_factory=ClinicalSectionCount)
+    outcomes_snapshot: list[dict] = Field(default_factory=list)
     history_present: int = 0
     generated_at: str
 

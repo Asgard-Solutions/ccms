@@ -205,9 +205,12 @@ class FollowUpNoteNarrative(BaseModel):
 
 class CareTimelineEntry(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    kind: Literal["encounter", "initial_exam", "follow_up_note", "re_exam", "treatment_plan"]
+    kind: Literal[
+        "encounter", "initial_exam", "follow_up_note", "re_exam", "treatment_plan",
+        "clinical_media", "outcome_entry", "diagnosis_change", "intake_submission",
+    ]
     id: str
-    date_of_service: str
+    date_of_service: str | None = None
     status: str
     title: str
     subtitle: str | None = None

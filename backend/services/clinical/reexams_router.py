@@ -599,6 +599,12 @@ async def sign_reexam(
             onset_date=current.get("date_of_service") or now_iso(),
         )
 
+    # Phase 7 — auto-emit standalone outcome entries for trend reporting.
+    from services.clinical.outcomes_router import emit_outcomes_from_reexam
+    emitted_outcome_ids = await emit_outcomes_from_reexam(
+        db, ctx, reexam=current, user=user,
+    )
+
     now = now_iso()
     await db.clinical_reexams.update_one(
         {"id": rid, "tenant_id": current["tenant_id"]},
@@ -654,6 +660,7 @@ async def sign_reexam(
             "recommendation": current["recommendation_decision"],
             "treatment_plan_id": current.get("treatment_plan_id"),
             "materialized_diagnosis_ids": materialized_ids,
+            "emitted_outcome_entry_ids": emitted_outcome_ids,
         },
     )
     return await _hydrate(db, ctx.tenant_id, fresh)
