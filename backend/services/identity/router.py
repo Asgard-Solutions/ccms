@@ -661,6 +661,19 @@ async def refresh(request: Request, response: Response):
     return {"message": "Refreshed"}
 
 
+# Failures allowed within the window before `/change-password` returns
+# 429. High enough for honest typos, low enough to block brute-force
+# attempts against `current_password`.
+CHANGE_PASSWORD_FAIL_LIMIT = 5
+CHANGE_PASSWORD_FAIL_WINDOW_SECONDS = 15 * 60  # 15 minutes
+# Volume ceiling per IP across all change-password attempts (success or
+# fail). Honest users change their password at most a handful of times
+# per year; this blocks scripted abuse without punishing anyone. Kept
+# high enough for shared NAT (clinic staff on the same outbound IP).
+CHANGE_PASSWORD_VOLUME_LIMIT = 60
+CHANGE_PASSWORD_VOLUME_WINDOW_SECONDS = 60
+
+
 @router.post("/change-password")
 async def change_password(
     payload: PasswordChange,
@@ -668,14 +681,81 @@ async def change_password(
     response: Response,
     user: dict = Depends(get_current_user),
 ):
+    ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() or (
+        request.client.host if request.client else "unknown"
+    )
+
+    # --- Per-IP volume ceiling (all attempts count). Blocks scripted abuse.
+    if not await rate_limit.is_allowed(
+        f"cp_vol:{ip}",
+        limit=CHANGE_PASSWORD_VOLUME_LIMIT,
+        window_seconds=CHANGE_PASSWORD_VOLUME_WINDOW_SECONDS,
+    ):
+        await log_audit(
+            action="auth.password_change",
+            actor_id=user["id"],
+            actor_email=user["email"],
+            actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure",
+            reason="rate_limited_volume",
+            request=request,
+        )
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many password change attempts from this address. Please try again shortly.",
+        )
+
+    # --- Per-user failure counter (only wrong-current-password bumps it).
+    # Gated at entry: once the limit is hit, further tries return 429
+    # without touching the password hash. The window naturally expires.
+    fail_key = f"cp:{user['id']}"
+    current_fails = await rate_limit.failure_count(
+        fail_key, window_seconds=CHANGE_PASSWORD_FAIL_WINDOW_SECONDS,
+    )
+    if current_fails >= CHANGE_PASSWORD_FAIL_LIMIT:
+        await log_audit(
+            action="auth.password_change",
+            actor_id=user["id"],
+            actor_email=user["email"],
+            actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure",
+            reason="rate_limited_failures",
+            request=request,
+        )
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Too many failed attempts. Please wait a few minutes and try again.",
+        )
+
     db = get_db()
     full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
     if not full or not verify_password(payload.current_password, full["password_hash"]):
-        await audit_failure(
-            action="auth.password_change", request=request,
-            actor_email=user["email"], reason="wrong_current_password",
+        await rate_limit.record_failure(
+            fail_key, window_seconds=CHANGE_PASSWORD_FAIL_WINDOW_SECONDS,
+        )
+        await log_audit(
+            action="auth.password_change",
+            actor_id=user["id"],
+            actor_email=user["email"],
+            actor_role=user["role"],
+            tenant_id=user.get("tenant_id"),
+            outcome="failure",
+            reason="wrong_current_password",
+            request=request,
         )
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Current password is incorrect")
+
+    # Reject setting the same password (users often fat-finger current
+    # and new into the same value). Message-wise this maps to the
+    # history-reuse response so we don't leak policy internals.
+    if payload.new_password == payload.current_password:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Cannot reuse any of your last {PASSWORD_HISTORY} passwords.",
+        )
+
     try:
         validate_strength(payload.new_password)
         reject_password_reuse(payload.new_password, full.get("password_history") or [])
@@ -709,6 +789,7 @@ async def change_password(
         actor_id=user["id"],
         actor_email=user["email"],
         actor_role=user["role"],
+        tenant_id=user.get("tenant_id"),
         request=request,
         metadata={"other_sessions_revoked": True},
     )

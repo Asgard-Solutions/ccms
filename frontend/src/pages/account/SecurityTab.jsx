@@ -15,6 +15,8 @@ import {
   ShieldCheck,
   KeyRound,
   CheckCircle2,
+  Eye,
+  EyeOff,
   History,
   Globe,
 } from "lucide-react";
@@ -25,29 +27,107 @@ import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 
+// Mirrors backend/core/password_policy.py. Kept in sync so UI hints
+// never diverge from enforcement.
+const POLICY_RULES = [
+  { id: "length", label: "At least 12 characters", test: (p) => p.length >= 12 },
+  { id: "upper", label: "An uppercase letter", test: (p) => /[A-Z]/.test(p) },
+  { id: "lower", label: "A lowercase letter", test: (p) => /[a-z]/.test(p) },
+  { id: "digit", label: "A digit", test: (p) => /\d/.test(p) },
+  {
+    id: "symbol",
+    label: "A symbol (!@#$…)",
+    test: (p) => /[^A-Za-z0-9]/.test(p),
+  },
+];
+
+function PolicyChecklist({ value }) {
+  return (
+    <ul
+      data-testid="pw-policy-checklist"
+      className="grid gap-1.5 rounded-sm border border-border bg-background p-3 text-xs sm:grid-cols-2"
+    >
+      {POLICY_RULES.map((r) => {
+        const ok = value ? r.test(value) : false;
+        return (
+          <li
+            key={r.id}
+            data-testid={`pw-policy-${r.id}${ok ? "-ok" : "-todo"}`}
+            className={`flex items-center gap-1.5 ${
+              ok ? "text-primary" : "text-muted-foreground"
+            }`}
+          >
+            {ok ? (
+              <CheckCircle2 className="h-3.5 w-3.5" />
+            ) : (
+              <span className="inline-block h-3.5 w-3.5 rounded-full border border-muted-foreground/40" />
+            )}
+            <span>{r.label}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function PasswordChangeCard() {
+  const { refresh } = useAuth();
   const [form, setForm] = useState({
     current_password: "",
     new_password: "",
     confirm: "",
   });
+  const [show, setShow] = useState({
+    current_password: false,
+    new_password: false,
+    confirm: false,
+  });
   const [submitting, setSubmitting] = useState(false);
-  const update = (k) => (e) => setForm({ ...form, [k]: e.target.value });
+  const update = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const toggleShow = (k) => () => setShow((s) => ({ ...s, [k]: !s[k] }));
+
+  const allRulesOk = POLICY_RULES.every((r) => r.test(form.new_password));
+  const matches = form.new_password && form.new_password === form.confirm;
+  const sameAsCurrent =
+    form.new_password && form.new_password === form.current_password;
+  const submittable =
+    form.current_password &&
+    form.new_password &&
+    form.confirm &&
+    allRulesOk &&
+    matches &&
+    !sameAsCurrent &&
+    !submitting;
 
   async function submit(e) {
     e.preventDefault();
-    if (form.new_password !== form.confirm) {
+    // Local guards — backend re-validates, but these keep the UX sharp.
+    if (!allRulesOk) {
+      toast.error("Password does not meet the policy rules.");
+      return;
+    }
+    if (!matches) {
       toast.error("Passwords do not match");
+      return;
+    }
+    if (sameAsCurrent) {
+      toast.error("Choose a password different from your current one.");
       return;
     }
     setSubmitting(true);
     try {
-      await api.post("/auth/change-password", {
+      const { data } = await api.post("/auth/change-password", {
         current_password: form.current_password,
         new_password: form.new_password,
       });
-      toast.success("Password updated");
+      toast.success(
+        data?.other_sessions_revoked
+          ? "Password updated. All other sessions signed out."
+          : "Password updated.",
+      );
       setForm({ current_password: "", new_password: "", confirm: "" });
+      // Refresh /auth/me so `password_changed_at` updates the age banner.
+      refresh?.();
     } catch (err) {
       toast.error(formatApiError(err));
     } finally {
@@ -56,59 +136,120 @@ function PasswordChangeCard() {
   }
 
   return (
-    <div className="rounded-sm border border-border bg-card p-6">
+    <div
+      data-testid="password-card"
+      className="rounded-sm border border-border bg-card p-6"
+    >
       <div className="flex items-center gap-2">
         <Lock className="h-5 w-5 text-primary" />
         <h2 className="font-display text-2xl font-medium">Password</h2>
       </div>
       <p className="mt-2 text-sm text-muted-foreground">
         Must be at least 12 characters with upper, lower, digit, and symbol.
-        We remember your last 5 passwords — you cannot reuse them.
+        We remember your last 5 passwords — you cannot reuse them. Changing
+        your password signs you out of all <em>other</em> sessions.
       </p>
       <form onSubmit={submit} className="mt-5 space-y-4">
-        <div className="space-y-1">
-          <Label>Current password</Label>
-          <Input
-            type="password"
-            data-testid="pw-current"
-            value={form.current_password}
-            onChange={update("current_password")}
-            required
-            className="rounded-sm"
-          />
-        </div>
-        <div className="space-y-1">
-          <Label>New password</Label>
-          <Input
-            type="password"
-            data-testid="pw-new"
+        <PasswordField
+          label="Current password"
+          testId="pw-current"
+          value={form.current_password}
+          onChange={update("current_password")}
+          show={show.current_password}
+          onToggleShow={toggleShow("current_password")}
+          autoComplete="current-password"
+        />
+        <div className="space-y-2">
+          <PasswordField
+            label="New password"
+            testId="pw-new"
             value={form.new_password}
             onChange={update("new_password")}
+            show={show.new_password}
+            onToggleShow={toggleShow("new_password")}
+            autoComplete="new-password"
             minLength={12}
-            required
-            className="rounded-sm"
           />
+          <PolicyChecklist value={form.new_password} />
+          {sameAsCurrent && (
+            <p
+              data-testid="pw-same-as-current-hint"
+              className="text-[11px] text-destructive"
+            >
+              New password must differ from your current password.
+            </p>
+          )}
         </div>
         <div className="space-y-1">
-          <Label>Confirm new password</Label>
-          <Input
-            type="password"
-            data-testid="pw-confirm"
+          <PasswordField
+            label="Confirm new password"
+            testId="pw-confirm"
             value={form.confirm}
             onChange={update("confirm")}
-            required
-            className="rounded-sm"
+            show={show.confirm}
+            onToggleShow={toggleShow("confirm")}
+            autoComplete="new-password"
           />
+          {form.confirm && !matches && (
+            <p
+              data-testid="pw-mismatch-hint"
+              className="text-[11px] text-destructive"
+            >
+              Passwords do not match.
+            </p>
+          )}
         </div>
         <Button
           type="submit"
-          disabled={submitting}
+          disabled={!submittable}
           data-testid="pw-submit-btn"
           className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
         >
           {submitting ? "Updating…" : "Update password"}
         </Button>
       </form>
+    </div>
+  );
+}
+
+function PasswordField({
+  label,
+  testId,
+  value,
+  onChange,
+  show,
+  onToggleShow,
+  autoComplete,
+  minLength,
+}) {
+  return (
+    <div className="space-y-1">
+      <Label>{label}</Label>
+      <div className="relative">
+        <Input
+          type={show ? "text" : "password"}
+          data-testid={testId}
+          value={value}
+          onChange={onChange}
+          autoComplete={autoComplete}
+          minLength={minLength}
+          required
+          className="rounded-sm pr-10"
+        />
+        <button
+          type="button"
+          onClick={onToggleShow}
+          data-testid={`${testId}-toggle`}
+          aria-label={show ? "Hide password" : "Show password"}
+          className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-muted-foreground hover:text-foreground"
+        >
+          {show ? (
+            <EyeOff className="h-4 w-4" />
+          ) : (
+            <Eye className="h-4 w-4" />
+          )}
+        </button>
+      </div>
     </div>
   );
 }

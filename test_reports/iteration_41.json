@@ -1,0 +1,23 @@
+{
+  "summary": "Validated the hardened /auth/change-password flow end-to-end. Backend: ran the 11-test pytest module — 11/11 PASS against the preview URL, covering happy-path + session revocation, wrong-current (401), same-as-current (400), policy rejections (400), min_length (422), password history reuse (400), per-user 5/15min failure rate limit (6th → 429 even with correct current), audit rows for success and failure, and unauthenticated 401. Frontend: logged in as a throwaway staff user on /account → Security tab, confirmed every required data-testid (pw-current/new/confirm, *-toggle, pw-submit-btn, pw-policy-checklist, pw-policy-{rule}-ok/-todo), observed live policy-checklist state flips, mismatch hint, same-as-current hint, show/hide toggles flipping type password↔text, submit button correctly gated, and the toast 'Password updated. All other sessions signed out.' after successful change.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_password_change_hardening.py",
+    "/app/test_reports/pytest/password_hardening_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Password-policy rules are duplicated between backend/core/password_policy.py and frontend/src/pages/account/SecurityTab.jsx POLICY_RULES. Consider exposing the rule set via a /auth/password-policy endpoint to remove drift risk (nice-to-have, not blocking).",
+    "SecurityTab.jsx is 623 lines — still under the 700-line soft cap but close. If more security widgets are added, consider splitting PasswordChangeCard, MFACard, and SessionsCard into separate files.",
+    "Per-user failure rate-limit window (5 fails / 15 min) uses in-memory counters — if the backend scales horizontally, the gate becomes per-pod. Flag for future prod hardening; out of scope for this iteration."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (all checks green)"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (restored after an accidental inline change — cycled through 6 throwaway passwords and rotated back). UI test used a throwaway staff user pwuitest_7f743960@ccms.app / NewStrongPass@123 (original Change@Me_7f743960! was rotated as part of the success-toast test).",
+  "seed_data_creation": "Created one throwaway staff user via POST /api/auth/users for the frontend Playwright flow (pwuitest_7f743960@ccms.app). Backend tests self-provision throwaway users per test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Always export REACT_APP_BACKEND_URL=https://care-platform-45.preview.emergentagent.com before running the password-change hardening tests — auth cookies are Secure, so localhost:8001 will 401 on /auth/me (tests fall back to localhost if the env var is missing and will fail with 'Not authenticated'). The admin password was rotated and restored during this run; do not assume stale values. Per-user rate-limit counters persist ~15 min in memory, so create fresh throwaway users per test flow.",
+  "rca of the issue": "No outstanding bugs. Initial red run was caused by REACT_APP_BACKEND_URL env var not being set in the shell, which made tests hit http://localhost:8001 where Secure cookies were stripped by requests → every authenticated call returned 401. Fixed by exporting the preview URL; all 11 tests then passed."
+}
