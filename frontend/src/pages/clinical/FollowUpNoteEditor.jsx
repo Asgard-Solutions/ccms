@@ -50,6 +50,8 @@ import {
 } from "../../components/ui/dialog";
 
 import { useAuth } from "../../contexts/AuthContext";
+import { useReauth } from "../../components/ReauthGate";
+import AddendumPanel from "./AddendumPanel";
 import { formatDateTime } from "../../utils/time";
 
 const PAIN_CHANGE = [
@@ -143,6 +145,7 @@ export default function FollowUpNoteEditor() {
   const { pid, nid } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { requestReauth } = useReauth();
   const canWrite = ["admin", "doctor"].includes(user?.role);
 
   const [note, setNote] = useState(null);
@@ -329,6 +332,9 @@ export default function FollowUpNoteEditor() {
                 className={`text-[10px] uppercase tracking-wider ${statusBadge.class}`}
               >
                 {statusBadge.label}
+                {note.status === "signed" && (note.addendum_count || 0) > 0
+                  ? ` · +${note.addendum_count} addendum${note.addendum_count === 1 ? "" : "s"}`
+                  : ""}
               </Badge>
               {note.signed_at && (
                 <span>
@@ -827,10 +833,21 @@ export default function FollowUpNoteEditor() {
             </div>
             <p className="mt-1 text-xs text-success/80">
               This note is a permanent chart artifact and cannot be edited. New findings
-              should be documented in a subsequent follow-up note.
+              should be documented in a subsequent follow-up note, or appended
+              through a signed addendum below.
             </p>
           </div>
         )}
+
+        <AddendumPanel
+          patientId={pid}
+          parentType="follow_up_note"
+          parentId={nid}
+          parentSigned={note.status === "signed"}
+          canWrite={canWrite}
+          currentUser={user}
+          onReauthNeeded={() => requestReauth(async () => load())}
+        />
       </div>
 
       <NarrativeDialog

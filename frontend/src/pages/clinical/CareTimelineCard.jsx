@@ -12,6 +12,7 @@ import {
   FileText,
   GitBranch,
   Image as ImageIcon,
+  MessageSquarePlus,
   NotebookPen,
   Stethoscope,
   Target,
@@ -33,6 +34,7 @@ const KIND_META = {
   outcome_entry: { Icon: Activity, tone: "text-success" },
   diagnosis_change: { Icon: GitBranch, tone: "text-warning" },
   intake_submission: { Icon: ClipboardList, tone: "text-muted-foreground" },
+  addendum: { Icon: MessageSquarePlus, tone: "text-primary" },
 };
 
 const STATUS_TONE = {

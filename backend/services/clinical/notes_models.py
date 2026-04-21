@@ -189,6 +189,9 @@ class FollowUpNotePublic(BaseModel):
     signed_at: str | None = None
     signed_by: str | None = None
     signed_by_name: str | None = None
+    has_addenda: bool = False
+    addendum_count: int = 0
+    latest_addendum_at: str | None = None
     created_at: str
     updated_at: str
     created_by: str | None = None
@@ -208,6 +211,7 @@ class CareTimelineEntry(BaseModel):
     kind: Literal[
         "encounter", "initial_exam", "follow_up_note", "re_exam", "treatment_plan",
         "clinical_media", "outcome_entry", "diagnosis_change", "intake_submission",
+        "addendum",
     ]
     id: str
     date_of_service: str | None = None

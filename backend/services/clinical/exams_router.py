@@ -104,6 +104,25 @@ async def _hydrate(db, tenant_id: str, doc: dict) -> dict:
         )
         if u:
             out["signed_by_name"] = u.get("name") or u.get("email")
+    # Phase 8 — addendum metadata
+    addendum_cnt = await db.clinical_addenda.count_documents({
+        "tenant_id": tenant_id,
+        "parent_type": "initial_exam",
+        "parent_id": out.get("id"),
+    })
+    out["addendum_count"] = addendum_cnt
+    out["has_addenda"] = addendum_cnt > 0
+    if addendum_cnt:
+        latest = await db.clinical_addenda.find_one(
+            {
+                "tenant_id": tenant_id,
+                "parent_type": "initial_exam",
+                "parent_id": out.get("id"),
+            },
+            {"_id": 0, "created_at": 1},
+            sort=[("created_at", -1)],
+        )
+        out["latest_addendum_at"] = latest.get("created_at") if latest else None
     return out
 
 

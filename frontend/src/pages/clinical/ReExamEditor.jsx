@@ -33,6 +33,7 @@ import {
 
 import { useAuth } from "../../contexts/AuthContext";
 import { useReauth } from "../../components/ReauthGate";
+import AddendumPanel from "./AddendumPanel";
 import { formatDateTime } from "../../utils/time";
 
 const STATUS_BADGE = {
@@ -287,6 +288,9 @@ export default function ReExamEditor() {
                 className={`text-[10px] uppercase tracking-wider ${badge.class}`}
               >
                 {badge.label}
+                {rx.status === "signed" && (rx.addendum_count || 0) > 0
+                  ? ` · +${rx.addendum_count} addendum${rx.addendum_count === 1 ? "" : "s"}`
+                  : ""}
               </Badge>
             </div>
           </div>
@@ -625,10 +629,21 @@ export default function ReExamEditor() {
             </div>
             <p className="mt-1 text-xs text-success/80">
               This re-exam is a permanent chart artifact and cannot be edited. Plan changes are
-              captured separately on the Treatment Plan record.
+              captured separately on the Treatment Plan record. Additional
+              clarifications may be appended through a signed addendum below.
             </p>
           </div>
         )}
+
+        <AddendumPanel
+          patientId={pid}
+          parentType="re_exam"
+          parentId={rid}
+          parentSigned={rx.status === "signed"}
+          canWrite={canWrite}
+          currentUser={user}
+          onReauthNeeded={() => requestReauth(async () => load())}
+        />
       </div>
 
       <NarrativeDialog

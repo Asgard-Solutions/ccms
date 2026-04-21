@@ -127,6 +127,25 @@ async def _hydrate(db, tenant_id: str, doc: dict) -> dict:
         )
         if u:
             out["signed_by_name"] = u.get("name") or u.get("email")
+    # Phase 8 — addendum metadata
+    addendum_cnt = await db.clinical_addenda.count_documents({
+        "tenant_id": tenant_id,
+        "parent_type": "follow_up_note",
+        "parent_id": out.get("id"),
+    })
+    out["addendum_count"] = addendum_cnt
+    out["has_addenda"] = addendum_cnt > 0
+    if addendum_cnt:
+        latest = await db.clinical_addenda.find_one(
+            {
+                "tenant_id": tenant_id,
+                "parent_type": "follow_up_note",
+                "parent_id": out.get("id"),
+            },
+            {"_id": 0, "created_at": 1},
+            sort=[("created_at", -1)],
+        )
+        out["latest_addendum_at"] = latest.get("created_at") if latest else None
     out["completeness"] = _compute_completeness(out)
     # Phase 6 — surface the active plan summary read-only on GETs.
     plan_doc = await db.clinical_treatment_plans.find_one(
@@ -503,6 +522,32 @@ async def patch_follow_up_note(
         event_type="follow_up_note.updated", entity_type="follow_up_note",
         entity_id=note_id, metadata={"fields": fields_changed},
     )
+    # Phase 8 — emit explicit linkage-change events when those specific
+    # linkages are mutated by a PATCH. Keeps downstream audit consumers
+    # (billing readiness, compliance audit export) from having to
+    # introspect the generic `updated` payload.
+    if "treatment_plan_id" in dumped:
+        old_tp = current.get("treatment_plan_id")
+        new_tp = sets.get("treatment_plan_id")
+        if old_tp != new_tp:
+            await _log_clinical_event(
+                db, ctx,
+                actor=user, patient_id=patient_id, episode_id=fresh.get("episode_id"),
+                event_type="follow_up_note.treatment_plan_linkage_changed",
+                entity_type="follow_up_note", entity_id=note_id,
+                metadata={"previous_plan_id": old_tp, "new_plan_id": new_tp},
+            )
+    if "assessment" in dumped and dumped["assessment"] is not None:
+        prev = (current.get("assessment") or {}).get("linked_diagnosis_ids") or []
+        nxt = (dumped["assessment"] or {}).get("linked_diagnosis_ids") or []
+        if sorted(prev) != sorted(nxt):
+            await _log_clinical_event(
+                db, ctx,
+                actor=user, patient_id=patient_id, episode_id=fresh.get("episode_id"),
+                event_type="follow_up_note.diagnosis_linkage_changed",
+                entity_type="follow_up_note", entity_id=note_id,
+                metadata={"previous": prev, "new": nxt},
+            )
     await audit_success(
         user, "clinical.follow_up_note.updated", request,
         entity_type="clinical_follow_up_note", entity_id=note_id, phi_accessed=True,
@@ -1217,6 +1262,43 @@ async def get_care_timeline(
             "provider_id": None,
             "provider_name": None,
             "link_path": None,
+        })
+
+    # Phase 8 — signed addenda appear on the timeline anchored to their
+    # parent artifact so the chart story stays complete.
+    addenda = [
+        d async for d in db.clinical_addenda.find(
+            {**q, "status": "signed"},
+            {"_id": 0},
+        ).sort("signed_at", -1).limit(limit)
+    ]
+    PARENT_LABELS = {
+        "follow_up_note": "follow-up note",
+        "initial_exam": "initial exam",
+        "re_exam": "re-exam",
+    }
+    for ad in addenda:
+        parent_label = PARENT_LABELS.get(ad.get("parent_type"), "note")
+        sub = ad.get("reason") or None
+        # Deep-link back to the authoring surface for the parent artifact
+        link = None
+        if ad.get("parent_type") == "follow_up_note" and ad.get("parent_id"):
+            link = f"/patients/{patient_id}/clinical/follow-up/{ad['parent_id']}"
+        elif ad.get("parent_type") == "initial_exam" and ad.get("parent_id"):
+            link = f"/patients/{patient_id}/clinical/exams/{ad['parent_id']}"
+        elif ad.get("parent_type") == "re_exam" and ad.get("parent_id"):
+            link = f"/patients/{patient_id}/clinical/re-exams/{ad['parent_id']}"
+        entries.append({
+            "kind": "addendum",
+            "id": ad["id"],
+            "date_of_service": ad.get("signed_at") or ad.get("created_at"),
+            "status": ad.get("status") or "signed",
+            "title": f"Addendum on {parent_label}",
+            "subtitle": sub,
+            "episode_id": ad.get("episode_id"),
+            "provider_id": ad.get("signed_by"),
+            "provider_name": prov_map.get(ad.get("signed_by")) if ad.get("signed_by") else None,
+            "link_path": link,
         })
 
     entries.sort(key=lambda r: (r.get("date_of_service") or ""), reverse=True)

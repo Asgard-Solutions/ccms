@@ -23,6 +23,7 @@ import { Skeleton } from "../../components/ui/skeleton";
 import { Badge } from "../../components/ui/badge";
 import { Textarea } from "../../components/ui/textarea";
 import { Label } from "../../components/ui/label";
+import BillingReadinessPanel from "./BillingReadinessPanel";
 import {
   Dialog,
   DialogContent,
@@ -160,7 +161,7 @@ function CancelDialog({ open, onOpenChange, encounter, onSubmit, submitting }) {
   );
 }
 
-function EncounterRow({ enc, canWrite, isHighlighted, onOpenAppt, onComplete, onCancel, onLaunchExam, onLaunchReExam, onLaunchNote }) {
+function EncounterRow({ enc, canWrite, isHighlighted, onOpenAppt, onComplete, onCancel, onLaunchExam, onLaunchReExam, onLaunchNote, patientId }) {
   const tone = STATUS_TONE[enc.status] || "border-border bg-muted";
   return (
     <div
@@ -289,6 +290,13 @@ function EncounterRow({ enc, canWrite, isHighlighted, onOpenAppt, onComplete, on
             </>
           )}
         </div>
+      </div>
+      <div className="mt-3">
+        <BillingReadinessPanel
+          patientId={patientId}
+          encounterId={enc.id}
+          defaultOpen={false}
+        />
       </div>
     </div>
   );
@@ -481,6 +489,7 @@ export default function EncountersCard({ patientId, canWrite, onReauthNeeded }) 
               onLaunchExam={handleLaunchExam}
               onLaunchReExam={handleLaunchReExam}
               onLaunchNote={handleLaunchNote}
+              patientId={patientId}
             />
           ))}
         </div>

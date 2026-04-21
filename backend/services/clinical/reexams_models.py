@@ -123,6 +123,9 @@ class ReExamPublic(BaseModel):
     signed_at: str | None = None
     signed_by: str | None = None
     signed_by_name: str | None = None
+    has_addenda: bool = False
+    addendum_count: int = 0
+    latest_addendum_at: str | None = None
     created_at: str
     updated_at: str
     created_by: str | None = None

@@ -47,6 +47,8 @@ import {
 } from "../../components/ui/dialog";
 
 import { useAuth } from "../../contexts/AuthContext";
+import { useReauth } from "../../components/ReauthGate";
+import AddendumPanel from "./AddendumPanel";
 import { formatDateTime } from "../../utils/time";
 
 const ROM_REGIONS = ["cervical", "thoracic", "lumbar", "shoulders", "hips"];
@@ -562,6 +564,7 @@ export default function InitialExamEditor() {
   const { pid, eid } = useParams();
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { requestReauth } = useReauth();
   const canWrite = ["admin", "doctor"].includes(user?.role);
 
   const [exam, setExam] = useState(null);
@@ -757,6 +760,9 @@ export default function InitialExamEditor() {
                 className={`text-[10px] uppercase tracking-wider ${statusBadge.class}`}
               >
                 {statusBadge.label}
+                {exam.status === "signed" && (exam.addendum_count || 0) > 0
+                  ? ` · +${exam.addendum_count} addendum${exam.addendum_count === 1 ? "" : "s"}`
+                  : ""}
               </Badge>
               {exam.signed_at && (
                 <span>
@@ -941,10 +947,21 @@ export default function InitialExamEditor() {
             </div>
             <p className="mt-1 text-xs text-success/80">
               This exam is a permanent chart artifact and cannot be edited.
-              New findings should be documented in a follow-up note or re-exam.
+              New findings should be documented in a follow-up note or re-exam,
+              or appended through a signed addendum below.
             </p>
           </div>
         )}
+
+        <AddendumPanel
+          patientId={pid}
+          parentType="initial_exam"
+          parentId={eid}
+          parentSigned={exam.status === "signed"}
+          canWrite={canWrite}
+          currentUser={user}
+          onReauthNeeded={() => requestReauth(async () => load())}
+        />
 
         <div className="flex justify-end">
           <Button
