@@ -119,12 +119,9 @@ export default function SchedulingPage() {
               hoursConfigured={!!clinicHours}
               includeCancelled={includeCancelled}
               onOpenAppointment={(a) => {
-                // Allow opening both scheduled AND cancelled appointments.
-                // Cancelled → BookDialog surfaces the "Launch encounter"
-                // action so admins/doctors can kick off the exception
-                // workflow for same-day documentation.
-                if (canBook && (a.status === "scheduled" || a.status === "cancelled"))
-                  openReschedule(a);
+                // Staff may open any appointment — the reschedule dialog
+                // doubles as the arrival/workflow panel.
+                if (canBook) openReschedule(a);
               }}
               onCreateAt={(d) => openNewAt(d)}
             />
@@ -138,8 +135,7 @@ export default function SchedulingPage() {
               includeCancelled={includeCancelled}
               onOpenDay={(d) => goToDay(d)}
               onOpenAppointment={(a) => {
-                if (canBook && (a.status === "scheduled" || a.status === "cancelled"))
-                  openReschedule(a);
+                if (canBook) openReschedule(a);
                 else goToDay(new Date(a.start_time));
               }}
               onCreateAt={(d) => openNewAt(d)}
@@ -152,8 +148,7 @@ export default function SchedulingPage() {
               canBook={canBook}
               onOpenDay={(d) => goToDay(d)}
               onOpenAppointment={(a) => {
-                if (canBook && (a.status === "scheduled" || a.status === "cancelled"))
-                  openReschedule(a);
+                if (canBook) openReschedule(a);
                 else goToDay(new Date(a.start_time));
               }}
               onCreateAt={(d) => openNewAt(d)}

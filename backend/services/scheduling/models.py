@@ -157,3 +157,10 @@ class AppointmentPublic(BaseModel):
     # Phase 3 — populated by GET /appointments/{id} when an encounter exists.
     clinical_encounter_id: str | None = None
     clinical_encounter_status: str | None = None
+
+    # Intake integration — computed by hydrator from `patient_intake_forms`.
+    # intake_status: not_started | in_progress | completed
+    intake_status: str | None = None
+    intake_completed_at: str | None = None
+    intake_completed_by_name: str | None = None
+    intake_form_id: str | None = None

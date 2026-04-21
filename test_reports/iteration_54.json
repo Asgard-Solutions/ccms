@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 54 - Appointment Workflow Phase 2 (check-in/intake-gated ready-for-provider). Backend: 29/29 pytest green (17 test_appointment_workflow + 5 test_appointment_counts + 7 test_appointment_types) against the preview service. Frontend: verified full workflow E2E via BookDialog on SchedulingPage day view. AppointmentWorkflowPanel renders status badge + intake badge + quick actions (Check in, No-show) + timeline. Drove a real appointment through Check-in (with admin step-up reauth) -> Ready-for-provider (intake NOT_STARTED triggered override prompt, override=true + reason sent, backend returned 200 and toast 'Ready for provider (intake override recorded)' appeared) -> Undo check-in -> back to Scheduled. Timeline renders checked_in + ready_for_provider rows with timestamps. Intake 'Open intake' link is present. All 8 review-request items (workflow endpoints, validation rules, intake gating, intake hydration, metadata stamps, location endpoint, AppointmentWorkflowPanel in BookDialog, patient-portal denial) are working.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "AppointmentWorkflowPanel timeline",
+        "issues": ["Timeline rows display raw user UUID next to each milestone (e.g. 'Checked in Apr 21, 6:41 PM · a7c5ab29-02a8-...') instead of the user's display name. Backend hydrates intake_completed_by_name but not checked_in_by_name / ready_for_provider_by_name / visit_started_by_name / completed_by_name / checked_out_by_name. Recommend either (a) hydrate *_by_name fields in router._hydrate similar to intake_completed_by_name, or (b) hide the by suffix in the UI when only a UUID is available."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_appointment_workflow.py",
+    "/app/backend/tests/test_appointment_counts.py",
+    "/app/backend/tests/test_appointment_types.py",
+    "/app/test_reports/pytest/iteration_54_workflow.xml"
+  ],
+  "action_items": [
+    "(Polish) Hydrate checked_in_by_name / ready_for_provider_by_name / visit_started_by_name / ready_for_checkout_by_name / completed_by_name / checked_out_by_name / no_show_by_name / location_updated_by_name in AppointmentPublic so the timeline in AppointmentWorkflowPanel shows user names instead of raw UUIDs. Same pattern already used for intake_completed_by_name."
+  ],
+  "critical_code_review_comments": [
+    "Workflow endpoint responses are step-up (re-auth) protected — verified by a 401 -> 'Confirm it\u2019s you' PIN dialog firing in the UI on first Check-in click. After 'Use password instead' the action succeeded. This is the correct HIPAA posture.",
+    "AppointmentWorkflowPanel.run() catches error and toasts err.response.data.detail, but doesn\u2019t surface the override hint. For ready-for-provider the front-end *predicts* the gate via intake_status === 'completed' and only then skips the prompt; fine today but fragile if backend adds more gates.",
+    "BookDialog reschedule mode is the only path to the workflow panel. SchedulingPage broadens onOpenAppointment for any status, good. Ensure future kanban/queue views also reuse AppointmentWorkflowPanel rather than re-implementing the actions.",
+    "Timeline `buildTimeline` filters rows by !!row.at which means a transition whose _at stamp is null won\u2019t render even if _by_user_id exists — safe today. Consider sort-by-timestamp to guarantee chronological order if rows can arrive out-of-order."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (29/29)", "frontend": "100% of review-request Phase 2 behaviours verified; 1 cosmetic polish item"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (reauth via 'Use password instead' in PIN dialog).",
+  "seed_data_creation": "Tests self-seed: ephemeral appointments (via POST /api/appointments) and, for intake-gate tests, an isolated patient + completed intake form. No cleanup required — retention handled by system.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 2 Appointment Workflow is green end-to-end. To reach the workflow panel in UI: login as admin -> /scheduling -> Day view -> 'Collapse to clinic hours' (or 'Show all appointments') -> click an appointment block (data-testid=scheduling-day-appt-<id>) -> BookDialog opens with AppointmentWorkflowPanel at top. First workflow action triggers a step-up PIN dialog; click 'Use password instead' and enter Admin@ComplianceClinic1. Regression: `cd /app/backend && python -m pytest tests/test_appointment_workflow.py tests/test_appointment_counts.py tests/test_appointment_types.py -q`. Only remaining polish: hydrate *_by_name fields on AppointmentPublic for the timeline.",
+  "rca of the issue": "N/A — no blocking issues. Cosmetic-only: timeline buildTimeline(appt) in AppointmentWorkflowPanel.jsx line 288-295 uses appt.checked_in_by_user_id etc. directly. Mitigation: extend scheduling/router.py::_hydrate to also resolve user names for all workflow stamps (it already does this for intake_completed_by_name), and either add checked_in_by_name... fields to AppointmentPublic or change the React component to prefer *_by_name when present and fall back to truncated UUID otherwise."
+}

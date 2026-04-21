@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Stethoscope } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import { isoToLocalInput, localInputToIso } from "../../utils/time";
 import { Button } from "../../components/ui/button";
+import AppointmentWorkflowPanel from "./AppointmentWorkflowPanel";
 import EncounterLaunchDialog from "../clinical/EncounterLaunchDialog";
 import {
   Dialog,
@@ -51,6 +53,8 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
   const mode = initial ? "reschedule" : "create";
   const [patients, setPatients] = useState([]);
   const { providers } = useProviders();
+  const [current, setCurrent] = useState(initial);
+  const navigate = useNavigate();
   const [form, setForm] = useState({
     patient_id: "",
     provider_id: "",
@@ -88,6 +92,7 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
     endManuallyEditedRef.current = false;
 
     if (initial) {
+      setCurrent(initial);
       setForm({
         patient_id: initial.patient_id,
         provider_id: initial.provider_id,
@@ -200,12 +205,27 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent data-testid="appt-dialog" className="max-w-lg rounded-sm">
+      <DialogContent data-testid="appt-dialog" className="max-w-xl max-h-[92vh] overflow-y-auto rounded-sm">
         <DialogHeader>
           <DialogTitle className="font-display">
             {mode === "reschedule" ? "Reschedule appointment" : "Book appointment"}
           </DialogTitle>
         </DialogHeader>
+        {mode === "reschedule" && current && (
+          <AppointmentWorkflowPanel
+            appointment={current}
+            onUpdated={(updated) => {
+              setCurrent(updated);
+              onSaved?.(updated);
+            }}
+            onOpenIntake={(appt) => {
+              if (!appt?.patient_id) return;
+              onClose?.();
+              // Route to patient detail — intake forms live there today.
+              navigate(`/patients/${appt.patient_id}?tab=intake`);
+            }}
+          />
+        )}
         <form onSubmit={submit} className="space-y-4">
           <div className="space-y-1">
             <Label>Patient</Label>

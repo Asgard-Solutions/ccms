@@ -255,6 +255,45 @@ def _guard_and_build(
     return update
 
 
+async def _intake_is_complete(patient_id: str, tenant_id: str | None) -> bool:
+    """Return True if the patient has at least one completed intake form.
+
+    Tenant-scoped when tenant_id is known. Doesn't touch PHI fields — only
+    reads status flag from `patient_intake_forms`.
+    """
+    from core.db import get_db_read
+    db = get_db_read()
+    q: dict = {"patient_id": patient_id, "status": "completed"}
+    if tenant_id:
+        q["tenant_id"] = tenant_id
+    row = await db.patient_intake_forms.find_one(q, {"_id": 0, "id": 1})
+    return bool(row)
+
+
+async def _guard_intake_gating(
+    current: dict,
+    spec: TransitionSpec,
+    *,
+    override: bool,
+    tenant_id: str | None,
+) -> None:
+    """Block `ready_for_provider` unless the patient has a completed intake
+    form. Explicit `override=True` bypasses the check (audited separately)."""
+    if spec.name != "ready_for_provider":
+        return
+    if override:
+        return
+    patient_id = current.get("patient_id")
+    if not patient_id:
+        return  # defensive — if we can't identify a patient, skip the gate
+    if not await _intake_is_complete(patient_id, tenant_id):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Patient intake is not complete. Complete intake or pass "
+            "override=true to bypass.",
+        )
+
+
 async def apply_transition(
     appointment_id: str,
     spec: TransitionSpec,
@@ -269,6 +308,13 @@ async def apply_transition(
 ) -> dict:
     """Execute the transition and return the updated (decrypted) document."""
     db = get_db_write()
+
+    # Intake gating runs BEFORE the state-machine check so the operator gets
+    # the most specific error first (otherwise they'd see a generic state
+    # rejection when the real blocker is missing intake).
+    await _guard_intake_gating(
+        current, spec, override=override, tenant_id=tenant_id,
+    )
 
     update = _guard_and_build(
         current, spec,
@@ -301,6 +347,10 @@ async def apply_transition(
     )
 
     # Audit — no PHI, only operational metadata + reason.
+    intake_override = (
+        spec.name == "ready_for_provider" and override
+        and not await _intake_is_complete(current.get("patient_id"), tenant_id)
+    )
     await audit_success(
         actor, spec.audit_action, request,
         entity_type="appointment", entity_id=appointment_id,
@@ -312,6 +362,7 @@ async def apply_transition(
             "reason": reason,
             "location_after": update.get("current_location_type"),
             "tenant_id": tenant_id,
+            "intake_gate_bypassed": intake_override,
         },
     )
     return updated_dec

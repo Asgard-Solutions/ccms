@@ -1408,20 +1408,45 @@ export default function PatientDetail() {
                   : "No appointments in the selected range."}
               </div>
             ) : (
-              <ul className="space-y-2">
+              <ul className="space-y-2" data-testid="patient-appointments-list">
                 {filteredAppointments.map((a) => (
-                  <li key={a.id} className="flex items-center justify-between rounded-sm border border-border bg-card px-5 py-4 text-sm">
-                    <div>
+                  <li
+                    key={a.id}
+                    data-testid={`patient-appt-${a.id}`}
+                    className="flex items-center justify-between gap-3 rounded-sm border border-border bg-card px-5 py-4 text-sm"
+                  >
+                    <div className="min-w-0">
                       <div className="font-medium text-foreground">{formatDateTime(a.start_time)}</div>
                       <div className="text-xs text-muted-foreground">
                         with {a.provider_name} · {relativeFromNow(a.start_time)}
                       </div>
+                      {a.intake_status && (
+                        <div
+                          data-testid={`patient-appt-intake-${a.id}`}
+                          className="mt-1 text-[11px] uppercase tracking-wider text-muted-foreground"
+                        >
+                          Intake: <span className={
+                            a.intake_status === "completed"
+                              ? "text-emerald-700 dark:text-emerald-300"
+                              : a.intake_status === "in_progress"
+                                ? "text-amber-700 dark:text-amber-300"
+                                : "text-muted-foreground"
+                          }>{a.intake_status.replace("_", " ")}</span>
+                          {a.checked_in_at && (
+                            <> · checked in {formatDateTime(a.checked_in_at)}</>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <span className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
-                      a.status === "cancelled" ? "bg-destructive-soft text-destructive"
-                        : a.status === "completed" ? "bg-muted text-muted-foreground"
+                    <span
+                      data-testid={`patient-appt-status-${a.id}`}
+                      className={`shrink-0 rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
+                        a.status === "cancelled" || a.status === "canceled" || a.status === "no_show"
+                          ? "bg-destructive-soft text-destructive"
+                        : a.status === "completed" || a.status === "checked_out"
+                          ? "bg-muted text-muted-foreground"
                         : "bg-primary/10 text-primary"}`}>
-                      {a.status}
+                      {String(a.status || "").replace(/_/g, " ")}
                     </span>
                   </li>
                 ))}

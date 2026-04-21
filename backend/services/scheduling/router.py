@@ -69,11 +69,43 @@ async def _hydrate(apps: list[dict]) -> list[dict]:
             {"_id": 0, "id": 1, "first_name": 1, "last_name": 1, "phone": 1},
         )
     }
+    # Latest intake form per patient (single pass, newest-first).
+    # - completed form wins; otherwise a draft is surfaced as "in_progress".
+    # - patients with zero intake forms → "not_started".
+    intake_by_pid: dict[str, dict] = {}
+    async for f in db.patient_intake_forms.find(
+        {"patient_id": {"$in": patient_ids}},
+        {"_id": 0, "id": 1, "patient_id": 1, "status": 1,
+         "captured_at": 1, "captured_by_name": 1, "created_at": 1},
+    ).sort("created_at", -1):
+        pid = f["patient_id"]
+        cur = intake_by_pid.get(pid)
+        # A completed form wins over a later draft.
+        if cur and cur.get("status") == "completed":
+            continue
+        if cur is None or f.get("status") == "completed":
+            intake_by_pid[pid] = f
     for a in apps:
         a["provider_name"] = providers.get(a["provider_id"])
         info = patients.get(a["patient_id"]) or {}
         a["patient_name"] = info.get("name")
         a["patient_phone"] = info.get("phone")
+        f = intake_by_pid.get(a["patient_id"])
+        if f is None:
+            a["intake_status"] = "not_started"
+            a["intake_completed_at"] = None
+            a["intake_completed_by_name"] = None
+            a["intake_form_id"] = None
+        elif f.get("status") == "completed":
+            a["intake_status"] = "completed"
+            a["intake_completed_at"] = f.get("captured_at")
+            a["intake_completed_by_name"] = f.get("captured_by_name")
+            a["intake_form_id"] = f.get("id")
+        else:  # draft
+            a["intake_status"] = "in_progress"
+            a["intake_completed_at"] = None
+            a["intake_completed_by_name"] = None
+            a["intake_form_id"] = f.get("id")
     return apps
 
 
