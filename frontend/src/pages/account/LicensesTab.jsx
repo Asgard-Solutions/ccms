@@ -16,6 +16,7 @@ import {
   BadgeCheck,
   CalendarClock,
   IdCard,
+  Pill,
   Pencil,
   Plus,
   Stethoscope,
@@ -24,6 +25,7 @@ import {
 import { api, formatApiError } from "../../api/client";
 import { useAuth } from "../../contexts/AuthContext";
 import { describeNpiError, NPI_CHECKSUM_DISCLAIMER } from "../../utils/npi";
+import { describeDeaError, DEA_CHECKSUM_DISCLAIMER } from "../../utils/dea";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -396,6 +398,142 @@ function NpiCard() {
   );
 }
 
+function DeaCard() {
+  const { user, refresh } = useAuth();
+  const [value, setValue] = useState(user?.dea_number || "");
+  const [expires, setExpires] = useState(user?.dea_expires_at || "");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setValue(user?.dea_number || "");
+    setExpires(user?.dea_expires_at || "");
+  }, [user]);
+
+  // Keep internal state in upper-case — the backend also normalises,
+  // but mirroring it here means the UI shows the user exactly what
+  // will be persisted.
+  const normalised = value.trim().toUpperCase();
+  const errorMessage =
+    normalised === "" ? null : describeDeaError(normalised);
+  const valid = errorMessage === null;
+  const dirty =
+    (user?.dea_number || "") !== normalised ||
+    (user?.dea_expires_at || "") !== (expires || "");
+
+  const save = async () => {
+    if (!valid) {
+      toast.error(errorMessage || "DEA number is invalid.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.patch("/auth/me/profile", {
+        dea_number: normalised,
+        dea_expires_at: expires || "",
+      });
+      toast.success(normalised ? "DEA saved." : "DEA cleared.");
+      await refresh();
+    } catch (err) {
+      toast.error(formatApiError(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      data-testid="dea-card"
+      className="rounded-sm border border-border bg-card p-6"
+    >
+      <div className="flex items-center gap-2">
+        <Pill className="h-5 w-5 text-primary" aria-hidden="true" />
+        <h2 className="font-display text-2xl font-medium">DEA number</h2>
+        <span className="ml-auto rounded-sm bg-muted px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Optional — prescribers only
+        </span>
+      </div>
+      <p className="mt-2 text-sm text-muted-foreground">
+        DEA registration number for prescribing controlled substances. Only
+        complete this section if your role requires it. The format check
+        below is an anti-typo safeguard — it does not prove federal
+        registration status.
+      </p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-end">
+        <div className="space-y-1 min-w-[220px]">
+          <Label
+            htmlFor="dea-input-field"
+            className="text-xs uppercase tracking-wider text-muted-foreground"
+          >
+            DEA number
+          </Label>
+          <Input
+            id="dea-input-field"
+            value={normalised}
+            onChange={(e) =>
+              setValue(
+                e.target.value
+                  .toUpperCase()
+                  .replace(/[^A-Z0-9]/g, "")
+                  .slice(0, 9),
+              )
+            }
+            placeholder="AB1234563"
+            data-testid="dea-input"
+            inputMode="text"
+            maxLength={9}
+            autoCapitalize="characters"
+            spellCheck={false}
+            aria-invalid={!valid}
+            aria-describedby="dea-help"
+            className="rounded-sm font-mono tracking-widest uppercase focus-visible:ring-2 focus-visible:ring-primary"
+          />
+        </div>
+        <div className="space-y-1">
+          <Label
+            htmlFor="dea-expiry-field"
+            className="text-xs uppercase tracking-wider text-muted-foreground"
+          >
+            Expires
+          </Label>
+          <Input
+            id="dea-expiry-field"
+            type="date"
+            value={expires || ""}
+            onChange={(e) => setExpires(e.target.value)}
+            data-testid="dea-expiry"
+            className="rounded-sm focus-visible:ring-2 focus-visible:ring-primary"
+          />
+        </div>
+        <Button
+          onClick={save}
+          disabled={!dirty || !valid || saving}
+          data-testid="dea-save-btn"
+          className="rounded-sm"
+        >
+          {saving ? "Saving…" : "Save DEA"}
+        </Button>
+      </div>
+      {!valid && (
+        <p
+          data-testid="dea-error"
+          role="alert"
+          aria-live="polite"
+          className="mt-1 text-[11px] text-destructive"
+        >
+          {errorMessage}
+        </p>
+      )}
+      <p
+        id="dea-help"
+        data-testid="dea-disclaimer"
+        className="mt-2 text-[11px] text-muted-foreground"
+      >
+        {DEA_CHECKSUM_DISCLAIMER}
+      </p>
+    </div>
+  );
+}
+
 function LicenseRow({ row, onEdit, onDelete }) {
   const exp = expirationMeta(row.expiration_date);
   return (
@@ -501,6 +639,7 @@ export default function LicensesTab() {
       className="space-y-6 animate-in fade-in duration-200"
     >
       <NpiCard />
+      <DeaCard />
 
       <div
         data-testid="licenses-card"

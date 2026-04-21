@@ -140,6 +140,8 @@ def _to_public(user: dict) -> dict:
         "preferred_signature_name": user.get("preferred_signature_name"),
         "time_zone": user.get("time_zone"),
         "npi_number": user.get("npi_number"),
+        "dea_number": user.get("dea_number"),
+        "dea_expires_at": user.get("dea_expires_at"),
         "created_at": user["created_at"],
     }
 
@@ -556,6 +558,8 @@ _PROFILE_STRING_FIELDS = (
     "preferred_signature_name",
     "time_zone",
     "npi_number",
+    "dea_number",
+    "dea_expires_at",
 )
 
 

@@ -47,6 +47,8 @@ class UserPublic(BaseModel):
     preferred_signature_name: str | None = None
     time_zone: str | None = None
     npi_number: str | None = None
+    dea_number: str | None = None
+    dea_expires_at: str | None = None
     created_at: datetime
 
 
@@ -231,6 +233,14 @@ class ProfileUpdate(BaseModel):
         default=None, max_length=10,
         description="CMS 10-digit National Provider Identifier (clinicians only).",
     )
+    dea_number: str | None = Field(
+        default=None, max_length=9,
+        description="DEA registration number — 9 chars, normalised upper-case. Clinicians only.",
+    )
+    dea_expires_at: str | None = Field(
+        default=None, max_length=10,
+        description="ISO YYYY-MM-DD expiry date for the DEA registration.",
+    )
 
     @model_validator(mode="after")
     def _validate_npi(self):
@@ -245,6 +255,33 @@ class ProfileUpdate(BaseModel):
                 self.npi_number = validate_npi_or_raise(self.npi_number)
             except NpiValidationError as exc:
                 raise ValueError(str(exc)) from exc
+        return self
+
+    @model_validator(mode="after")
+    def _validate_dea(self):
+        # DEA number: 2 letters + 6 digits + 1 check digit (9 chars).
+        # Trim + upper-case before validation; empty string clears.
+        # See `core/dea.py` for the checksum spec. Checksum validation
+        # is structural only — it does NOT prove federal registration.
+        from core.dea import DeaValidationError, validate_dea_or_raise
+
+        if self.dea_number not in (None, ""):
+            try:
+                self.dea_number = validate_dea_or_raise(self.dea_number)
+            except DeaValidationError as exc:
+                raise ValueError(str(exc)) from exc
+
+        # Optional expiry date — enforce ISO YYYY-MM-DD shape if present.
+        if self.dea_expires_at not in (None, ""):
+            from datetime import date as _date
+            v = self.dea_expires_at.strip()
+            try:
+                _date.fromisoformat(v)
+            except ValueError as exc:
+                raise ValueError(
+                    "DEA expiry must be an ISO date (YYYY-MM-DD).",
+                ) from exc
+            self.dea_expires_at = v
         return self
 
 
