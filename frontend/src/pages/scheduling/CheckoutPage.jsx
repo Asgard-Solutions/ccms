@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
   CheckCircle2,
@@ -71,6 +72,7 @@ function humanDuration(from) {
 }
 
 export default function CheckoutPage() {
+  const navigate = useNavigate();
   const [appointments, setAppointments] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [completeDialog, setCompleteDialog] = useState(null);
@@ -277,6 +279,16 @@ export default function CheckoutPage() {
 
       <FollowUpSuggestions
         rows={followUps}
+        onBook={(r) => {
+          const params = new URLSearchParams({
+            patient_id: r.patient_id,
+            provider_id: r.provider_id,
+            date: r.suggested_at,
+            appointment_type_id: r.appointment_type_id || "",
+            follow_up_suggestion_id: r.id,
+          });
+          navigate(`/scheduling?${params.toString()}`);
+        }}
         onDismiss={async (sid) => {
           try {
             await api.post(`/appointments/follow-up-suggestions/${sid}/dismiss`);
@@ -553,7 +565,7 @@ function CompleteCheckoutDialog({ open, appointment, onSubmit, onClose }) {
   );
 }
 
-function FollowUpSuggestions({ rows, onDismiss }) {
+function FollowUpSuggestions({ rows, onBook, onDismiss }) {
   if (!rows || rows.length === 0) {
     return (
       <section
@@ -624,19 +636,7 @@ function FollowUpSuggestions({ rows, onDismiss }) {
               <Button
                 size="sm"
                 data-testid={`followup-book-${r.id}`}
-                onClick={() => {
-                  // Minimal-click: take the user to Scheduling with hints in
-                  // the URL. A future phase can consume these to pre-fill
-                  // BookDialog and dismiss the suggestion on save.
-                  const params = new URLSearchParams({
-                    patient_id: r.patient_id,
-                    provider_id: r.provider_id,
-                    date: r.suggested_at,
-                    appointment_type_id: r.appointment_type_id || "",
-                    follow_up_suggestion_id: r.id,
-                  });
-                  window.location.href = `/scheduling?${params.toString()}`;
-                }}
+                onClick={() => onBook(r)}
                 className="h-8 rounded-sm bg-primary px-3 text-xs hover:bg-[var(--primary-hover)]"
               >
                 Book follow-up
