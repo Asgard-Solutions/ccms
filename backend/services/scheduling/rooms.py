@@ -27,7 +27,7 @@ from core.crypto import decrypt_fields
 from core import cache, cache_keys
 from core.event_bus import publish
 
-ENCRYPTED_FIELDS = ["notes"]
+ENCRYPTED_FIELDS = ["notes", "checkout_notes", "checkout_summary"]
 
 # Terminal statuses — cannot be re-assigned to a room.
 TERMINAL = frozenset({"no_show", "canceled", "cancelled", "checked_out"})

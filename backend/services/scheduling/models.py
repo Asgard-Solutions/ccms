@@ -109,6 +109,18 @@ class WorkflowTransitionRequest(BaseModel):
     location: PatientLocationType | None = None
 
 
+class CheckoutRequest(WorkflowTransitionRequest):
+    """Payload for POST /api/appointments/{id}/checkout.
+
+    Extends the generic transition request with optional operational
+    checkout fields. Both `checkout_notes` and `checkout_summary` are
+    stored encrypted at rest (same field-level AES-256-GCM used by the
+    rest of the PHI-adjacent appointment data).
+    """
+    checkout_notes: str | None = Field(default=None, max_length=2000)
+    checkout_summary: str | None = Field(default=None, max_length=4000)
+
+
 class PatientLocationChangeRequest(BaseModel):
     location: PatientLocationType
     reason: str | None = Field(default=None, max_length=255)
@@ -173,3 +185,10 @@ class AppointmentPublic(BaseModel):
     current_room_type: str | None = None
     room_assigned_at: str | None = None
     room_assigned_by_user_id: str | None = None
+
+    # Checkout metadata (Phase 6). Notes / summary are encrypted at rest by
+    # the exporter — only surfaced in response when the caller can see PHI.
+    checkout_started_at: str | None = None
+    checkout_started_by_user_id: str | None = None
+    checkout_notes: str | None = None
+    checkout_summary: str | None = None

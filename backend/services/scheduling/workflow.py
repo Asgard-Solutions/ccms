@@ -54,7 +54,7 @@ POST_VISIT_START: frozenset[str] = frozenset(
     {"in_progress", "ready_for_checkout", "completed", "checked_out"}
 )
 
-ENCRYPTED_FIELDS = ["notes"]
+ENCRYPTED_FIELDS = ["notes", "checkout_notes", "checkout_summary"]
 
 
 def _now_iso() -> str:
@@ -146,6 +146,17 @@ TRANSITIONS: dict[str, TransitionSpec] = {
         default_location="checkout",
         audit_action="appointment.ready_for_checkout",
         reject_msg="Visit must be in progress to mark ready for checkout",
+    ),
+    "start_checkout": TransitionSpec(
+        name="start_checkout",
+        # Status stays ready_for_checkout — this is a physical motion only.
+        target_status=None,
+        allowed_from=frozenset({"ready_for_checkout", "completed"}),
+        stamp_at="checkout_started_at",
+        stamp_by="checkout_started_by_user_id",
+        default_location="checkout",
+        audit_action="appointment.checkout_started",
+        reject_msg="Appointment must be ready for checkout or completed",
     ),
     "complete": TransitionSpec(
         name="complete",
@@ -305,8 +316,16 @@ async def apply_transition(
     reason: str | None,
     location_override: str | None,
     tenant_id: str | None,
+    extra_fields: dict | None = None,
 ) -> dict:
-    """Execute the transition and return the updated (decrypted) document."""
+    """Execute the transition and return the updated (decrypted) document.
+
+    `extra_fields` lets specific endpoints capture additional persisted
+    data as part of the same atomic write — e.g. checkout notes on the
+    `checkout` transition. Keys are restricted to the appointments
+    schema; values are trusted (already validated by the Pydantic model
+    in the router layer) and encrypted in-flight via ENCRYPTED_FIELDS.
+    """
     db = get_db_write()
 
     # Intake gating runs BEFORE the state-machine check so the operator gets
@@ -322,6 +341,13 @@ async def apply_transition(
         override=override,
         location_override=location_override,
     )
+    if extra_fields:
+        # Only accept a narrow, known set of keys to avoid accidental
+        # over-writes from caller-controlled payloads.
+        allowed = {"checkout_notes", "checkout_summary"}
+        for k, v in extra_fields.items():
+            if k in allowed and v is not None:
+                update[k] = v
 
     await db.appointments.update_one(
         {"id": appointment_id},

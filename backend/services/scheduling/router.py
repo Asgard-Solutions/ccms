@@ -24,6 +24,7 @@ from services.scheduling.models import (
     AppointmentCreate,
     AppointmentPublic,
     AppointmentUpdate,
+    CheckoutRequest,
     PatientLocationChangeRequest,
     WorkflowTransitionRequest,
 )
@@ -36,7 +37,7 @@ from services.scheduling.workflow import (
 
 router = APIRouter(prefix="/appointments", tags=["scheduling"])
 STAFF_ROLES = ("admin", "doctor", "staff")
-ENCRYPTED = ["notes"]
+ENCRYPTED = ["notes", "checkout_notes", "checkout_summary"]
 
 
 def _now_iso() -> str:
@@ -755,8 +756,8 @@ async def appointment_complete(
     return await _run_transition("complete", appointment_id, payload, request, actor, ctx)
 
 
-@router.post("/{appointment_id}/checkout", response_model=AppointmentPublic)
-async def appointment_checkout(
+@router.post("/{appointment_id}/start-checkout", response_model=AppointmentPublic)
+async def appointment_start_checkout(
     appointment_id: str,
     request: Request,
     payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
@@ -765,7 +766,51 @@ async def appointment_checkout(
     ),
     ctx: TenantContext = Depends(get_tenant_context),
 ):
-    return await _run_transition("checkout", appointment_id, payload, request, actor, ctx)
+    """Mark the patient as at the checkout counter. Physical-location move
+    only — `status` remains `ready_for_checkout`/`completed`. Stamps
+    `checkout_started_at`/`_by_user_id` for future handoffs."""
+    return await _run_transition(
+        "start_checkout", appointment_id, payload, request, actor, ctx,
+    )
+
+
+@router.post("/{appointment_id}/checkout", response_model=AppointmentPublic)
+async def appointment_checkout(
+    appointment_id: str,
+    request: Request,
+    payload: CheckoutRequest = CheckoutRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Complete checkout — `status → checked_out`, optionally capture
+    `checkout_notes` / `checkout_summary` in the same atomic write.
+
+    Event-bus publishes `appointment.checkout` with the full updated
+    appointment, providing the hook point for future payment-collection,
+    invoice-handoff, follow-up-scheduling, and document-print/email
+    subscribers without needing to touch this endpoint.
+    """
+    spec = TRANSITIONS["checkout"]
+    current = await _load_for_transition(appointment_id, ctx)
+    extra = {
+        "checkout_notes": payload.checkout_notes,
+        "checkout_summary": payload.checkout_summary,
+    }
+    updated = await apply_transition(
+        appointment_id, spec,
+        current=current,
+        actor=actor,
+        request=request,
+        override=payload.override,
+        reason=payload.reason,
+        location_override=payload.location,
+        tenant_id=ctx.tenant_id,
+        extra_fields=extra,
+    )
+    (hydrated,) = await _hydrate([updated])
+    return hydrated
 
 
 @router.post("/{appointment_id}/depart", response_model=AppointmentPublic)
