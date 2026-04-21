@@ -1,6 +1,6 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-04-21 (Clinical module Phase 8 — Billing Readiness, lifecycle hardening, addenda, audit coverage)
+**Last updated:** 2026-04-22 (Appointment Workflow Backbone — Phase 1 of operational flow)
 
 ## 0. Design system (binding)
 The Chiro Software design system is authoritative for every UI surface.
@@ -2621,3 +2621,60 @@ Remaining deferred items (no backing data yet): referral source,
 communication consent per patient, appointment-type volume (blocked on
 `appointment_type_id` persistence), open time slots, provider schedule
 utilisation, collections summary.
+
+
+
+## 2026-04-22 — Appointment Workflow Backbone (Phase 1)
+
+Backend foundation for the full clinic operational workflow. UI phases
+(room management, flow board, intake, checkout) will build on this.
+
+**Lifecycle status set** (superseded old scheduled/completed/cancelled):
+`scheduled`, `confirmed`, `checked_in`, `ready_for_provider`, `in_progress`,
+`ready_for_checkout`, `completed`, `checked_out`, `no_show`, `canceled`.
+Legacy `cancelled` spelling preserved for back-compat.
+
+**Patient physical location** (independent concept):
+`not_arrived`, `waiting_room`, `roomed`, `checkout`, `departed`.
+
+**Per-transition metadata** — `*_at` + `*_by_user_id` stamps for
+check-in, ready-for-provider, visit-start, ready-for-checkout, complete,
+checkout, no-show, and location-updated.
+
+**New endpoints** under `/api/appointments/{id}/`:
+`check-in`, `undo-check-in`, `no-show`, `ready-for-provider`,
+`start-visit`, `ready-for-checkout`, `complete`, `checkout`, `depart`,
+`location`.
+
+**Validation rules (server-side, default-deny):**
+- cannot check in a canceled appointment
+- cannot start visit before check-in unless `override=true`
+- cannot complete before visit starts
+- cannot check out before `completed` unless `override=true`
+- cannot mark no-show after visit started
+- undo-check-in after visit started requires `override=true`
+
+**Permissions:** all workflow endpoints use `appointment.update` policy;
+patient-portal role is denied. Overrides do not bypass authz.
+
+**Audit:** every transition emits a dedicated audit row with
+`from_status`, `to_status`, `override`, `reason`, `location_after`,
+`tenant_id`. Location-only changes emit `appointment.location_changed`.
+
+**Event bus:** `appointment.<transition_name>` published for every move.
+
+**Tests:** `test_appointment_workflow.py` — 14/14 green covering happy
+path, all validation rules, overrides, reversions, depart, explicit
+location change, and patient-portal permission deny.
+
+**Files:**
+- `backend/services/scheduling/models.py` (status + location enums, workflow
+  request schemas, public response fields for stamps)
+- `backend/services/scheduling/workflow.py` (transition engine + specs +
+  validation + audit + event bus)
+- `backend/services/scheduling/router.py` (10 new thin endpoints)
+- `backend/services/scheduling/WORKFLOW.md` (implementation notes)
+
+**Not yet done (explicitly out of Phase 1 scope):**
+room management UI, patient flow board UI, intake UI integration,
+checkout UI, calendar visual polish.

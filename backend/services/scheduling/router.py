@@ -23,6 +23,13 @@ from services.scheduling.models import (
     AppointmentCreate,
     AppointmentPublic,
     AppointmentUpdate,
+    PatientLocationChangeRequest,
+    WorkflowTransitionRequest,
+)
+from services.scheduling.workflow import (
+    TRANSITIONS,
+    apply_patient_location,
+    apply_transition,
 )
 
 router = APIRouter(prefix="/appointments", tags=["scheduling"])
@@ -559,4 +566,195 @@ async def cancel_appointment(
         entity_type="appointment", entity_id=appointment_id, phi_accessed=True,
     )
     (hydrated,) = await _hydrate([updated_dec])
+    return hydrated
+
+
+# ---------------------------------------------------------------------------
+# Appointment workflow transitions — Phase 1 backbone.
+#
+# Each endpoint is a thin wrapper around `apply_transition` which centralises
+# the validation rules, audit emission, and physical-location side effects.
+# ---------------------------------------------------------------------------
+
+async def _load_for_transition(
+    appointment_id: str, ctx: TenantContext,
+) -> dict:
+    """Fetch the appointment under tenant+location scope or 404."""
+    db = get_db_write()  # read-after-write: use write client
+    q = scoped_filter({"id": appointment_id}, ctx, location_scoped=True)
+    if q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
+    a = await db.appointments.find_one(q, {"_id": 0})
+    if not a:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
+    return a
+
+
+async def _run_transition(
+    transition_name: str,
+    appointment_id: str,
+    payload: WorkflowTransitionRequest,
+    request: Request,
+    actor: dict,
+    ctx: TenantContext,
+) -> dict:
+    spec = TRANSITIONS[transition_name]
+    current = await _load_for_transition(appointment_id, ctx)
+    updated = await apply_transition(
+        appointment_id, spec,
+        current=current,
+        actor=actor,
+        request=request,
+        override=payload.override,
+        reason=payload.reason,
+        location_override=payload.location,
+        tenant_id=ctx.tenant_id,
+    )
+    (hydrated,) = await _hydrate([updated])
+    return hydrated
+
+
+@router.post("/{appointment_id}/check-in", response_model=AppointmentPublic)
+async def appointment_check_in(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition("check_in", appointment_id, payload, request, actor, ctx)
+
+
+@router.post("/{appointment_id}/undo-check-in", response_model=AppointmentPublic)
+async def appointment_undo_check_in(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition("undo_check_in", appointment_id, payload, request, actor, ctx)
+
+
+@router.post("/{appointment_id}/no-show", response_model=AppointmentPublic)
+async def appointment_no_show(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition("no_show", appointment_id, payload, request, actor, ctx)
+
+
+@router.post("/{appointment_id}/ready-for-provider", response_model=AppointmentPublic)
+async def appointment_ready_for_provider(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition(
+        "ready_for_provider", appointment_id, payload, request, actor, ctx,
+    )
+
+
+@router.post("/{appointment_id}/start-visit", response_model=AppointmentPublic)
+async def appointment_start_visit(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition("start_visit", appointment_id, payload, request, actor, ctx)
+
+
+@router.post("/{appointment_id}/ready-for-checkout", response_model=AppointmentPublic)
+async def appointment_ready_for_checkout(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition(
+        "ready_for_checkout", appointment_id, payload, request, actor, ctx,
+    )
+
+
+@router.post("/{appointment_id}/complete", response_model=AppointmentPublic)
+async def appointment_complete(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition("complete", appointment_id, payload, request, actor, ctx)
+
+
+@router.post("/{appointment_id}/checkout", response_model=AppointmentPublic)
+async def appointment_checkout(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition("checkout", appointment_id, payload, request, actor, ctx)
+
+
+@router.post("/{appointment_id}/depart", response_model=AppointmentPublic)
+async def appointment_depart(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition("depart", appointment_id, payload, request, actor, ctx)
+
+
+@router.post("/{appointment_id}/location", response_model=AppointmentPublic)
+async def appointment_set_location(
+    appointment_id: str,
+    payload: PatientLocationChangeRequest,
+    request: Request,
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Change the patient's physical location without touching lifecycle status."""
+    current = await _load_for_transition(appointment_id, ctx)
+    updated = await apply_patient_location(
+        appointment_id,
+        current=current,
+        new_location=payload.location,
+        actor=actor,
+        request=request,
+        reason=payload.reason,
+        tenant_id=ctx.tenant_id,
+    )
+    (hydrated,) = await _hydrate([updated])
     return hydrated
