@@ -1,0 +1,23 @@
+{
+  "summary": "Retest of Phase 2 Reports PHI consent dialog wiring (iteration 51 action item). ReportViewer.jsx:379 now correctly calls requestExportFormat(fmt). Playwright re-verification confirms: PHI CSV shows phi-consent-dialog with AES-256 copy, PHI PDF shows consent dialog with 'natively encrypted' copy, Cancel closes dialog without export, Confirm with reason fires export (ends in 403 as expected — admin lacks export_phi; consent path DID execute), non-PHI denials_log bypasses consent dialog and goes straight to Export-ready result dialog. Backend regression: 21/21 pytest green. Mongo regression: 0/36 exports rows contain the legacy password_plain field. All action items from iteration 51 resolved.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_reports_framework.py",
+    "/app/backend/tests/test_reports_phase2_e2e.py",
+    "/app/test_reports/pytest/iteration_52_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Export dropdown now correctly gates PHI through requestExportFormat(fmt). Non-blocking: consider disabling the DropdownMenuItem while a consent dialog is already open to avoid double-submission if user re-opens the dropdown.",
+    "Pre-existing (from iteration 51): export_writer.py _write_pdf hardcodes canPrint=1, canCopy=1 — product decision whether to tighten for HIPAA-grade exports. Not a regression for this iteration."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (21/21)", "frontend": "100% (4/4 PHI consent flows)"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (reauth via 'Use password instead' path verified)",
+  "seed_data_creation": "None (tests only opened/cancelled consent dialogs; the single confirm attempt was rejected at the API boundary with 403 before any exports row was created).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase 2 Reports PHI consent flow is now fully wired end-to-end. All four scenarios from the review_request pass. Backend 21/21 pytest stays green. Mongo exports collection has 0 rows with password_plain (36 total). If follow-up work adds export_phi permission to admin or a separate role, retest the full confirm→reveal-password→download path; today we only verified the consent gate fires and the API correctly rejects unauthorized PHI exports with 403.",
+  "rca of the issue": "Iteration 51's one-line wiring bug (handleExport vs requestExportFormat on line 379) was fixed by main agent. Retest confirms the PhiConsentDialog is now rendered on PHI exports, Cancel aborts cleanly, and non-PHI exports remain unaffected. No new issues surfaced."
+}

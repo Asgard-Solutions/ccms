@@ -376,7 +376,7 @@ export default function ReportViewer() {
               {(meta.export_formats || []).map((fmt) => (
                 <DropdownMenuItem
                   key={fmt}
-                  onClick={() => handleExport(fmt)}
+                  onClick={() => requestExportFormat(fmt)}
                   data-testid={`report-export-${fmt}`}
                 >
                   {fmt.toUpperCase()}
