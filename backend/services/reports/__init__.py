@@ -7,9 +7,10 @@ audit emission.
 """
 from __future__ import annotations
 
-# Force-registration side effect: import builtin.py so every @register()
-# call runs at module import time.
+# Force-registration side effect: import builtin.py + builtin_extra.py so
+# every @register() call runs at module import time.
 from services.reports import builtin as _builtin  # noqa: F401
+from services.reports import builtin_extra as _builtin_extra  # noqa: F401
 
 from services.reports.definitions import (
     Column,

@@ -4,13 +4,16 @@ import {
   ArrowLeft,
   ArrowDown,
   ArrowUp,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   Columns,
   Download,
   Filter as FilterIcon,
   Loader2,
   Lock,
+  RotateCcw,
   Save,
   Share2,
   Trash2,
@@ -186,6 +189,28 @@ export default function ReportViewer() {
     });
   }
 
+  function moveColumn(key, direction) {
+    setSelectedCols((cs) => {
+      const current = [...(cs || meta.default_columns)];
+      const idx = current.indexOf(key);
+      if (idx < 0) return current;
+      const target = direction === "up" ? idx - 1 : idx + 1;
+      if (target < 0 || target >= current.length) return current;
+      [current[idx], current[target]] = [current[target], current[idx]];
+      return current;
+    });
+  }
+
+  function resetView() {
+    if (!meta) return;
+    setFilters({});
+    setSort(meta.default_sort);
+    setSortDir(meta.default_sort_dir);
+    setSelectedCols(meta.default_columns);
+    setActiveViewId(null);
+    setPage(1);
+  }
+
   function toggleSort(colKey) {
     if (!colKey) return;
     const sortable = meta.sort_options.some((s) => s.key === colKey);
@@ -346,24 +371,78 @@ export default function ReportViewer() {
                 <Columns className="mr-2 h-4 w-4" /> Columns
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-64">
-              <DropdownMenuLabel>Show columns</DropdownMenuLabel>
-              {meta.columns.map((c) => {
-                const active = (selectedCols || meta.default_columns).includes(c.key);
+            <DropdownMenuContent align="end" className="w-80">
+              <DropdownMenuLabel>Show &amp; reorder columns</DropdownMenuLabel>
+              {/* Selected columns first (with reorder arrows), then hidden */}
+              {(selectedCols || meta.default_columns).map((key, idx, arr) => {
+                const c = meta.columns.find((x) => x.key === key);
+                if (!c) return null;
                 return (
-                  <DropdownMenuCheckboxItem
-                    key={c.key}
-                    checked={active}
-                    onCheckedChange={() => toggleColumn(c.key)}
-                    data-testid={`report-col-toggle-${c.key}`}
+                  <div
+                    key={key}
+                    className="flex items-center justify-between gap-2 px-2 py-1.5 hover:bg-muted/40"
+                    data-testid={`report-col-row-${key}`}
                   >
-                    {c.label}
-                    {c.phi && <Lock className="ml-2 h-3 w-3 text-warning" />}
-                  </DropdownMenuCheckboxItem>
+                    <div className="flex items-center gap-2">
+                      <Checkbox
+                        checked={true}
+                        onCheckedChange={() => toggleColumn(key)}
+                        data-testid={`report-col-toggle-${key}`}
+                      />
+                      <span className="text-sm">
+                        {c.label}
+                        {c.phi && <Lock className="ml-2 inline h-3 w-3 text-warning" />}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-0.5 opacity-70">
+                      <button
+                        type="button"
+                        disabled={idx === 0}
+                        onClick={() => moveColumn(key, "up")}
+                        className="rounded-sm p-0.5 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-30"
+                        data-testid={`report-col-up-${key}`}
+                        aria-label={`Move ${c.label} up`}
+                      ><ChevronUp className="h-3 w-3" /></button>
+                      <button
+                        type="button"
+                        disabled={idx === arr.length - 1}
+                        onClick={() => moveColumn(key, "down")}
+                        className="rounded-sm p-0.5 hover:bg-muted disabled:cursor-not-allowed disabled:opacity-30"
+                        data-testid={`report-col-down-${key}`}
+                        aria-label={`Move ${c.label} down`}
+                      ><ChevronDown className="h-3 w-3" /></button>
+                    </div>
+                  </div>
                 );
               })}
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel className="text-[10px] uppercase tracking-[0.15em] text-muted-foreground">
+                Hidden
+              </DropdownMenuLabel>
+              {meta.columns.filter((c) => !(selectedCols || meta.default_columns).includes(c.key)).map((c) => (
+                <DropdownMenuCheckboxItem
+                  key={c.key}
+                  checked={false}
+                  onCheckedChange={() => toggleColumn(c.key)}
+                  data-testid={`report-col-toggle-${c.key}`}
+                >
+                  {c.label}
+                  {c.phi && <Lock className="ml-2 h-3 w-3 text-warning" />}
+                </DropdownMenuCheckboxItem>
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
+
+          {/* Reset view */}
+          <Button
+            variant="ghost"
+            className="rounded-sm"
+            onClick={resetView}
+            data-testid="report-reset-btn"
+            title="Reset to default filters, columns, and sort"
+          >
+            <RotateCcw className="mr-2 h-4 w-4" /> Reset
+          </Button>
 
           {/* Export menu */}
           <DropdownMenu>

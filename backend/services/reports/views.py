@@ -69,6 +69,10 @@ async def create_view(ctx: TenantContext, report_name: str, payload: SavedViewCr
     ctx.assert_tenant_bound()
     if payload.is_shared and not _is_admin(ctx):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only admins can create shared views.")
+    # Column whitelist — prevent saved views from surfacing hidden fields
+    # the report definition didn't declare (e.g. via a forged POST body).
+    _validate_columns_against_definition(report_name, payload.columns)
+
     db = tenant_db(ctx.tenant_id)
     vid = str(uuid.uuid4())
     now = _now()
@@ -101,6 +105,8 @@ async def update_view(ctx: TenantContext, view_id: str, payload: SavedViewUpdate
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only the owner or an admin may update this view.")
 
     data = payload.model_dump(exclude_unset=True)
+    if "columns" in data:
+        _validate_columns_against_definition(view["report_name"], data.get("columns") or [])
     if "is_shared" in data and data["is_shared"] and not _is_admin(ctx) and not is_owner:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Only admins can share views.")
     data["updated_at"] = _now()
@@ -131,3 +137,26 @@ async def _clear_other_defaults(ctx: TenantContext, report_name: str, keep_id: s
     if ctx.tenant_id:
         q["tenant_id"] = ctx.tenant_id
     await db.report_saved_views.update_many(q, {"$set": {"is_default": False}})
+
+
+def _validate_columns_against_definition(report_name: str, columns: list[str]) -> None:
+    """Reject any column key the report definition didn't declare.
+
+    Without this gate a user could POST a saved view containing arbitrary
+    column names (e.g. `password_hash`) and then — if a runner ever added
+    that field to rows — surface it in the UI or exports. The definition
+    is the single source of truth for what a user may select.
+    """
+    # Local import to avoid a circular dependency at module load time.
+    from services.reports import get_definition
+
+    d = get_definition(report_name)
+    if not d:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown report: {report_name}")
+    allowed = {c.key for c in d.columns}
+    bad = [c for c in columns if c not in allowed]
+    if bad:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Unknown columns for report {report_name!r}: {bad[:5]}",
+        )
