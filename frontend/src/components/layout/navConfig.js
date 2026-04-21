@@ -71,6 +71,13 @@ export const NAV_GROUPS = [
         icon: CalendarDays,
         roles: ["admin", "doctor", "staff", "patient"],
       },
+      {
+        to: "/scheduling/flow-board",
+        label: "Flow Board",
+        testId: "nav-flow-board",
+        icon: ClipboardCheck,
+        roles: ["admin", "doctor", "staff"],
+      },
     ],
   },
   {
