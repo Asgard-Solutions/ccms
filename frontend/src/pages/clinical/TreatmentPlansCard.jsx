@@ -8,11 +8,27 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { PlusCircle, Target, Activity } from "lucide-react";
+import { Loader2, PlusCircle, Target, Activity } from "lucide-react";
 import { api, formatApiError } from "../../api/client";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
+import { Label } from "../../components/ui/label";
 import { Skeleton } from "../../components/ui/skeleton";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
 import { formatDateTime } from "../../utils/time";
 
 const STATUS_TONE = {
@@ -33,6 +49,10 @@ const STATUS_LABEL = {
 
 export default function TreatmentPlansCard({ patientId, canWrite, episodes = [], onReauthNeeded }) {
   const [rows, setRows] = useState(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newTitle, setNewTitle] = useState("Plan of care");
+  const [newEpisodeId, setNewEpisodeId] = useState("");
   const navigate = useNavigate();
 
   const load = useCallback(async () => {
@@ -57,24 +77,36 @@ export default function TreatmentPlansCard({ patientId, canWrite, episodes = [],
     return false;
   };
 
-  const defaultEpisodeId = useMemo(() => {
-    const active = (episodes || []).find((e) => e.status === "active");
-    return active?.id || null;
-  }, [episodes]);
+  const activeEpisodes = useMemo(
+    () => (episodes || []).filter((e) => e.status === "active"),
+    [episodes],
+  );
+  const defaultEpisodeId = useMemo(() => activeEpisodes[0]?.id || "", [activeEpisodes]);
 
-  const createPlan = async () => {
-    const title = window.prompt(
-      "Plan title (e.g. '6-week LBP plan')",
-      "Plan of care",
-    );
-    if (!title) return;
+  const openCreateDialog = () => {
+    setNewTitle("Plan of care");
+    setNewEpisodeId(defaultEpisodeId);
+    setCreateOpen(true);
+  };
+
+  const submitCreate = async () => {
+    const title = newTitle.trim();
+    if (title.length < 2) {
+      toast.error("Plan title is required");
+      return;
+    }
+    setCreating(true);
     try {
-      const body = { title, episode_id: defaultEpisodeId };
+      const body = { title };
+      if (newEpisodeId) body.episode_id = newEpisodeId;
       const { data } = await api.post(`/patients/${patientId}/clinical/treatment-plans`, body);
       toast.success("Plan created");
+      setCreateOpen(false);
       navigate(`/patients/${patientId}/clinical/treatment-plans/${data.id}`);
     } catch (e) {
       if (!handleReauthAware(e)) toast.error(formatApiError(e));
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -93,7 +125,7 @@ export default function TreatmentPlansCard({ patientId, canWrite, episodes = [],
         {canWrite && (
           <Button
             size="sm"
-            onClick={createPlan}
+            onClick={openCreateDialog}
             data-testid="plan-create-btn"
             className="rounded-sm"
           >
@@ -190,6 +222,84 @@ export default function TreatmentPlansCard({ patientId, canWrite, episodes = [],
           })}
         </div>
       )}
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent
+          data-testid="plan-create-dialog"
+          className="max-w-md rounded-sm"
+        >
+          <DialogHeader>
+            <DialogTitle className="font-display">New treatment plan</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                Plan title
+              </Label>
+              <Input
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+                placeholder="e.g. 6-week LBP plan"
+                data-testid="plan-create-title"
+                className="rounded-sm"
+                autoFocus
+              />
+            </div>
+            <div>
+              <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                Episode
+              </Label>
+              {activeEpisodes.length === 0 ? (
+                <p
+                  data-testid="plan-create-no-episode"
+                  className="text-xs text-muted-foreground"
+                >
+                  No active episodes — the plan will be created without episode
+                  linkage. You can link it later from the editor.
+                </p>
+              ) : (
+                <Select value={newEpisodeId} onValueChange={setNewEpisodeId}>
+                  <SelectTrigger
+                    data-testid="plan-create-episode"
+                    className="rounded-sm"
+                  >
+                    <SelectValue placeholder="Select an active episode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {activeEpisodes.map((ep) => (
+                      <SelectItem key={ep.id} value={ep.id}>
+                        {ep.title || ep.case_type || ep.id.slice(0, 8)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setCreateOpen(false)}
+              className="rounded-sm"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={submitCreate}
+              disabled={creating}
+              data-testid="plan-create-submit"
+              className="rounded-sm"
+            >
+              {creating ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <PlusCircle className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              Create plan
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }
