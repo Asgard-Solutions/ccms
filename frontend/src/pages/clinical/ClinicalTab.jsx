@@ -35,6 +35,8 @@ import IntakeHistoryCard from "./IntakeHistoryCard";
 import DiagnosesCard from "./DiagnosesCard";
 import EncountersCard from "./EncountersCard";
 import InitialExamsCard from "./InitialExamsCard";
+import FollowUpNotesCard from "./FollowUpNotesCard";
+import CareTimelineCard from "./CareTimelineCard";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Badge } from "../../components/ui/badge";
@@ -567,15 +569,11 @@ export default function ClinicalTab({
     return [
       { label: "In-progress visits", value: s.encounters?.open ?? "—", id: "stat-encounters" },
       { label: "Open exams", value: s.initial_exams?.open ?? "—", id: "stat-exams" },
+      { label: "Open notes", value: s.notes?.open ?? "—", id: "stat-notes" },
       {
         label: "Active diagnoses",
         value: s.diagnoses?.open ?? "—",
         id: "stat-diagnoses",
-      },
-      {
-        label: "History",
-        value: s.history_present ? "On file" : "—",
-        id: "stat-history",
       },
     ];
   }, [summary]);
@@ -706,24 +704,18 @@ export default function ClinicalTab({
         canWrite={canWrite}
       />
 
+      {/* Phase 5 — Follow-up / Daily Visit notes */}
+      <FollowUpNotesCard patientId={patientId} />
+
+      {/* Phase 5 — Care Timeline */}
+      <CareTimelineCard patientId={patientId} />
+
       {/* Future-phase section placeholders */}
       <div>
         <h3 className="mb-3 font-display text-lg font-semibold text-foreground">
           Chart sections
         </h3>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <PlaceholderCard
-            icon={Stethoscope}
-            title="Initial Exam"
-            description="Structured initial evaluation: inspection, palpation, ROM, orthopedic and neurological tests."
-            testId="clinical-placeholder-initial-exam"
-          />
-          <PlaceholderCard
-            icon={FileText}
-            title="Follow-up Notes"
-            description="SOAP notes tied to encounters. Draft → signed → amended lifecycle with provider attestation."
-            testId="clinical-placeholder-follow-notes"
-          />
           <PlaceholderCard
             icon={Activity}
             title="Re-Exams"
@@ -747,12 +739,6 @@ export default function ClinicalTab({
             title="Outcomes"
             description="Functional outcome measures — NDI, Oswestry, pain VAS — trended over the life of the episode."
             testId="clinical-placeholder-outcomes"
-          />
-          <PlaceholderCard
-            icon={CalendarClock}
-            title="Care Timeline"
-            description="Chronological projection of every clinical artifact linked to encounters — the unified patient story."
-            testId="clinical-placeholder-timeline"
           />
           <PlaceholderCard
             icon={ClipboardList}

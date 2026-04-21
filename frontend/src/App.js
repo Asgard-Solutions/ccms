@@ -12,6 +12,7 @@ import Dashboard from "./pages/Dashboard";
 import Patients from "./pages/Patients";
 import PatientDetail from "./pages/PatientDetail";
 import InitialExamEditor from "./pages/clinical/InitialExamEditor";
+import FollowUpNoteEditor from "./pages/clinical/FollowUpNoteEditor";
 import Scheduling from "./pages/Scheduling";
 import Notifications from "./pages/Notifications";
 import Security from "./pages/Security";
@@ -65,6 +66,7 @@ export default function App() {
               <Route path="/patients" element={<Shell><Patients /></Shell>} />
               <Route path="/patients/:id" element={<Shell><PatientDetail /></Shell>} />
               <Route path="/patients/:pid/clinical/exams/:eid" element={<Shell roles={["admin", "doctor", "staff"]}><InitialExamEditor /></Shell>} />
+              <Route path="/patients/:pid/clinical/follow-up/:nid" element={<Shell roles={["admin", "doctor", "staff"]}><FollowUpNoteEditor /></Shell>} />
               <Route path="/scheduling" element={<Shell><Scheduling /></Shell>} />
               <Route path="/settings/clinic" element={<Shell roles={["admin"]}><ClinicSettings /></Shell>} />
               <Route path="/settings/appointment-types" element={<Shell roles={["admin"]}><AppointmentTypesPage /></Shell>} />

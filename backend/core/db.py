@@ -316,3 +316,16 @@ async def create_indexes() -> None:
     await db.clinical_initial_exams.create_index(
         [("tenant_id", 1), ("status", 1)],
     )
+    # Phase 5 — Follow-up / Daily Visit Notes (one per encounter)
+    await db.clinical_follow_up_notes.create_index(
+        [("tenant_id", 1), ("encounter_id", 1)], unique=True,
+    )
+    await db.clinical_follow_up_notes.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("date_of_service", -1)],
+    )
+    await db.clinical_follow_up_notes.create_index(
+        [("tenant_id", 1), ("status", 1)],
+    )
+    await db.clinical_follow_up_notes.create_index(
+        [("tenant_id", 1), ("episode_id", 1)],
+    )

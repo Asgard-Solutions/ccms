@@ -176,6 +176,10 @@ async def get_clinical_summary(
     exam_open = await db.clinical_initial_exams.count_documents(
         {**tenant_q, "status": {"$in": ["draft", "sign_ready"]}}
     )
+    note_total = await db.clinical_follow_up_notes.count_documents(tenant_q)
+    note_open = await db.clinical_follow_up_notes.count_documents(
+        {**tenant_q, "status": {"$in": ["draft", "sign_ready"]}}
+    )
     history_doc = await db.clinical_history.find_one(tenant_q, {"_id": 0, "id": 1})
     history_present = 1 if history_doc else 0
 
@@ -189,7 +193,6 @@ async def get_clinical_summary(
         "patient_id": patient_id,
         "tenant_id": ctx.tenant_id,
         "episodes": ClinicalSectionCount(total=ep_total, open=ep_open).model_dump(),
-        "notes": ClinicalSectionCount().model_dump(),
         "diagnoses": ClinicalSectionCount(total=dx_total, open=dx_open).model_dump(),
         "treatment_plans": ClinicalSectionCount().model_dump(),
         "outcomes": ClinicalSectionCount().model_dump(),
@@ -197,6 +200,7 @@ async def get_clinical_summary(
         "encounter_links": ClinicalSectionCount().model_dump(),
         "encounters": ClinicalSectionCount(total=enc_total, open=enc_open).model_dump(),
         "initial_exams": ClinicalSectionCount(total=exam_total, open=exam_open).model_dump(),
+        "notes": ClinicalSectionCount(total=note_total, open=note_open).model_dump(),
         "history_present": history_present,
         "generated_at": now_iso(),
     }
