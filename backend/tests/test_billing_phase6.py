@@ -72,7 +72,7 @@ def _build_submitted_claim(s, ext_ref=None):
     sched = s.post(f"{API}/billing/fee-schedules", json={
         "name": _unique("P6s"), "kind": "payer", "payer_id": payer["id"],
     }, timeout=10).json()
-    s.put(f"{API}/billing/fee-schedules/{sched['id']}/lines", json=[
+    s.patch(f"{API}/billing/fee-schedules/{sched['id']}/lines", json=[
         {"code_type": "cpt", "code": "98940", "allowed_cents": 4000},
     ], timeout=10)
     s.post(f"{API}/billing/insurance-policies", json={
@@ -84,7 +84,7 @@ def _build_submitted_claim(s, ext_ref=None):
         "record_type": "treatment", "title": "P6", "description": "x",
         "diagnosis": "LBP", "treatment": "CMT",
     }, timeout=10).json()
-    s.put(f"{API}/patients/{patient['id']}/records/{rec['id']}/coding", json={
+    s.patch(f"{API}/patients/{patient['id']}/records/{rec['id']}/coding", json={
         "procedures": [{"code_type": "cpt", "code": "98940", "units": 1, "modifiers": []}],
         "diagnoses": [{"sequence": 1, "code": "M54.16"}],
         "responsibility": "insurance",
@@ -95,7 +95,7 @@ def _build_submitted_claim(s, ext_ref=None):
                  timeout=10).json()
     claim = s.post(f"{API}/billing/claims/from-invoice/{inv['id']}",
                    timeout=10).json()
-    s.put(f"{API}/billing/claims/{claim['id']}/header", json={
+    s.patch(f"{API}/billing/claims/{claim['id']}/header", json={
         "billing_provider_id": "bp", "rendering_provider_id": "rp",
         "place_of_service": "11",
     }, timeout=10)
@@ -218,7 +218,7 @@ class TestImportStageAndCommit:
         # and stamp an electronic_payer_id so the import can resolve.
         actual_payer_id = claim["payer_id"]
         ep_id = _unique("PEXT")
-        s.put(f"{API}/billing/payers/{actual_payer_id}",
+        s.patch(f"{API}/billing/payers/{actual_payer_id}",
               json={"electronic_payer_id": ep_id}, timeout=10)
         billed = int(claim["billed_cents"])
         payload = {
@@ -272,7 +272,7 @@ class TestImportStageAndCommit:
         _p, _payer, claim = _build_submitted_claim(s, ext_ref=ext_ref)
         actual_payer_id = claim["payer_id"]
         ep_id = _unique("PEXT")
-        s.put(f"{API}/billing/payers/{actual_payer_id}",
+        s.patch(f"{API}/billing/payers/{actual_payer_id}",
               json={"electronic_payer_id": ep_id}, timeout=10)
         # Resolve the payer name for the N1*PR segment.
         payer_name = s.get(f"{API}/billing/payers", timeout=10).json()
@@ -297,7 +297,7 @@ class TestImportStageAndCommit:
         _p, _payer, claim = _build_submitted_claim(s)
         actual_payer_id = claim["payer_id"]
         ep_id = _unique("PEXT")
-        s.put(f"{API}/billing/payers/{actual_payer_id}",
+        s.patch(f"{API}/billing/payers/{actual_payer_id}",
               json={"electronic_payer_id": ep_id}, timeout=10)
         payload = {
             "schema": JSON_SCHEMA,
@@ -430,7 +430,7 @@ class TestDeliveryEndpoints:
             patient = patients[0]
             # Give the patient an email if missing.
             if not patient.get("email"):
-                s.put(f"{API}/patients/{patient['id']}", json={
+                s.patch(f"{API}/patients/{patient['id']}", json={
                     "email": f"demo-{uuid.uuid4().hex[:6]}@example.com",
                 }, timeout=10)
             stmt = s.post(
@@ -488,7 +488,7 @@ class TestPhase6TenantIsolation:
         _p, _payer, claim = _build_submitted_claim(admin, ext_ref=ext_ref)
         actual_payer_id = claim["payer_id"]
         ep_id = _unique("PEXT")
-        admin.put(f"{API}/billing/payers/{actual_payer_id}",
+        admin.patch(f"{API}/billing/payers/{actual_payer_id}",
                   json={"electronic_payer_id": ep_id}, timeout=10)
         payload = {
             "schema": JSON_SCHEMA,

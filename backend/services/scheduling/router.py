@@ -440,7 +440,7 @@ async def get_appointment(
     return hydrated
 
 
-@router.put("/{appointment_id}", response_model=AppointmentPublic)
+@router.patch("/{appointment_id}", response_model=AppointmentPublic)
 async def update_appointment(
     appointment_id: str,
     payload: AppointmentUpdate,

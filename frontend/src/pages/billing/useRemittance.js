@@ -109,7 +109,7 @@ export function useDenialCategorySummary(includeClosed = false) {
 }
 
 export async function updateDenialWorkItem(id, body) {
-  const { data } = await api.put(`/billing/denial-work-items/${id}`, body);
+  const { data } = await api.patch(`/billing/denial-work-items/${id}`, body);
   return data;
 }
 

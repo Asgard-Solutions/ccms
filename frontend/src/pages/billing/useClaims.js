@@ -79,19 +79,19 @@ export async function submitClaim(claimId) {
 }
 
 export async function updateClaimHeader(claimId, patch) {
-  const { data } = await api.put(`/billing/claims/${claimId}/header`, patch);
+  const { data } = await api.patch(`/billing/claims/${claimId}/header`, patch);
   return data;
 }
 
 export async function replaceClaimDiagnoses(claimId, diagnoses) {
-  const { data } = await api.put(
+  const { data } = await api.patch(
     `/billing/claims/${claimId}/diagnoses`, diagnoses,
   );
   return data;
 }
 
 export async function replaceClaimLines(claimId, lines) {
-  const { data } = await api.put(
+  const { data } = await api.patch(
     `/billing/claims/${claimId}/lines`, lines,
   );
   return data;
@@ -153,7 +153,7 @@ export async function fetchClaimTimeline(claimId) {
 }
 
 export async function updateClaimAssignment(claimId, assignedTo) {
-  const { data } = await api.put(
+  const { data } = await api.patch(
     `/billing/claims/${claimId}/assignment`,
     { assigned_to: assignedTo || null },
   );

@@ -79,7 +79,7 @@ def _build_submitted_claim(s):
     sched = s.post(f"{API}/billing/fee-schedules", json={
         "name": _unique("Payer5"), "kind": "payer", "payer_id": payer["id"],
     }, timeout=10).json()
-    s.put(f"{API}/billing/fee-schedules/{sched['id']}/lines", json=[
+    s.patch(f"{API}/billing/fee-schedules/{sched['id']}/lines", json=[
         {"code_type": "cpt", "code": "98940", "allowed_cents": 4000},
     ], timeout=10)
     s.post(f"{API}/billing/insurance-policies", json={
@@ -91,7 +91,7 @@ def _build_submitted_claim(s):
         "record_type": "treatment", "title": "P5", "description": "x",
         "diagnosis": "LBP", "treatment": "CMT",
     }, timeout=10).json()
-    s.put(f"{API}/patients/{patient['id']}/records/{rec['id']}/coding", json={
+    s.patch(f"{API}/patients/{patient['id']}/records/{rec['id']}/coding", json={
         "procedures": [{"code_type": "cpt", "code": "98940", "units": 1, "modifiers": []}],
         "diagnoses": [{"sequence": 1, "code": "M54.16"}],
         "responsibility": "insurance",
@@ -99,7 +99,7 @@ def _build_submitted_claim(s):
     s.post(f"{API}/patients/{patient['id']}/records/{rec['id']}/sign", timeout=10)
     inv = s.post(f"{API}/billing/encounters/{rec['id']}/capture", timeout=10).json()
     claim = s.post(f"{API}/billing/claims/from-invoice/{inv['id']}", timeout=10).json()
-    s.put(f"{API}/billing/claims/{claim['id']}/header", json={
+    s.patch(f"{API}/billing/claims/{claim['id']}/header", json={
         "billing_provider_id": "bp-1", "rendering_provider_id": "rp-1",
         "place_of_service": "11",
     }, timeout=10)
@@ -328,7 +328,7 @@ class TestDenialMutations:
         s = _login(*DEFAULT_ADMIN)
         item = self._open_denial(s)
         me = s.get(f"{API}/auth/me", timeout=10).json()
-        r = s.put(f"{API}/billing/denial-work-items/{item['id']}", json={
+        r = s.patch(f"{API}/billing/denial-work-items/{item['id']}", json={
             "status": "in_progress", "assigned_to_id": me["id"],
             "resolution_notes": "working the denial",
         }, timeout=10)
@@ -342,14 +342,14 @@ class TestDenialMutations:
         s = _login(*DEFAULT_ADMIN)
         item = self._open_denial(s)
         # open -> resolved is NOT allowed directly (must go via in_progress).
-        r = s.put(f"{API}/billing/denial-work-items/{item['id']}",
+        r = s.patch(f"{API}/billing/denial-work-items/{item['id']}",
                   json={"status": "resolved"}, timeout=10)
         assert r.status_code in (400, 409), r.text
 
     def test_unknown_assignee_rejected(self):
         s = _login(*DEFAULT_ADMIN)
         item = self._open_denial(s)
-        r = s.put(f"{API}/billing/denial-work-items/{item['id']}", json={
+        r = s.patch(f"{API}/billing/denial-work-items/{item['id']}", json={
             "assigned_to_id": "missing-" + uuid.uuid4().hex,
         }, timeout=10)
         assert r.status_code == 400

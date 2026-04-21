@@ -311,7 +311,7 @@ async def create_payer(
     return _public(doc)
 
 
-@router.put("/payers/{payer_id}", response_model=PayerPublic)
+@router.patch("/payers/{payer_id}", response_model=PayerPublic)
 async def update_payer(
     payer_id: str,
     payload: PayerUpdate,
@@ -1429,7 +1429,7 @@ async def void_invoice(
 # ---------------------------------------------------------------------------
 # INSURANCE POLICIES — update (create already lives above)
 # ---------------------------------------------------------------------------
-@router.put("/insurance-policies/{policy_id}",
+@router.patch("/insurance-policies/{policy_id}",
             response_model=PatientInsurancePolicyPublic)
 async def update_insurance_policy(
     policy_id: str,
@@ -1605,7 +1605,7 @@ async def create_fee_schedule(
     return _public(doc) | {"line_count": 0}
 
 
-@router.put("/fee-schedules/{schedule_id}/lines")
+@router.patch("/fee-schedules/{schedule_id}/lines")
 async def upsert_fee_schedule_lines(
     schedule_id: str,
     request: Request,
@@ -2180,7 +2180,7 @@ async def claim_detail(
 _EDITABLE_STATUSES = {"draft", "validation_failed", "rejected"}
 
 
-@router.put("/claims/{claim_id}/header", response_model=ClaimPublic)
+@router.patch("/claims/{claim_id}/header", response_model=ClaimPublic)
 async def update_claim_header(
     claim_id: str,
     request: Request,
@@ -2227,7 +2227,7 @@ async def update_claim_header(
     return _public(fresh)
 
 
-@router.put("/claims/{claim_id}/diagnoses")
+@router.patch("/claims/{claim_id}/diagnoses")
 async def replace_claim_diagnoses(
     claim_id: str,
     request: Request,
@@ -2280,7 +2280,7 @@ async def replace_claim_diagnoses(
     return {"ok": True, "count": len(docs)}
 
 
-@router.put("/claims/{claim_id}/lines")
+@router.patch("/claims/{claim_id}/lines")
 async def replace_claim_lines(
     claim_id: str,
     request: Request,
@@ -2733,7 +2733,7 @@ async def read_claim_timeline(
     }
 
 
-@router.put("/claims/{claim_id}/assignment", response_model=ClaimPublic)
+@router.patch("/claims/{claim_id}/assignment", response_model=ClaimPublic)
 async def update_claim_assignment(
     claim_id: str,
     body: ClaimAssignmentUpdate,
@@ -2906,7 +2906,7 @@ async def read_remittance_detail(
 # ---------------------------------------------------------------------------
 # Denial work items — mutations
 # ---------------------------------------------------------------------------
-@router.put(
+@router.patch(
     "/denial-work-items/{item_id}",
     response_model=DenialWorkItemPublic,
 )

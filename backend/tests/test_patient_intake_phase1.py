@@ -87,7 +87,7 @@ def test_legacy_flat_payload_create_and_update(admin_session):
     assert body["unmasked"] is True
 
     # Legacy-style PUT updating flat fields only.
-    r = s.put(
+    r = s.patch(
         f"{API}/patients/{pid}",
         json={"notes": "Updated back pain notes", "phone": "+1-555-0111"},
         timeout=15,
@@ -294,7 +294,7 @@ def test_grouped_update_preserves_other_sections(admin_session):
     pid = r.json()["id"]
 
     # Patch just the insurance section.
-    r = s.put(
+    r = s.patch(
         f"{API}/patients/{pid}",
         json={
             "insurance": {
@@ -332,7 +332,7 @@ def test_update_with_object_address(admin_session):
     assert r.status_code == 201, r.text
     pid = r.json()["id"]
 
-    r = s.put(
+    r = s.patch(
         f"{API}/patients/{pid}",
         json={
             "address": {
@@ -581,7 +581,7 @@ def test_upgrade_legacy_to_grouped_via_update_is_lossless(admin_session):
     assert r.status_code == 201, r.text
     pid = r.json()["id"]
 
-    r = s.put(
+    r = s.patch(
         f"{API}/patients/{pid}",
         json={
             "clinical_intake": {"chief_complaint": "upgraded visit", "pain_level": 3},

@@ -42,7 +42,7 @@ export async function createPayer(payload) {
 }
 
 export async function updatePayer(id, payload) {
-  const { data } = await api.put(`/billing/payers/${id}`, payload);
+  const { data } = await api.patch(`/billing/payers/${id}`, payload);
   return data;
 }
 
@@ -76,7 +76,7 @@ export async function createPolicy(payload) {
 }
 
 export async function updatePolicy(id, payload) {
-  const { data } = await api.put(`/billing/insurance-policies/${id}`, payload);
+  const { data } = await api.patch(`/billing/insurance-policies/${id}`, payload);
   return data;
 }
 
@@ -111,7 +111,7 @@ export async function createFeeSchedule(payload) {
 }
 
 export async function upsertFeeScheduleLines(id, lines) {
-  const { data } = await api.put(`/billing/fee-schedules/${id}/lines`, lines);
+  const { data } = await api.patch(`/billing/fee-schedules/${id}/lines`, lines);
   return data;
 }
 
@@ -140,7 +140,7 @@ export async function captureEncounter(recordId) {
 // the billing surface)
 // ---------------------------------------------------------------------------
 export async function updateRecordCoding(patientId, recordId, payload) {
-  const { data } = await api.put(
+  const { data } = await api.patch(
     `/patients/${patientId}/records/${recordId}/coding`, payload,
   );
   return data;

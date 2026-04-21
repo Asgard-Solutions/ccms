@@ -393,14 +393,14 @@ async def get_prefs(user: dict = Depends(get_current_user)):
     return prefs
 
 
-@router.put("/communication-preferences")
+@router.patch("/communication-preferences")
 async def update_prefs(
     payload: CommPreferencesUpdate,
     request: Request,
     user: dict = Depends(get_current_user),
 ):
     db = get_db_write()
-    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    updates = payload.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No fields to update")
     updates["updated_at"] = _now()

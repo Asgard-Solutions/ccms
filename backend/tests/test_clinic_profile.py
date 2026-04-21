@@ -127,7 +127,7 @@ def test_clinic_profile_crud_happy_path():
             {"open_time": "13:00", "close_time": "17:00"},
         ],
     }
-    r = admin.put(f"{API}/clinic-profiles/{loc_id}",
+    r = admin.patch(f"{API}/clinic-profiles/{loc_id}",
                   json={"primary_phone": "+1 503-555-9999", "hours": new_hours},
                   timeout=10)
     assert r.status_code == 200, r.text
@@ -237,7 +237,7 @@ def test_doctor_and_staff_read_but_not_write():
         r = doc.get(f"{API}/clinic-profiles/{loc_id}", timeout=10)
         assert r.status_code == 200
         # Doctor cannot update
-        r = doc.put(f"{API}/clinic-profiles/{loc_id}",
+        r = doc.patch(f"{API}/clinic-profiles/{loc_id}",
                     json={"name": "hacked"}, timeout=10)
         assert r.status_code == 403
         # Doctor cannot delete
@@ -315,7 +315,7 @@ def test_mutations_emit_audit_rows():
     assert r.status_code == 201
     pid = r.json()["id"]
 
-    admin.put(f"{API}/clinic-profiles/{loc_id}",
+    admin.patch(f"{API}/clinic-profiles/{loc_id}",
               json={"primary_phone": "+15551234567"}, timeout=10)
     admin.delete(f"{API}/clinic-profiles/{loc_id}", timeout=10)
 

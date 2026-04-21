@@ -947,7 +947,7 @@ export function PatientWizardDialog({
       const payload = buildPayload(form);
       let data;
       if (isEdit) {
-        const resp = await api.put(`/patients/${patientId}`, payload);
+        const resp = await api.patch(`/patients/${patientId}`, payload);
         data = resp.data;
         toast.success(isIntakeScope ? "Intake updated" : "Patient updated");
         onSaved && onSaved(data);

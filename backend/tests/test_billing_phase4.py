@@ -77,7 +77,7 @@ def _build_ready_claim(s):
     patients = s.get(f"{API}/patients", timeout=15).json()
     patient = patients[0]
     sid = _ensure_self_pay(s)
-    s.put(f"{API}/billing/fee-schedules/{sid}/lines", json=[
+    s.patch(f"{API}/billing/fee-schedules/{sid}/lines", json=[
         {"code_type": "cpt", "code": "98940", "allowed_cents": 6000},
     ], timeout=10)
     payer = s.post(f"{API}/billing/payers", json={
@@ -87,7 +87,7 @@ def _build_ready_claim(s):
     sr = s.post(f"{API}/billing/fee-schedules", json={
         "name": _unique("Payer4"), "kind": "payer", "payer_id": payer["id"],
     }, timeout=10).json()
-    s.put(f"{API}/billing/fee-schedules/{sr['id']}/lines", json=[
+    s.patch(f"{API}/billing/fee-schedules/{sr['id']}/lines", json=[
         {"code_type": "cpt", "code": "98940", "allowed_cents": 4000},
     ], timeout=10)
     s.post(f"{API}/billing/insurance-policies", json={
@@ -100,7 +100,7 @@ def _build_ready_claim(s):
         "description": "x", "diagnosis": "low back pain",
         "treatment": "CMT",
     }, timeout=10).json()
-    s.put(f"{API}/patients/{patient['id']}/records/{rec['id']}/coding", json={
+    s.patch(f"{API}/patients/{patient['id']}/records/{rec['id']}/coding", json={
         "procedures": [{"code_type": "cpt", "code": "98940",
                         "units": 1, "modifiers": []}],
         "diagnoses": [{"sequence": 1, "code": "M54.16"}],
@@ -112,7 +112,7 @@ def _build_ready_claim(s):
                  timeout=10).json()
     claim = s.post(f"{API}/billing/claims/from-invoice/{inv['id']}",
                    timeout=10).json()
-    s.put(f"{API}/billing/claims/{claim['id']}/header", json={
+    s.patch(f"{API}/billing/claims/{claim['id']}/header", json={
         "billing_provider_id": rec.get("recorded_by") or "provider-1",
         "rendering_provider_id": rec.get("recorded_by") or "provider-1",
         "place_of_service": "11",
@@ -358,7 +358,7 @@ class TestTimelineAndAssignment:
         s = _login(*DEFAULT_ADMIN)
         _p, _py, claim = _build_ready_claim(s)
         me = s.get(f"{API}/auth/me", timeout=10).json()
-        r = s.put(f"{API}/billing/claims/{claim['id']}/assignment",
+        r = s.patch(f"{API}/billing/claims/{claim['id']}/assignment",
                   json={"assigned_to": me["id"]}, timeout=10)
         assert r.status_code == 200, r.text
         assert r.json()["assigned_to"] == me["id"]
@@ -370,7 +370,7 @@ class TestTimelineAndAssignment:
     def test_assignment_rejects_unknown_user(self):
         s = _login(*DEFAULT_ADMIN)
         _p, _py, claim = _build_ready_claim(s)
-        r = s.put(f"{API}/billing/claims/{claim['id']}/assignment",
+        r = s.patch(f"{API}/billing/claims/{claim['id']}/assignment",
                   json={"assigned_to": "nobody-" + uuid.uuid4().hex},
                   timeout=10)
         assert r.status_code == 400

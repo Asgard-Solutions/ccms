@@ -77,7 +77,7 @@ def _ensure_self_pay_schedule(s: requests.Session) -> str:
 
 
 def _upsert_lines(s: requests.Session, sid: str, lines: list[dict]):
-    r = s.put(f"{API}/billing/fee-schedules/{sid}/lines",
+    r = s.patch(f"{API}/billing/fee-schedules/{sid}/lines",
               json=lines, timeout=10)
     assert r.status_code == 200, r.text
 
@@ -117,7 +117,7 @@ def _code_record(s: requests.Session, patient_id: str, record_id: str,
         ],
         "responsibility": responsibility,
     }
-    r = s.put(
+    r = s.patch(
         f"{API}/patients/{patient_id}/records/{record_id}/coding",
         json=body, timeout=10,
     )
@@ -187,7 +187,7 @@ class TestInsurancePolicies:
         assert r.status_code == 201, r.text
         pol = r.json()
 
-        r = s.put(f"{API}/billing/insurance-policies/{pol['id']}", json={
+        r = s.patch(f"{API}/billing/insurance-policies/{pol['id']}", json={
             "group_number": "GRP-123", "notes": "updated via phase 2",
         }, timeout=10)
         assert r.status_code == 200, r.text
@@ -217,7 +217,7 @@ class TestRecordCodingAndSign:
         _code_record(s, patient["id"], rec["id"])
         _sign_record(s, patient["id"], rec["id"])
         # now coding should be locked
-        r = s.put(
+        r = s.patch(
             f"{API}/patients/{patient['id']}/records/{rec['id']}/coding",
             json={
                 "procedures": [{"code_type": "cpt", "code": "97140",

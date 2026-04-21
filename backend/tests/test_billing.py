@@ -222,7 +222,7 @@ class TestPayerCRUD:
         assert r.status_code == 200
         assert any(x["id"] == p["id"] for x in r.json())
 
-        r = s.put(f"{API}/billing/payers/{p['id']}",
+        r = s.patch(f"{API}/billing/payers/{p['id']}",
                   json={"notes": "updated"}, timeout=10)
         assert r.status_code == 200
         assert r.json()["notes"] == "updated"

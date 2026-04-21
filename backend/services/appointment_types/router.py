@@ -128,7 +128,7 @@ async def create_appointment_type(
 # ---------------------------------------------------------------------------
 # Update
 # ---------------------------------------------------------------------------
-@router.put("/{type_id}", response_model=AppointmentTypePublic)
+@router.patch("/{type_id}", response_model=AppointmentTypePublic)
 async def update_appointment_type(
     type_id: str,
     payload: AppointmentTypeUpdate,

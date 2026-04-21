@@ -176,7 +176,7 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
       };
       let saved;
       if (mode === "reschedule") {
-        const res = await api.put(`/appointments/${initial.id}`, {
+        const res = await api.patch(`/appointments/${initial.id}`, {
           start_time: payload.start_time,
           end_time: payload.end_time,
           reason: payload.reason,

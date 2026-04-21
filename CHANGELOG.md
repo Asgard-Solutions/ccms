@@ -12,6 +12,62 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Changed
+- **API-wide PATCH migration (2026-02-20).** Every resource update now
+  uses `PATCH` semantics with `exclude_unset=True` — only fields
+  explicitly present in the request body are applied; omitted fields
+  are left alone; passing `null` clears the field. `PUT` routes are
+  **removed** (not aliased). Converted endpoints:
+  `PATCH /api/patients/{id}`,
+  `PATCH /api/patients/{id}/records/{rec_id}/coding`,
+  `PATCH /api/appointments/{id}`,
+  `PATCH /api/appointment-types/{id}`,
+  `PATCH /api/clinic-profiles/{id}`,
+  `PATCH /api/privacy/communication-preferences`,
+  `PATCH /api/billing/payers/{id}`,
+  `PATCH /api/billing/insurance-policies/{id}`,
+  `PATCH /api/billing/fee-schedules/{id}/lines`,
+  `PATCH /api/billing/claims/{id}/header`,
+  `PATCH /api/billing/claims/{id}/diagnoses`,
+  `PATCH /api/billing/claims/{id}/lines`,
+  `PATCH /api/billing/claims/{id}/assignment`,
+  and `PATCH /api/billing/denial-work-items/{id}`.
+  Frontend callers (`Patients.jsx`, `ClinicSettings.jsx`,
+  `AppointmentTypesManager.jsx`, `BookDialog.jsx`, `useClaims.js`,
+  `useBillingAdmin.js`, `useRemittance.js`) all migrated to
+  `api.patch(…)`. Backend test suites (15 files) migrated.
+
+### Added
+- **Multi-version patient intake forms (2026-02-20).**
+  New collection `patient_intake_forms` + sub-router
+  `services/patient/intake_forms_router.py`. A patient can now hold
+  many intake snapshots (one per encounter / injury / revisit).
+  - `GET  /api/patients/{id}/intake-forms` — newest first
+  - `POST /api/patients/{id}/intake-forms` — creates a draft;
+    `seed_from_patient: true` (default) pre-fills from the patient's
+    current `clinical_intake` + `case_details` so the wizard opens
+    with what we already know
+  - `GET  /api/patients/{id}/intake-forms/{form_id}`
+  - `PATCH /api/patients/{id}/intake-forms/{form_id}` — partial
+    update (only supplied fields); `status: "completed"` stamps
+    `captured_at` / `captured_by` and locks the row immutable
+  - `DELETE /api/patients/{id}/intake-forms/{form_id}` — drafts only
+  Per-form `clinical_intake`, `case_details`, and `notes` are
+  encrypted at rest as JSON blobs (same AES-GCM scheme the rest of
+  the patient PHI uses). Cross-tenant isolation enforced via
+  `scoped_filter` on every read + write.
+
+  Frontend `IntakeFormsTab` now fetches live forms from the new
+  endpoint and shows actual version labels (`Draft · v1`, `v2`, …)
+  with the real `captured_at` timestamp. "New intake form" calls
+  the backend, creates a draft seeded from the patient, and
+  refreshes the list.
+
+### Tests
+- `backend/tests/test_patient_intake_forms.py` — 5 passing
+  (empty → seeded create, version increments, PATCH exclude_unset
+  semantics, draft → completed stamps captured_at + locks, delete
+  draft vs 409 on completed, cross-tenant isolation).
+
 - **Patient Detail — Intake vs Documents split (2026-02-20).**
   - The old "Intake" tab contained only consents + upload rows —
     which is really document management. Renamed to

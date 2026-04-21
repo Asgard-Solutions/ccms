@@ -43,6 +43,7 @@ from services.patient._shared import (
 )
 from services.patient.consent_pdf_router import router as consent_pdf_router
 from services.patient.documents_router import router as documents_router
+from services.patient.intake_forms_router import router as intake_forms_router
 from services.patient.search_router import router as search_router
 from services.patient.models import (
     MedicalRecordCoding,
@@ -63,6 +64,7 @@ router = APIRouter(prefix="/patients", tags=["patient"])
 router.include_router(search_router)
 router.include_router(documents_router)
 router.include_router(consent_pdf_router)
+router.include_router(intake_forms_router)
 
 STAFF_ROLES = ("admin", "doctor", "staff")
 
@@ -393,7 +395,7 @@ async def get_patient(
 
 # ---------------- Update ----------------
 
-@router.put("/{patient_id}", response_model=PatientPublic)
+@router.patch("/{patient_id}", response_model=PatientPublic)
 async def update_patient(
     patient_id: str,
     payload: PatientUpdate,
@@ -402,7 +404,9 @@ async def update_patient(
     ctx: TenantContext = Depends(get_tenant_context),
 ):
     db = get_db_write()
-    raw_updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    # PATCH semantics: only fields explicitly set in the request body are applied.
+    # Passing `null` clears a field; omitting it leaves the stored value alone.
+    raw_updates = payload.model_dump(exclude_unset=True)
     if not raw_updates:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No fields to update")
 
@@ -633,7 +637,7 @@ async def add_record(
 # ---------------------------------------------------------------------------
 # Charge-capture coding + signing (iteration 25 — Phase 2)
 # ---------------------------------------------------------------------------
-@router.put(
+@router.patch(
     "/{patient_id}/records/{record_id}/coding",
     response_model=MedicalRecordPublic,
 )

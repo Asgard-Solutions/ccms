@@ -105,7 +105,7 @@ export default function AppointmentTypesManager() {
     }
     setSaving(true);
     try {
-      await api.put(`/appointment-types/${editingId}`, {
+      await api.patch(`/appointment-types/${editingId}`, {
         name: editDraft.name.trim(),
         default_duration_minutes: Number(editDraft.default_duration_minutes),
         description: editDraft.description?.trim() || null,

@@ -505,36 +505,57 @@ function IntakeFormRow({ form }) {
   );
 }
 
-function IntakeFormsTab({ patient, range, onNew, onRangeChange, canEdit }) {
-  const clinical = patient.clinical_intake || {};
-  const caseDetails = patient.case_details || {};
-  const hasAny = hasValue(clinical) || hasValue(caseDetails);
+function IntakeFormsTab({ patientId, patient, range, onNew, onRangeChange, canEdit, refreshKey }) {
+  const [forms, setForms] = useState(null);
+  const [creating, setCreating] = useState(false);
 
-  // The backend currently exposes a single intake snapshot per patient.
-  // We render it as a one-item list so the tab is already list-shaped.
-  const capturedAt =
-    patient.clinical_intake_updated_at ||
-    patient.intake_completed_at ||
-    patient.updated_at ||
-    null;
+  const refresh = useCallback(async () => {
+    try {
+      const { data } = await api.get(`/patients/${patientId}/intake-forms`);
+      setForms(data || []);
+    } catch (err) {
+      setForms([]);
+      toast.error(formatApiError(err));
+    }
+  }, [patientId]);
 
-  const allForms = hasAny
-    ? [{
-        id: "current",
-        version_label: "Current intake",
-        captured_at: capturedAt,
-        chief_complaint: clinical.chief_complaint,
-        complaint_onset: clinical.complaint_onset,
-        onset_type: clinical.onset_type,
-        pain_level: typeof clinical.pain_level === "number" ? clinical.pain_level : null,
-        pain_locations: clinical.pain_locations,
-        symptoms: clinical.symptoms,
-        notes: clinical.notes,
-        case_type: caseDetails.case_type,
-      }]
-    : [];
+  useEffect(() => { refresh(); }, [refresh, refreshKey]);
 
-  const filteredForms = allForms.filter(
+  async function handleNew() {
+    setCreating(true);
+    try {
+      // Seed the new draft from the patient's most-recent intake so the
+      // wizard opens pre-filled with what we already know.
+      const { data } = await api.post(
+        `/patients/${patientId}/intake-forms`,
+        { seed_from_patient: true },
+      );
+      toast.success(`Intake draft v${data.version} created`);
+      await refresh();
+      // Let parent decide whether to open the wizard for further edits.
+      onNew?.(data);
+    } catch (err) {
+      toast.error(formatApiError(err));
+    } finally { setCreating(false); }
+  }
+
+  const rows = (forms || []).map((f) => ({
+    id: f.id,
+    version_label:
+      f.status === "draft" ? `Draft · v${f.version}` : `v${f.version}`,
+    captured_at: f.captured_at || f.updated_at || f.created_at,
+    chief_complaint: f.clinical_intake?.chief_complaint,
+    complaint_onset: f.clinical_intake?.complaint_onset,
+    onset_type: f.clinical_intake?.onset_type,
+    pain_level: typeof f.clinical_intake?.pain_level === "number"
+      ? f.clinical_intake.pain_level : null,
+    pain_locations: f.clinical_intake?.pain_locations,
+    symptoms: f.clinical_intake?.symptoms,
+    notes: f.notes || f.clinical_intake?.notes,
+    case_type: f.case_details?.case_type,
+  }));
+
+  const filteredForms = rows.filter(
     (f) => !f.captured_at || isInRange(f.captured_at, range),
   );
 
@@ -550,16 +571,18 @@ function IntakeFormsTab({ patient, range, onNew, onRangeChange, canEdit }) {
           </h2>
           <p className="mt-1 max-w-xl text-xs text-muted-foreground">
             Every intake captured for this patient — chief complaint, pain, symptoms,
-            and case details.
+            and case details. Each save creates a new versioned draft.
           </p>
         </div>
         {canEdit && (
           <Button
-            onClick={onNew}
+            onClick={handleNew}
+            disabled={creating}
             data-testid="intake-new-form-btn"
             className="rounded-sm bg-primary hover:bg-[var(--primary-hover)]"
           >
-            <Plus className="mr-2 h-4 w-4" /> New intake form
+            <Plus className="mr-2 h-4 w-4" />
+            {creating ? "Creating…" : "New intake form"}
           </Button>
         )}
       </div>
@@ -575,12 +598,16 @@ function IntakeFormsTab({ patient, range, onNew, onRangeChange, canEdit }) {
         </p>
       )}
 
-      {filteredForms.length === 0 ? (
+      {forms === null ? (
+        <div className="rounded-sm border border-dashed border-border bg-card p-12 text-center text-sm text-muted-foreground">
+          Loading intake forms…
+        </div>
+      ) : filteredForms.length === 0 ? (
         <div
           data-testid="intake-forms-empty"
           className="rounded-sm border border-dashed border-border bg-card p-12 text-center text-sm text-muted-foreground"
         >
-          {allForms.length === 0
+          {rows.length === 0
             ? "No intake forms captured yet."
             : "No intake forms in the selected range."}
         </div>
@@ -1201,6 +1228,7 @@ export default function PatientDetail() {
 
         <TabsContent value="intake" className="mt-6 space-y-6">
           <IntakeFormsTab
+            patientId={id}
             patient={patient}
             range={intakeRange}
             onRangeChange={setIntakeRange}

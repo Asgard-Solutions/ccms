@@ -191,7 +191,7 @@ async def create_clinic_profile(
 # ---------------------------------------------------------------------------
 # Update
 # ---------------------------------------------------------------------------
-@router.put("/{profile_or_location_id}", response_model=ClinicProfilePublic)
+@router.patch("/{profile_or_location_id}", response_model=ClinicProfilePublic)
 async def update_clinic_profile(
     profile_or_location_id: str,
     payload: ClinicProfileUpdate,

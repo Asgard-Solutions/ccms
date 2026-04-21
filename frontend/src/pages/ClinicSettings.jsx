@@ -216,7 +216,7 @@ export default function ClinicSettings() {
       }
 
       async function doPut() {
-        await api.put(`/clinic-profiles/${locationId}`, payload);
+        await api.patch(`/clinic-profiles/${locationId}`, payload);
         setProfileExists(true);
         toast.success("Clinic settings saved");
       }

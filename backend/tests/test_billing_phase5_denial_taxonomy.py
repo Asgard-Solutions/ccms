@@ -67,7 +67,7 @@ def _build_submitted_claim(s):
     sched = s.post(f"{API}/billing/fee-schedules", json={
         "name": _unique("Pt5"), "kind": "payer", "payer_id": payer["id"],
     }, timeout=10).json()
-    s.put(f"{API}/billing/fee-schedules/{sched['id']}/lines", json=[
+    s.patch(f"{API}/billing/fee-schedules/{sched['id']}/lines", json=[
         {"code_type": "cpt", "code": "98940", "allowed_cents": 4000},
     ], timeout=10)
     s.post(f"{API}/billing/insurance-policies", json={
@@ -79,7 +79,7 @@ def _build_submitted_claim(s):
         "record_type": "treatment", "title": "T", "description": "x",
         "diagnosis": "LBP", "treatment": "CMT",
     }, timeout=10).json()
-    s.put(f"{API}/patients/{patient['id']}/records/{rec['id']}/coding", json={
+    s.patch(f"{API}/patients/{patient['id']}/records/{rec['id']}/coding", json={
         "procedures": [{"code_type": "cpt", "code": "98940", "units": 1, "modifiers": []}],
         "diagnoses": [{"sequence": 1, "code": "M54.16"}],
         "responsibility": "insurance",
@@ -87,7 +87,7 @@ def _build_submitted_claim(s):
     s.post(f"{API}/patients/{patient['id']}/records/{rec['id']}/sign", timeout=10)
     inv = s.post(f"{API}/billing/encounters/{rec['id']}/capture", timeout=10).json()
     claim = s.post(f"{API}/billing/claims/from-invoice/{inv['id']}", timeout=10).json()
-    s.put(f"{API}/billing/claims/{claim['id']}/header", json={
+    s.patch(f"{API}/billing/claims/{claim['id']}/header", json={
         "billing_provider_id": "bp", "rendering_provider_id": "rp",
         "place_of_service": "11",
     }, timeout=10)
@@ -199,7 +199,7 @@ class TestListFilterAndOverride:
         claim = _build_submitted_claim(s)
         item = _post_denial(s, claim, "CO-97")  # derived coding
         # Override to authorization.
-        r = s.put(f"{API}/billing/denial-work-items/{item['id']}",
+        r = s.patch(f"{API}/billing/denial-work-items/{item['id']}",
                   json={"denial_category": "authorization"},
                   timeout=10)
         assert r.status_code == 200, r.text
@@ -209,7 +209,7 @@ class TestListFilterAndOverride:
         s = _login(*DEFAULT_ADMIN)
         claim = _build_submitted_claim(s)
         item = _post_denial(s, claim, "CO-97")
-        r = s.put(f"{API}/billing/denial-work-items/{item['id']}",
+        r = s.patch(f"{API}/billing/denial-work-items/{item['id']}",
                   json={"denial_category": "not-a-thing"}, timeout=10)
         assert r.status_code == 400
 

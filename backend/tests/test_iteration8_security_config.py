@@ -208,7 +208,7 @@ class TestDOBEncryption:
         assert rexp.json()["patient"]["date_of_birth"] == "1985-06-15"
 
         # PUT update with a new DOB, re-encrypts + reads back correctly
-        rp = admin_session.put(
+        rp = admin_session.patch(
             f"{API}/patients/{pid}",
             json={"date_of_birth": "1990-01-02"},
             timeout=10,

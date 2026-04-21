@@ -121,7 +121,7 @@ def test_create_list_range_and_counts_reconcile():
         # Reschedule
         new_start = start + timedelta(minutes=30)
         new_end = end + timedelta(minutes=30)
-        rescheduled = admin.put(f"{API}/appointments/{appt_id}", json={
+        rescheduled = admin.patch(f"{API}/appointments/{appt_id}", json={
             "start_time": _iso(new_start),
             "end_time": _iso(new_end),
         }, timeout=10)

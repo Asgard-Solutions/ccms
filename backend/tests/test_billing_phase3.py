@@ -88,7 +88,7 @@ def _prime_insurance_invoice(s):
     """Build a captured insurance invoice end-to-end for from-invoice tests."""
     patient = _first_patient(s)
     sid = _ensure_self_pay(s)
-    s.put(f"{API}/billing/fee-schedules/{sid}/lines", json=[
+    s.patch(f"{API}/billing/fee-schedules/{sid}/lines", json=[
         {"code_type": "cpt", "code": "98940", "allowed_cents": 6000},
     ], timeout=10)
     payer = _make_payer(s)
@@ -97,7 +97,7 @@ def _prime_insurance_invoice(s):
         "name": _unique("Payer"), "kind": "payer", "payer_id": payer["id"],
     }, timeout=10)
     payer_sid = r.json()["id"]
-    s.put(f"{API}/billing/fee-schedules/{payer_sid}/lines", json=[
+    s.patch(f"{API}/billing/fee-schedules/{payer_sid}/lines", json=[
         {"code_type": "cpt", "code": "98940", "allowed_cents": 4000},
     ], timeout=10)
     s.post(f"{API}/billing/insurance-policies", json={
@@ -110,7 +110,7 @@ def _prime_insurance_invoice(s):
         "description": "x", "diagnosis": "low back pain",
         "treatment": "CMT",
     }, timeout=10).json()
-    s.put(f"{API}/patients/{patient['id']}/records/{rec['id']}/coding", json={
+    s.patch(f"{API}/patients/{patient['id']}/records/{rec['id']}/coding", json={
         "procedures": [{"code_type": "cpt", "code": "98940",
                         "units": 1, "modifiers": []}],
         "diagnoses": [{"sequence": 1, "code": "M54.16"}],
@@ -231,14 +231,14 @@ class TestFromInvoiceBuilder:
         s = _login(*DEFAULT_ADMIN)
         patient = _first_patient(s)
         sid = _ensure_self_pay(s)
-        s.put(f"{API}/billing/fee-schedules/{sid}/lines", json=[
+        s.patch(f"{API}/billing/fee-schedules/{sid}/lines", json=[
             {"code_type": "cpt", "code": "98940", "allowed_cents": 6000},
         ], timeout=10)
         rec = s.post(f"{API}/patients/{patient['id']}/records", json={
             "record_type": "treatment", "title": "self pay",
             "description": "x",
         }, timeout=10).json()
-        s.put(f"{API}/patients/{patient['id']}/records/{rec['id']}/coding", json={
+        s.patch(f"{API}/patients/{patient['id']}/records/{rec['id']}/coding", json={
             "procedures": [{"code_type": "cpt", "code": "98940",
                             "units": 1, "modifiers": []}],
             "diagnoses": [{"sequence": 1, "code": "M54.16"}],
@@ -278,7 +278,7 @@ class TestValidate:
         claim = s.post(f"{API}/billing/claims/from-invoice/{inv['id']}",
                        timeout=10).json()
         # Fill the required header fields.
-        r = s.put(f"{API}/billing/claims/{claim['id']}/header", json={
+        r = s.patch(f"{API}/billing/claims/{claim['id']}/header", json={
             "billing_provider_id": rec.get("recorded_by") or "provider-1",
             "rendering_provider_id": rec.get("recorded_by") or "provider-1",
             "place_of_service": "11",
@@ -313,13 +313,13 @@ class TestEditEndpoints:
         _p, _py, rec, inv = _prime_insurance_invoice(s)
         claim = s.post(f"{API}/billing/claims/from-invoice/{inv['id']}",
                        timeout=10).json()
-        r = s.put(f"{API}/billing/claims/{claim['id']}/diagnoses", json=[
+        r = s.patch(f"{API}/billing/claims/{claim['id']}/diagnoses", json=[
             {"sequence": 1, "code": "M54.16"},
             {"sequence": 2, "code": "M25.50"},
         ], timeout=10)
         assert r.status_code == 200, r.text
         assert r.json()["count"] == 2
-        r = s.put(f"{API}/billing/claims/{claim['id']}/lines", json=[
+        r = s.patch(f"{API}/billing/claims/{claim['id']}/lines", json=[
             {"sequence": 1, "service_date": "2026-02-01",
              "code_type": "cpt", "code": "98941",
              "units": 1, "billed_cents": 7500,
@@ -335,14 +335,14 @@ class TestEditEndpoints:
         claim = s.post(f"{API}/billing/claims/from-invoice/{inv['id']}",
                        timeout=10).json()
         # force it to ready via validate after filling header
-        s.put(f"{API}/billing/claims/{claim['id']}/header", json={
+        s.patch(f"{API}/billing/claims/{claim['id']}/header", json={
             "billing_provider_id": rec.get("recorded_by") or "p1",
             "rendering_provider_id": rec.get("recorded_by") or "p1",
             "place_of_service": "11",
         }, timeout=10)
         s.post(f"{API}/billing/claims/{claim['id']}/validate", timeout=10)
         s.post(f"{API}/billing/claims/{claim['id']}/submit", timeout=10)
-        r = s.put(f"{API}/billing/claims/{claim['id']}/header",
+        r = s.patch(f"{API}/billing/claims/{claim['id']}/header",
                   json={"notes": "too late"}, timeout=10)
         assert r.status_code == 409, r.text
 

@@ -76,7 +76,7 @@ def test_admin_crud_lifecycle():
         assert any(t["id"] == body["id"] for t in r.json())
 
         # PUT update duration
-        r = s.put(f"{API}/appointment-types/{body['id']}",
+        r = s.patch(f"{API}/appointment-types/{body['id']}",
                   json={"default_duration_minutes": 45}, timeout=10)
         assert r.status_code == 200, r.text
         assert r.json()["default_duration_minutes"] == 45
@@ -165,7 +165,7 @@ def test_doctor_staff_can_list_but_not_mutate():
             }, timeout=10)
             assert cr.status_code == 403, (creds, cr.status_code)
             # Update forbidden
-            ur = s.put(f"{API}/appointment-types/{tid}",
+            ur = s.patch(f"{API}/appointment-types/{tid}",
                        json={"default_duration_minutes": 45}, timeout=10)
             assert ur.status_code == 403, (creds, ur.status_code)
             # Delete forbidden
@@ -196,7 +196,7 @@ def test_tenant_isolation():
         assert all(t["id"] != tid for t in sr_list)
 
         # Sunrise admin cannot update it (404 — not leaking existence).
-        upd = sunrise_admin.put(f"{API}/appointment-types/{tid}",
+        upd = sunrise_admin.patch(f"{API}/appointment-types/{tid}",
                                  json={"default_duration_minutes": 60}, timeout=10)
         assert upd.status_code == 404, upd.text
     finally:

@@ -233,7 +233,7 @@ class TestAppointmentsCacheAndRAW:
         # PUT reschedule → body must reflect new time (read-after-write)
         new_start = (now + timedelta(days=3, hours=1)).isoformat()
         new_end = (now + timedelta(days=3, hours=2)).isoformat()
-        ur = admin.put(
+        ur = admin.patch(
             f"{API}/appointments/{appt_id}",
             json={"start_time": new_start, "end_time": new_end},
             timeout=20,
@@ -276,7 +276,7 @@ class TestPatientPutRAW:
         pid = cr.json().get("id") or cr.json().get("_id")
 
         new_last = f"Renamed{uuid.uuid4().hex[:6]}"
-        ur = admin.put(
+        ur = admin.patch(
             f"{API}/patients/{pid}",
             params={"unmask": "true"},
             json={"last_name": new_last},
