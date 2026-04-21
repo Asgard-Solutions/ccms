@@ -12,7 +12,117 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
-- **Clinical module — Phase 3 (2026-02-21).** Appointment-first encounter
+- **Clinical module — Phase 4 (2026-02-22).** Initial Exam workflow:
+  structured, signable, one-per-encounter initial evaluation record
+  launched from the calendar → encounter → exam pipeline, rendered
+  under Patient Profile > Clinical.
+  - **Backend** new module `services/clinical/`:
+    - `exam_template.py` — system default `default-initial-exam-v1`
+      with three sections (history / examination / assessment),
+      snapshotted into every exam at create so template evolution
+      never mutates signed exams.
+    - `exams_models.py` — `ExamHistory` (11 free-text H&P fields),
+      `ExamExamination` (vitals + observation / posture / gait /
+      palpation / segmental findings + structured `RangeOfMotion`
+      across cervical/thoracic/lumbar/shoulders/hips +
+      `OrthopedicTest[]` with positive/negative/equivocal results +
+      `MuscleStrengthEntry[]` graded 0–5 with side + neurologic /
+      sensory-reflex narratives), `ExamAssessment` (functional
+      limitations, summary, impression, treatment recommendations),
+      `NewDiagnosisDraft` (ICD-10 drafts materialized at sign time).
+    - `exams_router.py` — endpoints under `/api`:
+      - `GET /clinical/exam-templates/default`
+      - `GET /patients/{pid}/clinical/exams` (list; `status_in`
+        filter)
+      - `POST /patients/{pid}/clinical/exams` — create from
+        encounter. `prefill_from_chart=true` (default) copies
+        `clinical_history` into empty exam.history fields and
+        auto-selects active diagnoses. One-exam-per-encounter:
+        duplicate create returns 200 + `X-Exam-Existed: true`
+        header + the existing exam.
+      - `GET/PATCH /patients/{pid}/clinical/exams/{eid}` — PATCH
+        blocks on signed status (409); cross-patient diagnosis_ids
+        → 400.
+      - `POST .../prefill` — explicit non-destructive re-pull from
+        the chart; only fills empty fields; updates
+        `prefilled_from_chart_at`.
+      - `POST .../mark-sign-ready` + `.../unmark-sign-ready` — draft
+        ↔ sign_ready transitions; wrong-status → 409.
+      - `POST .../sign` — terminal. Materializes `new_diagnoses`
+        into `clinical_diagnoses` rows with ICD-10 uppercasing,
+        case-insensitive de-dup on (code, body_region, laterality)
+        against active problem list, onset_date copied from the
+        encounter date-of-service, one-primary-per-episode
+        enforcement across both existing + newly-materialized rows.
+        Double-sign / sign-after-close → 409.
+      - `GET .../narrative` — Initial-Exam-oriented rendering
+        (NOT SOAP): `INITIAL EXAMINATION` header, HISTORY /
+        EXAMINATION / ASSESSMENT & PLAN sections, inline
+        structured vitals / ROM / orthopedic tests / muscle
+        strength, DIAGNOSES block with primary flagging. Empty
+        sections are omitted.
+    - Summary endpoint now exposes live `initial_exams.{total, open}`
+      where `open = draft + sign_ready`.
+  - **Access + audit**: reads gated by `admin|doctor|staff`, writes
+    by `admin|doctor` + `require_reauth`. Tenant isolation via
+    `scoped_filter` — cross-tenant GET/PATCH/sign all return 404.
+    Every mutation emits both a global `audit_logs` row AND a
+    patient-scoped `clinical_audit_events` row (events:
+    `initial_exam.created`, `initial_exam.updated`,
+    `initial_exam.prefilled`, `initial_exam.signed`).
+  - **Indexes** in `core/db.py`: `clinical_initial_exams` on
+    `(tenant_id, patient_id, date_of_service)`,
+    `(tenant_id, encounter_id)`, `(tenant_id, status)`.
+  - **Frontend**:
+    - `pages/clinical/InitialExamEditor.jsx` — full structured
+      editor driven by the frozen `template_snapshot`. Widgets for
+      vitals, ROM, orthopedic tests, muscle strength, existing
+      diagnoses, new diagnosis drafts; narrative dialog; save /
+      mark-sign-ready / unmark / sign actions with UX-correct
+      enable/disable (save disabled when clean; sign disabled
+      while dirty). `exam-signed-banner` replaces the editable form
+      after sign.
+    - `pages/clinical/InitialExamsCard.jsx` — rendered on the
+      Clinical tab: lists every exam with status / date / provider
+      with direct navigation to the editor.
+    - `pages/clinical/ClinicalTab.jsx` — stat row leads with
+      live `stat-exams` tile (open count).
+    - `pages/clinical/EncountersCard.jsx` — each in-progress
+      encounter now carries a `encounter-start-exam-{id}` action
+      that POSTs `/clinical/exams` and navigates to the editor.
+    - `App.js` route:
+      `/patients/:id/clinical/initial-exam/:examId`.
+  - **Tests**: `backend/tests/test_clinical_phase4.py` — 11
+    cases covering create-from-encounter with auto-fill + frozen
+    template, prefill-from-chart, idempotent one-exam-per-encounter,
+    cancelled-encounter reject, PATCH structured round-trip +
+    cross-patient diagnosis_ids 400, explicit prefill preserves
+    provider edits, mark-sign-ready/unmark/sign transitions, sign
+    materializes new_diagnoses with ICD-10 uppercase + de-dup +
+    primary uniqueness, narrative rendering, summary counts live,
+    cross-tenant 404, reauth required on writes. Phase 1+2
+    regression 24/24 green.
+  - **Test-ids**: `stat-exams`, `clinical-exams-card`,
+    `encounter-start-exam-{id}`, `initial-exam-editor`,
+    `exam-status-badge`, `exam-section-{id}`, `exam-vitals-bp`,
+    `exam-vitals-pulse`, `exam-rom-{region}-{movement}`,
+    `exam-ortho-row-{i}`, `exam-ms-row-{i}`,
+    `exam-existing-dx-{id}`, `exam-new-dx-row-{i}`,
+    `exam-new-dx-add`, `exam-save-btn`, `exam-mark-ready-btn`,
+    `exam-unmark-ready-btn`, `exam-sign-btn`, `exam-prefill-btn`,
+    `exam-narrative-btn`, `exam-narrative-dialog`,
+    `exam-narrative-text`, `exam-signed-banner`.
+
+### Infra / build
+- **`libmagic1` is a runtime requirement.** `services/patient/
+  documents_router.py` imports `python-magic` for MIME sniffing on
+  uploads. The container base image must ship the `libmagic1`
+  system package so uvicorn can cold-start. If the preview returns
+  502 on boot, run
+  `sudo apt-get update && sudo apt-get install -y libmagic1 && sudo supervisorctl restart backend`
+  and add `libmagic1` to the Dockerfile / bootstrap script.
+
+## [Unreleased — earlier in the window]
   launch infrastructure. Providers launch documentation from the
   appointment; the clinical record stays patient-owned. No full SOAP /
   exam note forms yet — plumbing only.

@@ -1,6 +1,6 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-02-21 (Clinical module Phase 3 — appointment-first encounter launch infrastructure)
+**Last updated:** 2026-02-22 (Clinical module Phase 4 — Initial Exam workflow)
 
 ## 0. Design system (binding)
 The Chiro Software design system is authoritative for every UI surface.
@@ -48,6 +48,103 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### Clinical module Phase 4 — Initial Exam workflow (2026-02-22)
+- **Workflow realized**: provider launches documentation from the
+  calendar → encounter shell (Phase 3) → `POST /clinical/exams`
+  creates a **single** Initial Exam bound to that encounter. One
+  exam per encounter (idempotent create returns 200 +
+  `X-Exam-Existed: true` header if the exam already exists). The
+  signed exam is the authoritative initial evaluation record and
+  lives under Patient Profile > Clinical for the life of the chart.
+- **New backend service** `services/clinical/` additions:
+  - `exam_template.py` — frozen system default template
+    `default-initial-exam-v1` with three sections (`history`,
+    `examination`, `assessment`). Snapshotted into each exam at
+    create time so template evolution never mutates a signed exam.
+  - `exams_models.py` — Pydantic models: `ExamHistory` (11 fields),
+    `ExamExamination` (vitals + observation/posture/gait/palpation/
+    segmental findings + structured `RangeOfMotion` for cervical/
+    thoracic/lumbar/shoulders/hips + `OrthopedicTest[]` +
+    `MuscleStrengthEntry[]` + neurologic/sensory/reflex narratives),
+    `ExamAssessment` (functional limitations, summary, impression,
+    treatment recommendations), `NewDiagnosisDraft` (ICD-10 drafts
+    materialized at sign time).
+  - `exams_router.py` — endpoints under `/api`:
+    - `GET /clinical/exam-templates/default`
+    - `GET/POST /patients/{pid}/clinical/exams` (list + create from
+      encounter with `prefill_from_chart=true` default)
+    - `GET/PATCH /patients/{pid}/clinical/exams/{eid}` (PATCH blocked
+      on signed; cross-patient diagnosis_ids → 400)
+    - `POST .../prefill` — explicit, non-destructive re-pull from
+      clinical_history + active diagnoses; updates
+      `prefilled_from_chart_at`
+    - `POST .../mark-sign-ready` + `.../unmark-sign-ready` (draft ↔
+      sign_ready)
+    - `POST .../sign` (terminal; materializes `new_diagnoses` into
+      `clinical_diagnoses` with ICD-10 uppercasing + case-insensitive
+      de-dup on `(code, body_region, laterality)` against active
+      problem list + one-primary-per-episode enforcement; records
+      `signed_at` / `signed_by`)
+    - `GET .../narrative` — Initial-Exam-oriented rendering with
+      `INITIAL EXAMINATION` header + HISTORY / EXAMINATION /
+      ASSESSMENT & PLAN sections + structured vitals/ROM/orthopedic
+      tests/muscle strength + DIAGNOSES block. Empty sections are
+      omitted.
+- **Lifecycle**: `draft → sign_ready → signed` (terminal). `signed`
+  is immutable in Phase 4 — amendments/addendums deferred to a later
+  phase. Double-sign → 409. Wrong-status transitions → 409.
+- **Cross-cutting controls** (consistent with earlier phases):
+  - Reads gated by `admin|doctor|staff`; writes by `admin|doctor` +
+    `require_reauth`. Tenant isolation via `scoped_filter`;
+    cross-tenant probes return 404.
+  - Every mutation writes both a global `audit_logs` row and a
+    patient-scoped `clinical_audit_events` row (events:
+    `initial_exam.created`, `initial_exam.updated`,
+    `initial_exam.prefilled`, `initial_exam.signed`).
+  - Summary endpoint now returns live `initial_exams.{total, open}`
+    where `open = draft + sign_ready`.
+- **Encounter → exam linkage**: `EncountersCard` (Phase 3)
+  surfaces a `encounter-start-exam-{enc.id}` button on every
+  in-progress encounter that POSTs `/clinical/exams` and routes to
+  `/patients/{pid}/clinical/exams/{eid}`.
+- **Indexes** in `core/db.py`: `clinical_initial_exams` on
+  `(tenant_id, patient_id, date_of_service)`,
+  `(tenant_id, encounter_id)`, and `(tenant_id, status)`.
+- **Frontend**:
+  - `pages/clinical/InitialExamsCard.jsx` — lists every exam on the
+    Clinical tab with status badge + date + provider + narrative
+    shortcut.
+  - `pages/clinical/InitialExamEditor.jsx` — full editor rendering
+    from the frozen `template_snapshot`. Structured widgets for
+    vitals (`exam-vitals-bp`, `exam-vitals-pulse`, …), ROM
+    (`exam-rom-{region}-{movement}`), orthopedic tests
+    (`exam-ortho-row-{i}`), muscle strength (`exam-ms-row-{i}`),
+    existing/new diagnoses (`exam-existing-dx-{id}`,
+    `exam-new-dx-row-{i}`). Save disabled when clean; sign disabled
+    while dirty (user must save before sign). Narrative dialog shows
+    rendered print-friendly narrative. `exam-signed-banner` replaces
+    the editable form post-sign.
+  - `ClinicalTab.jsx` — summary row leads with live `stat-exams` tile
+    (open count); `InitialExamsCard` mounted below the Encounters
+    card.
+  - `App.js` route: `/patients/:id/clinical/initial-exam/:examId`.
+- **Tests**: `backend/tests/test_clinical_phase4.py` — **11/11
+  passing**: create-from-encounter happy path + auto-fill from
+  encounter/appointment/provider/episode/location + prefill from
+  history + active-diagnosis auto-select + frozen template snapshot;
+  one-exam-per-encounter idempotency via `X-Exam-Existed`;
+  cancelled-encounter reject 409; PATCH merges structured sections +
+  cross-patient diagnosis_ids → 400; explicit `/prefill`
+  non-destructive; mark-sign-ready / unmark / sign transitions;
+  sign-from-draft; double-sign 409; PATCH-signed 409; sign
+  materializes `new_diagnoses` with ICD-10 uppercase + de-dup +
+  primary-uniqueness; narrative contains all expected sections;
+  summary `initial_exams` counts live; cross-tenant probes 404;
+  reauth required on writes.
+- **Regression**: Phase 1+2 (24/24) green. Phase 3 8/9 (1 flaky
+  appt-overlap seed collision in Phase 3's reauth test — pre-existing
+  random-time jitter, not a product bug).
+
 ### Clinical module Phase 3 — appointment-launched encounter shell (2026-02-21)
 - **Workflow standard locked in**: providers begin documentation from
   the appointment/calendar; the appointment is the encounter shell; the
