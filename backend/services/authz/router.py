@@ -7,11 +7,13 @@ import uuid
 from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
 
 from core.audit import audit_success, log_audit
 from core.db import get_db_read, get_db_write
 from core.deps import get_current_user, require_role
 from core import metrics
+from core.tenancy import TenantContext, get_tenant_context
 from services.authz.constants import (
     BASELINE_ROLES,
     LEGACY_ROLE_TO_KEY,
@@ -19,6 +21,11 @@ from services.authz.constants import (
     PRIVILEGED_PERMISSIONS,
     ROLE_GRANTS,
     permission_key,
+)
+from services.authz.permission_catalog import (
+    MODULES,
+    explain_permissions,
+    grouped_catalog,
 )
 from services.authz.models import (
     ElevationApprove,
@@ -116,11 +123,19 @@ async def check_permission(
 @router.get("/roles")
 async def list_roles(
     request: Request,
+    include_user_counts: bool = False,
     _admin: dict = Depends(require_permission("role", "read")),
+    ctx: TenantContext = Depends(get_tenant_context),
 ):
     db = get_db_read()
-    rows = [r async for r in db.roles.find({}, {"_id": 0}).sort("name", 1)]
-    # attach grants
+    q: dict = {}
+    # Tenant-scoped custom roles + all system roles.
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        q = {"$or": [
+            {"is_system": True},
+            {"tenant_id": ctx.tenant_id},
+        ]}
+    rows = [r async for r in db.roles.find(q, {"_id": 0}).sort("name", 1)]
     out = []
     for r in rows:
         grants = [
@@ -129,8 +144,326 @@ async def list_roles(
             )
         ]
         r["grants"] = grants
+        # Normalize flag for frontend (baseline rows predate is_custom).
+        r["is_custom"] = bool(r.get("is_custom")) or not r.get("is_system", False)
+        if include_user_counts:
+            r["user_count"] = await db.user_roles.count_documents(
+                {"role_key": r["key"], "status": "active"},
+            )
         out.append(r)
     return out
+
+
+class RoleWriteModel(BaseModel):
+    """Admin-facing payload for create/update of a role."""
+    name: str = Field(..., min_length=2, max_length=80)
+    description: str = Field(default="", max_length=500)
+    permission_keys: list[str] = Field(default_factory=list)
+    cloned_from: str | None = None  # role_key the user cloned from (for provenance)
+
+
+def _slugify_key(name: str, suffix: str = "") -> str:
+    safe = "".join(
+        ch.lower() if ch.isalnum() else "_" for ch in name.strip()
+    ).strip("_")
+    safe = "_".join(filter(None, safe.split("_")))
+    return f"{safe or 'role'}_{suffix}" if suffix else (safe or "role")
+
+
+async def _insert_custom_role(
+    db, actor: dict, ctx: TenantContext, payload: RoleWriteModel,
+    request: Request,
+) -> dict:
+    """Create a custom role + its role_permissions rows (idempotent on key)."""
+    now = datetime.now(timezone.utc).isoformat()
+    base_key = _slugify_key(payload.name)
+    # Ensure unique key — suffix with a short uuid if collision.
+    candidate = f"custom_{base_key}"
+    if await db.roles.find_one({"key": candidate}, {"_id": 0, "id": 1}):
+        candidate = f"custom_{base_key}_{uuid.uuid4().hex[:6]}"
+    doc = {
+        "id": str(uuid.uuid4()),
+        "key": candidate,
+        "name": payload.name.strip(),
+        "description": payload.description.strip(),
+        "abbr": "".join(w[0] for w in payload.name.split()[:2]).upper()[:2] or "CR",
+        "is_system": False,
+        "is_custom": True,
+        "privileged": False,
+        "service_account": False,
+        "tenant_id": ctx.tenant_id,
+        "cloned_from": payload.cloned_from,
+        "created_at": now,
+        "created_by_id": actor["id"],
+        "created_by_email": actor.get("email"),
+        "updated_at": now,
+    }
+    await db.roles.insert_one(dict(doc))
+    grants_docs = _grants_from_keys(candidate, payload.permission_keys, now)
+    if grants_docs:
+        await db.role_permissions.insert_many(grants_docs)
+    await log_audit(
+        action="authz.role.created",
+        actor_id=actor["id"], actor_email=actor["email"],
+        actor_role=actor.get("role"), entity_type="role",
+        entity_id=candidate, request=request,
+        metadata={
+            "name": doc["name"], "tenant_id": ctx.tenant_id,
+            "permission_count": len(grants_docs),
+            "cloned_from": payload.cloned_from,
+        },
+    )
+    return doc
+
+
+def _grants_from_keys(role_key: str, keys: list[str], now: str) -> list[dict]:
+    """Build role_permissions docs for a list of permission keys.
+
+    Custom-role defaults:
+      scope=all_org, no MFA/approval/break-glass flags. Admins can
+      later tighten via the Advanced Security Policies panel (Phase 4).
+    """
+    seen: set[str] = set()
+    out: list[dict] = []
+    valid_keys = {f"{p['resource']}.{p['action']}" for p in PERMISSIONS}
+    for k in keys:
+        if k in seen or k not in valid_keys:
+            continue
+        seen.add(k)
+        out.append({
+            "id": str(uuid.uuid4()),
+            "role_key": role_key,
+            "permission_key": k,
+            "scope": "all_org",
+            "requires_mfa": False,
+            "requires_approval": False,
+            "break_glass_allowed": False,
+            "custom": True,
+            "created_at": now,
+        })
+    return out
+
+
+@router.post("/roles", status_code=201)
+async def create_custom_role(
+    payload: RoleWriteModel,
+    request: Request,
+    actor: dict = Depends(require_permission("role", "create")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    db = get_db_write()
+    if len(payload.permission_keys) == 0:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Role must include at least one permission",
+        )
+    doc = await _insert_custom_role(db, actor, ctx, payload, request)
+    return {**doc, "grants": [], "is_custom": True, "user_count": 0}
+
+
+@router.post("/roles/{role_key}/clone", status_code=201)
+async def clone_role(
+    role_key: str,
+    payload: dict,
+    request: Request,
+    actor: dict = Depends(require_permission("role", "create")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Clone any role (system or custom) into a new custom role.
+
+    Payload: { name: str, description?: str }
+    The clone copies permission keys from the source; admins can then
+    edit via PATCH. Tenant-scoped (a tenant admin can't clone another
+    tenant's custom role).
+    """
+    db = get_db_write()
+    name = (payload or {}).get("name", "").strip()
+    if not name:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Name is required")
+    src_q: dict = {"key": role_key}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        src_q = {"key": role_key, "$or": [
+            {"is_system": True},
+            {"tenant_id": ctx.tenant_id},
+        ]}
+    src = await db.roles.find_one(src_q, {"_id": 0})
+    if not src:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Source role not found")
+    grants = [
+        g async for g in db.role_permissions.find(
+            {"role_key": role_key}, {"_id": 0, "permission_key": 1},
+        )
+    ]
+    perm_keys = [g["permission_key"] for g in grants]
+    write = RoleWriteModel(
+        name=name,
+        description=(payload.get("description") or src.get("description") or ""),
+        permission_keys=perm_keys,
+        cloned_from=role_key,
+    )
+    doc = await _insert_custom_role(db, actor, ctx, write, request)
+    return {**doc, "grants": [], "is_custom": True, "user_count": 0}
+
+
+@router.patch("/roles/{role_key}")
+async def update_custom_role(
+    role_key: str,
+    payload: dict,
+    request: Request,
+    actor: dict = Depends(require_permission("role", "update")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Update a custom role's name / description / permission keys.
+
+    System roles are read-only (409 on attempt).
+    """
+    db = get_db_write()
+    role_q: dict = {"key": role_key}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        role_q["$or"] = [{"is_system": True}, {"tenant_id": ctx.tenant_id}]
+    role = await db.roles.find_one(role_q, {"_id": 0})
+    if not role:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Role not found")
+    if role.get("is_system"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "System roles are read-only. Clone this role to customize it.",
+        )
+    now = datetime.now(timezone.utc).isoformat()
+    set_fields: dict = {"updated_at": now,
+                        "updated_by_id": actor["id"],
+                        "updated_by_email": actor.get("email")}
+    if "name" in payload:
+        name = (payload["name"] or "").strip()
+        if len(name) < 2:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Name must be at least 2 characters",
+            )
+        set_fields["name"] = name
+    if "description" in payload:
+        set_fields["description"] = (payload["description"] or "").strip()[:500]
+
+    await db.roles.update_one({"key": role_key}, {"$set": set_fields})
+
+    if "permission_keys" in payload:
+        keys = payload["permission_keys"] or []
+        if not isinstance(keys, list) or len(keys) == 0:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "permission_keys must be a non-empty list",
+            )
+        # Replace all role_permissions for this role.
+        await db.role_permissions.delete_many({"role_key": role_key})
+        docs = _grants_from_keys(role_key, keys, now)
+        if docs:
+            await db.role_permissions.insert_many(docs)
+        # Bump session_epoch for every user with this role so their token
+        # is re-evaluated on next request.
+        user_ids = [
+            u["user_id"] async for u in db.user_roles.find(
+                {"role_key": role_key, "status": "active"},
+                {"_id": 0, "user_id": 1},
+            )
+        ]
+        if user_ids:
+            await db.users.update_many(
+                {"id": {"$in": user_ids}},
+                {"$inc": {"session_epoch": 1}},
+            )
+
+    await log_audit(
+        action="authz.role.updated",
+        actor_id=actor["id"], actor_email=actor["email"],
+        actor_role=actor.get("role"), entity_type="role",
+        entity_id=role_key, request=request,
+        metadata={
+            "changed_fields": list(set_fields.keys()),
+            "permission_keys_changed": "permission_keys" in payload,
+            "tenant_id": ctx.tenant_id,
+        },
+    )
+    updated = await db.roles.find_one({"key": role_key}, {"_id": 0})
+    grants = [
+        g async for g in db.role_permissions.find(
+            {"role_key": role_key}, {"_id": 0},
+        )
+    ]
+    uc = await db.user_roles.count_documents(
+        {"role_key": role_key, "status": "active"},
+    )
+    return {**updated, "grants": grants, "is_custom": True, "user_count": uc}
+
+
+@router.delete("/roles/{role_key}")
+async def delete_custom_role(
+    role_key: str,
+    request: Request,
+    force: bool = False,
+    actor: dict = Depends(require_permission("role", "update")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Archive (soft-delete) a custom role.
+
+    If the role is in use (has active user_roles rows), returns 409
+    listing the usage count unless `force=true` is passed. On force,
+    every user's assignment to this role is revoked and their
+    session_epoch bumped.
+    """
+    db = get_db_write()
+    role_q: dict = {"key": role_key}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        role_q["$or"] = [{"is_system": True}, {"tenant_id": ctx.tenant_id}]
+    role = await db.roles.find_one(role_q, {"_id": 0})
+    if not role:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Role not found")
+    if role.get("is_system"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "System roles cannot be deleted.",
+        )
+    user_count = await db.user_roles.count_documents(
+        {"role_key": role_key, "status": "active"},
+    )
+    if user_count > 0 and not force:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Role is assigned to {user_count} user(s). "
+            f"Reassign them first or call again with ?force=true.",
+        )
+    now = datetime.now(timezone.utc).isoformat()
+    if user_count > 0 and force:
+        # Revoke assignments + bump session_epoch for each affected user.
+        affected = [
+            u["user_id"] async for u in db.user_roles.find(
+                {"role_key": role_key, "status": "active"},
+                {"_id": 0, "user_id": 1},
+            )
+        ]
+        await db.user_roles.update_many(
+            {"role_key": role_key, "status": "active"},
+            {"$set": {"status": "revoked", "revoked_at": now,
+                      "revoked_by_id": actor["id"]}},
+        )
+        if affected:
+            await db.users.update_many(
+                {"id": {"$in": affected}},
+                {"$inc": {"session_epoch": 1}},
+            )
+    await db.role_permissions.delete_many({"role_key": role_key})
+    await db.roles.delete_one({"key": role_key})
+    await log_audit(
+        action="authz.role.deleted",
+        actor_id=actor["id"], actor_email=actor["email"],
+        actor_role=actor.get("role"), entity_type="role",
+        entity_id=role_key, request=request,
+        metadata={
+            "was_assigned_to": user_count, "forced": force,
+            "tenant_id": ctx.tenant_id,
+        },
+    )
+    return {"ok": True, "deleted_role_key": role_key,
+            "users_unassigned": user_count if force else 0}
 
 
 @router.get("/permissions")
@@ -177,6 +510,143 @@ async def permission_matrix(
         ],
         "grants_by_role": grants_map,
     }
+
+
+# ---------------------------------------------------------------------------
+# Grouped permission catalog + plain-English access summaries
+#
+# These endpoints back the redesigned admin UX (Users / Roles / Role
+# Editor / "Review access before save"). They NEVER expose per-user
+# effective permissions to non-admins — see the guards below.
+# ---------------------------------------------------------------------------
+
+@router.get("/permission-catalog")
+async def get_permission_catalog(
+    _admin: dict = Depends(require_permission("role", "read")),
+):
+    """Return every permission grouped by product module (Dashboard,
+    Scheduling, Patients, Clinical, Billing, Claims, Reports,
+    Compliance & Audit, Settings, User Management, Administration),
+    with plain-English labels and helper text suitable for the new
+    Role Editor accordion.
+
+    Shape:
+      {
+        "modules": [{key, label, description}, ...],   # order to render
+        "groups":  [{module, label, description,
+                     permissions: [{key, label, help, sensitivity,
+                                    phi, clinical, financial, export,
+                                    destructive, privileged,
+                                    resource, action}, ...]}, ...]
+      }
+    """
+    return {
+        "modules": MODULES,
+        "groups": grouped_catalog(),
+    }
+
+
+@router.get("/users/{user_id}/effective-permissions")
+async def user_effective_permissions(
+    user_id: str,
+    explain: bool = False,
+    admin: dict = Depends(require_permission("user", "read")),
+):
+    """Compute a user's effective permissions (role + location + active
+    overrides + active elevations). Returns the same shape as
+    `/me/permissions` so the Users-admin UI can reuse the renderer.
+
+    When `explain=true`, also returns a plain-English summary via
+    `permission_catalog.explain_permissions()` — used by the
+    "Review access before save" step of the Create User flow.
+    """
+    db = get_db_read()
+    target = await db.users.find_one(
+        {"id": user_id},
+        {"_id": 0, "id": 1, "email": 1, "role": 1, "tenant_id": 1,
+         "session_epoch": 1, "name": 1},
+    )
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+
+    # Tenant isolation — platform admin sees everything; tenant admin
+    # must stay within their own tenant.
+    actor_tenant = admin.get("tenant_id")
+    target_tenant = target.get("tenant_id")
+    if (
+        actor_tenant is not None
+        and target_tenant is not None
+        and actor_tenant != target_tenant
+    ):
+        # Don't leak existence.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+
+    grants = await effective_grants(target)
+    role_rows = [
+        r async for r in db.user_roles.find(
+            {"user_id": user_id, "status": "active"}, {"_id": 0},
+        )
+    ]
+    role_keys = [r["role_key"] for r in role_rows]
+    if not role_keys:
+        legacy = (target.get("role") or "").lower()
+        mapped = LEGACY_ROLE_TO_KEY.get(legacy)
+        if mapped:
+            role_keys = [mapped]
+
+    locs = [
+        l async for l in db.user_location_assignments.find(
+            {"user_id": user_id, "status": "active"}, {"_id": 0},
+        )
+    ]
+
+    permissions_list = [
+        {
+            "key": g.permission_key,
+            "scope": g.scope,
+            "requires_mfa": g.requires_mfa,
+            "requires_approval": g.requires_approval,
+            "break_glass_allowed": g.break_glass_allowed,
+            "source_role": g.source_role,
+            "via_elevation": g.via_elevation,
+        }
+        for g in grants
+    ]
+    payload = {
+        "user_id": target["id"],
+        "email": target.get("email"),
+        "name": target.get("name"),
+        "legacy_role": target.get("role"),
+        "role_keys": role_keys,
+        "location_ids": [l["location_id"] for l in locs],
+        "permissions": permissions_list,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if explain:
+        payload["explanation"] = explain_permissions(
+            [p["key"] for p in permissions_list],
+        )
+    return payload
+
+
+@router.post("/roles/preview-effective-permissions")
+async def preview_role_effective_permissions(
+    payload: dict,
+    _admin: dict = Depends(require_permission("role", "read")),
+):
+    """Preview what a role would look like if a given set of permission
+    keys were granted. Used by the new Role Editor's "review access"
+    step before saving a custom role.
+
+    Payload:
+      { "permission_keys": ["patient.read", "appointment.create", ...] }
+    """
+    keys = payload.get("permission_keys") or []
+    if not isinstance(keys, list):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "permission_keys must be a list",
+        )
+    return {"explanation": explain_permissions(keys)}
 
 
 # ---------------------------------------------------------------------------
