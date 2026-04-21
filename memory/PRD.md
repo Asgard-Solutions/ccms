@@ -1993,3 +1993,63 @@ page into a single operational scheduling experience.
 - Frontend: DONE (Playwright e2e pass)
 - Docs: DONE (this entry + CHANGELOG.md)
 - **Phase 6: CLOSED** ✅
+
+
+---
+
+## 2026-04-21 — Test-suite rate-limit isolation + Professional Licenses verified
+
+### Problem
+Running the full backend test suite (`pytest backend/tests/`) crashed with
+2 failed + 45 errors. Root cause: `core/rate_limit.py` uses in-process
+deques keyed by `login:{ip}` (60 req / 60 s) and per-user change-password
+/ PIN failure counters. Tests across many files do dozens of admin
+logins in <60 s → limiter trips → subsequent fixture setups 429.
+
+### Fix (backend)
+- `core/rate_limit.py`: added `reset_local_state()` and async
+  `reset_redis_state()` (scans `rl:*` + `rlfail:*` keyspaces).
+- `core/debug_router.py` **(new)**: exposes
+  `POST /api/_debug/rate-limit/reset`, gated by `APP_ENV != production`
+  (returns 404 otherwise). No PHI / user state is touched.
+- `server.py`: conditional mount — router is only registered when
+  `APP_ENV != "production"`, so the route is literally absent in prod.
+- `backend/tests/conftest.py` **(new)**: autouse fixture that POSTs the
+  reset endpoint before every test, degrading silently if the endpoint
+  is unavailable.
+
+### Verification
+- Targeted suite (the 5 files affected by the leakage):
+  `test_professional_licenses.py`, `test_password_change_hardening.py`,
+  `test_pin_security.py`, `test_reauth_pin_step_up.py`,
+  `test_profile_self_service.py` — **82/82 pass** (previously 2 pass +
+  45 errors at suite level).
+- Testing agent (iteration_44.json) ran backend + frontend end-to-end:
+  - Doctor walk-through on `/security?tab=licenses`: create →
+    duplicate-409 toast → edit → delete via ConfirmDialog — all pass.
+  - NPI on Profile tab: save / validate / clear — all pass.
+  - Staff role: Licenses trigger hidden; direct API POST → 403; GET →
+    empty list.
+
+### Out of scope / pre-existing
+Other iteration test files (`test_iteration4/5/8/9/11/12/13`) still
+fail — they depend on `redis-cli` being installed and/or a
+`CCMS_BASE_URL` env variable; both are environmental, not regressions
+from this change. Left for a later hardening pass.
+
+### Professional Licenses — status
+- Backend: DONE, validated.
+- Frontend `LicensesTab.jsx` + `ProfileTab.jsx` NPI: DONE, validated.
+- **Task Prompt 5: CLOSED** ✅
+
+### Remaining backlog (unchanged)
+- **P1 — Global retry-after-reauth Axios interceptor** (silently replay
+  last privileged action after ReauthDialog success).
+- **P2** — Persist `appointment_type_id` on Appointments (currently
+  only UI prefill).
+- **P2** — Reorder Appointment Types (drag-drop in Clinic Settings).
+- **P2 / deferred** — Provide `RESEND_API_KEY` for Email delivery
+  (currently MOCKED).
+- **P2 (future)** — Enterprise Auth (WebAuthn, SAML/OIDC, SCIM).
+- **P2 (future)** — PostgreSQL migration.
+- **P2 (future)** — Reporting read-heavy analytics.
