@@ -15,9 +15,6 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
-import AppointmentTypesManager from "./AppointmentTypesManager";
-import PayersManager from "./billing/PayersManager";
-import FeeSchedulesManager from "./billing/FeeSchedulesManager";
 
 // Display order is Sunday→Saturday to match the calendar views.
 // Backend day_of_week is 0=Monday; `BACKEND_DOW[i]` maps row i to the
@@ -268,7 +265,9 @@ export default function ClinicSettings() {
             Clinic profile &amp; hours
           </h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            Address, contact details, and per-weekday hours that drive Scheduling.
+            Location identity, contact details, and per-weekday hours that
+            drive Scheduling. Appointment types, payers and fee schedules
+            each have their own page under Settings.
           </p>
         </div>
         {locations.length > 1 && (
@@ -441,10 +440,6 @@ export default function ClinicSettings() {
           </Button>
         </div>
       </form>
-
-      <AppointmentTypesManager />
-      <PayersManager />
-      <FeeSchedulesManager />
     </div>
   );
 }

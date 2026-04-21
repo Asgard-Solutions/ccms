@@ -25,6 +25,9 @@ import AccessReview from "./pages/AccessReview";
 import Elevation from "./pages/Elevation";
 import ThemePreview from "./pages/ThemePreview";
 import ClinicSettings from "./pages/ClinicSettings";
+import AppointmentTypesPage from "./pages/AppointmentTypesPage";
+import PayersPage from "./pages/PayersPage";
+import FeeSchedulesPage from "./pages/FeeSchedulesPage";
 import BillingDashboard from "./pages/billing/BillingDashboard";
 import InvoicesList from "./pages/billing/InvoicesList";
 import InvoiceDetail from "./pages/billing/InvoiceDetail";
@@ -62,6 +65,9 @@ export default function App() {
               <Route path="/patients/:id" element={<Shell><PatientDetail /></Shell>} />
               <Route path="/scheduling" element={<Shell><Scheduling /></Shell>} />
               <Route path="/settings/clinic" element={<Shell roles={["admin"]}><ClinicSettings /></Shell>} />
+              <Route path="/settings/appointment-types" element={<Shell roles={["admin"]}><AppointmentTypesPage /></Shell>} />
+              <Route path="/settings/payers" element={<Shell roles={["admin"]}><PayersPage /></Shell>} />
+              <Route path="/settings/fee-schedules" element={<Shell roles={["admin"]}><FeeSchedulesPage /></Shell>} />
               <Route path="/billing" element={<Shell roles={["admin", "doctor", "staff"]}><BillingDashboard /></Shell>} />
               <Route path="/billing/invoices" element={<Shell roles={["admin", "doctor", "staff"]}><InvoicesList /></Shell>} />
               <Route path="/billing/invoices/:id" element={<Shell roles={["admin", "doctor", "staff"]}><InvoiceDetail /></Shell>} />
