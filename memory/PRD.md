@@ -1,6 +1,6 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-02-22 (Clinical module Phase 5 — Follow-up / Daily Visit Notes + Care Timeline)
+**Last updated:** 2026-02-22 (Clinical module Phase 6 — Treatment Plans + Re-Exams)
 
 ## 0. Design system (binding)
 The Chiro Software design system is authoritative for every UI surface.
@@ -48,6 +48,132 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### Clinical module Phase 6 — Treatment Plans + Re-Exams (2026-02-22)
+- **Workflow realized**: provider creates a chart-level **Treatment
+  Plan** (plan of care) for the episode/case with goals, frequency,
+  duration, baselines, discharge criteria. As care progresses, a
+  **Re-Exam** is launched from a `re_evaluation` encounter — it
+  auto-links the active plan + most recent signed Initial Exam +
+  freezes a `baseline_snapshot` for defensible comparison. The
+  re-exam carries a recommendation decision (continue / modify_plan /
+  discharge / transition_maintenance). Signing a
+  `modify_plan` re-exam emits an audit event only — the plan is NOT
+  auto-mutated. Providers then explicitly PATCH the plan (or
+  discharge + create a new one).
+- **New backend modules** under `services/clinical/`:
+  - `treatment_plans_models.py` — `PlannedIntervention`, `PlanGoal`
+    (measure_type: pain_scale/functional/rom/outcome_score/custom;
+    status: active/met/modified/abandoned; baseline_value /
+    target_value), `FunctionalMeasure`, `PlanBaselines`,
+    `TreatmentPlanCreate/Update/SetStatus`, `TreatmentPlanPublic`
+    with live `TreatmentPlanProgress` (visits_completed /
+    total_visits / percent).
+  - `treatment_plans_router.py` — endpoints under `/api`:
+    - `GET/POST /patients/{pid}/clinical/treatment-plans`
+    - `GET/PATCH /patients/{pid}/clinical/treatment-plans/{tpid}`
+    - `POST /patients/{pid}/clinical/treatment-plans/{tpid}/set-status`
+      (transitions active → on_hold / completed / discharged /
+      cancelled with required reason; discharged is reversible back
+      to active)
+    - One-active-plan-per-episode guard → 409 with existing plan id
+      surfaced in detail
+    - PATCH on discharged / completed / cancelled → 409
+    - Progress computed live: signed follow-up notes on same episode
+      since plan `start_date` / `frequency_total_visits` * 100
+  - `reexams_models.py` — `GoalProgressEntry`
+    (status: on_track/improved/plateau/regressed/met),
+    `OutcomeUpdate` (typed: ndi/oswestry/pain_vas/
+    functional_index/custom + score/max_score/note),
+    `RECOMMENDATION` Literal, `ReExamCreate/Update`,
+    `ReExamPublic`, `ReExamNarrative`. Reuses
+    `ExamExamination` + `NewDiagnosisDraft` from Phase 4 for
+    apples-to-apples comparison against the Initial Exam.
+  - `reexams_router.py` — endpoints under `/api`:
+    - `GET/POST /patients/{pid}/clinical/re-exams` (POST from
+      encounter)
+    - `GET/PATCH /patients/{pid}/clinical/re-exams/{rid}`
+    - `POST .../mark-sign-ready` / `.../unmark-sign-ready`
+    - `POST .../sign` — terminal; requires
+      `recommendation_decision` (400 otherwise). Materializes
+      `new_diagnoses` into `clinical_diagnoses` (ICD-10 uppercasing
+      + de-dup; same semantics as Initial Exam). If
+      `recommendation_decision=modify_plan`, emits a second
+      `treatment_plan.revised_recommended` audit event tagging the
+      linked plan; the plan itself is NOT mutated.
+    - `GET .../narrative` — RE-EXAMINATION NOTE header with
+      BASELINE (frozen) / UPDATED OBJECTIVE FINDINGS / GOAL
+      PROGRESS / OUTCOME MEASURES / RECOMMENDATION sections
+    - One-reexam-per-encounter (non-cancelled). Duplicate POST
+      returns 200 + `X-ReExam-Existed: true` header. Cancelled
+      encounter → 409.
+    - At create: `_build_baseline_snapshot` freezes plan goals +
+      plan baselines + plan frequency + initial exam examination /
+      history + prior re-exam snapshot (if any) into an immutable
+      dict on the re-exam document.
+  - **Integrations**:
+    - Summary endpoint now exposes
+      `treatment_plans.{total, open}` (open = active status) and
+      `re_exams.{total, open}` (open = draft + sign_ready).
+    - Follow-up note `_hydrate` resolves the episode's active plan
+      and injects `active_plan_summary` (id, title, frequency,
+      visits progress, top 3 goals) on every GET — read-only.
+    - Care-timeline endpoint now merges `treatment_plan` +
+      `re_exam` kinds alongside encounters + exams + notes with
+      deep-link paths.
+- **Access + audit**: reads `admin|doctor|staff`; writes
+  `admin|doctor` + `require_reauth`. Tenant isolation via
+  `scoped_filter` — cross-tenant probes 404. Every mutation emits a
+  global `audit_logs` row + patient-scoped `clinical_audit_events`
+  (`treatment_plan.created`, `treatment_plan.updated`,
+  `treatment_plan.status_changed`, `re_exam.created`,
+  `re_exam.updated`, `re_exam.signed`,
+  `treatment_plan.revised_recommended`).
+- **Indexes** in `core/db.py`: `clinical_treatment_plans` on
+  `(tenant_id, patient_id, plan_status)` + `(tenant_id, episode_id)`.
+  `clinical_reexams` on `(tenant_id, encounter_id)` UNIQUE +
+  `(tenant_id, patient_id, date_of_service)` + `(tenant_id, status)`.
+- **Frontend**:
+  - `pages/clinical/TreatmentPlansCard.jsx` — chart-level list with
+    status + progress bar; `plan-create-btn` launches new plan.
+  - `pages/clinical/TreatmentPlanEditor.jsx` at
+    `/patients/:pid/clinical/treatment-plans/:tpid` — structured
+    sections (overview, interventions, goals, baselines including
+    functional measures list, home-care, activity/work, discharge,
+    maintenance). `plan-set-status-btn` opens a dialog with required
+    reason. Progress bar reflects live visit count.
+  - `pages/clinical/ReExamsCard.jsx` — chart list with status +
+    decision chips.
+  - `pages/clinical/ReExamEditor.jsx` at
+    `/patients/:pid/clinical/re-exams/:rid` — renders frozen plan
+    snapshot read-only; auto-seeds goal progress rows from the
+    plan's goals with baseline / current / status / note; typed
+    outcome measures editor (NDI / Oswestry / pain_vas / functional
+    index / custom); decision radio + reason; `revised_plan_summary`
+    shown only when `decision=modify_plan`. Sign disabled when no
+    decision or while dirty. Signed banner replaces form post-sign.
+  - `pages/clinical/ClinicalTab.jsx` — adds `stat-treatment-plans`
+    + `stat-reexams` tiles; mounts the two new cards; removes Phase-2
+    placeholders (`clinical-placeholder-treatment-plans`,
+    `clinical-placeholder-re-exams`).
+  - `pages/clinical/EncountersCard.jsx` — `re_evaluation` encounters
+    now emit `encounter-start-reexam-{id}` (routing to Re-Exam, not
+    Initial Exam). `new_patient_exam` continues to route to the
+    Initial Exam editor; `follow_up` / `treatment_visit` continue
+    to route to the Follow-up Note editor.
+  - `pages/clinical/CareTimelineCard.jsx` — supports `treatment_plan`
+    + `re_exam` kinds with distinct icons.
+  - `pages/clinical/FollowUpNoteEditor.jsx` — renders
+    `note-active-plan-strip` (plan title + frequency + visits
+    progress + top 3 goals) at the top when an active plan exists
+    on the episode. Read-only; no edit path.
+  - `App.js` routes `/patients/:pid/clinical/treatment-plans/:tpid`
+    and `/patients/:pid/clinical/re-exams/:rid`.
+- **Tests**: `backend/tests/test_clinical_phase6.py` — **14/14
+  passing**. Phase 5 regression — **12/12 green**.
+- **Frontend E2E** (`iteration_36.json`): **100%** coverage —
+  TreatmentPlanEditor 19/19 testids present, ReExamEditor 21/21
+  testids present, routing and conditional rendering verified.
+
 ### Clinical module Phase 5 — Follow-up / Daily Visit Notes + Care Timeline (2026-02-22)
 - **Workflow realized**: daily-visit charting for follow-up / treatment
   encounters. Provider launches from the calendar → encounter → note.
