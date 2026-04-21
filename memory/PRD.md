@@ -2720,3 +2720,53 @@ scheduling router):
 **Out of scope (by request):** room assignment, room settings, flow
 board beyond simple arrival visibility, provider workflow beyond intake
 gating, checkout UI.
+
+
+
+## 2026-04-22 — Patient Flow Board (Workflow Phase 3)
+
+Operational view for front-desk and providers. No new backend — wired
+entirely to Phase-1 workflow endpoints and Phase-2 intake hydration.
+
+**Route:** `/scheduling/flow-board` (admin | doctor | staff).
+**Nav:** new "Flow Board" item under Operations (testid `nav-flow-board`).
+
+**Six columns, mutually exclusive classification by priority:**
+1. `checked_out` within last 2h → Recently Checked Out
+2. `ready_for_checkout` → Ready for Checkout
+3. `in_progress` → In Progress
+4. `ready_for_provider` → Ready for Provider
+5. `checked_in` + location `roomed` → Roomed
+6. `checked_in` → Waiting Room
+
+**Row schema:** patient name, appointment time, provider, appointment
+type, plus explicit text-label badges for status / intake / location
+(never color-only). Elapsed time uses the timestamp of whichever stage
+the card is currently in (`checked_in_at`, `location_updated_at`,
+`ready_for_provider_at`, `visit_started_at`, `ready_for_checkout_at`,
+`checked_out_at`).
+
+**Quick actions wired to the existing workflow endpoints:**
+- Waiting Room: Room (→ location=roomed), Ready, Undo, No-show
+- Roomed: Ready, Undo, No-show
+- Ready for Provider: Start visit, Undo, No-show
+- In Progress: Ready checkout, Complete
+- Ready for Checkout: Complete, Checkout (with override)
+- Recently Checked Out: Depart
+
+Intake gate prompts a reason on Ready-for-Provider when the patient's
+intake is not completed; the override + reason ride through the
+existing audit path (`intake_gate_bypassed=True`).
+
+**Filters:** date (default today), provider, location (shown only when
+the user sees >1 location), status, intake. Clear-all resets.
+
+**Freshness:** 20s silent poll while visible + manual Refresh button.
+Local merge on action for instant UI with no flicker.
+
+**Testing-agent iteration 55:** full E2E validated — six columns,
+testids, filters, intake-override prompt, reauth, full lifecycle
+drive, patient-portal denial. `retest_needed=false`.
+
+**Out of scope (by request):** room master/settings management, room
+conflict validation, checkout detail UI beyond workflow visibility.
