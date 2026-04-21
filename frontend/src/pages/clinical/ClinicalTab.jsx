@@ -34,6 +34,7 @@ import { api, formatApiError } from "../../api/client";
 import IntakeHistoryCard from "./IntakeHistoryCard";
 import DiagnosesCard from "./DiagnosesCard";
 import EncountersCard from "./EncountersCard";
+import InitialExamsCard from "./InitialExamsCard";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Badge } from "../../components/ui/badge";
@@ -565,7 +566,7 @@ export default function ClinicalTab({
     const s = summary || {};
     return [
       { label: "In-progress visits", value: s.encounters?.open ?? "—", id: "stat-encounters" },
-      { label: "Open episodes", value: s.episodes?.open ?? "—", id: "stat-open-episodes" },
+      { label: "Open exams", value: s.initial_exams?.open ?? "—", id: "stat-exams" },
       {
         label: "Active diagnoses",
         value: s.diagnoses?.open ?? "—",
@@ -697,6 +698,12 @@ export default function ClinicalTab({
         patientId={patientId}
         canWrite={canWrite}
         onReauthNeeded={onReauthNeeded}
+      />
+
+      {/* Phase 4 — Initial Exams */}
+      <InitialExamsCard
+        patientId={patientId}
+        canWrite={canWrite}
       />
 
       {/* Future-phase section placeholders */}

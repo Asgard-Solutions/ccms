@@ -13,6 +13,7 @@ import {
   Calendar,
   CheckCircle2,
   ExternalLink,
+  FilePlus2,
   Stethoscope,
   XCircle,
 } from "lucide-react";
@@ -159,7 +160,7 @@ function CancelDialog({ open, onOpenChange, encounter, onSubmit, submitting }) {
   );
 }
 
-function EncounterRow({ enc, canWrite, isHighlighted, onOpenAppt, onComplete, onCancel }) {
+function EncounterRow({ enc, canWrite, isHighlighted, onOpenAppt, onComplete, onCancel, onLaunchExam }) {
   const tone = STATUS_TONE[enc.status] || "border-border bg-muted";
   return (
     <div
@@ -231,6 +232,16 @@ function EncounterRow({ enc, canWrite, isHighlighted, onOpenAppt, onComplete, on
           </Button>
           {canWrite && enc.status === "in_progress" && (
             <>
+              <Button
+                size="sm"
+                variant="default"
+                onClick={() => onLaunchExam(enc)}
+                data-testid={`encounter-start-exam-${enc.id}`}
+                className="rounded-sm"
+              >
+                <FilePlus2 className="mr-1.5 h-3.5 w-3.5" />
+                Start Initial Exam
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
@@ -338,6 +349,19 @@ export default function EncountersCard({ patientId, canWrite, onReauthNeeded }) 
     navigate(`/scheduling?date=${iso}`);
   };
 
+  const handleLaunchExam = async (enc) => {
+    try {
+      // Idempotent on the backend — returns 201 on new or 200 on existing.
+      const { data } = await api.post(
+        `/patients/${patientId}/clinical/exams`,
+        { encounter_id: enc.id, prefill_from_chart: true },
+      );
+      navigate(`/patients/${patientId}/clinical/exams/${data.id}`);
+    } catch (e) {
+      if (!handleReauthAware(e)) toast.error(formatApiError(e));
+    }
+  };
+
   const emptyLabel = useMemo(() => {
     if (statusFilter === "in_progress") return "No in-progress encounters.";
     if (statusFilter === "completed") return "No completed encounters yet.";
@@ -406,6 +430,7 @@ export default function EncountersCard({ patientId, canWrite, onReauthNeeded }) 
               onOpenAppt={handleOpenAppt}
               onComplete={setCompleting}
               onCancel={setCancelling}
+              onLaunchExam={handleLaunchExam}
             />
           ))}
         </div>

@@ -185,6 +185,7 @@ class ClinicalSummary(BaseModel):
     media: ClinicalSectionCount = Field(default_factory=ClinicalSectionCount)
     encounter_links: ClinicalSectionCount = Field(default_factory=ClinicalSectionCount)
     encounters: ClinicalSectionCount = Field(default_factory=ClinicalSectionCount)
+    initial_exams: ClinicalSectionCount = Field(default_factory=ClinicalSectionCount)
     history_present: int = 0
     generated_at: str
 
