@@ -1,6 +1,6 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-02-21 (Clinical module Phase 1 — episode/case scaffold inside Patient Profile)
+**Last updated:** 2026-02-21 (Clinical module Phase 2 — Intake & History + Diagnoses / Problem List)
 
 ## 0. Design system (binding)
 The Chiro Software design system is authoritative for every UI surface.
@@ -48,6 +48,69 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### Clinical module Phase 2 — Intake & History + Diagnoses (2026-02-21)
+- **Chart-first workflow standard reinforced:** intake-derived history and
+  diagnoses live under the patient chart; future appointment-launched note
+  workflows will read this chart-level data.
+- **New backend routers** under `services/clinical/`:
+  - `history_router.py`:
+    - `GET /api/patients/{pid}/clinical/history` — auto-seeds ONCE from the
+      most recent completed intake form on first access. Each field carries
+      a traceability row in `field_meta[<field>]` with
+      `{source, source_form_id, updated_at, updated_by}`.
+    - `PATCH /clinical/history` — `exclude_unset`; any field present flips
+      its `source` to `"provider_edit"`.
+    - `POST /clinical/history/import` — explicit, non-destructive re-import:
+      provider-edited fields are preserved; returns
+      `imported_fields[]` + `skipped_fields[]` + `source_form_id`.
+      Rejects non-completed forms (409) and no-form-available (409).
+  - `diagnoses_router.py` — full problem-list CRUD at
+    `/api/patients/{pid}/clinical/diagnoses` with create/list/get/patch/
+    resolve/reactivate. Supports ICD-10, label, status (active/resolved),
+    `is_primary`, optional `episode_id` (any episode — active, on-hold, or
+    closed; no restriction for recurrence/PI case cleanup), `body_region`,
+    `laterality` (left/right/bilateral/midline), `chronicity`
+    (acute/subacute/chronic), `onset_date`, `resolved_date`,
+    `resolution_notes`, `notes`. `is_primary=True` is auto-uniqued within
+    `(patient, episode_id-or-null, status=active)` — setting one as primary
+    clears siblings in the same grouping.
+  - Summary endpoint now returns live `diagnoses` counts + `history_present`
+    flag so the UI doesn't need a third round-trip.
+- **Access + audit:** reads gated by `admin|doctor|staff`; writes by
+  `admin|doctor` plus `require_reauth`. Every create/edit/import/resolve/
+  reactivate emits both a global `audit_logs` row and a patient-chart-scoped
+  `clinical_audit_events` row.
+- **Indexes** added in `core/db.py`:
+  `clinical_history` unique on `(tenant_id, patient_id)`;
+  `clinical_diagnoses` on
+  `(tenant_id, patient_id, status, is_primary, created_at)` and
+  `(tenant_id, episode_id)`.
+- **Frontend** new cards on the Clinical tab (`pages/clinical/`):
+  - `IntakeHistoryCard.jsx` — renders every history field with a per-field
+    "FROM INTAKE" / "PROVIDER EDIT" / "NOT SET" badge. Fields cover chief
+    complaint, HPI, onset date, MOI, pain location/radiation, aggravating/
+    relieving factors, severity (0–10), prior treatment, prior chiropractic
+    care, medications, allergies, PMH/PSH/FH/SH, occupation, activity
+    level, accident details, work-comp details, ROS, red-flag screening.
+    "Re-import from intake" button calls the non-destructive import;
+    inline Edit mode lets providers PATCH any subset at once.
+  - `DiagnosesCard.jsx` — Problem List with status + episode filters,
+    add/edit dialog (ICD-10 uppercased live, label, optional episode link
+    to ANY episode, body region, laterality, chronicity, onset date,
+    notes, is_primary checkbox), inline Resolve/Reactivate, primary badge.
+  - `ClinicalTab.jsx` updated: replaces the two Phase-2 placeholder cards
+    with live cards and shows live diagnoses + history stats in the
+    summary row (`stat-diagnoses` count + `stat-history: On file`). Eight
+    future-phase placeholder cards remain.
+- **Tests** `backend/tests/test_clinical_phase2.py` — **15/15 passing**;
+  Phase 1 regression suite still 9/9. Covers auto-seed, empty history,
+  provider-edit flip, exclude_unset, import-skips-provider-edits, draft
+  form rejection, no-form-available rejection, tenant isolation,
+  reauth requirement, full diagnosis lifecycle, primary uniqueness
+  (including orphan vs episode grouping), cross-tenant/cross-patient
+  episode linkage 400, list filters, patient-role blocked,
+  summary reflects history + diagnoses.
+
 ### Clinical module Phase 1 — episode/case scaffold (2026-02-21)
 - **Workflow standard locked in:** the **Patient Profile is the authoritative
   longitudinal home of the clinical record.** Appointments (to be wired in

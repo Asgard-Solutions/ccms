@@ -12,6 +12,59 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Clinical module — Phase 2 (2026-02-21).** Intake & History integration
+  + Diagnoses / Problem List under Patient Profile > Clinical. Chart-first;
+  no exam or follow-up workflows yet.
+  - Backend: new routers `services/clinical/history_router.py` and
+    `services/clinical/diagnoses_router.py`.
+  - **History endpoints** (`/api/patients/{pid}/clinical/history`):
+    - `GET` — auto-seeds on first access from the most recent completed
+      intake form. Field-level traceability via `field_meta[<key>] =
+      {source, source_form_id, updated_at, updated_by}`.
+    - `PATCH` — partial; any supplied field flips to
+      `source="provider_edit"`. Unsupplied keys untouched.
+    - `POST /import` — explicit, non-destructive re-import. Preserves
+      provider-edited fields; returns `imported_fields` / `skipped_fields`
+      / `source_form_id`. Rejects drafts (409) and missing form (409).
+  - **Diagnoses endpoints**
+    (`/api/patients/{pid}/clinical/diagnoses[/{id}[/resolve|/reactivate]]`):
+    create / list with `status_in` + `episode_id` filters / get / patch /
+    resolve (with optional resolution notes, defaults resolved_date to
+    now) / reactivate (blocked with 409 if already in target state).
+    Fields: ICD-10 code (upper-cased), label, status (active/resolved),
+    is_primary, body_region, laterality (left/right/bilateral/midline),
+    chronicity (acute/subacute/chronic), onset_date, resolved_date,
+    resolution_notes, notes, optional `episode_id` (any episode — active,
+    on-hold, or closed). `is_primary=True` auto-uniqued within
+    `(patient, episode_id-or-null, status=active)`.
+  - **Summary**: `GET /clinical/summary` now returns live `diagnoses`
+    counts + `history_present` flag.
+  - **Access**: reads `admin|doctor|staff`, writes `admin|doctor` +
+    `require_reauth`. Every mutation audited to `audit_logs` AND the
+    patient-chart-scoped `clinical_audit_events` collection (events:
+    `history.updated`, `history.imported`, `diagnosis.created`,
+    `diagnosis.updated`, `diagnosis.resolved`, `diagnosis.reactivated`).
+  - **Tenant isolation**: cross-tenant probes return 404.
+  - **Frontend**: two new cards rendered inside the Clinical tab —
+    `pages/clinical/IntakeHistoryCard.jsx` (20+ editable fields, per-field
+    source badges, Re-import button) and `pages/clinical/DiagnosesCard.jsx`
+    (problem-list with status + episode filters, add/edit dialog, inline
+    resolve/reactivate, primary star badge). `ClinicalTab.jsx` pruned the
+    two corresponding Phase-2 placeholders and now surfaces live
+    `stat-diagnoses` and `stat-history` in the Clinical Summary row.
+  - **Tests**: `backend/tests/test_clinical_phase2.py` — 15/15 passing.
+    Phase 1 suite still 9/9.
+  - Test-ids: `clinical-history-card`, `history-import-btn`,
+    `history-edit-btn`, `history-save-btn`, `history-cancel-btn`,
+    `history-last-imported`, `history-field-{key}`,
+    `history-input-{key}`, `clinical-diagnoses-card`, `dx-new-btn`,
+    `dx-filter-status`, `dx-filter-episode`, `dx-icd10`, `dx-label`,
+    `dx-episode`, `dx-body-region`, `dx-onset`, `dx-laterality`,
+    `dx-chronicity`, `dx-is-primary`, `dx-notes`, `dx-submit-btn`,
+    `dx-row-{id}`, `dx-edit-{id}`, `dx-resolve-{id}`, `dx-reactivate-{id}`,
+    `dx-resolve-dialog`, `dx-resolve-notes`, `dx-resolve-submit-btn`,
+    `stat-diagnoses`, `stat-history`, `dx-list`, `dx-empty`.
+
 - **Clinical module — Phase 1 (2026-02-21).** New `services/clinical/`
   backend module + new **Clinical** tab in Patient Profile. Establishes the
   patient-chart ownership model: the Patient Profile is the longitudinal

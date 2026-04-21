@@ -126,7 +126,7 @@ function DiagnosisDialog({ open, onOpenChange, initial, episodes, onSubmit, subm
                 required
                 placeholder="M54.50"
                 value={form.icd10_code}
-                onChange={(e) => setForm({ ...form, icd10_code: e.target.value })}
+                onChange={(e) => setForm({ ...form, icd10_code: e.target.value.toUpperCase() })}
                 data-testid="dx-icd10"
                 className="rounded-sm font-mono uppercase"
               />
