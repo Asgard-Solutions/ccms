@@ -20,6 +20,7 @@ import {
   Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
 } from "../../components/ui/dialog";
 import { Skeleton } from "../../components/ui/skeleton";
+import ConfirmDialog from "../../components/ConfirmDialog";
 import { formatDateTime } from "../../utils/time";
 
 const CATEGORIES = [
@@ -43,6 +44,7 @@ export default function MediaCard({ patientId, canWrite, onReauthNeeded }) {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [detail, setDetail] = useState(null);
   const [blobUrl, setBlobUrl] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -90,7 +92,6 @@ export default function MediaCard({ patientId, canWrite, onReauthNeeded }) {
   };
 
   const doDelete = async (m) => {
-    if (!window.confirm(`Delete "${m.original_filename}"? This hides it from the chart.`)) return;
     try {
       await api.delete(`/patients/${patientId}/clinical/media/${m.id}`);
       toast.success("Media removed");
@@ -98,6 +99,7 @@ export default function MediaCard({ patientId, canWrite, onReauthNeeded }) {
       load();
     } catch (e) {
       if (!handleReauthAware(e)) toast.error(formatApiError(e));
+      throw e;
     }
   };
 
@@ -219,7 +221,24 @@ export default function MediaCard({ patientId, canWrite, onReauthNeeded }) {
         blobUrl={blobUrl}
         canWrite={canWrite}
         onClose={closeDetail}
-        onDelete={doDelete}
+        onDelete={(m) => setConfirmDelete(m)}
+      />
+
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onOpenChange={(v) => !v && setConfirmDelete(null)}
+        title="Remove media from chart?"
+        description={
+          confirmDelete
+            ? `"${confirmDelete.original_filename}" will be hidden from the chart. The underlying file is retained for compliance.`
+            : undefined
+        }
+        confirmLabel="Remove"
+        destructive
+        onConfirm={async () => {
+          if (confirmDelete) await doDelete(confirmDelete);
+        }}
+        testId="media-delete-confirm"
       />
     </section>
   );

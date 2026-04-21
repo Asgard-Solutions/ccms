@@ -21,6 +21,7 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import { UserCog, UserPlus, Trash2, Shield, KeyRound, Users } from "lucide-react";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
   const [rows, setRows] = useState([]);
@@ -30,6 +31,7 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
     reason: "",
     expires_at: "",
   });
+  const [confirmRevoke, setConfirmRevoke] = useState(null);
 
   const load = async () => {
     if (!user) return;
@@ -71,13 +73,13 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
   };
 
   const revoke = async (id) => {
-    if (!window.confirm("Revoke this override?")) return;
     try {
       await api.delete(`/authz/users/${user.id}/overrides/${id}`);
       toast.success("Override revoked");
       load();
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Revoke failed");
+      throw err;
     }
   };
 
@@ -214,7 +216,7 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
                         size="sm"
                         variant="ghost"
                         className="rounded-sm text-destructive"
-                        onClick={() => revoke(o.id)}
+                        onClick={() => setConfirmRevoke(o)}
                       >
                         <Trash2 className="mr-1 h-3 w-3" /> Revoke
                       </Button>
@@ -227,6 +229,22 @@ function UserOverridesDialog({ user, open, onOpenChange, permissions }) {
             </ul>
           )}
         </div>
+        <ConfirmDialog
+          open={!!confirmRevoke}
+          onOpenChange={(v) => !v && setConfirmRevoke(null)}
+          title="Revoke this override?"
+          description={
+            confirmRevoke
+              ? `Permission "${confirmRevoke.permission_key}" (scope: ${confirmRevoke.scope}) will be revoked for ${user?.email}.`
+              : undefined
+          }
+          confirmLabel="Revoke"
+          destructive
+          onConfirm={async () => {
+            if (confirmRevoke) await revoke(confirmRevoke.id);
+          }}
+          testId="override-revoke-confirm"
+        />
       </DialogContent>
     </Dialog>
   );
@@ -241,6 +259,7 @@ export default function RoleManagement() {
   const [overridesUser, setOverridesUser] = useState(null);
   const [selectedUser, setSelectedUser] = useState(null);
   const [pendingRole, setPendingRole] = useState("");
+  const [confirmRevokeRole, setConfirmRevokeRole] = useState(null);
 
   const load = async () => {
     try {
@@ -282,13 +301,13 @@ export default function RoleManagement() {
   };
 
   const revokeRole = async (user, roleKey) => {
-    if (!window.confirm(`Revoke role "${roleKey}" from ${user.email}?`)) return;
     try {
       await api.delete(`/authz/users/${user.id}/roles/${roleKey}`);
       toast.success("Role revoked");
       load();
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Revoke failed");
+      throw err;
     }
   };
 
@@ -333,7 +352,7 @@ export default function RoleManagement() {
                   key={u.id}
                   user={u}
                   onAssign={() => openAssign(u)}
-                  onRevoke={(rk) => revokeRole(u, rk)}
+                  onRevoke={(rk) => setConfirmRevokeRole({ user: u, roleKey: rk })}
                   onOverrides={() => setOverridesUser(u)}
                 />
               ))}
@@ -422,6 +441,24 @@ export default function RoleManagement() {
         open={!!overridesUser}
         onOpenChange={(o) => !o && setOverridesUser(null)}
         permissions={permissions}
+      />
+
+      <ConfirmDialog
+        open={!!confirmRevokeRole}
+        onOpenChange={(v) => !v && setConfirmRevokeRole(null)}
+        title="Revoke role?"
+        description={
+          confirmRevokeRole
+            ? `Remove role "${confirmRevokeRole.roleKey}" from ${confirmRevokeRole.user.email}? All active sessions will be revoked.`
+            : undefined
+        }
+        confirmLabel="Revoke role"
+        destructive
+        onConfirm={async () => {
+          if (confirmRevokeRole)
+            await revokeRole(confirmRevokeRole.user, confirmRevokeRole.roleKey);
+        }}
+        testId="role-revoke-confirm"
       />
     </div>
   );

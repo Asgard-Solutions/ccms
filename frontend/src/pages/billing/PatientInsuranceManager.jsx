@@ -29,6 +29,7 @@ import {
   usePayers,
 } from "./useBillingAdmin";
 import { formatDate } from "../../utils/time";
+import ConfirmDialog from "../../components/ConfirmDialog";
 
 const RANKS = [
   { v: "primary", l: "Primary" },
@@ -51,6 +52,7 @@ export default function PatientInsuranceManager({ patientId }) {
   const { rows, loading, refresh } = usePatientPolicies(patientId);
   const { rows: payers } = usePayers({ activeOnly: true });
   const [editing, setEditing] = useState(null); // null | {} for new
+  const [confirmDeactivate, setConfirmDeactivate] = useState(null);
 
   const activePrimary = useMemo(
     () => rows.find((p) => p.rank === "primary" && p.status === "active"),
@@ -58,15 +60,13 @@ export default function PatientInsuranceManager({ patientId }) {
   );
 
   async function onDeactivate(policy) {
-    if (!window.confirm(
-      `Deactivate ${policy.rank} policy for ${policy.subscriber_name}?`,
-    )) return;
     try {
       await deactivatePolicy(policy.id);
       toast.success("Policy deactivated");
       await refresh();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not deactivate");
+      throw e;
     }
   }
 
@@ -140,7 +140,7 @@ export default function PatientInsuranceManager({ patientId }) {
                   {p.status === "active" && (
                     <Button
                       variant="ghost" size="sm"
-                      onClick={() => onDeactivate(p)}
+                      onClick={() => setConfirmDeactivate(p)}
                       data-testid={`policy-deactivate-${p.id}`}
                       className="text-destructive hover:bg-destructive/10"
                     >
@@ -174,6 +174,23 @@ export default function PatientInsuranceManager({ patientId }) {
           }}
         />
       )}
+
+      <ConfirmDialog
+        open={!!confirmDeactivate}
+        onOpenChange={(v) => !v && setConfirmDeactivate(null)}
+        title="Deactivate insurance policy?"
+        description={
+          confirmDeactivate
+            ? `Deactivate ${confirmDeactivate.rank} policy for ${confirmDeactivate.subscriber_name}? The policy record is retained but cannot be used for new claims.`
+            : undefined
+        }
+        confirmLabel="Deactivate"
+        destructive
+        onConfirm={async () => {
+          if (confirmDeactivate) await onDeactivate(confirmDeactivate);
+        }}
+        testId="policy-deactivate-confirm"
+      />
     </section>
   );
 }

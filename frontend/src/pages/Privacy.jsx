@@ -15,6 +15,16 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Skeleton } from "../components/ui/skeleton";
+import { Textarea } from "../components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../components/ui/dialog";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 const REQUEST_TYPES = ["export", "delete", "correct", "restrict", "opt_out"];
 const STATUS_FLOW = {
@@ -226,21 +236,26 @@ function NewRequestForm({ onCreated }) {
 
 function RequestRow({ r, onChanged }) {
   const [busy, setBusy] = useState(false);
+  const [transitionTo, setTransitionTo] = useState(null);
+  const [transitionNotes, setTransitionNotes] = useState("");
+  const [confirmFulfill, setConfirmFulfill] = useState(false);
   const nextStates = STATUS_FLOW[r.status] || [];
 
-  async function transition(next) {
-    const response_notes = window.prompt(
-      `Transition to "${next}". Add a response note (no PHI):`,
-      r.response_notes || "",
-    );
-    if (response_notes === null) return;
+  function openTransition(next) {
+    setTransitionTo(next);
+    setTransitionNotes(r.response_notes || "");
+  }
+
+  async function submitTransition() {
+    if (!transitionTo) return;
     setBusy(true);
     try {
       await api.patch(`/privacy/requests/${r.id}`, {
-        status: next,
-        response_notes,
+        status: transitionTo,
+        response_notes: transitionNotes,
       });
-      toast.success(`Moved to ${next}`);
+      toast.success(`Moved to ${transitionTo}`);
+      setTransitionTo(null);
       onChanged();
     } catch (err) {
       toast.error(formatApiError(err));
@@ -250,7 +265,6 @@ function RequestRow({ r, onChanged }) {
   }
 
   async function fulfillDelete() {
-    if (!window.confirm("Fulfil this delete request? This requires recent re-authentication.")) return;
     setBusy(true);
     try {
       await api.post(`/privacy/requests/${r.id}/fulfill-delete`);
@@ -258,6 +272,7 @@ function RequestRow({ r, onChanged }) {
       onChanged();
     } catch (err) {
       toast.error(formatApiError(err));
+      throw err;
     } finally {
       setBusy(false);
     }
@@ -298,7 +313,7 @@ function RequestRow({ r, onChanged }) {
             <button
               key={ns}
               data-testid={`transition-${r.id}-${ns}`}
-              onClick={() => transition(ns)}
+              onClick={() => openTransition(ns)}
               disabled={busy}
               className="rounded-sm border border-border bg-card px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground hover:bg-muted"
             >
@@ -308,7 +323,7 @@ function RequestRow({ r, onChanged }) {
           {r.request_type === "delete" && r.subject_patient_id && r.status === "approved" && (
             <button
               data-testid={`fulfill-delete-${r.id}`}
-              onClick={fulfillDelete}
+              onClick={() => setConfirmFulfill(true)}
               disabled={busy}
               className="rounded-sm border border-destructive bg-destructive-soft px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-destructive"
             >
@@ -316,6 +331,58 @@ function RequestRow({ r, onChanged }) {
             </button>
           )}
         </div>
+        <Dialog open={!!transitionTo} onOpenChange={(v) => !v && setTransitionTo(null)}>
+          <DialogContent
+            data-testid={`transition-dialog-${r.id}`}
+            className="rounded-sm"
+          >
+            <DialogHeader>
+              <DialogTitle className="font-display">
+                Transition to &ldquo;{transitionTo}&rdquo;
+              </DialogTitle>
+              <DialogDescription>
+                Add a response note (no PHI). This is audited and visible to
+                the subject.
+              </DialogDescription>
+            </DialogHeader>
+            <Textarea
+              data-testid={`transition-notes-${r.id}`}
+              value={transitionNotes}
+              onChange={(e) => setTransitionNotes(e.target.value)}
+              rows={4}
+              placeholder="e.g. Verified identity via secondary channel; no PHI included."
+              className="rounded-sm"
+            />
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setTransitionTo(null)}
+                className="rounded-sm"
+                disabled={busy}
+              >
+                Cancel
+              </Button>
+              <Button
+                data-testid={`transition-submit-${r.id}`}
+                onClick={submitTransition}
+                disabled={busy}
+                className="rounded-sm"
+              >
+                {busy ? "Saving…" : "Save transition"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+        <ConfirmDialog
+          open={confirmFulfill}
+          onOpenChange={setConfirmFulfill}
+          title="Fulfil this delete request?"
+          description="This requires recent re-authentication. The subject record will be marked for erasure per retention policy."
+          confirmLabel="Fulfil delete"
+          destructive
+          onConfirm={fulfillDelete}
+          testId={`fulfill-delete-confirm-${r.id}`}
+        />
       </td>
     </tr>
   );

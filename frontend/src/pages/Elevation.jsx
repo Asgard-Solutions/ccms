@@ -15,6 +15,7 @@ import {
   DialogTitle,
 } from "../components/ui/dialog";
 import { KeyRound, Check, X, Clock, Shield } from "lucide-react";
+import ConfirmDialog from "../components/ConfirmDialog";
 
 function statusBadge(status) {
   const cls = {
@@ -34,6 +35,7 @@ export default function Elevation() {
   const [dlg, setDlg] = useState(false);
   const [form, setForm] = useState({ permission_key: "", reason: "", ttl_minutes: 30 });
   const [reviewDlg, setReviewDlg] = useState(null);
+  const [confirmCancel, setConfirmCancel] = useState(null);
 
   const load = async () => {
     try {
@@ -88,13 +90,13 @@ export default function Elevation() {
   };
 
   const cancel = async (row) => {
-    if (!window.confirm("Cancel this elevation request?")) return;
     try {
       await api.delete(`/authz/elevation/${row.id}`);
       toast.success("Cancelled");
       load();
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Cancel failed");
+      throw err;
     }
   };
 
@@ -174,7 +176,7 @@ export default function Elevation() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          onClick={() => cancel(r)}
+                          onClick={() => setConfirmCancel(r)}
                           className="rounded-sm text-destructive"
                         >
                           Cancel
@@ -311,6 +313,23 @@ export default function Elevation() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={!!confirmCancel}
+        onOpenChange={(v) => !v && setConfirmCancel(null)}
+        title="Cancel elevation request?"
+        description={
+          confirmCancel
+            ? `Withdraw your request for "${confirmCancel.permission_key}". Approvers will no longer see it.`
+            : undefined
+        }
+        confirmLabel="Cancel request"
+        destructive
+        onConfirm={async () => {
+          if (confirmCancel) await cancel(confirmCancel);
+        }}
+        testId="elevation-cancel-confirm"
+      />
     </div>
   );
 }

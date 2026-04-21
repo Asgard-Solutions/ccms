@@ -46,6 +46,7 @@ import {
   isDraftFresh,
   formHasAnyInput,
 } from "../../pages/patientWizardLogic";
+import { useProviders } from "../../contexts/ProvidersContext";
 
 const STEPS = [
   { id: 1, label: "Patient Info", sub: "Demographics, contact & address" },
@@ -793,7 +794,7 @@ export function PatientWizardDialog({
   const [form, setForm] = useState(EMPTY_FORM);
   const [errors, setErrors] = useState({});
   const [submitting, setSubmitting] = useState(false);
-  const [providers, setProviders] = useState([]);
+  const { providers } = useProviders();
   const [locations, setLocations] = useState([]);
   const [draftPrompt, setDraftPrompt] = useState(null); // {savedAt, form}
   const [draftNotice, setDraftNotice] = useState(false); // "Draft saved"
@@ -872,14 +873,10 @@ export function PatientWizardDialog({
     }
     (async () => {
       try {
-        const [pr, ctx] = await Promise.all([
-          api.get("/auth/providers"),
-          api.get("/tenancy/me/context"),
-        ]);
-        setProviders(pr.data || []);
+        const ctx = await api.get("/tenancy/me/context");
         setLocations((ctx.data && ctx.data.locations) || []);
       } catch {
-        /* providers/locations optional */
+        /* locations optional */
       }
     })();
   }, [open, isEdit, initialForm, draftKey, firstStep]);

@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { Toaster } from "./components/ui/sonner";
 import { AuthProvider } from "./contexts/AuthContext";
 import { PermissionsProvider } from "./contexts/PermissionsContext";
+import { ProvidersProvider } from "./contexts/ProvidersContext";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import { ReauthProvider } from "./components/ReauthGate";
 import ProtectedRoute from "./components/layout/ProtectedRoute";
@@ -58,7 +59,8 @@ export default function App() {
     <ThemeProvider>
       <AuthProvider>
         <PermissionsProvider>
-          <ReauthProvider>
+          <ProvidersProvider>
+            <ReauthProvider>
             <BrowserRouter>
             <Routes>
               <Route path="/login" element={<Login />} />
@@ -104,6 +106,7 @@ export default function App() {
           </BrowserRouter>
           <Toaster richColors position="top-right" />
           </ReauthProvider>
+          </ProvidersProvider>
         </PermissionsProvider>
       </AuthProvider>
     </ThemeProvider>

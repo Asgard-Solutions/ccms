@@ -456,6 +456,7 @@ export default function ClinicalTab({
   patientId,
   providers = [],
   canWrite = false,
+  currentUser,
   onReauthNeeded,
 }) {
   const [summary, setSummary] = useState(null);
@@ -670,6 +671,7 @@ export default function ClinicalTab({
       <EncountersCard
         patientId={patientId}
         canWrite={canWrite}
+        currentUser={currentUser}
         onReauthNeeded={onReauthNeeded}
       />
 

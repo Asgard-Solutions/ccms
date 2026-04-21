@@ -86,6 +86,8 @@ from services.billing.models import (
     RemittancePublic,
     StatementPublic,
 )
+from services.clinical.billing_readiness_router import evaluate_billing_readiness
+from pydantic import BaseModel, ConfigDict, Field
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 
@@ -1091,6 +1093,300 @@ async def create_claim(
                   "payer_id": payload.payer_id,
                   "billed_cents": billed_cents,
                   "lines": len(line_docs)},
+    )
+    return _public(claim_doc)
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — Claim skeleton from a documented clinical encounter
+# ---------------------------------------------------------------------------
+class ClaimFromEncounterInput(BaseModel):
+    """Inputs required to materialise a draft claim skeleton from a
+    completed clinical encounter.
+
+    Clinical signals (patient, provider, DOS, diagnoses, procedures) are
+    pulled from the encounter + readiness report — they're never taken
+    from the caller. Payer + policy + billing metadata are the one-time
+    human decisions that cannot be inferred from the chart."""
+
+    model_config = ConfigDict(extra="forbid")
+    encounter_id: str = Field(min_length=1)
+    payer_id: str = Field(min_length=1)
+    policy_id: str | None = None
+    location_id: str | None = None
+    billing_provider_id: str | None = None
+    facility_id: str | None = None
+    place_of_service: str = Field(default="11", max_length=2)   # 11 = office (CMS)
+    frequency_code: str = Field(default="1", max_length=1)
+    authorization_number: str | None = Field(default=None, max_length=60)
+    referral_number: str | None = Field(default=None, max_length=60)
+    notes: str | None = Field(default=None, max_length=2000)
+    # Admin override: proceed even when the encounter is `blocked`.
+    force: bool = False
+
+
+PLACEHOLDER_CPT = "TBD"
+# Kind → default CPT hint. Blank strings remain `TBD`; the operator must
+# fill in the exact code before submission. These are deliberately
+# non-authoritative — they're just soft suggestions surfaced in the notes.
+KIND_TO_HINT = {
+    "adjustment": "98940",             # CMT 1-2 regions
+    "manipulation": "98940",
+    "modality": "97014",                # e-stim (unattended)
+    "exercise": "97110",                # therapeutic exercise
+    "soft_tissue": "97140",             # manual therapy
+    "examination": "99203",             # new-pt office visit (low-mod)
+}
+
+
+@router.post("/claims/from-encounter",
+             response_model=ClaimPublic, status_code=201)
+async def create_claim_from_encounter(
+    payload: ClaimFromEncounterInput,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "create")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Materialise a `draft` claim skeleton from a documented encounter.
+
+    Copies patient, rendering provider, DOS, and documented diagnoses +
+    procedures from the encounter. CPT codes default to ``TBD`` (with
+    soft hints in line notes) so the operator fills them in the claim
+    editor. Billed amounts default to ``0`` (unpriced — fee schedule not
+    applied in this phase).
+
+    Returns 409 with the blocking checks if the encounter fails
+    readiness, unless ``force=True`` is supplied by an admin."""
+    if not ctx.tenant_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Tenant context required")
+    db = tenant_db(ctx.tenant_id)
+
+    # Load encounter first so we know the patient_id.
+    enc_q = scoped_filter({"id": payload.encounter_id}, ctx, location_scoped=False)
+    if enc_q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Encounter not found")
+    encounter = await db.clinical_encounters.find_one(enc_q, {"_id": 0})
+    if not encounter:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Encounter not found")
+    patient_id = encounter["patient_id"]
+
+    # Validate payer + policy within tenant.
+    payer = await _scoped_one(db.billing_payers, {"id": payload.payer_id}, ctx)
+    if not payer:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Payer not found")
+    if payload.policy_id:
+        pol = await _scoped_one(
+            db.patient_insurance_policies, {"id": payload.policy_id}, ctx,
+        )
+        if not pol:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Policy not found")
+        if pol["patient_id"] != patient_id:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Policy does not belong to this encounter's patient",
+            )
+
+    # Evaluate readiness. Blocked encounters cannot be claimed unless
+    # `force=True` and the caller is an admin.
+    readiness = await evaluate_billing_readiness(
+        db, ctx, patient_id, payload.encounter_id,
+    )
+    if readiness.overall_status == "blocked" and not payload.force:
+        blocking = [
+            {"key": c.key, "label": c.label, "detail": c.detail}
+            for c in readiness.checks
+            if c.severity == "fail" and not c.passed
+        ]
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            {"message": "Encounter is not billing-ready", "blocking": blocking},
+        )
+    if payload.force and user.get("role") != "admin":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Only admins can force a blocked encounter into a claim",
+        )
+
+    dos = encounter.get("date_of_service")
+    if not dos:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Encounter has no date_of_service; cannot build claim",
+        )
+
+    # ------------------------------------------------------------ diagnoses
+    # Order: primary first (if flagged), then by label/code.
+    dx_cursor = db.clinical_diagnoses.find(
+        {
+            "tenant_id": ctx.tenant_id,
+            "patient_id": patient_id,
+            "status": "active",
+            "episode_id": encounter.get("episode_id"),
+        },
+        {"_id": 0, "id": 1, "icd10_code": 1, "label": 1, "is_primary": 1},
+    )
+    dx_rows = [d async for d in dx_cursor]
+    if not dx_rows:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "No active ICD-10 diagnoses on the episode; cannot build claim",
+        )
+    # Deduplicate by upper-cased ICD-10 code, preserving primary first.
+    seen_codes: set[str] = set()
+    ordered: list[dict] = []
+    for row in sorted(dx_rows, key=lambda r: (not r.get("is_primary"), r.get("icd10_code") or "")):
+        code = (row.get("icd10_code") or "").strip().upper()
+        if not code or code in seen_codes:
+            continue
+        seen_codes.add(code)
+        ordered.append({"id": row["id"], "code": code, "label": row.get("label")})
+        if len(ordered) >= 12:   # CMS cap
+            break
+    diagnoses_payload = [
+        {"sequence": i + 1, "code": dx["code"]} for i, dx in enumerate(ordered)
+    ]
+    first_dx_pointer = [1]
+
+    # ------------------------------------------------------------ lines
+    # Convert readiness `procedures` into one line per procedure. CPT
+    # code defaults to `TBD` + per-kind hint. Units comes from `count`.
+    lines_payload: list[dict] = []
+    hint_notes: list[str] = []
+    for i, p in enumerate(readiness.procedures):
+        hint = KIND_TO_HINT.get(p.kind)
+        code = hint or PLACEHOLDER_CPT
+        lines_payload.append({
+            "sequence": i + 1,
+            "invoice_line_id": None,
+            "service_date": dos,
+            "code_type": "cpt",
+            "code": code,
+            "units": max(int(p.count or 1), 1),
+            "billed_cents": 0,
+            "diagnosis_pointers": first_dx_pointer if diagnoses_payload else [],
+            "modifiers": [],
+        })
+        descriptor = p.description or p.kind
+        region = f" [{p.body_region}]" if p.body_region else ""
+        hint_notes.append(
+            f"#{i + 1} {descriptor}{region} → CPT {code}"
+            + (" (auto-hint, verify)" if hint else " (placeholder, set CPT)"),
+        )
+
+    if not lines_payload:
+        # Fall back to a single placeholder line so the claim is editable.
+        lines_payload.append({
+            "sequence": 1,
+            "invoice_line_id": None,
+            "service_date": dos,
+            "code_type": "cpt",
+            "code": PLACEHOLDER_CPT,
+            "units": 1,
+            "billed_cents": 0,
+            "diagnosis_pointers": first_dx_pointer,
+            "modifiers": [],
+        })
+        hint_notes.append("#1 No documented procedures — add lines manually.")
+
+    # ------------------------------------------------------------ persist
+    now = _now()
+    claim_id = str(uuid.uuid4())
+    billed_cents = sum(ln["billed_cents"] * ln["units"] for ln in lines_payload)
+
+    synthesized_notes = "\n".join([
+        f"Auto-generated from encounter {payload.encounter_id} "
+        f"(readiness: {readiness.overall_status}"
+        + (", forced" if payload.force else "") + ")",
+        f"Visit: {readiness.visit_type_label or readiness.visit_type or '—'}",
+        "Line hints:",
+        *hint_notes,
+    ] + ([payload.notes] if payload.notes else []))
+
+    claim_doc = stamp_for_write({
+        "id": claim_id,
+        "location_id": payload.location_id or encounter.get("location_id"),
+        "patient_id": patient_id,
+        "payer_id": payload.payer_id,
+        "policy_id": payload.policy_id,
+        "source_invoice_id": None,
+        "source_encounter_id": payload.encounter_id,
+        "claim_type": "professional",
+        "place_of_service": payload.place_of_service,
+        "frequency_code": payload.frequency_code,
+        "billing_provider_id": payload.billing_provider_id,
+        "rendering_provider_id": encounter.get("provider_id"),
+        "facility_id": payload.facility_id,
+        "authorization_number": payload.authorization_number,
+        "referral_number": payload.referral_number,
+        "status": "draft",
+        "service_date_from": dos,
+        "service_date_to": dos,
+        "billed_cents": billed_cents,
+        "paid_cents": 0,
+        "submitted_at": None,
+        "accepted_at": None,
+        "last_denial_code": None,
+        "notes": synthesized_notes,
+        "validation_error_count": 0,
+        "validation_warning_count": 0,
+        "validation_last_run_at": None,
+        "created_at": now,
+        "updated_at": now,
+        "created_by": user["id"],
+        "updated_by": user["id"],
+        "history": [_history_entry(
+            user, "created_from_encounter",
+            encounter_id=payload.encounter_id,
+            readiness_status=readiness.overall_status,
+            forced=payload.force,
+            lines=len(lines_payload),
+            diagnoses=len(diagnoses_payload),
+        )],
+    }, ctx, location_id=payload.location_id or encounter.get("location_id"))
+
+    diag_docs = [stamp_for_write({
+        "id": str(uuid.uuid4()),
+        "claim_id": claim_id,
+        "sequence": d["sequence"],
+        "code": d["code"],
+        "created_at": now,
+    }, ctx, location_id=None) for d in diagnoses_payload]
+
+    line_docs: list[dict] = []
+    for ln in lines_payload:
+        line_docs.append(stamp_for_write({
+            "id": str(uuid.uuid4()),
+            "claim_id": claim_id,
+            "sequence": ln["sequence"],
+            "invoice_line_id": None,
+            "service_date": ln["service_date"],
+            "code_type": ln["code_type"],
+            "code": ln["code"],
+            "units": ln["units"],
+            "billed_cents": ln["billed_cents"],
+            "diagnosis_pointers": ln["diagnosis_pointers"],
+            "created_at": now,
+        }, ctx, location_id=payload.location_id or encounter.get("location_id")))
+
+    if diag_docs:
+        await db.claim_diagnoses.insert_many(diag_docs)
+    if line_docs:
+        await db.claim_lines.insert_many(line_docs)
+    await db.claims.insert_one(claim_doc)
+
+    await audit_success(
+        user, "billing.claim.created_from_encounter", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={
+            "patient_id": patient_id,
+            "encounter_id": payload.encounter_id,
+            "payer_id": payload.payer_id,
+            "readiness_status": readiness.overall_status,
+            "forced": payload.force,
+            "lines": len(line_docs),
+            "diagnoses": len(diag_docs),
+            "billed_cents": billed_cents,
+        },
     )
     return _public(claim_doc)
 

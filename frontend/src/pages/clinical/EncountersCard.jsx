@@ -161,7 +161,7 @@ function CancelDialog({ open, onOpenChange, encounter, onSubmit, submitting }) {
   );
 }
 
-function EncounterRow({ enc, canWrite, isHighlighted, onOpenAppt, onComplete, onCancel, onLaunchExam, onLaunchReExam, onLaunchNote, patientId }) {
+function EncounterRow({ enc, canWrite, isHighlighted, onOpenAppt, onComplete, onCancel, onLaunchExam, onLaunchReExam, onLaunchNote, patientId, currentUser }) {
   const tone = STATUS_TONE[enc.status] || "border-border bg-muted";
   return (
     <div
@@ -296,13 +296,14 @@ function EncounterRow({ enc, canWrite, isHighlighted, onOpenAppt, onComplete, on
           patientId={patientId}
           encounterId={enc.id}
           defaultOpen={false}
+          currentUser={currentUser}
         />
       </div>
     </div>
   );
 }
 
-export default function EncountersCard({ patientId, canWrite, onReauthNeeded }) {
+export default function EncountersCard({ patientId, canWrite, onReauthNeeded, currentUser }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [rows, setRows] = useState(null);
@@ -490,6 +491,7 @@ export default function EncountersCard({ patientId, canWrite, onReauthNeeded }) 
               onLaunchReExam={handleLaunchReExam}
               onLaunchNote={handleLaunchNote}
               patientId={patientId}
+              currentUser={currentUser}
             />
           ))}
         </div>

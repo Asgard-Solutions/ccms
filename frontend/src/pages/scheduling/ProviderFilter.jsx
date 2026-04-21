@@ -1,5 +1,3 @@
-import { useEffect, useState } from "react";
-import { api } from "../../api/client";
 import {
   Select,
   SelectContent,
@@ -7,14 +5,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
+import { useProviders } from "../../contexts/ProvidersContext";
 
 const ALL_VALUE = "__all__";
 
 /**
- * Small provider filter dropdown for Scheduling. Lazy-fetches
- * `/auth/providers` the first time it mounts, shows "All providers" +
- * one item per provider, and emits a callback with either the provider id
- * or `null` for "all".
+ * Small provider filter dropdown for Scheduling. Reads from
+ * `ProvidersContext` (no per-mount fetch) and emits a callback with either
+ * the provider id or `null` for "all".
  *
  * For the `doctor` role the endpoint returns every provider, but the
  * scheduling backend already auto-filters to the caller unless an explicit
@@ -23,21 +21,7 @@ const ALL_VALUE = "__all__";
  * covers for someone else.
  */
 export default function ProviderFilter({ value, onChange }) {
-  const [providers, setProviders] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const r = await api.get("/auth/providers");
-        setProviders(r.data || []);
-      } catch {
-        setProviders([]);
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, []);
+  const { providers, loading } = useProviders();
 
   if (!loading && providers.length === 0) return null;
 

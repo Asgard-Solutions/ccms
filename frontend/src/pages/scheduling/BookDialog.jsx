@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "../../components/ui/select";
 import { useAppointmentTypes } from "./useAppointmentTypes";
+import { useProviders } from "../../contexts/ProvidersContext";
 
 const CUSTOM_TYPE_VALUE = "__custom__";
 const DEFAULT_DURATION_MIN = 30;
@@ -49,7 +50,7 @@ const DEFAULT_DURATION_MIN = 30;
 export default function BookDialog({ open, onClose, onSaved, onCancelAppointment, onReauthNeeded, initial = null, defaultStart = null }) {
   const mode = initial ? "reschedule" : "create";
   const [patients, setPatients] = useState([]);
-  const [providers, setProviders] = useState([]);
+  const { providers } = useProviders();
   const [form, setForm] = useState({
     patient_id: "",
     provider_id: "",
@@ -75,12 +76,8 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
     if (!open) return;
     (async () => {
       try {
-        const [ps, pr] = await Promise.all([
-          api.get("/patients"),
-          api.get("/auth/providers"),
-        ]);
+        const ps = await api.get("/patients");
         setPatients(ps.data);
-        setProviders(pr.data);
       } catch {
         /* ignore; UI will just show empty selects */
       }

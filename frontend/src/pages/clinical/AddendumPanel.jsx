@@ -36,6 +36,7 @@ import {
   DialogTitle,
 } from "../../components/ui/dialog";
 import { Skeleton } from "../../components/ui/skeleton";
+import ConfirmDialog from "../../components/ConfirmDialog";
 import { formatDateTime } from "../../utils/time";
 
 /**
@@ -64,6 +65,7 @@ export default function AddendumPanel({
   const [rows, setRows] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
 
   const load = useCallback(async () => {
     try {
@@ -107,7 +109,6 @@ export default function AddendumPanel({
   };
 
   const deleteRow = async (row) => {
-    if (!window.confirm("Delete this draft addendum?")) return;
     try {
       await api.delete(`/patients/${patientId}/clinical/addenda/${row.id}`);
       toast.success("Draft addendum deleted");
@@ -115,6 +116,7 @@ export default function AddendumPanel({
       onChanged?.();
     } catch (e) {
       if (!reauthAware(e)) toast.error(formatApiError(e));
+      throw e;
     }
   };
 
@@ -225,7 +227,7 @@ export default function AddendumPanel({
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => deleteRow(a)}
+                      onClick={() => setConfirmDelete(a)}
                       data-testid={`addendum-row-${a.id}-delete-btn`}
                       className="rounded-sm"
                     >
@@ -266,6 +268,18 @@ export default function AddendumPanel({
           onChanged?.();
         }}
         onReauthNeeded={onReauthNeeded}
+      />
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onOpenChange={(v) => !v && setConfirmDelete(null)}
+        title="Delete draft addendum?"
+        description="This draft will be removed permanently. Signed addenda cannot be deleted — only drafts."
+        confirmLabel="Delete draft"
+        destructive
+        onConfirm={async () => {
+          if (confirmDelete) await deleteRow(confirmDelete);
+        }}
+        testId="addendum-delete-confirm"
       />
     </section>
   );

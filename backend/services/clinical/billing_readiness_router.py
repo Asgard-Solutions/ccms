@@ -255,7 +255,30 @@ async def get_billing_readiness(
 ):
     db = get_db_write()
     await _load_patient(db, patient_id, ctx)
+    response = await evaluate_billing_readiness(
+        db, ctx, patient_id, encounter_id,
+    )
+    await audit_success(
+        user, "clinical.billing_readiness.viewed", request,
+        entity_type="clinical_encounter", entity_id=encounter_id, phi_accessed=True,
+        metadata={"patient_id": patient_id, "overall_status": response.overall_status},
+    )
+    return response
 
+
+async def evaluate_billing_readiness(
+    db,
+    ctx: TenantContext,
+    patient_id: str,
+    encounter_id: str,
+) -> BillingReadinessResponse:
+    """Core aggregation for the Phase 8 readiness view. Extracted so
+    Phase 9 (claim-from-encounter) can reuse it without issuing a nested
+    HTTP call.
+
+    Raises `HTTPException(404)` if the encounter is not visible in the
+    tenant scope.
+    """
     enc_q = scoped_filter(
         {"id": encounter_id, "patient_id": patient_id}, ctx, location_scoped=False,
     )
@@ -513,11 +536,5 @@ async def get_billing_readiness(
         overall_status=overall,
         checks=checks,
         generated_at=now_iso(),
-    )
-
-    await audit_success(
-        user, "clinical.billing_readiness.viewed", request,
-        entity_type="clinical_encounter", entity_id=encounter_id, phi_accessed=True,
-        metadata={"patient_id": patient_id, "overall_status": overall},
     )
     return response

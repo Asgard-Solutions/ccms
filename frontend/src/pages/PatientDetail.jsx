@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Download, Eye, EyeOff, FileText, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, formatApiError } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
+import { useProviders } from "../contexts/ProvidersContext";
 import { formatDate, formatDateTime, relativeFromNow } from "../utils/time";
 import { PatientWizardDialog } from "../components/patient-wizard/PatientWizardDialog";
 import { payloadToForm } from "./patientWizardLogic";
@@ -993,7 +994,7 @@ export default function PatientDetail() {
   const [editingIntakeForm, setEditingIntakeForm] = useState(null);
   const [intakeRefreshKey, setIntakeRefreshKey] = useState(0);
   const [chargeRecord, setChargeRecord] = useState(null);
-  const [providers, setProviders] = useState([]);
+  const { providers } = useProviders();
   const [recordsRange, setRecordsRange] = useState(null);
   const [appointmentsRange, setAppointmentsRange] = useState(null);
   const [intakeRange, setIntakeRange] = useState(null);
@@ -1034,14 +1035,6 @@ export default function PatientDetail() {
     }
     // If reasonRequired, wait for break-glass submit.
   }, [load, reasonRequired]);
-
-  useEffect(() => {
-    let cancelled = false;
-    api.get("/auth/providers")
-      .then((r) => { if (!cancelled) setProviders(r.data || []); })
-      .catch(() => { /* providers list is best-effort for display names */ });
-    return () => { cancelled = true; };
-  }, []);
 
   async function exportPatient() {
     try {
@@ -1299,6 +1292,7 @@ export default function PatientDetail() {
             patientId={id}
             providers={providers}
             canWrite={canAddRecord}
+            currentUser={user}
             onReauthNeeded={() => {
               setReauthIntent("clinical");
               setReauthOpen(true);
