@@ -12,6 +12,122 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Clinical module — Phase 5 (2026-02-22).** Follow-up / Daily Visit
+  Notes workflow + Care Timeline. Launched from in-progress
+  encounters of type `follow_up` or `treatment_visit`; structured
+  SOAP editor rendered at `/patients/:pid/clinical/follow-up/:nid`;
+  surfaces as a chart card and in the chronological Care Timeline.
+  - **Backend** under `services/clinical/`:
+    - `notes_models.py` — Pydantic models: `NoteSubjective` (interval
+      history, pain scale 0–10, `pain_change` better/worse/same/
+      fluctuating, functional change, home-care adherence yes/partial/no
+      + notes), `NoteObjective` (repeatable `RegionFinding[]` with
+      palpation / ROM summary / notes, reassessment summary, optional
+      Vitals), `NoteAssessment` (`response_to_care`
+      improving/plateau/regressing/new_complaint + clinical impression),
+      `NotePlan` (repeatable `TreatmentEntry[]` kinds adjustment /
+      modality / soft_tissue / exercise / other with segments /
+      technique / modality / region / duration_min; regions_treated
+      chip list; home-care reinforcement; next-visit plan +
+      recommended_interval_days). REQUIRED_FIELDS drives completeness
+      scoring.
+    - `notes_router.py` — endpoints under `/api`:
+      - `GET /patients/{pid}/clinical/notes` (list; `status_in` +
+        `episode_id` filters)
+      - `POST /patients/{pid}/clinical/notes` — create from
+        `encounter_id`. One note per encounter (non-cancelled);
+        duplicate returns 200 + `X-Note-Existed: true` header.
+        Optional `copy_forward_from_note_id` seeds the new note's
+        structured sections from a prior signed note.
+      - `GET/PATCH /patients/{pid}/clinical/notes/{nid}` — PATCH
+        blocks on signed (409).
+      - `POST .../copy-forward` — explicit; non-destructive by
+        default, `force=true` overwrites. Rejects unsigned source
+        (400) and cross-patient source (400).
+      - `POST .../mark-sign-ready` / `.../unmark-sign-ready` —
+        draft ↔ sign_ready transitions.
+      - `POST .../sign` — terminal; assigns `visit_number` =
+        prior-signed-count-within-episode + 1.
+      - `GET .../narrative` — SOAP-formatted rendering with
+        `FOLLOW-UP / DAILY VISIT NOTE` header and
+        `SUBJECTIVE (S)` / `OBJECTIVE (O)` / `ASSESSMENT (A)` /
+        `PLAN (P)` sections. Empty sections omitted.
+      - `GET /patients/{pid}/clinical/care-timeline` — chronological
+        merge of encounters + initial exams + follow-up notes with
+        kind-specific deep-link paths, sorted date-desc.
+      - `POST /appointments/{aid}/clinical/notes` — convenience
+        launch that reuses the active non-cancelled encounter on
+        that appointment.
+    - Summary endpoint now exposes live `notes.{total, open}` where
+      `open = draft + sign_ready`.
+  - **Access + audit**: reads `admin|doctor|staff`, writes
+    `admin|doctor` + `require_reauth`. Tenant isolation via
+    `scoped_filter` — cross-tenant probes 404. Every mutation emits
+    both a global `audit_logs` row and a patient-scoped
+    `clinical_audit_events` row (`follow_up_note.created`,
+    `follow_up_note.updated`, `follow_up_note.copy_forward`,
+    `follow_up_note.signed`).
+  - **Indexes** in `core/db.py`: `clinical_follow_up_notes` on
+    `(tenant_id, encounter_id)` UNIQUE,
+    `(tenant_id, patient_id, date_of_service)`,
+    `(tenant_id, status)`, `(tenant_id, episode_id)`.
+  - **Frontend**:
+    - `pages/clinical/FollowUpNoteEditor.jsx` — full-page editor
+      at `/patients/:pid/clinical/follow-up/:nid`. Structured
+      widgets per SOAP section; completeness meter header with
+      missing-field chips (click-to-focus); Save / Copy-forward /
+      Mark sign-ready / Unmark / Sign / View narrative toolbar.
+      Copied-forward fields render with a yellow "Copied forward"
+      badge per-field. Read-only signed banner post-sign.
+    - `pages/clinical/FollowUpNotesCard.jsx` — list card on
+      Clinical tab with status / visit # / provider / completeness
+      meter per row.
+    - `pages/clinical/CareTimelineCard.jsx` — chronological
+      timeline merging encounters + initial exams + follow-up
+      notes; kind-specific icons + deep links.
+    - `pages/clinical/ClinicalTab.jsx` — new `stat-notes` tile
+      in summary row; mounts FollowUpNotesCard + CareTimelineCard;
+      Phase-2 placeholders for follow-notes + timeline removed.
+    - `pages/clinical/EncountersCard.jsx` — `follow_up` /
+      `treatment_visit` encounters now expose
+      `encounter-start-note-{id}`; `new_patient_exam` /
+      `re_evaluation` continue to expose `encounter-start-exam-{id}`.
+    - `App.js` route:
+      `/patients/:pid/clinical/follow-up/:nid`.
+  - **Tests**: `backend/tests/test_clinical_phase5.py` — 12
+    cases covering full lifecycle + copy-forward semantics +
+    care-timeline merging + tenant isolation + reauth. Phase
+    1+2+4 regression 35/35 green.
+  - **Test-ids**: `stat-notes`, `clinical-notes-card`,
+    `notes-empty`, `notes-list`, `note-row-{id}`,
+    `note-row-{id}-status`, `note-row-{id}-visit`,
+    `note-row-{id}-completeness`, `encounter-start-note-{id}`,
+    `follow-up-note-editor`, `note-status-badge`,
+    `note-visit-number`, `note-completeness`,
+    `note-completeness-score`, `note-missing-list`,
+    `note-missing-{field}`, `note-section-subjective/objective/
+    assessment/plan`, `note-interval-history`, `note-pain-scale`,
+    `note-pain-change`, `note-adherence`, `note-functional-change`,
+    `note-region-findings`, `note-region-{i}-body/palpation/rom/notes`,
+    `note-region-add`, `note-reassessment`, `note-vitals-bp`,
+    `note-vitals-pulse`, `note-response-to-care`,
+    `note-clinical-impression`, `note-treatment-list`,
+    `note-treatment-{i}-kind/segments/technique/modality/region/
+    duration/remove`, `note-treatment-add`, `note-regions-treated`,
+    `note-home-care`, `note-next-visit-plan`, `note-interval-days`,
+    `note-save-btn`, `note-copy-forward-btn`, `note-mark-ready-btn`,
+    `note-unmark-ready-btn`, `note-sign-btn`, `note-narrative-btn`,
+    `note-narrative-dialog`, `note-narrative-text`,
+    `note-signed-banner`, `note-copy-forward-dialog`,
+    `copy-forward-source-{id}`, `copy-forward-force`,
+    `copy-forward-submit-btn`, `note-copied-{field-id}`,
+    `care-timeline-card`, `care-timeline-list`,
+    `care-timeline-empty`, `timeline-entry-{kind}-{id}`,
+    `timeline-open-{kind}-{id}`.
+
+## [Unreleased — previously merged]
+
+### Added
 - **Clinical module — Phase 4 (2026-02-22).** Initial Exam workflow:
   structured, signable, one-per-encounter initial evaluation record
   launched from the calendar → encounter → exam pipeline, rendered
@@ -122,7 +238,10 @@ public release yet — we're pre-1.0).
   `sudo apt-get update && sudo apt-get install -y libmagic1 && sudo supervisorctl restart backend`
   and add `libmagic1` to the Dockerfile / bootstrap script.
 
-## [Unreleased — earlier in the window]
+## [Earlier — Phase 3 through iteration 25]
+
+### Added
+- **Clinical module — Phase 3 (2026-02-21).** Appointment-first encounter
   launch infrastructure. Providers launch documentation from the
   appointment; the clinical record stays patient-owned. No full SOAP /
   exam note forms yet — plumbing only.
