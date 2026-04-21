@@ -81,6 +81,7 @@ export default function TreatmentPlanEditor() {
   const [statusDialog, setStatusDialog] = useState(null);
 
   const [form, setForm] = useState(null);
+  const [outcomesTrends, setOutcomesTrends] = useState(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -116,6 +117,21 @@ export default function TreatmentPlanEditor() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get(
+          `/patients/${pid}/clinical/outcomes/trends`,
+        );
+        if (!cancelled) setOutcomesTrends(data.trends || []);
+      } catch {
+        if (!cancelled) setOutcomesTrends([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [pid]);
 
   const dirty = useMemo(() => {
     if (!plan || !form) return false;
@@ -492,6 +508,78 @@ export default function TreatmentPlanEditor() {
             }
             readOnly={readOnly}
           />
+        </SectionCard>
+
+        {/* Latest outcomes snapshot (Phase 7) */}
+        <SectionCard
+          title="Latest outcomes"
+          description="Most recent functional measure captured for this patient. Read-only — record new outcomes from the chart's Outcomes card."
+          testId="plan-section-latest-outcomes"
+        >
+          {outcomesTrends === null ? (
+            <p className="text-xs text-muted-foreground">Loading…</p>
+          ) : outcomesTrends.length === 0 ? (
+            <p
+              data-testid="plan-latest-outcomes-empty"
+              className="text-xs text-muted-foreground"
+            >
+              No outcomes recorded yet for this patient.
+            </p>
+          ) : (
+            <div
+              data-testid="plan-latest-outcomes-grid"
+              className="grid grid-cols-2 gap-3 sm:grid-cols-3"
+            >
+              {outcomesTrends.map((t) => {
+                const series = t.series || [];
+                const latest = series[series.length - 1];
+                const prior = series[series.length - 2];
+                const delta = latest && prior ? latest.score - prior.score : null;
+                const deltaTone = delta == null
+                  ? "text-muted-foreground"
+                  : delta < 0 ? "text-success"
+                  : delta > 0 ? "text-destructive"
+                  : "text-muted-foreground";
+                return (
+                  <div
+                    key={`${t.measure_type}-${t.label}`}
+                    data-testid={`plan-latest-outcome-${t.measure_type}`}
+                    className="rounded-lg border border-border bg-muted/30 p-3"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <div className="font-display text-lg font-semibold text-foreground">
+                          {latest?.score}
+                          {t.max_score != null && (
+                            <span className="text-xs text-muted-foreground">
+                              /{t.max_score}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                          {t.label}
+                        </div>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={`text-[10px] ${deltaTone}`}
+                      >
+                        {delta == null
+                          ? `${series.length} entry`
+                          : delta < 0 ? `▼ ${Math.abs(delta)}`
+                          : delta > 0 ? `▲ ${delta}` : "·"}
+                      </Badge>
+                    </div>
+                    {latest?.captured_at && (
+                      <div className="mt-1 text-[10px] text-muted-foreground">
+                        Last: {formatDateTime(latest.captured_at)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </SectionCard>
 
         {/* Home care, activity, discharge */}

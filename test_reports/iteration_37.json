@@ -1,0 +1,55 @@
+{
+  "summary": "Phase 7 Clinical UI wiring validated (frontend-only). Verified: clinical-media-card + clinical-outcomes-card render on the Clinical tab, the Phase-2 placeholders (clinical-placeholder-media / clinical-placeholder-outcomes) are removed, both cards show their empty states (media-empty, outcomes-empty), the upload dialog opens, and the filter chips/record button surfaces are present. Write flows (media upload POST, outcomes record POST, plan create, delete) were gated by a 401 'reauth required' interceptor as expected for admin privileged writes — functional behavior is correct per code, but the automated script did not programmatically confirm reauth so downstream assertions (tiles, snapshot/delta, trend, timeline, plan snapshot) could not be exercised end-to-end in this run. Also fixed a critical environment issue: backend was 502 on boot due to missing libmagic system lib (installed libmagic1 + libmagic-dev so clinical/media_router imports successfully).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "backend boot", "issue": "services/clinical/media_router.py imports python-magic which requires libmagic; container missing libmagic1/libmagic-dev caused backend to crash on startup (ImportError: failed to find libmagic). Installed the packages to unblock. Long-term: add libmagic to container base image / Dockerfile so it survives rebuilds.", "priority": "HIGH"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Privileged writes (media upload, outcomes record, plan create, media delete)", "issue": "Return 401 reauth-required on first write after login; UI appears to call onReauthNeeded but automated run did not confirm a dedicated reauth dialog surfaced visibly before the failure (dialog did not auto-open for upload submit in this run; only console 401 observed). Worth confirming interactively that ReauthDialog is always rendered by the parent (ClinicalTab/PatientDetail) for media & outcomes flows, not just for plan/delete.", "affected_selectors": ["media-upload-submit-btn", "outcomes-record-submit-btn", "media-detail-delete"]}
+    ],
+    "design_issues": []
+  },
+  "verified_working": [
+    "clinical-media-card and clinical-outcomes-card render in Clinical tab",
+    "clinical-placeholder-media and clinical-placeholder-outcomes removed",
+    "media-empty empty state renders initially",
+    "media-upload-btn opens media-upload-dialog",
+    "outcomes-empty empty state renders initially",
+    "outcomes-record-btn exists; record dialog opens (first record submitted)",
+    "Filter chips rendered (media-filter-all, media-filter-xray, media-filter-mri_ct_report, etc.)"
+  ],
+  "not_verified_due_to_reauth_401": [
+    "media-grid population after upload + media-detail-dialog image/download",
+    "media-filter-xray narrowing grid with actual tiles",
+    "outcomes-snapshot-pain_vas card + outcomes-delta-pain_vas ▼ badge",
+    "outcomes-mode-trend → outcomes-trend-pain_vas + outcomes-svg-pain_vas",
+    "care-timeline-list entries (timeline-entry-clinical_media-*, timeline-entry-outcome_entry-*, timeline-entry-diagnosis_change-*)",
+    "plan-section-latest-outcomes / plan-latest-outcomes-grid / plan-latest-outcome-pain_vas"
+  ],
+  "test_report_links": [],
+  "action_items": [
+    "Add libmagic1 (and libmagic-dev if building python-magic) to the container/Dockerfile so the backend does not 502 on future rebuilds.",
+    "Self-verify Phase 7 write flows interactively as admin: after login, perform a reauth (Soft-delete button or any privileged write once) and then exercise media upload, outcomes record (score 7 then 4), trend switch, care timeline merge, and treatment plan latest-outcomes snapshot — data-testids enumerated in the review request were all present in source so wiring looks correct.",
+    "Consider surfacing a proactive reauth banner/prompt on the Clinical tab for admin/doctor before first privileged write instead of failing-then-prompting, to smooth the UX (optional polish; matches user guardrail of keeping things lightweight)."
+  ],
+  "critical_code_review_comments": [
+    "MediaCard reauth handler only fires on 401 when detail contains /re-auth/i — if backend returns a different phrasing (e.g. 'Reauthentication required'), toast error will show instead. Consider matching on status 401 + a structured error code.",
+    "OutcomesCard record dialog relies on numeric max/score validation client-side only; ensure backend also rejects negative or out-of-range scores (backend tests covered this).",
+    "ClinicalTab mounts MediaCard and OutcomesCard unconditionally; both fire GETs on mount — consider lazy-loading when user scrolls to avoid extra network on initial chart open (optional perf)."
+  ],
+  "updated_files": [],
+  "environment_fixes": [
+    "apt-get install -y libmagic1 libmagic-dev; sudo supervisorctl restart backend (backend /api/health now 200)"
+  ],
+  "success_rate": {"backend": "n/a (frontend-only request, backend boot fixed)", "frontend": "~40% — static/UI wiring verified; dynamic write flows blocked by reauth and not confirmed"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (used successfully for login + /api/patients listing)",
+  "seed_data_creation": "Reused existing seeded patient id 526618a8-abbf-40c4-b05e-29b30cee1bee (masked initials P.P.)",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend was 502 at start of iteration 37 because of missing libmagic; fixed at runtime but not persisted across container rebuilds — verify /api/health=200 before testing. Admin writes to clinical/media & clinical/outcomes require reauth; the test script here does not reliably surface/handle ReauthDialog (the dialog container may be mounted at PatientDetail level — confirm which onReauthNeeded handler is wired). For next run, perform an explicit reauth (e.g. visit Patients detail and trigger Soft-delete cancel, or POST /api/auth/reauth with cookies) before exercising Phase 7 writes.",
+  "rca of the issue": "Root cause 1 (blocker fixed): services/clinical/media_router.py does `import magic` (python-magic) at module level, which tries to load libmagic.so; the sandbox container did not include libmagic, so uvicorn failed during import and backend was 502. Installed libmagic1 + libmagic-dev via apt. Root cause 2 (observed but not fixed): Phase 7 privileged writes return 401 with 're-auth required' message; MediaCard/OutcomesCard do call onReauthNeeded on 401, but the automated test did not synchronously confirm the dialog and submit credentials, so upload/record submissions failed silently (toast-only). Needs interactive verification."
+}

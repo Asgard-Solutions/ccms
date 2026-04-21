@@ -18,16 +18,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
-  Activity,
-  CalendarClock,
   ClipboardList,
-  FileText,
-  GitBranch,
-  Image as ImageIcon,
   PlayCircle,
   PlusCircle,
   Stethoscope,
-  Target,
   XCircle,
 } from "lucide-react";
 import { api, formatApiError } from "../../api/client";
@@ -39,6 +33,8 @@ import FollowUpNotesCard from "./FollowUpNotesCard";
 import CareTimelineCard from "./CareTimelineCard";
 import TreatmentPlansCard from "./TreatmentPlansCard";
 import ReExamsCard from "./ReExamsCard";
+import MediaCard from "./MediaCard";
+import OutcomesCard from "./OutcomesCard";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Badge } from "../../components/ui/badge";
@@ -725,24 +721,26 @@ export default function ClinicalTab({
       {/* Phase 5 — Care Timeline */}
       <CareTimelineCard patientId={patientId} />
 
+      {/* Phase 7 — Imaging & Clinical Media */}
+      <MediaCard
+        patientId={patientId}
+        canWrite={canWrite}
+        onReauthNeeded={onReauthNeeded}
+      />
+
+      {/* Phase 7 — Outcomes & Functional Measures */}
+      <OutcomesCard
+        patientId={patientId}
+        canWrite={canWrite}
+        onReauthNeeded={onReauthNeeded}
+      />
+
       {/* Future-phase section placeholders */}
       <div>
         <h3 className="mb-3 font-display text-lg font-semibold text-foreground">
           Chart sections
         </h3>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <PlaceholderCard
-            icon={ImageIcon}
-            title="Imaging &amp; Clinical Media"
-            description="X-rays, MRIs, exam photos and videos. Object-storage backed; never stored in-line with the chart."
-            testId="clinical-placeholder-media"
-          />
-          <PlaceholderCard
-            icon={GitBranch}
-            title="Outcomes"
-            description="Functional outcome measures — NDI, Oswestry, pain VAS — trended over the life of the episode."
-            testId="clinical-placeholder-outcomes"
-          />
           <PlaceholderCard
             icon={ClipboardList}
             title="Billing Readiness"

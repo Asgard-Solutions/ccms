@@ -7,13 +7,16 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import {
+  Activity,
   CalendarCheck2,
   FileText,
   GitBranch,
+  Image as ImageIcon,
   NotebookPen,
   Stethoscope,
   Target,
   Timer,
+  ClipboardList,
 } from "lucide-react";
 import { api, formatApiError } from "../../api/client";
 import { Badge } from "../../components/ui/badge";
@@ -26,6 +29,10 @@ const KIND_META = {
   follow_up_note: { Icon: NotebookPen, tone: "text-success" },
   re_exam: { Icon: GitBranch, tone: "text-primary" },
   treatment_plan: { Icon: Target, tone: "text-foreground" },
+  clinical_media: { Icon: ImageIcon, tone: "text-primary" },
+  outcome_entry: { Icon: Activity, tone: "text-success" },
+  diagnosis_change: { Icon: GitBranch, tone: "text-warning" },
+  intake_submission: { Icon: ClipboardList, tone: "text-muted-foreground" },
 };
 
 const STATUS_TONE = {
@@ -38,6 +45,15 @@ const STATUS_TONE = {
   active: "border-success/40 bg-success-soft text-success",
   on_hold: "border-warning/40 bg-warning-soft text-warning",
   discharged: "border-border bg-muted text-muted-foreground",
+  uploaded: "border-primary/30 bg-primary/10 text-primary",
+  provider_charted: "border-success/30 bg-success-soft text-success",
+  patient_reported: "border-primary/30 bg-primary/10 text-primary",
+  reexam: "border-primary/30 bg-primary/10 text-primary",
+  created: "border-success/30 bg-success-soft text-success",
+  updated: "border-warning/40 bg-warning-soft text-warning",
+  resolved: "border-border bg-muted text-muted-foreground",
+  activated: "border-success/30 bg-success-soft text-success",
+  submitted: "border-primary/30 bg-primary/10 text-primary",
 };
 
 export default function CareTimelineCard({ patientId }) {
