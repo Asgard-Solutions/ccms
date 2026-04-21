@@ -2133,3 +2133,62 @@ off naturally. Matches the pre-existing `/change-password` pattern.
 - **P2 (future)** — Enterprise Auth (WebAuthn / SAML / OIDC / SCIM).
 - **P2 (future)** — PostgreSQL migration.
 
+
+---
+
+## 2026-04-21 — Account Settings UX Cleanup (Task Prompt 7)
+
+### Problem
+After expanding `/security` into a full Account Settings area (Profile,
+Security, Licenses tabs) the Security tab had six stacked cards and
+was dense; the relationship between Password / MFA / PIN was not
+explicit. No redesign desired — just tighten the hierarchy and copy.
+
+### Fix (frontend only — no backend changes)
+- **`SecurityTab.jsx`** reorganised into two labelled groups:
+  - `signin-methods-group` — Password + MFA + PIN
+  - `session-activity-group` — Recent sign-ins + session hardening card
+- **New compact `security-posture-strip`** at the top: 3 tiles (MFA,
+  PIN, Password age) with status pills and hint copy. Replaces the
+  previous `password-age-banner` (old testid removed; value surfaced
+  via `posture-tile-pwage`).
+- **Terminology pills** make roles explicit:
+  - Password → "Primary login credential"
+  - MFA → "Extra sign-in check"
+  - PIN → "In-app only"  (description strengthens: *does NOT replace
+    your password and cannot be used to sign in*.)
+- **Accessibility pass**: every input now has `id` paired with
+  `<Label htmlFor>`, `aria-describedby` for hints, inline errors use
+  `role="alert"` + `aria-live="polite"`, password show/hide toggles
+  expose `aria-pressed` + `aria-label` + `aria-controls`, MFA code
+  input adds `inputMode="numeric"` + `pattern="\d{6}"` + `maxLength=6`,
+  focus rings on interactive elements, `aria-hidden="true"` on
+  decorative lucide icons.
+- `PinCard.jsx` description updated in-place (header pill + clearer
+  copy). Form logic untouched.
+- No changes to `ProfileTab`, `LicensesTab`, `Security.jsx` container,
+  AuthContext, or any backend surface.
+
+### Verification
+Testing agent (iteration_46.json) logged in as doctor, walked through
+the Security tab, confirmed:
+1. Posture strip + both section groups render in correct DOM order.
+2. All existing `data-testid`s preserved (`pw-*`, `mfa-*`, `pin-*`,
+   `sessions-card`, `session-row-*`).
+3. PIN copy matches the reviewer's terminology guardrails.
+4. 0 unmatched inputs — every input has a `for=id` label.
+5. Password toggle accessibility + MFA code input numeric mode +
+   `aria-live` on inline errors — all present.
+6. No Profile / Licenses regression.
+
+### Task Prompt 7 — CLOSED ✅
+
+### Remaining backlog (unchanged)
+- **P1** — Global retry-after-reauth Axios interceptor.
+- **P2** — Persist `appointment_type_id` on Appointments.
+- **P2** — Reorder Appointment Types (drag-drop).
+- **P2** — Restore green for pre-existing iteration4/5/8/9/11/12/13 files.
+- **P2 / deferred** — Unmock Resend email delivery.
+- **P2 (future)** — Enterprise Auth (WebAuthn / SAML / OIDC / SCIM).
+- **P2 (future)** — PostgreSQL migration.
+
