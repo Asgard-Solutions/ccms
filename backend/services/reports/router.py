@@ -91,6 +91,9 @@ class ExportRequest(BaseModel):
     sort: str | None = None
     sort_dir: str = Field(default="desc", pattern=r"^(asc|desc)$")
     columns: list[str] | None = None
+    # Optional purpose-of-export statement. Recorded against the
+    # export/audit row to satisfy HIPAA minimum-necessary reviews.
+    reason: str | None = Field(default=None, max_length=500)
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +293,7 @@ async def export_report(
         sort=resolve_sort(d, payload.sort),
         sort_dir=payload.sort_dir,
         columns=payload.columns,
+        reason=payload.reason,
     )
 
     await audit_success(
@@ -299,6 +303,7 @@ async def export_report(
             "report": name, "format": payload.format,
             "password_protected": d.contains_phi,
             "filters": payload.filters,
+            "reason": payload.reason,
         },
     )
     # Enqueue the background job (reuses existing `export.generate_report` handler)

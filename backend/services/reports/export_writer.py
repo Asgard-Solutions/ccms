@@ -1,29 +1,32 @@
 """
 Report export writers — CSV, Excel (xlsx), and PDF.
 
-All three produce a single file on disk. Reports flagged `contains_phi=True`
-are additionally wrapped in an AES-256 password-protected ZIP via pyzipper.
-
-Design:
-* Keep writers *pure* — they take `(columns, rows, title, meta)` and write
-  a file. They do not know about tenants, audit, or storage paths.
-* `build_export(path, definition, rows, columns, fmt, password=None)` is
-  the single entry point the export worker calls.
+Security model (HIPAA):
+  * **PDF** — When a password is supplied we encrypt the PDF *natively*
+    using reportlab's StandardEncryption (AES-128, PDF v4 header). Readers
+    prompt for the password when opened; no wrapper is used.
+  * **CSV and XLSX** — These formats cannot be truly encrypted with an
+    open-source library without pulling in heavyweight office tooling
+    (openpyxl's ``workbook.security`` is a *protection flag* only, not
+    encryption). Instead we wrap the file in an AES-256 password-protected
+    ZIP archive (pyzipper) which *is* real encryption.
+  * A file is only ever labelled ``password_protected=True`` when its
+    bytes on disk genuinely require the password to read.
 """
 from __future__ import annotations
 
 import csv
 import io
-import os
+import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pyzipper
 from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment
-from reportlab.lib import colors
+from openpyxl.styles import Alignment, Font, PatternFill
+from reportlab.lib import colors, pdfencrypt
 from reportlab.lib.pagesizes import landscape, letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
@@ -124,13 +127,35 @@ def _write_xlsx(path: Path, columns: list[Column], rows: list[dict[str, Any]], t
 # PDF (reportlab)
 # ---------------------------------------------------------------------------
 
-def _write_pdf(path: Path, columns: list[Column], rows: list[dict[str, Any]], title: str) -> None:
+def _write_pdf(
+    path: Path,
+    columns: list[Column],
+    rows: list[dict[str, Any]],
+    title: str,
+    *,
+    password: str | None = None,
+) -> None:
+    """Render the PDF, optionally encrypting it natively with AES-128.
+
+    When `password` is supplied the resulting PDF opens in any standard
+    reader with that password (no ZIP wrapper). We never print, or copy
+    blocked — the password is purely an access control gate.
+    """
+    encrypt = None
+    if password:
+        encrypt = pdfencrypt.StandardEncryption(
+            userPassword=password,
+            ownerPassword=password,
+            canPrint=1, canModify=0, canCopy=1, canAnnotate=0,
+            strength=128,
+        )
     doc = SimpleDocTemplate(
         str(path),
         pagesize=landscape(letter),
         leftMargin=0.4 * inch, rightMargin=0.4 * inch,
         topMargin=0.5 * inch, bottomMargin=0.5 * inch,
         title=title,
+        encrypt=encrypt,
     )
     styles = getSampleStyleSheet()
     story: list = []
@@ -192,6 +217,7 @@ class ExportArtifact:
     filename: str
     password_protected: bool
     size_bytes: int
+    protection_kind: str  # "none" | "pdf_native" | "aes_zip"
 
 
 MIME_TYPES = {
@@ -200,6 +226,21 @@ MIME_TYPES = {
     "pdf": "application/pdf",
     "zip": "application/zip",
 }
+
+
+_SLUG_STRIP = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _slugify(title: str) -> str:
+    """Whitespace → `_`, non-alnum → `-`, collapse repeats, max 60 chars."""
+    slug = title.strip().replace(" ", "_")
+    slug = _SLUG_STRIP.sub("-", slug).strip("-_")
+    return slug[:60] or "report"
+
+
+def _human_filename(title: str, ext: str, *, when: datetime | None = None) -> str:
+    when = when or datetime.now(timezone.utc)
+    return f"{_slugify(title)}-{when.strftime('%Y%m%d-%H%M')}.{ext}"
 
 
 def build_export(
@@ -214,39 +255,52 @@ def build_export(
 ) -> ExportArtifact:
     """Build the requested format at `dest_dir/{export_id}.{ext}`.
 
-    If `password` is provided, wraps the file into an AES-256 ZIP at
-    `dest_dir/{export_id}.zip` and returns that.
+    Protection rules:
+      * `fmt="pdf"` + password → native PDF encryption (AES-128). No ZIP.
+      * `fmt="csv"`/`"excel"` + password → AES-256 password-protected ZIP
+        (pyzipper). CSV and native xlsx cannot be encrypted without the
+        archive wrapper.
+      * No password → plain file.
     """
     dest_dir.mkdir(parents=True, exist_ok=True)
     raw_ext = {"csv": "csv", "excel": "xlsx", "pdf": "pdf"}[fmt]
     raw_path = dest_dir / f"{export_id}.{raw_ext}"
+
+    protection = "none"
 
     if fmt == "csv":
         _write_csv(raw_path, columns, rows)
     elif fmt == "excel":
         _write_xlsx(raw_path, columns, rows, title)
     elif fmt == "pdf":
-        _write_pdf(raw_path, columns, rows, title)
+        _write_pdf(raw_path, columns, rows, title, password=password)
+        if password:
+            protection = "pdf_native"
     else:  # pragma: no cover
         raise ValueError(f"Unsupported format: {fmt}")
 
-    if password:
+    # Wrap CSV/XLSX in an encrypted ZIP when a password is required.
+    if password and fmt in ("csv", "excel"):
         zip_path = dest_dir / f"{export_id}.zip"
         _zip_with_password(raw_path, zip_path, password)
+        protection = "aes_zip"
         return ExportArtifact(
             path=zip_path,
             mime=MIME_TYPES["zip"],
-            filename=f"{title.replace(' ', '_')}-{export_id[:8]}.zip",
+            filename=_human_filename(title, "zip"),
             password_protected=True,
             size_bytes=zip_path.stat().st_size,
+            protection_kind=protection,
         )
 
+    # Native-encrypted PDF keeps its .pdf extension.
     return ExportArtifact(
         path=raw_path,
         mime=MIME_TYPES[fmt],
-        filename=f"{title.replace(' ', '_')}-{export_id[:8]}.{raw_ext}",
-        password_protected=False,
+        filename=_human_filename(title, raw_ext),
+        password_protected=protection != "none",
         size_bytes=raw_path.stat().st_size,
+        protection_kind=protection,
     )
 
 

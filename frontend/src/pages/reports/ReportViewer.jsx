@@ -92,6 +92,7 @@ export default function ReportViewer() {
 
   const [saveOpen, setSaveOpen] = useState(false);
   const [exportDialog, setExportDialog] = useState(null); // {format, state}
+  const [phiConsent, setPhiConsent] = useState(null); // {format, reason}
 
   // Load meta + saved views
   useEffect(() => {
@@ -193,7 +194,7 @@ export default function ReportViewer() {
     else { setSort(colKey); setSortDir("desc"); }
   }
 
-  async function handleExport(format) {
+  async function handleExport(format, reason = null) {
     setExportDialog({ format, state: "submitting", error: null });
     try {
       const resp = await requestExport(name, {
@@ -201,6 +202,7 @@ export default function ReportViewer() {
         filters,
         sort, sort_dir: sortDir,
         columns: selectedCols || meta.default_columns,
+        reason: reason || undefined,
       });
       setExportDialog({
         format, state: "polling", exportId: resp.export_id,
@@ -215,6 +217,7 @@ export default function ReportViewer() {
             format, state: "ready", exportId: resp.export_id,
             downloadToken: s.download_token,
             passwordProtected: s.password_protected,
+            protectionKind: s.protection_kind,
             oneTimePassword: s.one_time_password,
             filename: s.filename,
             rows: s.rows,
@@ -229,6 +232,14 @@ export default function ReportViewer() {
       setExportDialog({ format, state: "failed", error: "Export timed out." });
     } catch (e) {
       setExportDialog({ format, state: "failed", error: formatApiError(e) });
+    }
+  }
+
+  function requestExportFormat(format) {
+    if (meta?.contains_phi) {
+      setPhiConsent({ format, reason: "" });
+    } else {
+      handleExport(format);
     }
   }
 
@@ -534,10 +545,98 @@ export default function ReportViewer() {
         state={exportDialog}
         onClose={() => setExportDialog(null)}
       />
+
+      {/* Pre-export PHI consent dialog */}
+      <PhiConsentDialog
+        state={phiConsent}
+        format={phiConsent?.format}
+        meta={meta}
+        onClose={() => setPhiConsent(null)}
+        onConfirm={(reason) => {
+          const fmt = phiConsent.format;
+          setPhiConsent(null);
+          handleExport(fmt, reason);
+        }}
+      />
     </div>
   );
 }
 
+
+// ---------------------------------------------------------------------------
+// PHI consent / purpose-of-export dialog (pre-export)
+// ---------------------------------------------------------------------------
+
+function PhiConsentDialog({ state, format, meta, onClose, onConfirm }) {
+  const [reason, setReason] = useState("");
+
+  useEffect(() => { setReason(""); }, [state?.format]);
+
+  const open = !!state;
+  const fmt = (format || "").toLowerCase();
+  const protectionCopy =
+    fmt === "pdf"
+      ? "The PDF will be natively encrypted. Any PDF reader will prompt for the password on open."
+      : "The file will be packaged in an AES-256 password-protected ZIP. Unzip with the password to extract the file.";
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="rounded-sm" data-testid="phi-consent-dialog">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Lock className="h-4 w-4 text-warning" />
+            Export contains PHI
+          </DialogTitle>
+          <DialogDescription>
+            “{meta?.title}” may include protected health information.
+            Under the HIPAA minimum-necessary rule you should only export
+            PHI for a specific, documented purpose.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="rounded-sm border border-warning bg-warning-soft p-3 text-xs leading-relaxed text-foreground">
+            <p className="font-semibold text-warning">
+              Secure export — {fmt.toUpperCase()}
+            </p>
+            <p className="mt-1 text-muted-foreground">{protectionCopy}</p>
+            <p className="mt-1 text-muted-foreground">
+              A one-time password will be generated and shown to you{" "}
+              <strong>only once</strong>. It is never emailed, logged, or
+              stored in plaintext — you will not be able to retrieve it
+              later.
+            </p>
+          </div>
+          <div>
+            <Label htmlFor="export-reason">
+              Purpose of export <span className="text-muted-foreground">(optional, recorded in audit)</span>
+            </Label>
+            <Input
+              id="export-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="e.g. Quarterly compliance review for Dr. Patel"
+              className="rounded-sm"
+              data-testid="phi-consent-reason"
+              maxLength={500}
+            />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} data-testid="phi-consent-cancel">
+            Cancel
+          </Button>
+          <Button
+            onClick={() => onConfirm(reason.trim() || null)}
+            data-testid="phi-consent-confirm"
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Acknowledge &amp; export
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Filter control
@@ -782,12 +881,17 @@ function ExportResultDialog({ state, onClose }) {
               {state.passwordProtected && state.oneTimePassword && (
                 <div className="rounded-sm border border-warning bg-warning-soft p-4">
                   <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-warning">
-                    <Lock className="h-4 w-4" /> Password required
+                    <Lock className="h-4 w-4" />
+                    {state.protectionKind === "pdf_native"
+                      ? "PDF password required"
+                      : "ZIP archive password required"}
                   </div>
                   <p className="mb-2 text-xs text-muted-foreground">
-                    This export contains PHI and is packaged inside a password-protected
-                    ZIP. Copy this password now — it is shown <strong>only once</strong>
-                    and cannot be retrieved later.
+                    {state.protectionKind === "pdf_native"
+                      ? "This PDF is natively encrypted. Any PDF reader will prompt for the password on open."
+                      : "This export is packaged inside a password-protected AES-256 ZIP archive."}
+                    {" "}Copy this password now — it is shown{" "}
+                    <strong>only once</strong> and cannot be retrieved later.
                   </p>
                   <div className="flex items-center gap-2">
                     <code

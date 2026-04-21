@@ -43,7 +43,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, sta
 from fastapi.responses import StreamingResponse
 
 from core.audit import audit_failure, audit_success, log_audit
-from core.crypto import decrypt_fields
+from core.crypto import decrypt_fields, decrypt_text, encrypt_text
 from core.tenancy import TenantContext, get_tenant_context, tenant_db
 from core.tenant_jobs import enqueue, tenant_job
 from services.authz.policy import require_permission
@@ -232,24 +232,25 @@ async def get_export(
     if row["status"] == "ready":
         token = _sign_download_token(export_id, ctx.tenant_id, user["id"])
 
-    # One-time password surfacing: if this export used zip+password
-    # protection, reveal the password exactly once (when the caller who
-    # owns the export polls the status and it has just flipped to ready).
-    # Subsequent polls return `password_revealed=False` and a null value.
+    # One-time password surfacing: if this export used zip+password or
+    # native-PDF password protection, reveal the password exactly once
+    # (on the first successful poll by the requester). On reveal we
+    # decrypt the at-rest ciphertext, hand it back, then wipe the
+    # ciphertext entirely so it cannot be replayed from the DB.
     one_time_password: str | None = None
     if (
         row.get("password_protected")
         and row["status"] == "ready"
         and not row.get("password_revealed")
         and row.get("actor_user_id") == user["id"]
-        and row.get("password_plain") is not None
+        and row.get("password_enc") is not None
     ):
-        one_time_password = row.get("password_plain")
+        one_time_password = decrypt_text(row["password_enc"])
         await db.exports.update_one(
             {"id": export_id},
             {"$set": {"password_revealed": True,
                       "password_revealed_at": datetime.now(timezone.utc).isoformat()},
-             "$unset": {"password_plain": ""}},
+             "$unset": {"password_enc": ""}},
         )
         await log_audit(
             action="export.password_revealed",
@@ -258,7 +259,9 @@ async def get_export(
             actor_role=user.get("role"),
             tenant_id=ctx.tenant_id,
             entity_type="export", entity_id=export_id,
-            metadata={"type": row.get("type"), "report_name": row.get("report_name")},
+            metadata={"type": row.get("type"),
+                      "report_name": row.get("report_name"),
+                      "protection_kind": row.get("protection_kind")},
         )
 
     return {
@@ -275,6 +278,7 @@ async def get_export(
         "download_token": token,
         "password_protected": bool(row.get("password_protected")),
         "password_revealed": bool(row.get("password_revealed")),
+        "protection_kind": row.get("protection_kind"),
         "one_time_password": one_time_password,
         "filename": row.get("filename"),
     }
@@ -465,6 +469,7 @@ async def create_report_export(
     sort: str | None,
     sort_dir: str,
     columns: list[str] | None,
+    reason: str | None = None,
 ) -> tuple[str, str | None]:
     """Persist a pending report-export row and return (export_id, password).
 
@@ -488,6 +493,10 @@ async def create_report_export(
     password_hash = (
         _hashlib.sha256(password_plain.encode()).hexdigest() if password_plain else None
     )
+    # Encrypt the plaintext at rest so the DB never holds it in the clear.
+    # It is decrypted only twice: once by the worker to drive encryption,
+    # once on the requester's first status poll to reveal it — then wiped.
+    password_encrypted = encrypt_text(password_plain) if password_plain else None
 
     db = tenant_db(ctx.tenant_id)
     await db.exports.insert_one({
@@ -501,16 +510,19 @@ async def create_report_export(
         "columns": columns,
         "actor_user_id": user["id"],
         "actor_role": user.get("role"),
+        "actor_email": user.get("email"),
+        "reason": reason,
         "status": "pending",
         "created_at": now.isoformat(),
         "expires_at": (now + timedelta(hours=EXPORT_TTL_HOURS)).isoformat(),
-        "path": None,  # set by worker
+        "path": None,
         "size_bytes": None,
         "rows": None,
         "password_protected": bool(password_plain),
         "password_hash": password_hash,
-        "password_plain": password_plain,  # wiped on first reveal
+        "password_enc": password_encrypted,  # AES-GCM via core.crypto
         "password_revealed": False,
+        "protection_kind": None,  # set by worker: pdf_native | aes_zip | none
         "filename": None,
         "mime": None,
     })
@@ -560,6 +572,9 @@ async def _generate_report(ctx: TenantContext, payload: dict, meta: dict) -> Non
     result = await definition.runner(qc)
     cols = resolve_columns(definition, row.get("columns"))
 
+    # Decrypt the one-time password only for the encryption step.
+    password_plain = decrypt_text(row.get("password_enc")) if row.get("password_enc") else None
+
     artifact = build_export(
         dest_dir=_tenant_export_dir(ctx.tenant_id),
         export_id=export_id,
@@ -567,8 +582,10 @@ async def _generate_report(ctx: TenantContext, payload: dict, meta: dict) -> Non
         columns=cols,
         rows=result.rows,
         fmt=row["format"],
-        password=row.get("password_plain"),  # None when not PHI
+        password=password_plain,  # None when not PHI
     )
+    # Drop the decrypted password reference immediately.
+    password_plain = None  # noqa: F841
 
     await db.exports.update_one(
         {"id": export_id},
@@ -579,6 +596,7 @@ async def _generate_report(ctx: TenantContext, payload: dict, meta: dict) -> Non
             "path": str(artifact.path),
             "mime": artifact.mime,
             "filename": artifact.filename,
+            "protection_kind": artifact.protection_kind,
             "ready_at": datetime.now(timezone.utc).isoformat(),
         }},
     )
@@ -592,6 +610,7 @@ async def _generate_report(ctx: TenantContext, payload: dict, meta: dict) -> Non
             "report": row["report_name"],
             "format": row["format"],
             "password_protected": bool(row.get("password_protected")),
+            "protection_kind": artifact.protection_kind,
             "rows": len(result.rows),
             "size_bytes": artifact.size_bytes,
         },

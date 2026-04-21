@@ -135,6 +135,85 @@ def test_pdf_export_generates_file(tmp_path):
     assert art.path.stat().st_size > 0
     head = art.path.read_bytes()[:4]
     assert head == b"%PDF"  # PDF magic number
+    assert art.protection_kind == "none"
+    assert art.password_protected is False
+
+
+def test_pdf_export_native_password_encryption(tmp_path):
+    """
+    Password-protected PDFs are encrypted *natively* (AES-128, PDF v4).
+    They do NOT get wrapped in a ZIP — the .pdf extension is preserved and
+    the file carries the `/Encrypt` dictionary so any standard reader
+    will prompt for the password.
+    """
+    pw = generate_password()
+    art = build_export(
+        dest_dir=tmp_path, export_id=str(uuid.uuid4()),
+        title="Secure PDF", columns=TEST_COLUMNS, rows=TEST_ROWS, fmt="pdf",
+        password=pw,
+    )
+    assert art.path.suffix == ".pdf", "PDF must not be re-wrapped in a ZIP"
+    assert art.protection_kind == "pdf_native"
+    assert art.password_protected is True
+    assert art.mime == "application/pdf"
+
+    body = art.path.read_bytes()
+    assert body[:4] == b"%PDF"
+    # Presence of the encryption dictionary is the ground-truth signal of
+    # a *genuinely* password-protected PDF.
+    assert b"/Encrypt" in body, "PDF must contain an /Encrypt dict when password-protected"
+
+
+def test_xlsx_with_password_produces_aes_zip(tmp_path):
+    pw = generate_password()
+    art = build_export(
+        dest_dir=tmp_path, export_id=str(uuid.uuid4()),
+        title="Secure XLSX", columns=TEST_COLUMNS, rows=TEST_ROWS, fmt="excel",
+        password=pw,
+    )
+    # xlsx can't be truly encrypted by openpyxl → ZIP wrapper is correct.
+    assert art.path.suffix == ".zip"
+    assert art.protection_kind == "aes_zip"
+    assert art.mime == "application/zip"
+    with pyzipper.AESZipFile(art.path) as zf:
+        zf.setpassword(pw.encode())
+        members = zf.namelist()
+        assert any(m.endswith(".xlsx") for m in members)
+
+
+def test_filename_includes_title_and_date(tmp_path):
+    art = build_export(
+        dest_dir=tmp_path, export_id=str(uuid.uuid4()),
+        title="Patient Roster Q1", columns=TEST_COLUMNS, rows=TEST_ROWS, fmt="csv",
+    )
+    # Pattern: `Patient_Roster_Q1-YYYYMMDD-HHMM.csv`
+    import re as _re
+    assert _re.match(
+        r"^Patient_Roster_Q1-\d{8}-\d{4}\.csv$", art.filename,
+    ), f"filename does not match expected pattern: {art.filename}"
+
+
+def test_filename_slug_strips_unsafe_characters(tmp_path):
+    art = build_export(
+        dest_dir=tmp_path, export_id=str(uuid.uuid4()),
+        title="A/B::Report? 2026", columns=TEST_COLUMNS, rows=TEST_ROWS, fmt="csv",
+    )
+    # No slashes, colons, or question marks in the filename.
+    for ch in "/:?":
+        assert ch not in art.filename
+
+
+def test_password_never_serialises_to_artifact(tmp_path):
+    """The ExportArtifact dataclass exposes no plaintext password field."""
+    pw = generate_password()
+    art = build_export(
+        dest_dir=tmp_path, export_id=str(uuid.uuid4()),
+        title="Secure CSV", columns=TEST_COLUMNS, rows=TEST_ROWS, fmt="csv",
+        password=pw,
+    )
+    fields = set(vars(art).keys())
+    forbidden = {"password", "password_plain", "plaintext", "secret"}
+    assert not (fields & forbidden), f"artifact leaks password field: {fields & forbidden}"
 
 
 def test_password_protected_zip_decrypts_with_given_password(tmp_path):
