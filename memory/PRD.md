@@ -1,6 +1,6 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-02-22 (Clinical module Phase 6 — Treatment Plans + Re-Exams)
+**Last updated:** 2026-04-21 (Clinical module Phase 7 — Imaging/Media + Outcomes + Care Timeline expanded)
 
 ## 0. Design system (binding)
 The Chiro Software design system is authoritative for every UI surface.
@@ -48,6 +48,102 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### Clinical module Phase 7 — Imaging & Clinical Media + Outcomes + Care Timeline v2 (2026-04-21)
+- **Workflow realized**: providers upload x-rays, MRI/CT reports,
+  ultrasound, clinical photos, outside records, and PDFs to the
+  patient chart; files are immutable after upload, metadata is
+  editable, soft-delete hides from chart but retains audit trail.
+  Functional outcome measures (NDI, Oswestry, Pain VAS, Pain scale,
+  functional index, custom) are recorded ad-hoc from the chart or
+  auto-emitted when a Re-Exam is signed. The Care Timeline is the
+  longitudinal story — it now merges clinical media, standalone
+  outcome entries, and diagnosis change audit events on top of the
+  existing encounters / exams / notes / re-exams / plans stream.
+- **New backend modules** under `services/clinical/`:
+  - `media_models.py` — `ClinicalMediaCreate/Update/Public`, category
+    enum (`xray`, `mri_ct_report`, `ultrasound`, `clinical_photo`,
+    `outside_record`, `other_pdf`), source enum (`in_clinic`,
+    `outside_imaging_center`, `patient_provided`, `records_request`),
+    study_date, body_region, impression_findings, mime validation
+    via `python-magic` (PNG/JPEG/WebP/HEIC + PDF), 25 MB cap.
+  - `media_router.py` — endpoints under `/api`:
+    - `GET/POST /patients/{pid}/clinical/media` (list + multipart
+      upload; objects written via pre-existing
+      `core.object_storage`).
+    - `GET /patients/{pid}/clinical/media/{mid}` (metadata)
+    - `GET /patients/{pid}/clinical/media/{mid}/download` (streaming
+      blob with correct `Content-Type`)
+    - `PATCH /patients/{pid}/clinical/media/{mid}` (metadata only —
+      the binary is immutable)
+    - `DELETE /patients/{pid}/clinical/media/{mid}` (soft-delete +
+      audit event)
+  - `outcomes_models.py` — `OutcomeCreate/Update/Public`, measure
+    enum (`ndi`, `oswestry`, `pain_vas`, `pain_scale`,
+    `functional_index`, `custom`), score/max_score, captured_at,
+    unit, note, source (`provider_charted`, `patient_reported`,
+    `reexam`), optional `reexam_id` link.
+  - `outcomes_router.py` — endpoints under `/api`:
+    - `GET/POST /patients/{pid}/clinical/outcomes`
+    - `GET /patients/{pid}/clinical/outcomes/trends` — groups by
+      `(measure_type, label)`, returns series of `{entry_id, score,
+      captured_at}` sorted chronologically.
+  - `notes_router.py care-timeline endpoint` — extended to aggregate
+    three new entry kinds: `clinical_media` (from `clinical_media`
+    collection, filtered on `deleted_at=None`), `outcome_entry`
+    (from `clinical_outcome_entries` excluding `source=reexam` so
+    the re-exam row isn't duplicated), `diagnosis_change` (derived
+    from `clinical_audit_events` where `event_type` in
+    `diagnosis.created/updated/resolved/activated`), plus
+    `intake_submission` (from `clinical_history.intake_submitted`
+    audit events). Every entry has the same shape: `{kind, id,
+    date_of_service, status, title, subtitle, episode_id,
+    provider_id, provider_name, link_path}`.
+  - **Re-Exam auto-emission**: signing a re-exam now writes one
+    `clinical_outcome_entries` row per outcome in the re-exam, tagged
+    `source=reexam` with `reexam_id` linkage, so the trends endpoint
+    picks them up automatically.
+- **New frontend under `pages/clinical/`**:
+  - `MediaCard.jsx` — filter chips (`all` + 6 categories), 4-col
+    thumbnail grid with image/PDF glyphs, upload dialog (category,
+    source, body region, study date, impression/findings), detail
+    dialog with inline preview (`<img>` for images, `<iframe>` for
+    PDFs), download link, and soft-delete button for writers.
+    Re-auth-aware on 401.
+  - `OutcomesCard.jsx` — two modes: `snapshot` (per-measure chip
+    with latest score, `/max`, and delta-vs-prior badge using
+    `▼`/`▲`) and `trend` (one compact SVG line chart per measure,
+    no charting library — viewBox-scaled, axis ticks + point
+    labels). Record dialog seeds unit/max from the chosen measure.
+  - `CareTimelineCard.jsx` — extended `KIND_META` with icons for
+    `clinical_media` (ImageIcon), `outcome_entry` (Activity),
+    `diagnosis_change` (GitBranch/warning), and `intake_submission`
+    (ClipboardList); extended `STATUS_TONE` for new statuses
+    (`uploaded`, `provider_charted`, `patient_reported`, `reexam`,
+    `created`, `updated`, `resolved`, `activated`, `submitted`).
+  - `TreatmentPlanEditor.jsx` — new read-only "Latest outcomes"
+    section right after "Objective baselines"; pulls
+    `/outcomes/trends`, renders a delta chip per measure, never
+    mutates data.
+  - `ClinicalTab.jsx` — mounts `MediaCard` and `OutcomesCard`,
+    removes the Phase-2 placeholders for Imaging/Outcomes. Only
+    Billing Readiness remains as a placeholder.
+- **Object storage**: reuses pre-existing `core.object_storage`
+  (Emergent LLM-key backed) — no new 3rd-party dependency. Files are
+  referenced by `storage_path` on `clinical_media`; the binary is
+  never returned inline in list/detail responses, only via explicit
+  `/download`.
+- **Testing**: backend `pytest` (`test_clinical_phase7.py`) covers
+  upload → list → download → metadata patch → soft delete and the
+  outcomes + trends flow including re-exam auto-emission. Frontend
+  validated via `testing_agent_v3_fork` (iteration 37) static wiring
+  + self-test via live preview (admin login, upload PNG, record Pain
+  VAS 7 then 4, trend mode SVG render, care timeline merge) — all
+  pass.
+- **Guardrails observed**: re-used `core.object_storage`; auto-emit
+  standalone outcomes on re-exam sign; simple inline SVG charts
+  (no Recharts / Nivo). Treatment plan "Latest outcomes" is
+  read-only and lightweight.
+
 ### Clinical module Phase 6 — Treatment Plans + Re-Exams (2026-02-22)
 - **Workflow realized**: provider creates a chart-level **Treatment
   Plan** (plan of care) for the episode/case with goals, frequency,

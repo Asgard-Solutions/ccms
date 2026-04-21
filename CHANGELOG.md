@@ -12,6 +12,72 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Clinical module — Phase 7 (2026-04-21).** Imaging & Clinical
+  Media + Outcomes / Functional Measures + Care Timeline v2. Chart
+  gets first-class file storage for x-rays / MRI / CT / ultrasound /
+  clinical photos / outside records, plus longitudinal patient-
+  reported outcomes (NDI, Oswestry, Pain VAS, pain scale,
+  functional index, custom) with inline trend SVGs. The Care Timeline
+  merges three new entry kinds (`clinical_media`, `outcome_entry`,
+  `diagnosis_change`) on top of the existing encounter / exam /
+  note / re-exam / plan stream, plus a fourth kind
+  (`intake_submission`) derived from clinical audit events.
+  - **Backend** under `services/clinical/`:
+    - `media_models.py` + `media_router.py` — list / multipart
+      upload / detail / streamed download / metadata patch /
+      soft-delete. Categories: xray, mri_ct_report, ultrasound,
+      clinical_photo, outside_record, other_pdf. MIME validation
+      via `python-magic` (PNG / JPEG / WebP / HEIC + PDF, 25 MB
+      cap). Objects persisted through the pre-existing
+      `core.object_storage`; binary never inlined.
+    - `outcomes_models.py` + `outcomes_router.py` — list / record
+      outcome + `GET /outcomes/trends` grouping by
+      `(measure_type, label)`, chronological series for inline
+      charting.
+    - `notes_router.py` care-timeline endpoint extended to aggregate
+      `clinical_media` (excluding soft-deleted), `outcome_entry`
+      (excluding `source=reexam` to avoid duplicating the re-exam
+      row), `diagnosis_change` (from `clinical_audit_events` where
+      `event_type` in `diagnosis.created/updated/resolved/activated`),
+      and `intake_submission` (from
+      `clinical_history.intake_submitted` events).
+    - `reexams_router.py` on-sign hook now emits one
+      `clinical_outcome_entries` row per OutcomeUpdate with
+      `source=reexam` and `reexam_id` linkage — the trends
+      endpoint picks them up automatically.
+  - **Frontend** under `pages/clinical/`:
+    - `MediaCard.jsx` — filter chips, 4-col thumbnail grid, upload
+      dialog (category / source / body region / study date /
+      findings), detail dialog with inline image / PDF preview,
+      download link, soft-delete button. Re-auth-aware on 401.
+    - `OutcomesCard.jsx` — snapshot grid (per-measure chip +
+      delta-vs-prior badge) and trend mode (compact inline SVG line
+      chart per measure, no charting library).
+    - `CareTimelineCard.jsx` — extended `KIND_META` and
+      `STATUS_TONE` tables; renders new kinds with proper icons,
+      status tones, and optional deep-links.
+    - `TreatmentPlanEditor.jsx` — new read-only "Latest outcomes"
+      section right after baselines; pulls from `/outcomes/trends`;
+      never mutates data.
+    - `ClinicalTab.jsx` — mounts `MediaCard` and `OutcomesCard`;
+      the Phase-2 Imaging / Outcomes placeholders are removed
+      (only Billing Readiness placeholder remains).
+  - **Testing**: backend `pytest`
+    (`backend/tests/test_clinical_phase7.py`) covers the full
+    media + outcomes + timeline merge flow including re-exam
+    auto-emission. Frontend validated via `testing_agent_v3_fork`
+    (iteration 37) for static wiring + main-agent self-test in the
+    live preview (admin login → media upload → outcomes record
+    (7 then 4) → trend SVG → care timeline merge) with all four
+    new `data-testid` scopes verified.
+  - **Guardrails**: reused existing `core.object_storage` (no new
+    third-party dependency); auto-emitted standalone outcomes on
+    re-exam sign; inline SVG charts (no chart library); treatment
+    plan "Latest outcomes" is read-only and lightweight.
+  - **Ops note**: `python-magic` requires `libmagic1` at the
+    system level; confirmed installed in the container. Add to the
+    base image / Dockerfile for new builds.
+
 - **Clinical module — Phase 6 (2026-02-22).** Treatment Plans +
   Re-Exams workflow. Chart-level plan of care (goals, frequency,
   duration, baselines, discharge criteria) plus a structured
