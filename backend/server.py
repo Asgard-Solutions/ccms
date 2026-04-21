@@ -118,6 +118,14 @@ api_router.include_router(appointment_types_router)
 api_router.include_router(billing_router)
 api_router.include_router(metrics_router)  # GET /api/metrics
 
+# Non-production debug endpoints (rate-limit reset for integration tests).
+# Router itself returns 404 when APP_ENV=production, but we also avoid
+# advertising the route entirely in that mode.
+if (os.environ.get("APP_ENV") or "dev").strip().lower() != "production":
+    from core.debug_router import router as debug_router  # noqa: E402
+
+    api_router.include_router(debug_router)
+
 app.include_router(api_router)
 
 # Sanitised 500 responses + structured error logging.

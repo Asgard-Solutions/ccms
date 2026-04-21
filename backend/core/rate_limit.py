@@ -18,6 +18,43 @@ def local_blocks() -> int:
     return _local_blocks
 
 
+def reset_local_state() -> int:
+    """Wipe the in-process buckets and block counter.
+
+    Returned integer is the number of buckets cleared — used by the
+    dev/test reset endpoint for observability. This helper is only
+    invoked by a non-production `/api/_debug/rate-limit/reset` route
+    and by the pytest conftest; it never runs in production flows."""
+    global _local_blocks
+    cleared = len(_local_buckets)
+    _local_buckets.clear()
+    _local_blocks = 0
+    return cleared
+
+
+async def reset_redis_state() -> int:
+    """Best-effort purge of `rl:` and `rlfail:` keys in Redis.
+
+    Only used by the dev/test reset endpoint so the per-IP login /
+    change-password / PIN failure counters do not leak between test
+    runs. Returns the number of keys deleted (0 if Redis is down)."""
+    client = get_redis()
+    if client is None:
+        return 0
+
+    async def _scan_and_del():
+        deleted = 0
+        async for key in client.scan_iter(match="rl:*", count=500):
+            await client.delete(key)
+            deleted += 1
+        async for key in client.scan_iter(match="rlfail:*", count=500):
+            await client.delete(key)
+            deleted += 1
+        return deleted
+
+    return await safe_call(_scan_and_del, default=0) or 0
+
+
 async def is_allowed(key: str, *, limit: int, window_seconds: int) -> bool:
     bucket = int(time.time() // window_seconds)
     redis_key = f"rl:{key}:{window_seconds}:{bucket}"
