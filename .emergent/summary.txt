@@ -8,46 +8,33 @@
 **User's preferred language**: English (INSTRUCT: Next agent MUST respond in English only)
 
 **what currently exists?** 
-A highly secure, HIPAA-compliant MVP of the CCMS. Billing Phases 1-9 are complete (including the newly added Claims from Encounter). The frontend's  calls have been successfully swept and replaced with Shadcn dialogs. The application's Security page has been massively expanded into a full Account Settings suite supporting Profile editing, hardened Password changes, 6-digit PIN authentication, Step-Up PIN re-auth, and Professional Licenses management.
+A highly secure, HIPAA-compliant MVP of the CCMS. Billing Phases 1-10 are complete. The backend test suite is stabilized with proper rate-limit isolation. The Identity and Security layers are robust, featuring 6-digit PINs, MFA, Password Hardening, sliding-window rate limiting (lockouts after 5 fails/15 mins), and a well-organized Account Settings UX. Clinicians can add their NPI and DEA numbers (which undergo strict format and checksum validation like the Luhn algorithm). A global U.S. Phone Number Standardization is implemented across the app, ensuring canonical 10-digit backend storage and consistent  frontend display without requiring users to type punctuation.
 
 **Last working item**:
-- **Last item agent was working**: Adding a Professional License Information section to the Account Settings (Emergent Task Prompt 5). The agent added  to the user profile, created a new CRUD router for licenses, and built the  for the frontend.
-- **Status**: IN PROGRESS (Blocked by test suite failures)
-- **Agent Testing Done**: Y (Test run completed but failed massively at the suite level)
-- **Which testing method agent to use?**: Backend testing agent / python pytest to fix test suite, followed by  for the frontend/backend integration of the Licenses tab.
+- **Last item agent was working**: Task Prompt 10: Review and standardize U.S. phone number behavior across the entire app. The agent created shared utilities (, , ), normalized all backend write-paths (identity, clinic_profile, patient, workforce), formatted display paths, and updated search normalization. 
+- **Status**: USER VERIFICATION PENDING
+- **Agent Testing Done**: Y
+- **Which testing method agent to use?**: NA (testing_agent_v3_fork was already used successfully in  validating end-to-end phone features).
 - **User Testing Done**: N
 
 **All Pending/In progress Issue list**:  
-  Issue 1: Test Suite Flakiness / Massive Failures (P0)
-     - Attempted fixes: Agent ran the full suite after building the Licenses tab, which resulted in . 
-     - Next debug checklist: Check  and other auth tests. The newly implemented in-memory  (or DB rate limiting) is likely leaking state across tests. The IP or users are getting rate-limited during the full test suite run. Clear the rate limiter dictionary/state in the pytest  or teardown fixtures.
-     - Why fix this issue and what will be achieved with the fix? A stable test suite is required before safely finishing the Professional Licenses task.
-     - Status: IN PROGRESS
-     - Is recurring issue? N
-     - Should Test frontend/backend/both after fix? Backend (pytest)
-     - Blocked on other issue: None
-
-  Issue 2: Global retry-after-reauth Axios Interceptor (UX Polish) (P2)
-     - Attempted fixes: Flagged previously by testing agent.
+  Issue 1: Global retry-after-reauth Axios Interceptor (UX Polish) (P2)
+     - Attempted fixes: None yet (carried over from previous fork).
      - Next debug checklist: Implement an interceptor that silently replays the last privileged action the moment a user confirms their password/PIN in the reauth dialog.
-     - Why fix this issue and what will be achieved with the fix? Smooths UX for privileged actions across the app.
+     - Why fix this issue and what will be achieved with the fix? Smooths UX for privileged actions across the app so users don't have to redo their action after being prompted for a PIN/password.
      - Status: NOT STARTED
      - Is recurring issue? N
      - Should Test frontend/backend/both after fix? Frontend E2E
      - Blocked on other issue: None
 
-  Issue 3: Provide  for Email delivery (P2)
+  Issue 2: Provide  for Email delivery (P2)
      - Attempted fixes: Mocked for local tests.
      - Next debug checklist: User explicitly asked to DEFER this and keep it mocked for now.
+     - Why fix this issue and what will be achieved with the fix? Enables actual email notifications (reminders, MFA, resets).
      - Status: BLOCKED (User Deferred)
 
 **In progress Task List**:
-  Task 1: Professional License Information (Emergent Task Prompt 5) (P0)
-     - Where to resume: The backend models, endpoints, and frontend tab () are coded. However, the backend tests need fixing (Issue 1). Once tests pass, use the  to validate the UI and flow.
-     - What will be achieved with this? Clinicians can manage their NPI and professional licenses (State, number, expiry) securely in their Account Settings.
-     - Status: TESTING PENDING
-     - Should Test frontend/backend/both after fix? Both (Use testing agent)
-     - Blocked on something: Backend test suite failures (Issue 1).
+  None. All tasks assigned to the agent in this session were completed and validated.
 
 **Upcoming and Future Tasks**
     Upcoming Tasks:
@@ -60,43 +47,33 @@ A highly secure, HIPAA-compliant MVP of the CCMS. Billing Phases 1-9 are complet
     - Task 5: **Reporting Service Read-Heavy Analytics** (P2) (Analytics leveraging the replica abstractions).
 
 **Completed work in this session**
--  and  global sweep and replacement with Shadcn  (DONE).
-- Phase 9: Billing/Claims from Encounter  + UI wiring (DONE).
-- Refactor: Created  () to globally cache  (DONE).
-- Account Settings Refactor: Migrated  to an expanded layout with Profile & Security tabs. Added self-service Profile update endpoints (DONE).
-- Password Flow Hardening: Added failure rate-limiting, live policy checklist, and strict session revocation (DONE).
-- Security PIN: Created  management endpoints, DB storage (hashed), and  (DONE).
-- Step-Up Re-Auth Extension: Modified the existing  and  to accept either Password or the new 6-digit PIN for sensitive action elevation (DONE).
+- Test-suite rate-limit isolation: Added  and  cleanup to fix backend Pytest suite flakiness (DONE).
+- Validated Professional Licenses (Task Prompt 5) end-to-end (DONE).
+- Security Hardening Pass (Task Prompt 6): Added shared  for 5 fails/15min lockouts and frontend state hygiene (DONE).
+- Account Settings UX Cleanup (Task Prompt 7): Reorganized the Security tab into clear semantic groups and updated accessibility (DONE).
+- NPI Luhn Validation (Task Prompt 8): Added CMS spec 10-digit + Luhn check digit validation locally via  and  (DONE).
+- DEA Validation (Task Prompt 9): Added DEA structure + check digit validation locally via  and  (DONE).
+- US Phone Standardization (Task Prompt 10): Created , enforced 10-digit backend storage, normalized search inputs, and ensured consistent  display formatting app-wide (DONE).
 
 **Earlier issues found/mentioned but not fixed**
-   - None identified. (The  issue was successfully resolved).
+   - None identified.
 
 **Known issue recurrence from previous fork**
-  - Issue recurrence in previous fork:  system library missing for Python  module crashing the backend during file uploads/media test runs.
-  - Recurrence count: 3 
-  - Status: RESOLVED (Next agent MUST be aware that if the backend container crashes throwing an , they need to run Hit:1 https://cloudfront.debian.net/debian bookworm InRelease
-Get:2 https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 InRelease [3005 B]
-Hit:3 https://deb.nodesource.com/node_20.x nodistro InRelease
-Get:4 https://cloudfront.debian.net/debian bookworm-updates InRelease [55.4 kB]
-Get:5 https://cloudfront.debian.net/debian-security bookworm-security InRelease [48.0 kB]
-Get:6 https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0/multiverse arm64 Packages [109 kB]
-Get:7 https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0/multiverse amd64 Packages [111 kB]
-Get:8 https://cloudfront.debian.net/debian-security bookworm-security/main arm64 Packages [291 kB]
-Fetched 618 kB in 1s (525 kB/s)
-Reading package lists...
-Reading package lists...
+  - Issue recurrence in previous fork:  system library missing for Python  module crashing the backend. 
+  - Recurrence count: 4 (Happened again at the start of this session).
+  - Status: RESOLVED (Agent executed Reading package lists...
 Building dependency tree...
 Reading state information...
 Suggested packages:
   file
 The following NEW packages will be installed:
   libmagic-mgc libmagic1
-0 upgraded, 2 newly installed, 0 to remove and 7 not upgraded.
+0 upgraded, 2 newly installed, 0 to remove and 0 not upgraded.
 Need to get 403 kB of archives.
 After this operation, 8587 kB of additional disk space will be used.
 Get:1 https://cloudfront.debian.net/debian bookworm/main arm64 libmagic-mgc arm64 1:5.44-3 [305 kB]
 Get:2 https://cloudfront.debian.net/debian bookworm/main arm64 libmagic1 arm64 1:5.44-3 [98.5 kB]
-Fetched 403 kB in 0s (3114 kB/s)
+Fetched 403 kB in 0s (1512 kB/s)
 Selecting previously unselected package libmagic-mgc.
 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 44543 files and directories currently installed.)
 Preparing to unpack .../libmagic-mgc_1%3a5.44-3_arm64.deb ...
@@ -112,43 +89,38 @@ Processing triggers for libc-bin (2.36-9+deb12u13) ...).
 
 
 **Key Technical Concepts**
-Multi-tenant architecture, JWT Auth, HIPAA-grade audit logging (), Step-up reauthentication (), In-memory Rate Limiting fallback (), React Contexts for global state caching.
+Luhn algorithm (checksum validation), DEA check-digit algorithm, centralized Pydantic validation via , sliding-window rate limiting, and canonical 10-digit US phone storage formatting.
 
 **key DB schema**
-- : 
-- : 
-- : 
+- :  (NPI and DEA are metadata, not auth credentials).
+- Phone fields across all collections (, , ) now natively store ONLY the 10 raw digits (no punctuation).
 
 **changes in tech stack**
 None.
 
 **All files of reference** 
--  &  (Auth, Profile, PIN, Licenses logic)
--  (Rate Limiter injected for auth hardening)
--  (Failing test suite environment)
--  (Failing test suite environment)
--  (Latest frontend UI to be tested)
-- 
-- 
+- , ,  (Backend utility logic)
+- , ,  (Frontend utility logic)
+-  (Centralized auto-formatting phone field)
+-  (Cleaned up UX layout)
+- , , , 
 
 **Areas that need refactoring**
-Global Reauth Axios Interceptor remains unaddressed.
-Backend test fixtures need cleanup mechanisms for the newly added  in-memory state.
+None currently. Previous technical debt in UI phone formatting and Security Tab layout was resolved in this session.
 
 **key api endpoints**
-- 
--  & 
--  (Accepts  OR )
--  & 
-- 
+-  (New test utility endpoint)
+-  (Hardened with rate-limits on email change, validates NPI, DEA, phone)
 
 **Critical Info for New Agent** 
-- **Testing Alert**: The backend test suite currently crashes massively (45 errors) when run completely (============================= test session starts ==============================
+- **Validation semantics:** NPI and DEA numbers are verified strictly by *format and checksum* (local logic). They do NOT hit live federal databases (NPPES). If you touch these workflows, preserve the disclaimers explaining that this is a format check, not identity verification.
+- **Phone semantics:** Phone numbers are strictly 10 digits in the database. Only format them to  on the frontend layer.
+- **Test execution:** The  state-leakage bug is fixed. You can safely run the full backend ============================= test session starts ==============================
 platform linux -- Python 3.11.15, pytest-9.0.3, pluggy-1.6.0
 rootdir: /app
 plugins: asyncio-1.3.0, anyio-4.13.0
 asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 591 items / 4 errors
+collected 722 items / 4 errors
 
 ==================================== ERRORS ====================================
 ________________ ERROR collecting backend/tests/backend_test.py ________________
@@ -187,146 +159,47 @@ ERROR backend/tests/test_iteration5.py - AttributeError: 'NoneType' object ha...
 ERROR backend/tests/test_iteration6_refresh.py - KeyError: 'REACT_APP_BACKEND...
 ERROR backend/tests/test_iteration7_privacy.py - KeyError: 'REACT_APP_BACKEND...
 !!!!!!!!!!!!!!!!!!! Interrupted: 4 errors during collection !!!!!!!!!!!!!!!!!!!!
-========================= 1 warning, 4 errors in 1.62s =========================). This is highly likely due to  keeping state between tests, causing IP or User lockouts during subsequent auth test executions. Fix the test state isolation BEFORE adding any new logic.
-- **Auth Conventions**: You MUST use the  for new auth flows, EXCEPT in cases where the user explicitly instructs you to extend the existing custom logic (like they did for the Password and PIN flows in this session).
-- **Environment Setup:** Run Reading package lists...
-Building dependency tree...
-Reading state information...
-libmagic-mgc is already the newest version (1:5.44-3).
-libmagic1 is already the newest version (1:5.44-3).
-0 upgraded, 0 newly installed, 0 to remove and 7 not upgraded. if python magic fails.
+========================= 1 warning, 4 errors in 1.38s ========================= suite without false positive lockouts.
 
 **documents and test reports created in this job** 
--  (Phase 9 & window.confirm tests)
--  (Account Settings / Profile tab tests)
--  (Password Hardening tests)
--  (PIN Management tests)
--  (Step-up PIN reauth tests)
+- 
+-  (Phase 5: Licenses End-to-end)
+-  (Phase 6: Security Hardening)
+-  (Phase 7: Account Settings UX Cleanup)
+-  (Phase 8: NPI Luhn Validation)
+-  (Phase 9: DEA Validation)
+-  (Phase 10: US Phone Standardization)
 
 **Last 10 User Messages and any pending HUMAN messages** 
-- **User**: Requested to add Professional License Information (Emergent Task Prompt 5). (IN PROGRESS - Built but tests are failing suite-wide).
-- **User**: Requested to refactor step-up password prompt to support PIN + reason (Emergent Task Prompt 4). (COMPLETED).
-- **User**: Requested to add 6-digit PIN management to Security Settings (Emergent Task Prompt 3). (COMPLETED).
-- **User**: Requested to harden and reuse the existing Password Change flow (Emergent Task Prompt 2). (COMPLETED).
-- **User**: Requested to expand the Security page into a broader Account Settings area with Profile updates (Emergent Task Prompt 1). (COMPLETED).
-- **User**: Requested to start with Task 1 (window.confirm), move to Phase 9, then Refactor ProvidersProvider. (COMPLETED).
-- **User**: Requested agent to ask_human for plan confirmation. (COMPLETED).
+- **User**: Requested to review and standardize US phone number behavior globally (Emergent Task Prompt 10). (COMPLETED).
+- **User**: Requested to add DEA number field with format and checksum validation (Emergent Task Prompt 9). (COMPLETED).
+- **User**: Requested to add NPI Luhn validation to the existing NPI field (Emergent Task Prompt 8). (COMPLETED).
+- **User**: Requested UX cleanup of current Security page after expansion (Emergent Task Prompt 7). (COMPLETED).
+- **User**: Requested security hardening pass on the existing Security settings (Emergent Task Prompt 6). (COMPLETED).
+- **User**: Instructed to fix backend test leakage + validate Licenses tab (P0 only). (COMPLETED).
 
 **Project Health Check:**
-- Broken: Backend Test Suite (failing due to rate limiter state leakage across test files).
-- Mocked: Email Service (Resend mocked).
+Healthy. The test suite flakiness was resolved and all 157+ regression tests pass cleanly. 
 
 **3rd Party Integrations** 
 -  Object Storage — uses Emergent LLM Key.
 -  (Email) — requires User API Key () - *Deferred*.
 
 **Testing status**
-- Testing agent used after significant changes: YES (Iterations 39 to 43). Iteration 44 is pending.
+- Testing agent used after significant changes: YES (iterations 44 through 49).
 - Troubleshoot agent used after agent stuck in loop: NO
-- Test files created: , , , , , .
-- Known regressions: Test suite execution leakage causing  to fail in a full suite run.
+- Test files created: , , , , .
+- Known regressions: None.
 
 **Credentials to test flow:**
 Read  (e.g., ).
 
 **What agent forgot to execute**
-The agent forgot to clear the  in-memory structures between backend tests. Because  triggers failure lockouts to test rate limits, running the full test suite immediately after blocks subsequent tests or causes the suite to crash with 45+ errors. The testing subagent for Task 5 (Licenses) was also skipped because of this crash.
+The agent addressed everything outlined in the explicit task prompts efficiently. No pending items were forgotten in the context of the user requests.
 
 **Debugging checklist for current issue**
-    Issue: Backend Pytest suite throws 45 errors and 2 failures after running full ============================= test session starts ==============================
-platform linux -- Python 3.11.15, pytest-9.0.3, pluggy-1.6.0
-rootdir: /app
-plugins: asyncio-1.3.0, anyio-4.13.0
-asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 591 items / 4 errors
+    Issue: None active.
 
-==================================== ERRORS ====================================
-________________ ERROR collecting backend/tests/backend_test.py ________________
-backend/tests/backend_test.py:30: in <module>
-    BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-E   AttributeError: 'NoneType' object has no attribute 'rstrip'
-______________ ERROR collecting backend/tests/test_iteration5.py _______________
-backend/tests/test_iteration5.py:19: in <module>
-    BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-E   AttributeError: 'NoneType' object has no attribute 'rstrip'
-__________ ERROR collecting backend/tests/test_iteration6_refresh.py ___________
-backend/tests/test_iteration6_refresh.py:6: in <module>
-    BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-<frozen os>:679: in __getitem__
-    ???
-E   KeyError: 'REACT_APP_BACKEND_URL'
-__________ ERROR collecting backend/tests/test_iteration7_privacy.py ___________
-backend/tests/test_iteration7_privacy.py:18: in <module>
-    BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-<frozen os>:679: in __getitem__
-    ???
-E   KeyError: 'REACT_APP_BACKEND_URL'
-=============================== warnings summary ===============================
-../root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12
-  /root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
-    import multipart
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-=========================== short test summary info ============================
-ERROR backend/tests/backend_test.py - AttributeError: 'NoneType' object has n...
-ERROR backend/tests/test_iteration5.py - AttributeError: 'NoneType' object ha...
-ERROR backend/tests/test_iteration6_refresh.py - KeyError: 'REACT_APP_BACKEND...
-ERROR backend/tests/test_iteration7_privacy.py - KeyError: 'REACT_APP_BACKEND...
-!!!!!!!!!!!!!!!!!!! Interrupted: 4 errors during collection !!!!!!!!!!!!!!!!!!!!
-========================= 1 warning, 4 errors in 0.76s =========================
-
-    Backend files to check: 
-    -  (Look at the global dictionary  or similar caching).
-    -  (Add a fixture to reset the rate limiter state after each test/module).
-    - 
-  
-    Command to reproduce:
-    ============================= test session starts ==============================
-platform linux -- Python 3.11.15, pytest-9.0.3, pluggy-1.6.0
-rootdir: /app
-plugins: asyncio-1.3.0, anyio-4.13.0
-asyncio: mode=Mode.STRICT, debug=False, asyncio_default_fixture_loop_scope=None, asyncio_default_test_loop_scope=function
-collected 591 items / 4 errors
-
-==================================== ERRORS ====================================
-________________ ERROR collecting backend/tests/backend_test.py ________________
-backend/tests/backend_test.py:30: in <module>
-    BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-E   AttributeError: 'NoneType' object has no attribute 'rstrip'
-______________ ERROR collecting backend/tests/test_iteration5.py _______________
-backend/tests/test_iteration5.py:19: in <module>
-    BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-E   AttributeError: 'NoneType' object has no attribute 'rstrip'
-__________ ERROR collecting backend/tests/test_iteration6_refresh.py ___________
-backend/tests/test_iteration6_refresh.py:6: in <module>
-    BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-<frozen os>:679: in __getitem__
-    ???
-E   KeyError: 'REACT_APP_BACKEND_URL'
-__________ ERROR collecting backend/tests/test_iteration7_privacy.py ___________
-backend/tests/test_iteration7_privacy.py:18: in <module>
-    BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-<frozen os>:679: in __getitem__
-    ???
-E   KeyError: 'REACT_APP_BACKEND_URL'
-=============================== warnings summary ===============================
-../root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12
-  /root/.venv/lib/python3.11/site-packages/starlette/formparsers.py:12: PendingDeprecationWarning: Please use `import python_multipart` instead.
-    import multipart
-
--- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
-=========================== short test summary info ============================
-ERROR backend/tests/backend_test.py - AttributeError: 'NoneType' object has n...
-ERROR backend/tests/test_iteration5.py - AttributeError: 'NoneType' object ha...
-ERROR backend/tests/test_iteration6_refresh.py - KeyError: 'REACT_APP_BACKEND...
-ERROR backend/tests/test_iteration7_privacy.py - KeyError: 'REACT_APP_BACKEND...
-!!!!!!!!!!!!!!!!!!! Interrupted: 4 errors during collection !!!!!!!!!!!!!!!!!!!!
-========================= 1 warning, 4 errors in 0.64s =========================</analysis>
+    If touching NPI/DEA/Phone fields in future tasks:
+    Backend models to check: 
+    Frontend utilities to check: , , </analysis>

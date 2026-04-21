@@ -48,6 +48,8 @@ from core.tenancy import TenantContext, get_tenant_context, tenant_db
 from core.tenant_jobs import enqueue, tenant_job
 from services.authz.policy import require_permission
 
+import hashlib as _hashlib
+
 logger = logging.getLogger("ccms.exports")
 
 EXPORT_DIR = Path(os.environ.get("EXPORT_DIR", "/app/data/exports"))
@@ -230,16 +232,51 @@ async def get_export(
     if row["status"] == "ready":
         token = _sign_download_token(export_id, ctx.tenant_id, user["id"])
 
+    # One-time password surfacing: if this export used zip+password
+    # protection, reveal the password exactly once (when the caller who
+    # owns the export polls the status and it has just flipped to ready).
+    # Subsequent polls return `password_revealed=False` and a null value.
+    one_time_password: str | None = None
+    if (
+        row.get("password_protected")
+        and row["status"] == "ready"
+        and not row.get("password_revealed")
+        and row.get("actor_user_id") == user["id"]
+        and row.get("password_plain") is not None
+    ):
+        one_time_password = row.get("password_plain")
+        await db.exports.update_one(
+            {"id": export_id},
+            {"$set": {"password_revealed": True,
+                      "password_revealed_at": datetime.now(timezone.utc).isoformat()},
+             "$unset": {"password_plain": ""}},
+        )
+        await log_audit(
+            action="export.password_revealed",
+            actor_id=user["id"],
+            actor_email=user.get("email"),
+            actor_role=user.get("role"),
+            tenant_id=ctx.tenant_id,
+            entity_type="export", entity_id=export_id,
+            metadata={"type": row.get("type"), "report_name": row.get("report_name")},
+        )
+
     return {
         "id": row["id"],
         "status": row["status"],
         "type": row["type"],
+        "report_name": row.get("report_name"),
+        "format": row.get("format"),
         "created_at": row["created_at"],
         "expires_at": row["expires_at"],
         "size_bytes": row.get("size_bytes"),
         "rows": row.get("rows"),
         "error": row.get("error"),
         "download_token": token,
+        "password_protected": bool(row.get("password_protected")),
+        "password_revealed": bool(row.get("password_revealed")),
+        "one_time_password": one_time_password,
+        "filename": row.get("filename"),
     }
 
 
@@ -292,7 +329,9 @@ async def download_export(
     await audit_success(
         ctx.user, "export.downloaded", request,
         entity_type="export", entity_id=export_id,
-        metadata={"type": row["type"], "size_bytes": row.get("size_bytes")},
+        metadata={"type": row["type"], "size_bytes": row.get("size_bytes"),
+                  "report_name": row.get("report_name"),
+                  "format": row.get("format")},
     )
 
     def _stream():
@@ -303,10 +342,12 @@ async def download_export(
                     break
                 yield chunk
 
+    filename = row.get("filename") or f"{row['type']}-{export_id}.csv"
+    media_type = row.get("mime") or "text/csv"
     return StreamingResponse(
         _stream(),
-        media_type="text/csv",
-        headers={"Content-Disposition": f'attachment; filename="{row["type"]}-{export_id}.csv"'},
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -408,3 +449,150 @@ async def cleanup_endpoint(
 ):
     removed = await cleanup_expired_exports()
     return {"removed": removed}
+
+
+# ---------------------------------------------------------------------------
+# Report exports — reuses the same `exports` row schema, different handler
+# ---------------------------------------------------------------------------
+
+async def create_report_export(
+    ctx: TenantContext,
+    user: dict,
+    *,
+    report_name: str,
+    fmt: str,
+    filters: dict,
+    sort: str | None,
+    sort_dir: str,
+    columns: list[str] | None,
+) -> tuple[str, str | None]:
+    """Persist a pending report-export row and return (export_id, password).
+
+    The password is generated server-side when the report is flagged
+    `contains_phi=True` and is stored in plaintext ONLY until the user's
+    first successful polling response — `get_export` returns it once and
+    then wipes the plaintext copy and flips `password_revealed=True`.
+
+    The hash of the password is always kept for audit integrity.
+    """
+    from services.reports import get_definition
+    from services.reports.export_writer import generate_password
+
+    definition = get_definition(report_name)
+    if not definition:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Unknown report {report_name}")
+
+    export_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc)
+    password_plain = generate_password() if definition.contains_phi else None
+    password_hash = (
+        _hashlib.sha256(password_plain.encode()).hexdigest() if password_plain else None
+    )
+
+    db = tenant_db(ctx.tenant_id)
+    await db.exports.insert_one({
+        "id": export_id,
+        "tenant_id": ctx.tenant_id,
+        "type": "report",
+        "report_name": report_name,
+        "format": fmt,
+        "filters": filters,
+        "sort": sort, "sort_dir": sort_dir,
+        "columns": columns,
+        "actor_user_id": user["id"],
+        "actor_role": user.get("role"),
+        "status": "pending",
+        "created_at": now.isoformat(),
+        "expires_at": (now + timedelta(hours=EXPORT_TTL_HOURS)).isoformat(),
+        "path": None,  # set by worker
+        "size_bytes": None,
+        "rows": None,
+        "password_protected": bool(password_plain),
+        "password_hash": password_hash,
+        "password_plain": password_plain,  # wiped on first reveal
+        "password_revealed": False,
+        "filename": None,
+        "mime": None,
+    })
+    return export_id, password_plain
+
+
+@tenant_job("export.generate_report")
+async def _generate_report(ctx: TenantContext, payload: dict, meta: dict) -> None:
+    """Worker for the report export pipeline.
+
+    Flow:
+      1. Load the pending export row.
+      2. Resolve the report definition + columns.
+      3. Execute the runner with `page_size=50_000` (hard cap).
+      4. Hand rows + columns off to `export_writer.build_export`.
+      5. Flip status→ready with size + rows + path + filename + mime.
+    """
+    from services.reports import get_definition, resolve_columns, resolve_sort
+    from services.reports.definitions import QueryContext
+    from services.reports.export_writer import build_export
+
+    export_id = payload["export_id"]
+    db = tenant_db(ctx.tenant_id)
+    row = await db.exports.find_one(
+        {"id": export_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    if not row:
+        raise RuntimeError("export row disappeared")
+
+    definition = get_definition(row["report_name"])
+    if not definition:
+        await db.exports.update_one(
+            {"id": export_id},
+            {"$set": {"status": "failed",
+                      "error": f"Unknown report {row['report_name']}"}},
+        )
+        return
+
+    qc = QueryContext(
+        tenant=ctx,
+        filters=row.get("filters") or {},
+        sort=resolve_sort(definition, row.get("sort")),
+        sort_dir=row.get("sort_dir") or definition.default_sort_dir,
+        page=1, page_size=50_000,  # hard ceiling for export
+        selected_columns=row.get("columns"),
+    )
+    result = await definition.runner(qc)
+    cols = resolve_columns(definition, row.get("columns"))
+
+    artifact = build_export(
+        dest_dir=_tenant_export_dir(ctx.tenant_id),
+        export_id=export_id,
+        title=definition.title,
+        columns=cols,
+        rows=result.rows,
+        fmt=row["format"],
+        password=row.get("password_plain"),  # None when not PHI
+    )
+
+    await db.exports.update_one(
+        {"id": export_id},
+        {"$set": {
+            "status": "ready",
+            "rows": len(result.rows),
+            "size_bytes": artifact.size_bytes,
+            "path": str(artifact.path),
+            "mime": artifact.mime,
+            "filename": artifact.filename,
+            "ready_at": datetime.now(timezone.utc).isoformat(),
+        }},
+    )
+    await log_audit(
+        action="report.export_generated",
+        actor_id=meta.get("actor_user_id"),
+        tenant_id=ctx.tenant_id,
+        entity_type="report_export",
+        entity_id=export_id,
+        metadata={
+            "report": row["report_name"],
+            "format": row["format"],
+            "password_protected": bool(row.get("password_protected")),
+            "rows": len(result.rows),
+            "size_bytes": artifact.size_bytes,
+        },
+    )

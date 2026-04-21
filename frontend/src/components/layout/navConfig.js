@@ -1,5 +1,6 @@
 import {
   BellRing,
+  BookOpen,
   Building2,
   CalendarDays,
   ClipboardCheck,
@@ -118,6 +119,20 @@ export const NAV_GROUPS = [
         testId: "nav-835-imports",
         icon: Upload,
         roles: ["admin", "staff"],
+      },
+    ],
+  },
+  {
+    id: "insights",
+    label: "Insights",
+    collapsible: false,
+    items: [
+      {
+        to: "/reports",
+        label: "Reports",
+        testId: "nav-reports",
+        icon: BookOpen,
+        roles: ["admin", "doctor", "staff"],
       },
     ],
   },
