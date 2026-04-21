@@ -48,6 +48,21 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### Step-up re-auth supports PIN (2026-04-21)
+- Single refactored `/auth/reauth` endpoint accepts `{password}` OR
+  `{pin}` + optional `{reason}`. Returns the same 5-min reauth_token
+  cookie as before — every downstream `require_reauth()` gate works
+  unchanged.
+- PIN path shares the 5-wrong-attempts → 15-min lockout with
+  `/auth/me/pin/verify` so brute-force protection can't be bypassed.
+- One shared `ReauthDialog` — single source of truth for step-up UX.
+  Users with a PIN see the PIN form by default with a "Use password
+  instead" toggle. Locked-out PIN auto-falls-back to password.
+- `ReauthProvider.requestReauth({requireReason, defaultReason, …})`
+  is the sole reusable entry point; optional reason is copied into
+  audit metadata (`auth.reauth.metadata.reason`).
+- 14 tests in `test_reauth_pin_step_up.py`.
+
 ### Security PIN (2026-04-21)
 - New 6-digit PIN section on the existing Security page, sitting
   between the MFA card and Recent sign-ins. Zero displacement of

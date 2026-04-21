@@ -11,6 +11,34 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+### Changed
+- **Step-up re-auth supports PIN (2026-04-21).** Refactored the single
+  existing step-up flow (no parallel path created): `/auth/reauth`
+  now accepts either `{password}` (legacy — preserved) OR
+  `{pin:"123456"}` (new) plus an optional `{reason}` audit note, and
+  returns `{reauth_token, factor}`. The 5-minute `reauth_token` cookie
+  contract is unchanged — every downstream `require_reauth()` gate
+  works without modification. PIN path shares lockout state with
+  `/auth/me/pin/verify` (5 wrong attempts → 15-min lock), so an
+  attacker cannot bypass the PIN brute-force protection by hammering
+  reauth.
+  - Shared `ReauthDialog` component now has a single implementation:
+    defaults to PIN mode for users with `pin_configured=true`,
+    password otherwise, with a one-click toggle. Digit-only masked
+    input, 6-char cap. Reason field surfaces only when the caller
+    passes `requireReason:true` or a `defaultReason`.
+  - `ReauthProvider.requestReauth({title?, description?, requireReason?, defaultReason?})`
+    is the single reusable entry point — no bespoke password modals
+    anywhere in the app.
+  - If a user's PIN gets locked mid-session, the dialog auto-falls
+    back to password mode so the flow is never blocked.
+  - `ReauthRequest` model enforces "exactly one of password/pin" via a
+    Pydantic `@model_validator`. `DELETE /auth/me/pin` explicitly
+    rejects pin-only payloads (400) — removing a PIN still requires
+    the password as proof-of-presence.
+  - 14 pytest cases in `test_reauth_pin_step_up.py`. 68/68 combined
+    green across all identity/account suites.
+
 ### Added
 - **Security PIN (2026-04-21).** New self-service 6-digit PIN section
   added to the existing Security page (Account Settings → Security
