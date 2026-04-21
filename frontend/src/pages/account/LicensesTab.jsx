@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { api, formatApiError } from "../../api/client";
 import { useAuth } from "../../contexts/AuthContext";
+import { describeNpiError, NPI_CHECKSUM_DISCLAIMER } from "../../utils/npi";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -305,12 +306,15 @@ function NpiCard() {
   }, [user]);
 
   const digits = value.replace(/\D/g, "");
-  const valid = digits === "" || digits.length === 10;
+  // Empty string = "clear the field" → always valid. Otherwise require
+  // the full 10-digit Luhn-valid form before Save enables.
+  const errorMessage = digits === "" ? null : describeNpiError(digits);
+  const valid = errorMessage === null;
   const dirty = (user?.npi_number || "") !== digits;
 
   const save = async () => {
     if (!valid) {
-      toast.error("NPI must be exactly 10 digits.");
+      toast.error(errorMessage || "NPI is invalid.");
       return;
     }
     setSaving(true);
@@ -331,7 +335,7 @@ function NpiCard() {
       className="rounded-sm border border-border bg-card p-6"
     >
       <div className="flex items-center gap-2">
-        <IdCard className="h-5 w-5 text-primary" />
+        <IdCard className="h-5 w-5 text-primary" aria-hidden="true" />
         <h2 className="font-display text-2xl font-medium">NPI number</h2>
       </div>
       <p className="mt-2 text-sm text-muted-foreground">
@@ -340,17 +344,26 @@ function NpiCard() {
       </p>
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <div className="flex-1 space-y-1 min-w-[220px]">
-          <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+          <Label
+            htmlFor="npi-input-field"
+            className="text-xs uppercase tracking-wider text-muted-foreground"
+          >
             NPI
           </Label>
           <Input
+            id="npi-input-field"
             value={digits}
             onChange={(e) =>
               setValue(e.target.value.replace(/\D/g, "").slice(0, 10))
             }
             placeholder="1234567890"
             data-testid="npi-input"
-            className="rounded-sm font-mono tracking-widest"
+            inputMode="numeric"
+            pattern="\d{10}"
+            maxLength={10}
+            aria-invalid={!valid}
+            aria-describedby="npi-help"
+            className="rounded-sm font-mono tracking-widest focus-visible:ring-2 focus-visible:ring-primary"
           />
         </div>
         <Button
@@ -362,11 +375,23 @@ function NpiCard() {
           {saving ? "Saving…" : "Save NPI"}
         </Button>
       </div>
-      {!valid && digits.length > 0 && (
-        <p className="mt-1 text-[11px] text-destructive">
-          NPI must be exactly 10 digits.
+      {!valid && (
+        <p
+          data-testid="npi-error"
+          role="alert"
+          aria-live="polite"
+          className="mt-1 text-[11px] text-destructive"
+        >
+          {errorMessage}
         </p>
       )}
+      <p
+        id="npi-help"
+        data-testid="npi-disclaimer"
+        className="mt-2 text-[11px] text-muted-foreground"
+      >
+        {NPI_CHECKSUM_DISCLAIMER}
+      </p>
     </div>
   );
 }

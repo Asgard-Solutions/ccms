@@ -234,11 +234,17 @@ class ProfileUpdate(BaseModel):
 
     @model_validator(mode="after")
     def _validate_npi(self):
-        # NPI is always exactly 10 digits. Empty string is allowed as a
-        # "clear this field" signal (mirrors the other string fields).
+        # NPI must be exactly 10 digits AND pass the CMS/NPI Luhn
+        # checksum (validated as if the implicit 80840 prefix were
+        # present). Empty string is treated as a "clear this field"
+        # signal and passes through unchanged. See `core/npi.py`.
+        from core.npi import NpiValidationError, validate_npi_or_raise
+
         if self.npi_number not in (None, ""):
-            if not self.npi_number.isdigit() or len(self.npi_number) != 10:
-                raise ValueError("NPI must be exactly 10 digits.")
+            try:
+                self.npi_number = validate_npi_or_raise(self.npi_number)
+            except NpiValidationError as exc:
+                raise ValueError(str(exc)) from exc
         return self
 
 

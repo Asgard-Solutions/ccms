@@ -68,10 +68,12 @@ class TestNpiOnProfile:
 
     def test_set_valid_npi(self, doctor):
         s = _login(doctor["email"], doctor["password"])
+        # 1234567893 — canonical CMS-docs example that passes the
+        # Luhn check digit (see core/npi.py).
         r = s.patch(f"{API}/auth/me/profile",
-                    json={"npi_number": "1234567890"}, timeout=10)
+                    json={"npi_number": "1234567893"}, timeout=10)
         assert r.status_code == 200
-        assert r.json()["npi_number"] == "1234567890"
+        assert r.json()["npi_number"] == "1234567893"
 
     def test_reject_non_digit_npi(self, doctor):
         s = _login(doctor["email"], doctor["password"])
@@ -88,7 +90,7 @@ class TestNpiOnProfile:
     def test_empty_string_clears_npi(self, doctor):
         s = _login(doctor["email"], doctor["password"])
         s.patch(f"{API}/auth/me/profile",
-                json={"npi_number": "1234567890"}, timeout=10)
+                json={"npi_number": "1234567893"}, timeout=10)
         r = s.patch(f"{API}/auth/me/profile",
                     json={"npi_number": ""}, timeout=10)
         assert r.status_code == 200
