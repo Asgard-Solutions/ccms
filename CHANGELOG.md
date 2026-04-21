@@ -11,6 +11,26 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+### Added
+- **Versioned intake save wiring + wizard extraction (2026-02-21).**
+  - `PatientWizardDialog` (scope=`intake`) now saves through
+    `PATCH /api/patients/{patient_id}/intake-forms/{form_id}` instead of
+    the legacy flat `patient.clinical_intake` blob. Two new actions
+    appear on step 4 when editing an intake form: `Save draft`
+    (`wizard-save-draft-btn`) and `Save & complete`
+    (`wizard-save-complete-btn`, sets `status: "completed"`).
+  - `IntakeFormsTab` now exposes an `Edit draft`
+    (`intake-form-edit-<id>`) button on every draft row and the parent
+    `PatientDetail` tracks `editingIntakeForm` to seed the wizard with
+    that form's `clinical_intake` + `case_details`.
+  - **Refactor:** `PatientWizardDialog` + its 4 step renderers were
+    moved out of `pages/Patients.jsx` into a dedicated
+    `components/patient-wizard/PatientWizardDialog.jsx`. `Patients.jsx`
+    now owns only the search/recent-patients page. Both
+    `Patients.jsx` and `PatientDetail.jsx` import the wizard from the
+    new path. Pure-logic helpers (`patientWizardLogic`) are unchanged
+    and still covered by the 39-test Node suite.
+
 ### Changed
 - **API-wide PATCH migration (2026-02-20).** Every resource update now
   uses `PATCH` semantics with `exclude_unset=True` — only fields

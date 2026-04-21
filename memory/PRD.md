@@ -1,6 +1,6 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-04-20 (Unified Scheduling module)
+**Last updated:** 2026-02-21 (Versioned intake save wiring + wizard extraction)
 
 ## 0. Design system (binding)
 The Chiro Software design system is authoritative for every UI surface.
@@ -48,6 +48,21 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### Versioned intake save wiring + wizard extraction (2026-02-21)
+- `PatientWizardDialog` (scope=`intake`) now PATCHes the new
+  `/api/patients/{id}/intake-forms/{form_id}` endpoint instead of the
+  legacy flat `patient.clinical_intake` blob. Two explicit actions on
+  step 4: `wizard-save-draft-btn` (keeps draft) and
+  `wizard-save-complete-btn` (flips `status="completed"`, sets
+  `captured_at`). Completed forms are immutable (backend 409).
+- `IntakeFormsTab` exposes a per-row `intake-form-edit-<id>` button on
+  drafts only. Parent tracks `editingIntakeForm` so the wizard is
+  seeded with that form's latest `clinical_intake`/`case_details`.
+- `PatientWizardDialog` + its 4 step renderers extracted from
+  `pages/Patients.jsx` to `components/patient-wizard/PatientWizardDialog.jsx`.
+  `Patients.jsx` now owns only the search page. Both importers updated.
+  39/39 logic tests + 5/5 backend intake_forms tests green.
+
 ### Phase 1 (2026-04-19)
 - Identity, Patient CRUD, Scheduling with conflict detection, mock notifications via in-process event bus
 - Sage + stone medical theme, 7 role-aware pages
