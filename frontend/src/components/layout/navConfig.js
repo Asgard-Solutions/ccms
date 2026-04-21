@@ -264,9 +264,9 @@ export const NAV_GROUPS = [
         roles: ["admin"],
       },
       {
-        to: "/access-review",
-        label: "Access Review",
-        testId: "nav-access-review",
+        to: "/admin/access-history",
+        label: "Access History",
+        testId: "nav-access-history",
         icon: FileBarChart,
         roles: ["admin"],
       },

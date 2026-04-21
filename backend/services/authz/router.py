@@ -27,6 +27,10 @@ from services.authz.permission_catalog import (
     explain_permissions,
     grouped_catalog,
 )
+from services.authz.migration import (
+    apply_legacy_backfill,
+    dry_run_legacy_backfill,
+)
 from services.authz.models import (
     ElevationApprove,
     ElevationOut,
@@ -160,6 +164,9 @@ class RoleWriteModel(BaseModel):
     description: str = Field(default="", max_length=500)
     permission_keys: list[str] = Field(default_factory=list)
     cloned_from: str | None = None  # role_key the user cloned from (for provenance)
+    # Per-permission security policies — {key: {requires_mfa, requires_approval, break_glass_allowed}}.
+    # Only applies to keys also listed in permission_keys. Optional.
+    permission_policies: dict | None = None
 
 
 def _slugify_key(name: str, suffix: str = "") -> str:
@@ -199,7 +206,10 @@ async def _insert_custom_role(
         "updated_at": now,
     }
     await db.roles.insert_one(dict(doc))
-    grants_docs = _grants_from_keys(candidate, payload.permission_keys, now)
+    grants_docs = _grants_from_keys(
+        candidate, payload.permission_keys, now,
+        policies=payload.permission_policies,
+    )
     if grants_docs:
         await db.role_permissions.insert_many(grants_docs)
     await log_audit(
@@ -207,6 +217,7 @@ async def _insert_custom_role(
         actor_id=actor["id"], actor_email=actor["email"],
         actor_role=actor.get("role"), entity_type="role",
         entity_id=candidate, request=request,
+        tenant_id=ctx.tenant_id,
         metadata={
             "name": doc["name"], "tenant_id": ctx.tenant_id,
             "permission_count": len(grants_docs),
@@ -216,28 +227,39 @@ async def _insert_custom_role(
     return doc
 
 
-def _grants_from_keys(role_key: str, keys: list[str], now: str) -> list[dict]:
+def _grants_from_keys(
+    role_key: str,
+    keys: list[str],
+    now: str,
+    policies: dict | None = None,
+) -> list[dict]:
     """Build role_permissions docs for a list of permission keys.
 
     Custom-role defaults:
       scope=all_org, no MFA/approval/break-glass flags. Admins can
-      later tighten via the Advanced Security Policies panel (Phase 4).
+      now optionally tighten per-permission via the `policies` dict,
+      keyed by permission key:
+          { "patient.delete": {"requires_mfa": True},
+            "payment.refund": {"requires_approval": True, "requires_mfa": True},
+            "break_glass.activate": {"break_glass_allowed": True} }
     """
     seen: set[str] = set()
     out: list[dict] = []
     valid_keys = {f"{p['resource']}.{p['action']}" for p in PERMISSIONS}
+    policies = policies or {}
     for k in keys:
         if k in seen or k not in valid_keys:
             continue
         seen.add(k)
+        pol = policies.get(k) or {}
         out.append({
             "id": str(uuid.uuid4()),
             "role_key": role_key,
             "permission_key": k,
             "scope": "all_org",
-            "requires_mfa": False,
-            "requires_approval": False,
-            "break_glass_allowed": False,
+            "requires_mfa": bool(pol.get("requires_mfa", False)),
+            "requires_approval": bool(pol.get("requires_approval", False)),
+            "break_glass_allowed": bool(pol.get("break_glass_allowed", False)),
             "custom": True,
             "created_at": now,
         })
@@ -353,9 +375,15 @@ async def update_custom_role(
                 status.HTTP_400_BAD_REQUEST,
                 "permission_keys must be a non-empty list",
             )
+        policies = payload.get("permission_policies") or {}
+        if not isinstance(policies, dict):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "permission_policies must be an object",
+            )
         # Replace all role_permissions for this role.
         await db.role_permissions.delete_many({"role_key": role_key})
-        docs = _grants_from_keys(role_key, keys, now)
+        docs = _grants_from_keys(role_key, keys, now, policies=policies)
         if docs:
             await db.role_permissions.insert_many(docs)
         # Bump session_epoch for every user with this role so their token
@@ -377,6 +405,7 @@ async def update_custom_role(
         actor_id=actor["id"], actor_email=actor["email"],
         actor_role=actor.get("role"), entity_type="role",
         entity_id=role_key, request=request,
+        tenant_id=ctx.tenant_id,
         metadata={
             "changed_fields": list(set_fields.keys()),
             "permission_keys_changed": "permission_keys" in payload,
@@ -457,6 +486,7 @@ async def delete_custom_role(
         actor_id=actor["id"], actor_email=actor["email"],
         actor_role=actor.get("role"), entity_type="role",
         entity_id=role_key, request=request,
+        tenant_id=ctx.tenant_id,
         metadata={
             "was_assigned_to": user_count, "forced": force,
             "tenant_id": ctx.tenant_id,
@@ -1142,3 +1172,86 @@ async def revoke_override(
                   "override_id": override_id, "sessions_revoked": True},
     )
     return {"message": "Override revoked"}
+
+
+
+# ---------------------------------------------------------------------------
+# Legacy-role migration endpoints (Phase 5)
+#
+# Every boot runs an idempotent backfill in `seed_authz()`. These admin
+# endpoints expose the same logic for on-demand use, with a dry-run
+# preview. Tenant admins see only their tenant's users; platform admins
+# see everything.
+# ---------------------------------------------------------------------------
+
+@router.get("/migration/legacy/dry-run")
+async def migration_legacy_dry_run(
+    actor: dict = Depends(require_permission("role", "read")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Preview what the legacy-role backfill would write. No mutations."""
+    tenant = ctx.tenant_id if (ctx.tenant_id and not ctx.is_platform_admin) else None
+    return await dry_run_legacy_backfill(tenant_id=tenant)
+
+
+@router.post("/migration/legacy/apply")
+async def migration_legacy_apply(
+    request: Request,
+    actor: dict = Depends(require_permission("role", "update")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Run the legacy-role backfill once. Idempotent."""
+    tenant = ctx.tenant_id if (ctx.tenant_id and not ctx.is_platform_admin) else None
+    result = await apply_legacy_backfill(
+        actor_id=actor["id"],
+        actor_email=actor.get("email") or "admin",
+        tenant_id=tenant,
+    )
+    await log_audit(
+        action="authz.migration.legacy_backfill_applied",
+        actor_id=actor["id"], actor_email=actor.get("email"),
+        actor_role=actor.get("role"), entity_type="migration",
+        entity_id="legacy-role-backfill", request=request,
+        tenant_id=ctx.tenant_id,
+        metadata={
+            "tenant_id": tenant,
+            "inserted_count": result["inserted_count"],
+            "total_candidates": result["total_candidates"],
+        },
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Access Change History (Phase 5)
+#
+# Thin wrapper over the general audit log, prefiltered to
+# authz.role.* / authz.override.* / authz.elevation.* /
+# authz.migration.* actions so the admin UI doesn't have to compose
+# filters.
+# ---------------------------------------------------------------------------
+
+@router.get("/access-history")
+async def access_history(
+    limit: int = 100,
+    action_prefix: str | None = None,
+    _admin: dict = Depends(require_permission("audit_log", "read")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Return audit-log rows for access-management actions.
+
+    If `action_prefix` is None, includes every authz.* action.
+    """
+    limit = max(1, min(limit, 500))
+    db = get_db_read()
+    q: dict = {}
+    if action_prefix:
+        q["action"] = {"$regex": f"^{action_prefix}"}
+    else:
+        q["action"] = {"$regex": "^authz\\."}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        q["tenant_id"] = ctx.tenant_id
+    rows = [
+        r async for r in db.audit_logs.find(q, {"_id": 0}).sort("created_at", -1).limit(limit)
+    ]
+    return {"rows": rows, "count": len(rows)}

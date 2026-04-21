@@ -18,6 +18,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field
 
 from core.audit import audit_success
 from core.deps import require_role
@@ -259,3 +260,64 @@ async def reactivate_appointment_type(
         entity_type="appointment_type", entity_id=type_id,
     )
     return _public(fresh)
+
+
+
+# ---------------------------------------------------------------------------
+# Bulk reorder — drag-and-drop support.
+#
+# Payload: { "ordered_ids": ["uuid-1", "uuid-2", ...] }
+# Writes sequential `sort_order` values (0..N-1) in the order given.
+# Unknown / cross-tenant ids are ignored; missing ids keep their
+# current sort_order + get bumped to the end.
+# ---------------------------------------------------------------------------
+
+class ReorderPayload(BaseModel):
+    ordered_ids: list[str] = Field(..., min_length=1, max_length=500)
+
+
+@router.post("/reorder", status_code=200)
+async def reorder_appointment_types(
+    payload: ReorderPayload,
+    request: Request,
+    user: dict = Depends(require_role("admin")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    now = _now()
+
+    rows = [
+        r async for r in db.appointment_types.find(
+            scoped_filter({}, ctx, location_scoped=False),
+            {"_id": 0, "id": 1},
+        )
+    ]
+    valid_ids = {r["id"] for r in rows}
+    if not valid_ids:
+        return {"ok": True, "reordered": 0}
+
+    applied = 0
+    for i, tid in enumerate(payload.ordered_ids):
+        if tid not in valid_ids:
+            continue
+        await db.appointment_types.update_one(
+            {"id": tid, "tenant_id": ctx.tenant_id},
+            {"$set": {"sort_order": i, "updated_at": now, "updated_by": user["id"]}},
+        )
+        applied += 1
+
+    trailing_start = len(payload.ordered_ids)
+    trailing_ids = sorted(valid_ids - set(payload.ordered_ids))
+    for j, tid in enumerate(trailing_ids):
+        await db.appointment_types.update_one(
+            {"id": tid, "tenant_id": ctx.tenant_id},
+            {"$set": {"sort_order": trailing_start + j, "updated_at": now,
+                      "updated_by": user["id"]}},
+        )
+
+    await audit_success(
+        user, "appointment_type.reordered", request,
+        entity_type="appointment_type", entity_id="bulk",
+        metadata={"tenant_id": ctx.tenant_id, "count": applied},
+    )
+    return {"ok": True, "reordered": applied}

@@ -48,6 +48,8 @@ export default function RoleEditorDialog({ mode, role, onClose, onSaved }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [selected, setSelected] = useState(() => new Set());
+  const [policies, setPolicies] = useState({}); // {permKey: {requires_mfa, requires_approval, break_glass_allowed}}
+  const [showSecurityPanel, setShowSecurityPanel] = useState(false);
   const [explanation, setExplanation] = useState(null);
   const [openModules, setOpenModules] = useState(() => new Set(["patients", "scheduling"]));
   const [saving, setSaving] = useState(false);
@@ -69,11 +71,24 @@ export default function RoleEditorDialog({ mode, role, onClose, onSaved }) {
       setName("");
       setDescription("");
       setSelected(new Set());
+      setPolicies({});
       return;
     }
     setName(role?.name || "");
     setDescription(role?.description || "");
     setSelected(new Set((role?.grants || []).map((g) => g.permission_key)));
+    // Seed policies from existing grants (non-defaults only).
+    const seedPolicies = {};
+    for (const g of (role?.grants || [])) {
+      if (g.requires_mfa || g.requires_approval || g.break_glass_allowed) {
+        seedPolicies[g.permission_key] = {
+          requires_mfa: !!g.requires_mfa,
+          requires_approval: !!g.requires_approval,
+          break_glass_allowed: !!g.break_glass_allowed,
+        };
+      }
+    }
+    setPolicies(seedPolicies);
   }, [open, mode, role, isCreate]);
 
   // Debounced preview fetch whenever selection changes.
@@ -146,11 +161,21 @@ export default function RoleEditorDialog({ mode, role, onClose, onSaved }) {
     setSaving(true);
     try {
       const permission_keys = Array.from(selected);
+      // Prune policies whose key isn't selected anymore, and drop
+      // all-false entries so we don't send noise.
+      const permission_policies = {};
+      for (const k of permission_keys) {
+        const p = policies[k];
+        if (p && (p.requires_mfa || p.requires_approval || p.break_glass_allowed)) {
+          permission_policies[k] = p;
+        }
+      }
       if (isCreate) {
         await api.post("/authz/roles", {
           name: name.trim(),
           description: description.trim(),
           permission_keys,
+          permission_policies,
         });
         toast.success("Custom role created");
       } else {
@@ -158,6 +183,7 @@ export default function RoleEditorDialog({ mode, role, onClose, onSaved }) {
           name: name.trim(),
           description: description.trim(),
           permission_keys,
+          permission_policies,
         });
         toast.success("Role updated");
       }
@@ -256,6 +282,71 @@ export default function RoleEditorDialog({ mode, role, onClose, onSaved }) {
                 What this role can do
               </h3>
               <p className="mt-2 text-sm">{explanation.summary}</p>
+            </div>
+          )}
+
+          {!readOnly && selected.size > 0 && (
+            <div data-testid="role-editor-security-panel" className="rounded-sm border border-amber-500/30 bg-amber-500/5 p-4">
+              <button
+                type="button"
+                data-testid="role-editor-toggle-security"
+                onClick={() => setShowSecurityPanel((v) => !v)}
+                className="flex w-full items-center justify-between text-left"
+              >
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="h-4 w-4 text-amber-700 dark:text-amber-300" />
+                  <div>
+                    <p className="text-sm font-medium">Advanced: Security policies</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Require step-up MFA or peer approval for sensitive permissions.
+                    </p>
+                  </div>
+                </div>
+                <span className="text-xs text-muted-foreground">
+                  {Object.keys(policies).filter((k) => selected.has(k)).length} configured
+                </span>
+              </button>
+              {showSecurityPanel && (
+                <div className="mt-3 space-y-1.5 rounded-sm bg-background/60 p-2">
+                  {Array.from(selected).map((key) => {
+                    const pol = policies[key] || {};
+                    const label = catalog?.groups
+                      .flatMap((g) => g.permissions)
+                      .find((p) => p.key === key)?.label || key;
+                    const any = pol.requires_mfa || pol.requires_approval || pol.break_glass_allowed;
+                    return (
+                      <div
+                        key={key}
+                        data-testid={`role-editor-policy-row-${key}`}
+                        className={`flex flex-wrap items-center gap-2 rounded-sm px-2 py-1.5 text-xs
+                          ${any ? "bg-amber-500/10" : ""}`}
+                      >
+                        <span className="flex-1 min-w-[180px] font-medium">{label}</span>
+                        {["requires_mfa", "requires_approval", "break_glass_allowed"].map((flag) => (
+                          <label
+                            key={flag}
+                            data-testid={`role-editor-policy-${key}-${flag}`}
+                            className="flex items-center gap-1.5 rounded-sm border border-border bg-background px-2 py-0.5 cursor-pointer hover:bg-muted/50"
+                          >
+                            <input
+                              type="checkbox"
+                              checked={!!pol[flag]}
+                              onChange={(e) => setPolicies((prev) => ({
+                                ...prev,
+                                [key]: { ...(prev[key] || {}), [flag]: e.target.checked },
+                              }))}
+                              className="h-3 w-3"
+                            />
+                            {flag === "requires_mfa" ? "Step-up MFA"
+                            : flag === "requires_approval" ? "Peer approval"
+                            : "Break-glass only"}
+                          </label>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </div>

@@ -26,6 +26,7 @@ import {
   UserX,
   UserCheck,
   Lock,
+  Wand2,
 } from "lucide-react";
 import { api } from "../../api/client";
 import { useAuth } from "../../contexts/AuthContext";
@@ -51,6 +52,27 @@ export default function AdminUsersPage() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [migration, setMigration] = useState(null);
+
+  async function refreshMigration() {
+    try {
+      const { data } = await api.get("/authz/migration/legacy/dry-run");
+      setMigration(data);
+    } catch {
+      setMigration(null);
+    }
+  }
+
+  async function runMigration() {
+    try {
+      const { data } = await api.post("/authz/migration/legacy/apply");
+      toast.success(`Migration applied — ${data.inserted_count} user(s) assigned`);
+      refreshMigration();
+      refresh();
+    } catch (err) {
+      toast.error(err.response?.data?.detail || "Migration failed");
+    }
+  }
 
   async function refresh() {
     try {
@@ -78,7 +100,7 @@ export default function AdminUsersPage() {
     }
   }
 
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { refresh(); refreshMigration(); }, []);
 
   const roleMap = useMemo(() => {
     const m = new Map();
@@ -165,6 +187,34 @@ export default function AdminUsersPage() {
           </SelectContent>
         </Select>
       </div>
+
+      {migration && migration.count_mapped > 0 && (
+        <div
+          data-testid="admin-users-migration-banner"
+          className="flex flex-wrap items-center gap-3 rounded-sm border border-amber-500/40 bg-amber-500/5 px-4 py-3"
+        >
+          <Wand2 className="h-4 w-4 text-amber-700 dark:text-amber-300" />
+          <div className="flex-1 text-xs">
+            <p className="font-medium">
+              {migration.count_mapped} user{migration.count_mapped === 1 ? "" : "s"} still on the legacy role model.
+            </p>
+            <p className="text-muted-foreground">
+              Run the one-click migration to assign matching baseline roles.
+              {migration.count_ambiguous > 0 && (
+                <> {migration.count_ambiguous} user(s) have an ambiguous legacy role and need manual review.</>
+              )}
+            </p>
+          </div>
+          <Button
+            size="sm"
+            data-testid="admin-users-run-migration"
+            onClick={runMigration}
+            className="h-8 rounded-sm bg-amber-600 px-3 text-xs text-white hover:bg-amber-700"
+          >
+            Apply migration
+          </Button>
+        </div>
+      )}
 
       <section data-testid="admin-users-list" className="rounded-sm border border-border bg-card">
         {users === null ? (
