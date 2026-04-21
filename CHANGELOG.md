@@ -11,6 +11,32 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+### Added
+- **Security PIN (2026-04-21).** New self-service 6-digit PIN section
+  added to the existing Security page (Account Settings → Security
+  tab). Extends the existing password/MFA/sign-ins area without
+  displacing any flow.
+  - **Backend endpoints** (all `/auth/me/pin*`): `GET status`, `POST`
+    (create, password-gated), `PATCH` (change, password + current PIN
+    gated), `POST /reset` (forgot-PIN, reauth-token gated), `DELETE`
+    (remove, password gated), `POST /verify` (verification for future
+    step-up flows with 5-wrong-attempts → 15-min lockout).
+  - **Storage**: `pin_hash` (bcrypt), `pin_created_at`,
+    `pin_updated_at`, `pin_failed_attempts`, `pin_locked_until`. PIN
+    is never surfaced in any response; `/auth/me` gains a boolean
+    `pin_configured` bit only.
+  - **Audit**: `user.pin_created`, `user.pin_changed`, `user.pin_reset`,
+    `user.pin_removed`, `auth.pin_verify` (success + failure with
+    `reason` + locked state).
+  - **Frontend**: `/app/frontend/src/pages/account/PinCard.jsx` with
+    Set / Change / Reset / Remove dialogs. PIN inputs are masked,
+    digit-only (non-numeric keystrokes stripped on change), 6-digit
+    capped, and require a confirm field. Reset dialog relies on the
+    existing global `ReauthProvider` Axios interceptor to
+    transparently handle the reauth-then-retry flow.
+  - 25 pytest cases in `test_pin_security.py` — 54/54 when run with
+    the profile / password-hardening / theme suites.
+
 ### Changed
 - **`/auth/change-password` hardened (2026-04-21).** Preserved the
   existing endpoint contract and UI placement (inside the Security tab

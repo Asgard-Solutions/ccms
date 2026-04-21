@@ -48,6 +48,22 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### Security PIN (2026-04-21)
+- New 6-digit PIN section on the existing Security page, sitting
+  between the MFA card and Recent sign-ins. Zero displacement of
+  existing flows.
+- Endpoints (all under `/auth/me/pin`): `GET status`, `POST` create,
+  `PATCH` change, `POST /reset`, `DELETE` remove, `POST /verify`.
+- Defence-in-depth gates: password proof for create/change/remove;
+  reauth token for reset; `current_pin` verification for change;
+  5-wrong-attempt → 15-min lockout on verify.
+- PIN is never returned; `pin_hash` is bcrypt; `/auth/me` gains a
+  `pin_configured` bit only. Audit rows cover every state change plus
+  verify success/failure.
+- Frontend `PinCard.jsx` with masked digit-only inputs, confirm fields,
+  status badge, rotation timestamps, and a lockout banner.
+- 25 pytest cases in `test_pin_security.py` all pass.
+
 ### `/auth/change-password` hardening (2026-04-21)
 - Preserved the existing endpoint + UI in Security tab. Added:
   - Per-user failure rate limit: 5 fails / 15 min → 429 at entry.
