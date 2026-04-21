@@ -1,0 +1,57 @@
+{
+  "summary": "Phase 1 Chiropractic Clinical module E2E validated. Backend pytest /app/backend/tests/test_clinical_phase1.py: 9/9 passing against the public external URL (summary zero-state, all 7 case_types accepted, invalid case_type 422, unknown provider 400, cross-tenant 404, patient role blocked, doctor create+close, PATCH exclude_unset + close/reopen lifecycle with 409 double-close and 409 edit-on-closed, clinical_audit_events rows emitted). Reauth enforcement verified out-of-band: write without x-reauth-token returns 401 'Re-authentication required', read succeeds 200. Frontend E2E (group-admin@sunrise.ccms.app → patient 3e158492): Clinical tab mounts between Intake and Documents, patient-clinical-tab renders, stat-open-episodes + stat-total-episodes are live (Notes/Diagnoses stay em-dash), all 10 Phase-2 placeholder cards render with PHASE 2 badges, new-episode dialog opens, 7 case_type options listed, create happens after reauth, close dialog rejects <3-char reason with 'Closing reason must be at least 3 characters' toast, valid close flips status to CLOSED and swaps in the Reopen button, reopen flips status back to ACTIVE with 'Episode reopened' toast.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {
+        "flow": "Clinical episode create (POST /clinical/episodes) + close (POST /clinical/episodes/{id}/close) require reauth",
+        "issue": "Same UX wrinkle as iterations 29/30: on first click the axios ReauthGate fires 401 → 'Confirm it's you' dialog; after reauth the original action is NOT auto-retried, user must re-click submit. Reopen has the same behavior. Non-blocking — consistent with all other privileged actions in the app. A single global 'queue-and-retry-after-reauth' hook in the axios interceptor would resolve it.",
+        "affected_selectors": ["episode-submit-btn","episode-close-submit-btn","clinical-episode-<id>-reopen-btn"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "EpisodeCreateDialog",
+        "issues": ["Empty-title submit is intercepted by the browser's native HTML5 `required` tooltip before the in-code `if (!form.title.trim())` toast fires, so users never see the custom 'Episode title is required' sonner toast. Minor — browser validation still prevents the bad submit."]
+      }
+    ]
+  },
+  "verified_flows": [
+    "Backend pytest /app/backend/tests/test_clinical_phase1.py — 9/9 passing against https://patient-intake-hub-5.preview.emergentagent.com/api",
+    "Reauth gate — POST /api/patients/{pid}/clinical/episodes without x-reauth-token → 401; GET summary without reauth → 200",
+    "Frontend login group-admin@sunrise.ccms.app → direct nav /patients/{pid} without break-glass prompt for masked patient",
+    "Clinical tab (data-testid=tab-clinical) sits between Intake and Documents & Attachments; click renders patient-clinical-tab",
+    "clinical-summary-stats renders 4 StatBadges — Open=1, Total=2 (live), Notes='—', Diagnoses='—'",
+    "All 10 Phase-2 placeholder cards render with PHASE 2 badges (intake, diagnoses, initial-exam, follow-notes, re-exams, treatment-plans, media, outcomes, timeline, billing-readiness)",
+    "clinical-new-episode-btn opens clinical-episode-create-dialog; case_type Select exposes all 7 options (new_patient_eval, injury_episode, recurrence, maintenance, mva, workers_comp, personal_injury)",
+    "Submit on empty title blocked by browser's native required validation",
+    "After reauth, episode is POSTed successfully and appears at the top of clinical-episodes-list",
+    "clinical-episode-<id>-close-btn opens close dialog; reason < 3 chars triggers sonner 'Closing reason must be at least 3 characters' toast and does NOT POST",
+    "Valid close (>=3 chars) flips status to CLOSED, renders Close-reason footer, swaps Close button for Reopen button",
+    "Reopen POST /clinical/episodes/{id}/reopen flips status back to ACTIVE with 'Episode reopened' toast"
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_clinical_phase1.py",
+    "/app/test_reports/pytest/clinical_phase1.xml"
+  ],
+  "action_items": [
+    "OPTIONAL UX: Implement a 'queue-and-retry-after-reauth-success' pattern in the axios reauth interceptor so episode create/close/reopen (and every other privileged write across the app) auto-retries the original request after reauth; same finding flagged in iterations 29 & 30 for RemittanceImport and Intake Forms.",
+    "OPTIONAL UX: Either remove the HTML5 `required` attribute on episode-title (so the custom sonner toast fires) or surface a consistent inline error message — today the custom 'Episode title is required' toast path is dead code."
+  ],
+  "critical_code_review_comments": [
+    "services/clinical/router.py (556 lines) is well-factored; _load_patient/_load_episode share the scoped_filter → __deny__ → 404 contract which correctly never leaks cross-tenant existence (404 not 403, per spec). Audit coverage is dual-written (global audit_logs + clinical_audit_events) which matches the Phase 2 'chart history' contract documented inline.",
+    "services/clinical/models.py — EpisodeCaseUpdate correctly excludes end_date + closed_reason so only the close transition can set them; EpisodeCaseUpdate.status is narrowed to Literal['active','on_hold'] which prevents PATCH from sneaking a close/archive past the state machine. Good.",
+    "ClinicalTab.jsx (768 lines) — single-file component is at the upper edge of acceptable; consider splitting EpisodeCreateDialog and EpisodeCloseDialog into siblings under components/clinical/ in Phase 2 when note/diagnosis/plan dialogs land (otherwise the file will double).",
+    "ClinicalTab summary optimistic-update on handleCreated/handleClosed/handleReopen correctly keeps the stat row in sync without a re-fetch; only caveat is it doesn't re-fetch `generated_at`, so the 'Synced' timestamp can lag until the next tab mount — cosmetic.",
+    "Reauth on writes is wired correctly through the EpisodeCreateDialog/EpisodeCloseDialog error branches (both check /re-auth/i + onReauthNeeded()), but handleReopen's error branch does the same inline — could be DRY'd into a shared useReauthAwarePost hook."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100% (9/9 clinical Phase 1 tests pass + reauth gate confirmed)", "frontend": "100% of Phase 1 user-facing flows verified end-to-end (tab mount, summary, create, close validation, close, reopen, 10 placeholders)" },
+  "test_credentials": "group-admin@sunrise.ccms.app / Sunrise@ComplianceClinic1 (used for E2E); admin@ccms.app / Admin@ComplianceClinic1 (Default tenant cross-tenant probe); downtown-doc@sunrise.ccms.app / Sunrise@ComplianceClinic1 (doctor RBAC); patient@ccms.app / Patient@ComplianceClinic1 (patient blocked)",
+  "seed_data_creation": "Two Sunrise-tenant patients created via pytest fixtures (one per run of test_create_episode_accepts_every_case_type et al). One E2E frontend episode 'E2E Probe Episode' + one 'audit probe v2' (closed) on patient 3e158492-cdba-4bd3-979c-09d1d6d36205. None impact other modules.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Phase 1 clinical is scaffold-only — the 10 chart-section cards are PHASE 2 placeholders by design; do NOT fail for missing notes/diagnoses/treatment-plans CRUD. Reauth is mandatory on every write (POST /episodes, PATCH /episodes/{id}, POST /close, POST /reopen) — pytest helper _login(reauth=True) lifts access_token to Authorization and reauth_token to x-reauth-token header. Cross-tenant probes MUST return 404 (never 403). Patient-role reads of /clinical/* may legitimately return 403 or 404 — both are acceptable. UI reauth flow still requires a manual re-click after the 'Confirm it's you' modal succeeds (known global UX wrinkle, flagged in iterations 29 + 30 + 31).",
+  "rca of the issue": "No defect uncovered. All 14 explicitly listed test targets (backend + frontend) pass. Only discretionary items: (1) shared reauth-retry UX wrinkle already tracked across 3 iterations and (2) dead 'Episode title is required' toast path masked by browser's native required tooltip."
+}

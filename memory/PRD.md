@@ -1,6 +1,6 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-02-21 (Settings nav split: Appointment Types, Payers, Fee Schedules promoted to dedicated pages)
+**Last updated:** 2026-02-21 (Clinical module Phase 1 — episode/case scaffold inside Patient Profile)
 
 ## 0. Design system (binding)
 The Chiro Software design system is authoritative for every UI surface.
@@ -48,6 +48,69 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### Clinical module Phase 1 — episode/case scaffold (2026-02-21)
+- **Workflow standard locked in:** the **Patient Profile is the authoritative
+  longitudinal home of the clinical record.** Appointments (to be wired in
+  Phase 2+) are the operational encounter launch point, but every clinical
+  artifact lives under the patient and is reachable from the Clinical tab
+  regardless of whether it was authored from the chart or from an encounter.
+- **Backend service** `services/clinical/` with tenant-aware router at
+  `/api/patients/{patient_id}/clinical/*`:
+  - `GET  /clinical/summary` — counts for episodes + zero-shaped
+    placeholders for notes/diagnoses/treatment_plans/outcomes/media/
+    encounter_links so the UI contract stays stable across future phases.
+  - `GET  /clinical/episodes` — list with `status_in` and `case_type`
+    filters; responsible-provider name hydrated in one round-trip.
+  - `POST /clinical/episodes` — create; accepts every case_type
+    (`new_patient_eval`, `injury_episode`, `recurrence`, `maintenance`,
+    `mva`, `workers_comp`, `personal_injury`); rejects cross-tenant
+    responsible_provider_id with 400.
+  - `GET  /clinical/episodes/{id}` — read.
+  - `PATCH /clinical/episodes/{id}` — partial update with `exclude_unset`;
+    blocked on closed/archived episodes (409).
+  - `POST /clinical/episodes/{id}/close` — transitions to `closed` with
+    required reason (≥3 chars) and `end_date`.
+  - `POST /clinical/episodes/{id}/reopen` — transitions back to `active`
+    and clears end_date / closed_reason.
+- **Models** declared in `services/clinical/models.py` for every downstream
+  artifact that Phase 2+ will build on: `ClinicalNoteBase`, `DiagnosisBase`,
+  `TreatmentPlanBase`, `OutcomeEntryBase`, `ClinicalMediaBase`,
+  `EncounterLinkBase`, `ClinicalAuditEventBase`. Their collections ship with
+  `(tenant_id, patient_id, episode_id)` indexes on day one so no migration
+  will be needed when CRUD lands.
+- **Cross-cutting controls:**
+  - `require_role("admin","doctor","staff")` on reads; `("admin","doctor")`
+    on writes. All writes additionally call `require_reauth` — matching the
+    medical-record reauth posture.
+  - Tenant isolation enforced via `scoped_filter` on every query; cross-
+    tenant probes always return 404, never 403.
+  - Every mutation writes a row to a new `clinical_audit_events` collection
+    (patient-scoped projection of the global audit stream) so Phase 2
+    chart-history UI doesn't have to scan the global stream.
+- **Frontend** new tab **Clinical** inside Patient Profile:
+  - `pages/clinical/ClinicalTab.jsx` renders the Clinical Summary stat row
+    (open + total episodes; placeholder `—` for notes/diagnoses until
+    Phase 2), an **Episodes & Cases** section with list / create / close /
+    reopen affordances, and ten dashed **Phase 2** placeholder cards for
+    every downstream section (Intake & History, Diagnoses, Initial Exam,
+    Follow-up Notes, Re-Exams, Treatment Plans, Imaging & Clinical Media,
+    Outcomes, Care Timeline, Billing Readiness).
+  - Create dialog offers every case type with onset date + responsible
+    provider dropdown; close dialog enforces a ≥3-char reason.
+  - Wired into `PatientDetail.jsx` between Intake and Documents; writes
+    use the existing global `ReauthGate` / `ReauthDialog` for step-up.
+- **Indexes added** in `core/db.py` for `clinical_episode_cases`,
+  `clinical_notes`, `clinical_diagnoses`, `clinical_treatment_plans`,
+  `clinical_outcome_entries`, `clinical_media`, `clinical_encounter_links`,
+  and `clinical_audit_events` — each anchored on `tenant_id + patient_id +
+  episode_id` for PostgreSQL-portable query plans.
+- **Tests** `backend/tests/test_clinical_phase1.py` — **9/9 green**:
+  summary shape on fresh patient, every case_type accepted + rejected-
+  unknown, unknown provider 400, tenant isolation (cross-tenant 404 on
+  reads + writes), patient-role blocked, doctor can create/close,
+  PATCH `exclude_unset` + double-close 409 + reopen lifecycle,
+  clinical_audit_events rows emitted.
+
 ### Settings navigation split (2026-02-21)
 - `ClinicSettings.jsx` now handles only the clinic profile + hours of
   operation. The three business catalogs that used to share the same

@@ -49,6 +49,7 @@ import PatientDocumentsCard from "../components/PatientDocumentsCard";
 import PatientLedgerCard from "./billing/PatientLedgerCard";
 import PatientInsuranceManager from "./billing/PatientInsuranceManager";
 import ChargeCaptureDialog from "./billing/ChargeCaptureDialog";
+import ClinicalTab from "./clinical/ClinicalTab";
 
 // ---------------------------------------------------------------------------
 // Expanded-intake section renderers (Phase 4).
@@ -1240,6 +1241,7 @@ export default function PatientDetail() {
         >
           <TabsTrigger value="overview" data-testid="tab-overview" className="rounded-sm">Overview</TabsTrigger>
           <TabsTrigger value="intake" data-testid="tab-intake" className="rounded-sm">Intake</TabsTrigger>
+          <TabsTrigger value="clinical" data-testid="tab-clinical" className="rounded-sm">Clinical</TabsTrigger>
           <TabsTrigger value="documents" data-testid="tab-documents" className="rounded-sm">Documents &amp; Attachments</TabsTrigger>
           <TabsTrigger value="records" data-testid="tab-records" className="rounded-sm">Medical Records</TabsTrigger>
           <TabsTrigger value="appointments" data-testid="tab-appointments" className="rounded-sm">Appointments</TabsTrigger>
@@ -1272,6 +1274,18 @@ export default function PatientDetail() {
         <TabsContent value="documents" className="mt-6 space-y-6">
           <IntakeSections patient={patient} onDownloadConsent={downloadConsentPdf} />
           <PatientDocumentsCard patientId={id} canEdit={canEditIntake} />
+        </TabsContent>
+
+        <TabsContent value="clinical" className="mt-6">
+          <ClinicalTab
+            patientId={id}
+            providers={providers}
+            canWrite={canAddRecord}
+            onReauthNeeded={() => {
+              setReauthIntent("clinical");
+              setReauthOpen(true);
+            }}
+          />
         </TabsContent>
 
         <TabsContent value="records" className="mt-6">

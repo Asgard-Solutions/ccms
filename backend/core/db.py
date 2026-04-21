@@ -248,3 +248,41 @@ async def create_indexes() -> None:
         [("tenant_id", 1), ("claim_id", 1), ("run_at", -1)],
     )
     await db.claims.create_index([("tenant_id", 1), ("source_invoice_id", 1)])
+    # Clinical module (Phase 1 — episode/case is the only CRUD'd entity;
+    # other collections ship with indexes so Phase 2+ attaches cleanly).
+    await db.clinical_episode_cases.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("start_date", -1)],
+    )
+    await db.clinical_episode_cases.create_index(
+        [("tenant_id", 1), ("status", 1)],
+    )
+    await db.clinical_episode_cases.create_index(
+        [("tenant_id", 1), ("responsible_provider_id", 1), ("status", 1)],
+    )
+    await db.clinical_notes.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("episode_id", 1), ("created_at", -1)],
+    )
+    await db.clinical_diagnoses.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("episode_id", 1)],
+    )
+    await db.clinical_treatment_plans.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("episode_id", 1)],
+    )
+    await db.clinical_outcome_entries.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("episode_id", 1), ("recorded_on", -1)],
+    )
+    await db.clinical_media.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("episode_id", 1)],
+    )
+    await db.clinical_encounter_links.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("appointment_id", 1)],
+    )
+    await db.clinical_encounter_links.create_index(
+        [("tenant_id", 1), ("episode_id", 1)],
+    )
+    await db.clinical_audit_events.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("created_at", -1)],
+    )
+    await db.clinical_audit_events.create_index(
+        [("tenant_id", 1), ("episode_id", 1), ("created_at", -1)],
+    )

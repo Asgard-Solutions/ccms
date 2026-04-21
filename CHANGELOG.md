@@ -11,6 +11,61 @@ public release yet — we're pre-1.0).
 
 ## [Unreleased]
 
+### Added
+- **Clinical module — Phase 1 (2026-02-21).** New `services/clinical/`
+  backend module + new **Clinical** tab in Patient Profile. Establishes the
+  patient-chart ownership model: the Patient Profile is the longitudinal
+  home of the clinical record; appointments will be the operational
+  encounter launch point in Phase 2+. Phase 1 ships the architecture base
+  so every downstream clinical entity can attach without rework.
+  - **Episode/case CRUD** (`clinical_episode_cases` collection):
+    - `GET/POST /api/patients/{id}/clinical/episodes`
+    - `GET/PATCH /api/patients/{id}/clinical/episodes/{eid}`
+    - `POST /api/patients/{id}/clinical/episodes/{eid}/close`
+    - `POST /api/patients/{id}/clinical/episodes/{eid}/reopen`
+    - Case types: `new_patient_eval`, `injury_episode`, `recurrence`,
+      `maintenance`, `mva`, `workers_comp`, `personal_injury`.
+    - Statuses: `active`, `on_hold`, `closed`, `archived`.
+    - Fields: responsible_provider_id, patient_id, tenant_id, location_id,
+      title, chief_complaint, mechanism_of_injury, onset_date, start_date,
+      end_date, closed_reason, tags, plus a `metadata` dict and per-doc
+      `history[]` for future linkage fields.
+  - **Clinical summary** endpoint
+    `GET /api/patients/{id}/clinical/summary` — aggregates episode counts
+    (total + open) and returns zero-shaped placeholders for notes,
+    diagnoses, treatment_plans, outcomes, media, and encounter_links so
+    the UI contract stays stable as Phase 2+ CRUD ships.
+  - **Downstream models** declared up-front in `services/clinical/models.py`
+    (not yet CRUD'd): `ClinicalNoteBase`, `DiagnosisBase`,
+    `TreatmentPlanBase`, `OutcomeEntryBase`, `ClinicalMediaBase`,
+    `EncounterLinkBase`, `ClinicalAuditEventBase`. Their collections get
+    `(tenant_id, patient_id, episode_id)` indexes on day one so Phase 2+
+    doesn't need migrations.
+  - **Clinical audit trail**: every episode mutation writes one row to the
+    new `clinical_audit_events` collection (patient-scoped projection of
+    the global audit stream) so future chart-history UI can render fast
+    without filtering the global stream per request.
+  - **Access control** — reads gated by
+    `require_role("admin", "doctor", "staff")`; writes by
+    `require_role("admin", "doctor")` + `require_reauth` (matches
+    medical-record reauth posture). Tenant isolation via `scoped_filter`;
+    cross-tenant probes always return 404, never 403.
+  - **Frontend**: new `pages/clinical/ClinicalTab.jsx` rendered as a
+    **Clinical** tab inside Patient Profile (between Intake and Documents).
+    Renders the Clinical Summary stats card row, an Episodes & Cases list
+    with create / close / reopen dialogs, and ten dashed **Phase 2**
+    placeholder cards covering Intake & History, Diagnoses, Initial Exam,
+    Follow-up Notes, Re-Exams, Treatment Plans, Imaging & Clinical Media,
+    Outcomes, Care Timeline, and Billing Readiness. Writes leverage the
+    existing global `ReauthGate` for step-up retry.
+  - Test-ids: `patient-clinical-tab`, `tab-clinical`,
+    `clinical-summary-stats`, `clinical-new-episode-btn`,
+    `clinical-episodes-list`, `clinical-episodes-empty`,
+    `clinical-episode-{id}`, `clinical-episode-{id}-close-btn`,
+    `clinical-episode-{id}-reopen-btn`, `clinical-episode-create-dialog`,
+    `clinical-episode-close-dialog`, `clinical-placeholder-{name}`.
+  - Tests: `backend/tests/test_clinical_phase1.py` — 9/9 passing.
+
 ### Changed
 - **Settings navigation split — standalone pages for Appointment Types,
   Payers, and Fee Schedules (2026-02-21).** `ClinicSettings.jsx` is now
