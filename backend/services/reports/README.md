@@ -138,22 +138,28 @@ how?" for compliance review.
   `(tenant_id, report, filters, sort, page, user_id)`. TTL is per
   definition (`cache_ttl_seconds`, default 300s).
 
-## Deferred reports (future work)
+### Deferred reports (need data not yet captured)
 
 Reports whose source data is not yet captured anywhere in the app:
 
 * Referral source — no referral field on patient/appointment models
-* Birthday / age cohort — derivable from `patients.date_of_birth`, but no
-  demand yet for date-based ageing buckets
-* Patient insurance coverage summary — needs a richer
-  `insurance_policies` view over the currently-embedded `insurance`
-  block on patients
-* CPT / procedure utilisation — needs a line-item view over the
-  charge-capture collection
-* ICD / diagnosis reporting — needs a `diagnoses` view over clinical
-  note diagnoses
+* Birthday / age cohort — shipped via `patient_age_cohort`
+* Patient insurance coverage summary — shipped via
+  `patient_responsibility_summary` (self-pay/insurance/mixed grouping).
+  A richer carrier-level breakdown will land when the embedded
+  `insurance` block on patients is promoted to a first-class
+  `insurance_policies` collection.
 * Appointment-type volume — blocked on the P2 task to persist
-  `appointment_type_id` on appointments (currently only UI prefill)
+  `appointment_type_id` on appointments (currently only UI prefill).
+* Open time slots / availability summary — requires a provider schedule
+  / availability model that doesn't exist yet.
+* Patient communication consent — `comm_preferences` is tracked in
+  `services.privacy` audit events but not stored per-patient yet.
+* Provider schedule utilisation (% of available hours booked) — same
+  availability-model gap as "open time slots".
+* Collections summary (external collections status) — no collections
+  module yet.
 
 When these data sources land, adding the report is a ~40-line file
-using the patterns already in `builtin_extra.py`.
+using the patterns already in `builtin.py` / `builtin_extra.py` /
+`builtin_extra_2.py`.

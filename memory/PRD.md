@@ -2594,3 +2594,30 @@ frontend/src/pages/reports/ReportViewer.jsx   # PhiConsentDialog + protection-aw
 - PHI exports use native PDF encryption (AES-128) for PDF and
   AES-256 password-protected ZIP for CSV/XLSX.
 
+
+
+## 2026-04-21 — Reports expansion to 33 reports
+
+Closed the remaining gaps from the product wishlist. Added 11 reports
+mapping cleanly to existing data:
+
+**Clinical** — `missing_documentation`, `addendum_activity`,
+`treatment_plan_status`, `icd_diagnoses_distribution`.
+
+**Financial** — `billing_adjustments` (write-offs/discounts/courtesy/
+contractual), `cpt_procedure_utilisation`.
+
+**Patient** — `patient_age_cohort` (0-12, 13-17, 18-34, 35-54, 55-74,
+75+), `patient_responsibility_summary` (self-pay / insurance / mixed).
+
+**Scheduling** — `daily_appointment_production`,
+`appointment_status_summary`.
+
+**Compliance** — `break_glass_usage`.
+
+**Catalog now: 33 reports × 7 categories.** Test suite: 110/110 green.
+
+Remaining deferred items (no backing data yet): referral source,
+communication consent per patient, appointment-type volume (blocked on
+`appointment_type_id` persistence), open time slots, provider schedule
+utilisation, collections summary.

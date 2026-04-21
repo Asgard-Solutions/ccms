@@ -11,6 +11,7 @@ from __future__ import annotations
 # every @register() call runs at module import time.
 from services.reports import builtin as _builtin  # noqa: F401
 from services.reports import builtin_extra as _builtin_extra  # noqa: F401
+from services.reports import builtin_extra_2 as _builtin_extra_2  # noqa: F401
 
 from services.reports.definitions import (
     Column,

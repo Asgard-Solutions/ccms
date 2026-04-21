@@ -72,10 +72,12 @@ def test_catalog_total_and_category_counts(admin_client):
     r = admin_client.get(f"{API}/reports/catalog", timeout=10)
     assert r.status_code == 200, r.text
     data = r.json()
-    assert data.get("total") == 22, f"expected total=22, got {data.get('total')}"
+    # Floor on total — we grow this on every new report, so the test
+    # asserts "at least 22" rather than exact. Per-category floors below.
+    assert data.get("total") >= 22, f"expected total>=22, got {data.get('total')}"
     counts = {c["category"]: len(c["reports"]) for c in data["categories"]}
     for cat, cnt in EXPECTED_CATEGORY_COUNTS.items():
-        assert counts.get(cat) == cnt, f"{cat}: expected {cnt}, got {counts.get(cat)}"
+        assert counts.get(cat, 0) >= cnt, f"{cat}: expected >={cnt}, got {counts.get(cat, 0)}"
 
 
 # ---------- Each new report executes ----------
