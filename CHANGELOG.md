@@ -12,6 +12,50 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Billing — Phase 9 Claims-from-Encounter (2026-04-21).** New
+  `POST /api/billing/claims/from-encounter` synthesises a draft claim
+  skeleton from a documented clinical encounter. Reuses the Phase 8
+  readiness evaluator (`evaluate_billing_readiness` extracted into a
+  reusable helper) and copies patient, rendering provider, DOS,
+  diagnoses, and documented procedures into claim headers + lines + dx.
+  CPT codes default to kind-based hints (e.g. `98940` for manipulation,
+  `97140` for soft-tissue, `97110` for therapeutic exercise, `99203`
+  for exam) and billed_cents start at 0 — the operator finalises codes
+  and pricing in the Claim Editor. Blocked encounters return 409 with
+  a structured `blocking` list unless an admin passes `force=true`.
+  Non-admins cannot force. Every creation emits a
+  `billing.claim.created_from_encounter` audit row with the source
+  encounter id + readiness status.
+  - **Backend**: `services/billing/router.py` —
+    `ClaimFromEncounterInput`, `KIND_TO_HINT`, and the endpoint itself.
+    9 pytest cases (6 in `test_billing_phase9.py`, 2 added by testing
+    agent in `test_billing_phase9_nonadmin.py`).
+  - **Frontend**: `BillingReadinessPanel` gained a "Create claim draft"
+    button + `CreateClaimDialog` (payer + policy selects pulled from
+    existing insurance hooks, POS/notes fields, force-override
+    checkbox gated on `role==='admin'`). On success, toasts and
+    navigates to `/billing/claims/{id}`.
+- **Frontend UX — `window.confirm()` sweep (2026-04-21).** Replaced
+  every remaining `window.confirm()` and `window.prompt()` call with
+  Shadcn `AlertDialog` via a new reusable wrapper
+  (`/app/frontend/src/components/ConfirmDialog.jsx`). Browser-native
+  dialogs were being silently blocked in the preview iframe, which
+  left destructive actions non-functional. Updated surfaces:
+  - Clinical: `AddendumPanel` (delete draft), `MediaCard` (delete media).
+  - Access control: `RoleManagement` (revoke role + revoke override),
+    `Elevation` (cancel request).
+  - Billing: `PatientInsuranceManager` (deactivate policy).
+  - Compliance: `Privacy` (transition request via `Dialog`, fulfil
+    delete via `ConfirmDialog`).
+- **Frontend refactor — `ProvidersProvider` context (2026-04-21).**
+  New `/app/frontend/src/contexts/ProvidersContext.jsx` caches the
+  `/auth/providers` roster once per session (with in-flight dedupe)
+  and exposes `useProviders()`. `PatientDetail`, `PatientWizardDialog`,
+  `BookDialog`, and `ProviderFilter` all stopped issuing their own
+  fetch and now read from the context. Removes ~4 redundant roundtrips
+  per navigation.
+
+### Added (previous — kept for continuity)
 - **Clinical module — Phase 8 (2026-04-21).** Billing Readiness,
   lifecycle hardening, addenda, and audit coverage. The chart is now
   "defensibly billable": every appointment-linked encounter exposes a

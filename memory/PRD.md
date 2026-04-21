@@ -48,6 +48,53 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### Billing module Phase 9 — Claims from Encounter (2026-04-21)
+**Deliverables**
+- **`POST /api/billing/claims/from-encounter`** (new) — synthesises a
+  `draft` claim skeleton from a documented clinical encounter. Reuses
+  the Phase 8 readiness evaluator (`evaluate_billing_readiness` was
+  extracted from the read-only endpoint into a reusable helper). The
+  endpoint:
+  - auto-loads patient_id, rendering_provider_id, DOS from the encounter
+  - copies active ICD-10 diagnoses for the episode into `claim_diagnoses`
+    (deduped by code, primary first, capped at 12)
+  - maps each documented procedure (`kind`) into a `claim_lines` row
+    with a default CPT hint (`KIND_TO_HINT`), `billed_cents=0`,
+    pointing to the first diagnosis
+  - returns `409` with a structured `blocking` list when readiness is
+    `blocked`, unless `force=true` is passed by an admin
+  - returns `400` when the supplied `policy_id` does not belong to the
+    encounter's patient
+  - emits `billing.claim.created_from_encounter` audit rows
+- **Frontend** (`BillingReadinessPanel`): new "Create claim draft"
+  button + `CreateClaimDialog` (payer + policy selects, POS field,
+  notes, force-override checkbox for admins). Navigates to
+  `/billing/claims/{id}` on success.
+
+**Tests**
+- `/app/backend/tests/test_billing_phase9.py` — 6 passing cases.
+- `/app/backend/tests/test_billing_phase9_nonadmin.py` — 2 cases
+  (added by testing agent) covering non-admin force rejection + doctor
+  happy path.
+
+### Frontend UX hardening — `window.confirm()` sweep (2026-04-21)
+- Replaced every `window.confirm()` and `window.prompt()` in the app
+  (they were being silently blocked inside the preview iframe) with
+  Shadcn `AlertDialog`/`Dialog` flows via a new reusable
+  `ConfirmDialog` wrapper at
+  `/app/frontend/src/components/ConfirmDialog.jsx`.
+- Surfaces fixed: `AddendumPanel` (delete draft), `MediaCard` (delete
+  media), `RoleManagement` (revoke role + revoke override),
+  `PatientInsuranceManager` (deactivate policy), `Elevation` (cancel
+  request), `Privacy` (fulfil delete + transition notes via Dialog).
+
+### Frontend refactor — `ProvidersProvider` context (2026-04-21)
+- New `/app/frontend/src/contexts/ProvidersContext.jsx` hoists the
+  `/auth/providers` fetch to one location with in-flight dedupe.
+- `PatientDetail`, `PatientWizardDialog`, `BookDialog`, and
+  `ProviderFilter` all consume `useProviders()` instead of running
+  their own fetch.
+
 ### Clinical module Phase 8 — Billing Readiness + Lifecycle Hardening + Addenda + Audit Coverage (2026-04-21)
 - **Workflow realized**: the chart is now "defensibly billable" — each
   appointment-linked encounter exposes a read-only Billing Readiness
@@ -925,7 +972,8 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Dependency SCA + SAST in CI — ISO A.8.8 / A.8.28
 
 ### P1 (next features)
-- Billing service subscriber on `appointment.completed`
+- Global retry-after-reauth Axios interceptor that silently replays the
+  last privileged action after reauth confirmation (UX polish)
 - Real Twilio SMS + Resend email (require BAAs)
 - Reporting service for compliance and ops dashboards
 - Patient self-service portal (book / reschedule own appointments)
@@ -934,6 +982,9 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - CSV evidence export for auditors (`/api/audit-logs/export.csv`)
 - Prometheus alerting rules + runbooks committed to repo
 - Purpose taxonomy (enum) replacing free-text `reason` in audit rows
+- Persist `appointment_type_id` on Appointments (currently drives UI
+  prefill only)
+- Drag-and-drop ordering for Appointment Types in Clinic Settings
 
 ### P2 (polish)
 - Multi-tenancy with `tenant_id` on every entity + JWT claim
