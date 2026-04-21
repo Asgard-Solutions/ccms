@@ -514,6 +514,15 @@ export default function DayView({
                       {appt.provider_name}
                     </div>
                   )}
+                  {appt.current_room_name && (
+                    <div
+                      data-testid={`scheduling-day-appt-room-${appt.id}`}
+                      className="mt-0.5 truncate text-[10px] font-semibold uppercase tracking-wider text-primary"
+                      title={`Current room: ${appt.current_room_name}`}
+                    >
+                      Room · {appt.current_room_name}
+                    </div>
+                  )}
                   {appt.reason && height >= SLOT_HEIGHT * 3 && (
                     <div className="mt-0.5 truncate text-[11px] italic text-muted-foreground">
                       {appt.reason}

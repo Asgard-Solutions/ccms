@@ -32,6 +32,7 @@ import Elevation from "./pages/Elevation";
 import ThemePreview from "./pages/ThemePreview";
 import ClinicSettings from "./pages/ClinicSettings";
 import AppointmentTypesPage from "./pages/AppointmentTypesPage";
+import RoomsManagerPage from "./pages/settings/RoomsManagerPage";
 import PayersPage from "./pages/PayersPage";
 import FeeSchedulesPage from "./pages/FeeSchedulesPage";
 import BillingDashboard from "./pages/billing/BillingDashboard";
@@ -80,6 +81,7 @@ export default function App() {
               <Route path="/scheduling/flow-board" element={<Shell roles={["admin", "doctor", "staff"]}><FlowBoardPage /></Shell>} />
               <Route path="/settings/clinic" element={<Shell roles={["admin"]}><ClinicSettings /></Shell>} />
               <Route path="/settings/appointment-types" element={<Shell roles={["admin"]}><AppointmentTypesPage /></Shell>} />
+              <Route path="/settings/rooms" element={<Shell roles={["admin"]}><RoomsManagerPage /></Shell>} />
               <Route path="/settings/payers" element={<Shell roles={["admin"]}><PayersPage /></Shell>} />
               <Route path="/settings/fee-schedules" element={<Shell roles={["admin"]}><FeeSchedulesPage /></Shell>} />
               <Route path="/billing" element={<Shell roles={["admin", "doctor", "staff"]}><BillingDashboard /></Shell>} />

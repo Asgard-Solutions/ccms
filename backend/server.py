@@ -56,6 +56,7 @@ from services.patient.router import router as patient_router  # noqa: E402
 from services.perf.router import router as perf_router, metrics_router  # noqa: E402
 from services.privacy.router import router as privacy_router  # noqa: E402
 from services.reports.router import router as reports_router  # noqa: E402
+from services.rooms.router import router as rooms_router  # noqa: E402
 from services.scheduling.router import router as scheduling_router  # noqa: E402
 from services.tenancy.router import router as tenancy_router  # noqa: E402
 from services.tenancy.seed import seed_tenancy  # noqa: E402
@@ -87,6 +88,7 @@ api_router.include_router(identity_router)
 api_router.include_router(tenancy_router)
 api_router.include_router(patient_router)
 api_router.include_router(scheduling_router)
+api_router.include_router(rooms_router)
 api_router.include_router(authz_router)
 api_router.include_router(authz_reports_router)
 api_router.include_router(communication_router)

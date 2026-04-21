@@ -19,6 +19,7 @@ from core.event_bus import publish
 from core.tenancy import TenantContext, get_tenant_context
 from core.tenant_scope import scoped_filter, stamp_for_write
 from services.authz.policy import require_permission
+from services.rooms.models import RoomAssignRequest
 from services.scheduling.models import (
     AppointmentCreate,
     AppointmentPublic,
@@ -26,6 +27,7 @@ from services.scheduling.models import (
     PatientLocationChangeRequest,
     WorkflowTransitionRequest,
 )
+from services.scheduling.rooms import assign_or_change_room, clear_room
 from services.scheduling.workflow import (
     TRANSITIONS,
     apply_patient_location,
@@ -85,6 +87,15 @@ async def _hydrate(apps: list[dict]) -> list[dict]:
             continue
         if cur is None or f.get("status") == "completed":
             intake_by_pid[pid] = f
+    # Rooms lookup (only for appts that carry a current_room_id).
+    room_ids = list({a.get("current_room_id") for a in apps if a.get("current_room_id")})
+    rooms_by_id: dict[str, dict] = {}
+    if room_ids:
+        async for r in db.rooms.find(
+            {"id": {"$in": room_ids}},
+            {"_id": 0, "id": 1, "name": 1, "type": 1},
+        ):
+            rooms_by_id[r["id"]] = r
     for a in apps:
         a["provider_name"] = providers.get(a["provider_id"])
         info = patients.get(a["patient_id"]) or {}
@@ -106,6 +117,9 @@ async def _hydrate(apps: list[dict]) -> list[dict]:
             a["intake_completed_at"] = None
             a["intake_completed_by_name"] = None
             a["intake_form_id"] = f.get("id")
+        r = rooms_by_id.get(a.get("current_room_id") or "")
+        a["current_room_name"] = r.get("name") if r else None
+        a["current_room_type"] = r.get("type") if r else None
     return apps
 
 
@@ -790,3 +804,92 @@ async def appointment_set_location(
     )
     (hydrated,) = await _hydrate([updated])
     return hydrated
+
+
+# ---------------------------------------------------------------------------
+# Room assignment endpoints (Phase 4)
+# ---------------------------------------------------------------------------
+
+class _RoomClearRequest(PatientLocationChangeRequest):
+    """Reuses `reason` and adds the return-to-waiting toggle."""
+    # `location` is inherited but ignored for clear-room; kept for backwards
+    # compatibility with the generic request shape.
+
+
+@router.post("/{appointment_id}/room", response_model=AppointmentPublic)
+async def appointment_assign_room(
+    appointment_id: str,
+    payload: RoomAssignRequest,
+    request: Request,
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Assign (or change) the current room on an active appointment.
+
+    409 on single-occupancy conflict; pass `force=true` + `reason` to
+    override (audited with `forced=true`).
+    """
+    current = await _load_for_transition(appointment_id, ctx)
+    updated = await assign_or_change_room(
+        current=current,
+        room_id=payload.room_id,
+        actor=actor,
+        request=request,
+        reason=payload.reason,
+        force=payload.force,
+        tenant_id=ctx.tenant_id,
+    )
+    (hydrated,) = await _hydrate([updated])
+    return hydrated
+
+
+@router.post("/{appointment_id}/clear-room", response_model=AppointmentPublic)
+async def appointment_clear_room(
+    appointment_id: str,
+    request: Request,
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+    return_to_waiting: bool = Query(
+        default=False,
+        description="When true, also sets current_location_type=waiting_room.",
+    ),
+    reason: str | None = Query(default=None),
+):
+    """Clear the current_room_id. Set `return_to_waiting=true` to also
+    move the patient back to the waiting room."""
+    current = await _load_for_transition(appointment_id, ctx)
+    updated = await clear_room(
+        current=current,
+        actor=actor,
+        request=request,
+        reason=reason,
+        return_to_waiting=return_to_waiting,
+        tenant_id=ctx.tenant_id,
+    )
+    (hydrated,) = await _hydrate([updated])
+    return hydrated
+
+
+@router.get("/{appointment_id}/room-history")
+async def appointment_room_history(
+    appointment_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Return the chronological room/location history for an appointment."""
+    await _load_for_transition(appointment_id, ctx)
+    db = get_db_read()
+    q: dict = {"appointment_id": appointment_id}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        q["tenant_id"] = ctx.tenant_id
+    rows = [
+        r async for r in db.appointment_room_history.find(q, {"_id": 0})
+        .sort("at", 1)
+    ]
+    return rows
+

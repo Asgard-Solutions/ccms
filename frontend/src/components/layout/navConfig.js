@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   Coins,
+  DoorOpen,
   FileBarChart,
   FileStack,
   KeyRound,
@@ -160,6 +161,13 @@ export const NAV_GROUPS = [
         label: "Appointment Types",
         testId: "nav-appointment-types",
         icon: ClipboardList,
+        roles: ["admin"],
+      },
+      {
+        to: "/settings/rooms",
+        label: "Rooms",
+        testId: "nav-rooms",
+        icon: DoorOpen,
         roles: ["admin"],
       },
       {

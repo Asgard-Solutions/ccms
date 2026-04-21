@@ -13,6 +13,7 @@ import {
 import { api } from "../../api/client";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
+import RoomAssignmentControl from "./RoomAssignmentControl";
 
 /**
  * Appointment workflow + intake panel.
@@ -69,6 +70,24 @@ export default function AppointmentWorkflowPanel({
   onOpenIntake,
 }) {
   const [busy, setBusy] = useState(null);
+  const [rooms, setRooms] = useState([]);
+
+  // Active rooms scoped to this appointment's location.
+  useEffect(() => {
+    if (!appointment?.location_id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.get("/rooms", {
+          params: { active_only: true, location_id: appointment.location_id },
+        });
+        if (!cancelled) setRooms(data || []);
+      } catch {
+        if (!cancelled) setRooms([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [appointment?.location_id]);
 
   const status = appointment?.status || "scheduled";
   const intakeStatus = appointment?.intake_status || "not_started";
@@ -231,8 +250,7 @@ export default function AppointmentWorkflowPanel({
       )}
 
       {/* Intake quick-link */}
-      {onOpenIntake && (
-        <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
+      {onOpenIntake && (        <div className="flex flex-wrap items-center gap-2 border-t border-border/60 pt-3">
           <FileText className="h-4 w-4 text-muted-foreground" />
           <span className={`text-xs ${intakeMeta.tone}`}>
             {intakeStatus === "not_started"
@@ -251,6 +269,20 @@ export default function AppointmentWorkflowPanel({
           >
             Open intake
           </Button>
+        </div>
+      )}
+
+      {/* Room assignment */}
+      {!isTerminal && appointment?.location_id && (
+        <div
+          data-testid="appt-room-section"
+          className="border-t border-border/60 pt-3"
+        >
+          <RoomAssignmentControl
+            appointment={appointment}
+            rooms={rooms}
+            onUpdated={onUpdated}
+          />
         </div>
       )}
 

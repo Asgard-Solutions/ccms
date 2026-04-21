@@ -29,6 +29,7 @@ import {
 } from "../../components/ui/select";
 import { useProviders } from "../../contexts/ProvidersContext";
 import { useAppointmentTypes } from "./useAppointmentTypes";
+import RoomAssignmentControl from "./RoomAssignmentControl";
 
 /**
  * Patient Flow Board — single-page operational view of every appointment's
@@ -124,6 +125,7 @@ export default function FlowBoardPage() {
   const [intakeFilter, setIntakeFilter] = useState(null);
 
   const [appointments, setAppointments] = useState(null);
+  const [rooms, setRooms] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -145,6 +147,20 @@ export default function FlowBoardPage() {
       }
     })();
   }, []);
+
+  // Fetch active rooms for the room-picker.
+  useEffect(() => {
+    (async () => {
+      try {
+        const params = { active_only: true };
+        if (locationId) params.location_id = locationId;
+        const { data } = await api.get("/rooms", { params });
+        setRooms(data || []);
+      } catch {
+        setRooms([]);
+      }
+    })();
+  }, [locationId]);
 
   const providerName = useMemo(() => {
     const m = new Map();
@@ -218,6 +234,25 @@ export default function FlowBoardPage() {
     }
     return out;
   }, [appointments, statusFilter, intakeFilter]);
+
+  // Room occupancy index — a single scan across active appointments so the
+  // picker can mark each room's current occupant without extra queries.
+  const occupantByRoomId = useMemo(() => {
+    const m = new Map();
+    for (const a of appointments || []) {
+      if (
+        a.current_room_id
+        && !["no_show", "canceled", "cancelled", "checked_out"].includes(a.status)
+      ) {
+        m.set(a.current_room_id, {
+          appointment_id: a.id,
+          patient_name: a.patient_name,
+          patient_id: a.patient_id,
+        });
+      }
+    }
+    return m;
+  }, [appointments]);
 
   async function runAction(appt, endpoint, payload = {}) {
     try {
@@ -370,7 +405,14 @@ export default function FlowBoardPage() {
               rows={grouped[col.key] || []}
               providerName={providerName}
               typeById={typeById}
+              rooms={rooms}
+              occupantByRoomId={occupantByRoomId}
               onAction={runAction}
+              onUpdated={(data) =>
+                setAppointments((prev) =>
+                  (prev || []).map((a) => (a.id === data.id ? { ...a, ...data } : a)),
+                )
+              }
             />
           ))}
         </div>
@@ -379,7 +421,7 @@ export default function FlowBoardPage() {
   );
 }
 
-function FlowColumn({ column, rows, providerName, typeById, onAction }) {
+function FlowColumn({ column, rows, providerName, typeById, rooms, occupantByRoomId, onAction, onUpdated }) {
   const { Icon } = column;
   return (
     <section
@@ -414,7 +456,10 @@ function FlowColumn({ column, rows, providerName, typeById, onAction }) {
               columnKey={column.key}
               providerName={providerName}
               typeById={typeById}
+              rooms={rooms}
+              occupantByRoomId={occupantByRoomId}
               onAction={onAction}
+              onUpdated={onUpdated}
             />
           ))
         )}
@@ -423,7 +468,7 @@ function FlowColumn({ column, rows, providerName, typeById, onAction }) {
   );
 }
 
-function FlowRow({ appointment, columnKey, providerName, typeById, onAction }) {
+function FlowRow({ appointment, columnKey, providerName, typeById, rooms, occupantByRoomId, onAction, onUpdated }) {
   const elapsed = humanDuration(stageStart(appointment, columnKey));
   const typeName =
     appointment.appointment_type_id && typeById.get(appointment.appointment_type_id)?.name;
@@ -504,6 +549,16 @@ function FlowRow({ appointment, columnKey, providerName, typeById, onAction }) {
         columnKey={columnKey}
         onAction={onAction}
       />
+
+      {["waiting_room", "roomed", "ready_for_provider", "in_progress"].includes(columnKey) && (
+        <RoomAssignmentControl
+          appointment={appointment}
+          rooms={rooms}
+          occupantByRoomId={occupantByRoomId}
+          onUpdated={onUpdated}
+          compact
+        />
+      )}
     </article>
   );
 }

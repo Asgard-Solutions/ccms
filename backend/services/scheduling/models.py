@@ -164,3 +164,12 @@ class AppointmentPublic(BaseModel):
     intake_completed_at: str | None = None
     intake_completed_by_name: str | None = None
     intake_form_id: str | None = None
+
+    # Room assignment (see services/rooms). `current_room_id` is the active
+    # assignment; stamps are populated on any assign/change transition.
+    # `current_room_name` / `current_room_type` are hydrated for convenience.
+    current_room_id: str | None = None
+    current_room_name: str | None = None
+    current_room_type: str | None = None
+    room_assigned_at: str | None = None
+    room_assigned_by_user_id: str | None = None
