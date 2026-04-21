@@ -18,7 +18,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
-  ClipboardList,
   PlayCircle,
   PlusCircle,
   Stethoscope,
@@ -89,30 +88,6 @@ function StatBadge({ label, value, testId }) {
       </div>
       <div className="mt-1 font-display text-2xl font-medium tracking-tight text-foreground">
         {value}
-      </div>
-    </div>
-  );
-}
-
-function PlaceholderCard({ icon: Icon, title, description, testId }) {
-  return (
-    <div
-      data-testid={testId}
-      className="flex items-start gap-4 rounded-lg border border-dashed border-border bg-card p-5"
-    >
-      <div className="rounded-md bg-primary/10 p-2 text-primary">
-        <Icon className="h-5 w-5" />
-      </div>
-      <div className="flex-1">
-        <div className="flex items-center gap-2">
-          <h4 className="font-display text-base font-semibold text-foreground">
-            {title}
-          </h4>
-          <Badge variant="outline" className="uppercase text-[10px]">
-            Phase 2
-          </Badge>
-        </div>
-        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
       </div>
     </div>
   );
@@ -734,21 +709,6 @@ export default function ClinicalTab({
         canWrite={canWrite}
         onReauthNeeded={onReauthNeeded}
       />
-
-      {/* Future-phase section placeholders */}
-      <div>
-        <h3 className="mb-3 font-display text-lg font-semibold text-foreground">
-          Chart sections
-        </h3>
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <PlaceholderCard
-            icon={ClipboardList}
-            title="Billing Readiness"
-            description="Signed notes, coded diagnoses, active plan, missing documentation flags — the gate between care and claims."
-            testId="clinical-placeholder-billing-readiness"
-          />
-        </div>
-      </div>
 
       {canWrite && (
         <>
