@@ -132,7 +132,7 @@ def test_clinic_profile_crud_happy_path():
                   timeout=10)
     assert r.status_code == 200, r.text
     updated = r.json()
-    assert updated["primary_phone"] == "+1 503-555-9999"
+    assert updated["primary_phone"] == "5035559999"
     mon = next(h for h in updated["hours"] if h["day_of_week"] == 0)
     assert len(mon["intervals"]) == 2
 

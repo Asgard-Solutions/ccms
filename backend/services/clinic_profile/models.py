@@ -134,6 +134,26 @@ class ClinicProfileBase(BaseModel):
             raise ValueError(f"unknown IANA timezone: {v}") from exc
         return v
 
+    @model_validator(mode="after")
+    def _normalize_phones(self):
+        from core.phone import normalize_us_phone
+
+        supplied = self.__pydantic_fields_set__
+        for attr in ("primary_phone", "secondary_phone"):
+            if attr not in supplied:
+                continue
+            value = getattr(self, attr, None)
+            if value in (None, ""):
+                setattr(self, attr, None)
+                continue
+            try:
+                setattr(self, attr, normalize_us_phone(value))
+            except ValueError as exc:
+                raise ValueError(
+                    f"{attr.replace('_', ' ').title()}: {exc}",
+                ) from exc
+        return self
+
 
 class ClinicProfileCreate(ClinicProfileBase):
     location_id: str
@@ -184,6 +204,26 @@ class ClinicProfileUpdate(BaseModel):
             seen = {h.day_of_week for h in self.hours}
             if seen != set(range(7)):
                 raise ValueError("hours must contain exactly one entry per day_of_week 0..6")
+        return self
+
+    @model_validator(mode="after")
+    def _normalize_phones(self):
+        from core.phone import normalize_us_phone
+
+        supplied = self.__pydantic_fields_set__
+        for attr in ("primary_phone", "secondary_phone"):
+            if attr not in supplied:
+                continue
+            value = getattr(self, attr, None)
+            if value in (None, ""):
+                setattr(self, attr, None)
+                continue
+            try:
+                setattr(self, attr, normalize_us_phone(value))
+            except ValueError as exc:
+                raise ValueError(
+                    f"{attr.replace('_', ' ').title()}: {exc}",
+                ) from exc
         return self
 
 

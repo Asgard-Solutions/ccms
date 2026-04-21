@@ -15,6 +15,8 @@ import {
   SelectValue,
 } from "../components/ui/select";
 import { Skeleton } from "../components/ui/skeleton";
+import { PhoneInput } from "../components/PhoneInput";
+import { normalizePhone, formatAsTyped } from "../utils/phone";
 
 // Display order is Sunday→Saturday to match the calendar views.
 // Backend day_of_week is 0=Monday; `BACKEND_DOW[i]` maps row i to the
@@ -146,8 +148,8 @@ export default function ClinicSettings() {
           state: p.state || "",
           postal_code: p.postal_code || "",
           country: p.country || "US",
-          primary_phone: p.primary_phone || "",
-          secondary_phone: p.secondary_phone || "",
+          primary_phone: formatAsTyped(p.primary_phone || ""),
+          secondary_phone: formatAsTyped(p.secondary_phone || ""),
           email: p.email || "",
           website: p.website || "",
           timezone: p.timezone || "America/Los_Angeles",
@@ -206,6 +208,11 @@ export default function ClinicSettings() {
     setSaving(true);
     try {
       const payload = { ...form, hours: hoursToBackend(hoursRows) };
+      // Normalise phone inputs to 10-digit canonical before hitting the
+      // backend; backend also validates, but normalising locally keeps
+      // the submitted body predictable.
+      payload.primary_phone = normalizePhone(payload.primary_phone) || null;
+      payload.secondary_phone = normalizePhone(payload.secondary_phone) || null;
       for (const k of Object.keys(payload)) {
         if (typeof payload[k] === "string" && payload[k].trim() === "" && k !== "name") {
           payload[k] = null;
@@ -340,12 +347,22 @@ export default function ClinicSettings() {
                      value={form.postal_code}
                      onChange={(e) => update("postal_code")(e.target.value)} />
             </div>
-            <Field label="Primary phone" icon={Phone} data-testid="clinic-field-phone1"
-                   value={form.primary_phone}
-                   onChange={(e) => update("primary_phone")(e.target.value)} />
-            <Field label="Secondary phone" data-testid="clinic-field-phone2"
-                   value={form.secondary_phone}
-                   onChange={(e) => update("secondary_phone")(e.target.value)} />
+            <Field label="Primary phone" icon={Phone} data-testid="clinic-field-phone1">
+              <PhoneInput
+                data-testid="clinic-field-phone1-input"
+                value={form.primary_phone}
+                onChange={(e) => update("primary_phone")(e.target.value)}
+                className="rounded-sm"
+              />
+            </Field>
+            <Field label="Secondary phone" data-testid="clinic-field-phone2">
+              <PhoneInput
+                data-testid="clinic-field-phone2-input"
+                value={form.secondary_phone}
+                onChange={(e) => update("secondary_phone")(e.target.value)}
+                className="rounded-sm"
+              />
+            </Field>
             <Field label="Email" icon={Mail} data-testid="clinic-field-email"
                    type="email"
                    value={form.email} onChange={(e) => update("email")(e.target.value)} />

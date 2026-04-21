@@ -75,8 +75,8 @@ class TestProfileSelfService:
             "first_name": "Ada",
             "last_name": "Lovelace",
             "display_name": "Dr. Ada Lovelace, DC",
-            "mobile_phone": "+1-555-0101",
-            "work_phone": "+1-555-0102",
+            "mobile_phone": "+1-555-010-1001",
+            "work_phone": "(555) 010-1002",
             "job_title": "Chiropractor",
             "credentials_suffix": "DC, DACBR",
             "preferred_signature_name": "A. Lovelace, DC",
@@ -89,8 +89,9 @@ class TestProfileSelfService:
         assert body["display_name"] == "Dr. Ada Lovelace, DC"
         # Legacy `name` tracks display_name when present
         assert body["name"] == "Dr. Ada Lovelace, DC"
-        assert body["mobile_phone"] == "+1-555-0101"
-        assert body["work_phone"] == "+1-555-0102"
+        # Canonical digits-only storage (see core/phone.py).
+        assert body["mobile_phone"] == "5550101001"
+        assert body["work_phone"] == "5550101002"
         assert body["job_title"] == "Chiropractor"
         assert body["credentials_suffix"] == "DC, DACBR"
         assert body["preferred_signature_name"] == "A. Lovelace, DC"

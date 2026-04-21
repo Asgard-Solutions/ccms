@@ -7,6 +7,8 @@ import { api } from "../api/client";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
+import { PhoneInput } from "../components/PhoneInput";
+import { normalizePhone } from "../utils/phone";
 
 const PRIVACY_POLICY_VERSION = "2026-02-v1";
 
@@ -33,7 +35,7 @@ export default function Register() {
         name: form.name.trim(),
         email: form.email.trim(),
         password: form.password,
-        phone: form.phone.trim() || null,
+        phone: form.phone.trim() ? normalizePhone(form.phone) : null,
       });
       // Record versioned consent immediately after registration (fire-and-forget).
       try {
@@ -102,7 +104,7 @@ export default function Register() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="phone" className="text-muted-foreground">Phone (optional)</Label>
-            <Input
+            <PhoneInput
               id="phone"
               data-testid="register-phone-input"
               value={form.phone}

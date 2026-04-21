@@ -15,6 +15,8 @@ import { toast } from "sonner";
 import { api, formatApiError } from "../../api/client";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { PhoneInput } from "../PhoneInput";
+import { formatAsTyped, normalizePhone } from "../../utils/phone";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import { Checkbox } from "../ui/checkbox";
@@ -198,6 +200,18 @@ function TextInput({ id, value, onChange, type = "text", placeholder, testId, au
   );
 }
 
+function PhoneField({ id, value, onChange, testId }) {
+  return (
+    <PhoneInput
+      id={id}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      data-testid={testId}
+      className="h-10 rounded-sm border-border-strong bg-card text-sm"
+    />
+  );
+}
+
 function SelectField({ id, value, onChange, options, placeholder = "Select…", testId }) {
   return (
     <Select value={value || undefined} onValueChange={(v) => onChange(v)}>
@@ -333,13 +347,13 @@ function StepPatientInfo({ form, set, errors }) {
 
       <SectionTitle hint="Default contact details. Patient may update them in the portal.">Contact</SectionTitle>
       <Field label="Mobile phone" htmlFor="mobilePhone" required error={errors.mobilePhone} errorTestId="w-mobile-error">
-        <TextInput id="mobilePhone" testId="w-mobile" value={form.mobilePhone} onChange={set("mobilePhone")} autoComplete="tel" />
+        <PhoneField id="mobilePhone" testId="w-mobile" value={form.mobilePhone} onChange={set("mobilePhone")} />
       </Field>
       <Field label="Home phone" htmlFor="homePhone" error={errors.homePhone}>
-        <TextInput id="homePhone" testId="w-home-phone" value={form.homePhone} onChange={set("homePhone")} />
+        <PhoneField id="homePhone" testId="w-home-phone" value={form.homePhone} onChange={set("homePhone")} />
       </Field>
       <Field label="Work phone" htmlFor="workPhone" error={errors.workPhone}>
-        <TextInput id="workPhone" testId="w-work-phone" value={form.workPhone} onChange={set("workPhone")} />
+        <PhoneField id="workPhone" testId="w-work-phone" value={form.workPhone} onChange={set("workPhone")} />
       </Field>
       <Field label="Email" htmlFor="email" error={errors.email} errorTestId="w-email-error">
         <TextInput id="email" type="email" testId="w-email" value={form.email} onChange={set("email")} autoComplete="email" />
@@ -390,10 +404,10 @@ function StepPatientInfo({ form, set, errors }) {
         <TextInput id="ecRel" testId="w-ec-rel" value={form.emergencyContactRelationship} onChange={set("emergencyContactRelationship")} placeholder="Spouse, parent…" />
       </Field>
       <Field label="Primary phone" htmlFor="ecPhone" required error={errors.emergencyContactPhone}>
-        <TextInput id="ecPhone" testId="w-ec-phone" value={form.emergencyContactPhone} onChange={set("emergencyContactPhone")} />
+        <PhoneField id="ecPhone" testId="w-ec-phone" value={form.emergencyContactPhone} onChange={set("emergencyContactPhone")} />
       </Field>
       <Field label="Alternate phone" htmlFor="ecAlt" error={errors.emergencyContactAltPhone}>
-        <TextInput id="ecAlt" testId="w-ec-alt" value={form.emergencyContactAltPhone} onChange={set("emergencyContactAltPhone")} />
+        <PhoneField id="ecAlt" testId="w-ec-alt" value={form.emergencyContactAltPhone} onChange={set("emergencyContactAltPhone")} />
       </Field>
       <Field label="Email" htmlFor="ecEmail" error={errors.emergencyContactEmail}>
         <TextInput id="ecEmail" type="email" testId="w-ec-email" value={form.emergencyContactEmail} onChange={set("emergencyContactEmail")} />
@@ -428,7 +442,7 @@ function StepBillingInsurance({ form, set, errors, providers, locations, visibil
         <TextInput id="employerName" testId="w-employer" value={form.employerName} onChange={set("employerName")} />
       </Field>
       <Field label="Employer phone" htmlFor="employerPhone">
-        <TextInput id="employerPhone" testId="w-employer-phone" value={form.employerPhone} onChange={set("employerPhone")} />
+        <PhoneField id="employerPhone" testId="w-employer-phone" value={form.employerPhone} onChange={set("employerPhone")} />
       </Field>
 
       <SectionTitle hint={minor
@@ -457,7 +471,7 @@ function StepBillingInsurance({ form, set, errors, providers, locations, visibil
             <TextInput id="gDob" type="date" testId="w-g-dob" value={form.guarantorDateOfBirth} onChange={set("guarantorDateOfBirth")} max={TODAY_ISO} />
           </Field>
           <Field label="Phone" htmlFor="gPhone" required={requireGuarantor} error={errors.guarantorPhone} errorTestId="w-g-phone-error">
-            <TextInput id="gPhone" testId="w-g-phone" value={form.guarantorPhone} onChange={set("guarantorPhone")} />
+            <PhoneField id="gPhone" testId="w-g-phone" value={form.guarantorPhone} onChange={set("guarantorPhone")} />
           </Field>
           <Field label="Email" htmlFor="gEmail" error={errors.guarantorEmail}>
             <TextInput id="gEmail" type="email" testId="w-g-email" value={form.guarantorEmail} onChange={set("guarantorEmail")} />
@@ -469,7 +483,7 @@ function StepBillingInsurance({ form, set, errors, providers, locations, visibil
             <TextInput id="gEmployer" testId="w-g-employer" value={form.guarantorEmployerName} onChange={set("guarantorEmployerName")} />
           </Field>
           <Field label="Employer phone" htmlFor="gEmployerPhone">
-            <TextInput id="gEmployerPhone" testId="w-g-employer-phone" value={form.guarantorEmployerPhone} onChange={set("guarantorEmployerPhone")} />
+            <PhoneField id="gEmployerPhone" testId="w-g-employer-phone" value={form.guarantorEmployerPhone} onChange={set("guarantorEmployerPhone")} />
           </Field>
         </div>
       )}
@@ -679,7 +693,7 @@ function StepCaseConsents({ form, set, visibility }) {
             <TextInput id="adjusterName" testId="w-adjuster-name" value={form.adjusterName} onChange={set("adjusterName")} />
           </Field>
           <Field label="Adjuster phone" htmlFor="adjusterPhone">
-            <TextInput id="adjusterPhone" testId="w-adjuster-phone" value={form.adjusterPhone} onChange={set("adjusterPhone")} />
+            <PhoneField id="adjusterPhone" testId="w-adjuster-phone" value={form.adjusterPhone} onChange={set("adjusterPhone")} />
           </Field>
         </>
       )}
@@ -716,7 +730,7 @@ function StepCaseConsents({ form, set, visibility }) {
             <TextInput id="attorneyName" testId="w-attorney-name" value={form.attorneyName} onChange={set("attorneyName")} />
           </Field>
           <Field label="Attorney phone" htmlFor="attorneyPhone">
-            <TextInput id="attorneyPhone" testId="w-attorney-phone" value={form.attorneyPhone} onChange={set("attorneyPhone")} />
+            <PhoneField id="attorneyPhone" testId="w-attorney-phone" value={form.attorneyPhone} onChange={set("attorneyPhone")} />
           </Field>
           <Field label="Attorney email" htmlFor="attorneyEmail">
             <TextInput id="attorneyEmail" type="email" testId="w-attorney-email" value={form.attorneyEmail} onChange={set("attorneyEmail")} />

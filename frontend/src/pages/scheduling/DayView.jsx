@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { isoDateKey, sameDay } from "./dateHelpers";
 import { extractDaySpan } from "./useClinicHours";
+import { formatPhoneDisplay } from "../../utils/phone";
 import { Button } from "../../components/ui/button";
 
 /**
@@ -505,7 +506,7 @@ export default function DayView({
                       data-testid={`scheduling-day-appt-phone-${appt.id}`}
                       className="truncate font-mono text-[11px] text-muted-foreground"
                     >
-                      {appt.patient_phone}
+                      {formatPhoneDisplay(appt.patient_phone)}
                     </div>
                   )}
                   {appt.provider_name && height >= SLOT_HEIGHT * 2 && (

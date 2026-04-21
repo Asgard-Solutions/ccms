@@ -20,6 +20,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
+import { PhoneInput } from "../../components/PhoneInput";
+import { normalizePhone, formatAsTyped } from "../../utils/phone";
 
 const TIME_ZONES = [
   { value: "America/New_York", label: "Eastern (America/New_York)" },
@@ -59,8 +61,8 @@ function normalise(user) {
     last_name: user.last_name || "",
     display_name: user.display_name || "",
     email: user.email || "",
-    mobile_phone: user.mobile_phone || "",
-    work_phone: user.work_phone || "",
+    mobile_phone: formatAsTyped(user.mobile_phone || ""),
+    work_phone: formatAsTyped(user.work_phone || ""),
     job_title: user.job_title || "",
     credentials_suffix: user.credentials_suffix || "",
     preferred_signature_name: user.preferred_signature_name || "",
@@ -97,10 +99,19 @@ export default function ProfileTab() {
   async function save(e) {
     e?.preventDefault?.();
     // Build the diff — send only changed keys (backend honours PATCH semantics).
+    const PHONE_KEYS = new Set(["mobile_phone", "work_phone"]);
     const body = {};
     for (const key of Object.keys(EMPTY_FORM)) {
       if ((form[key] || "") !== (original[key] || "")) {
-        body[key] = form[key].trim();
+        const raw = (form[key] || "").trim();
+        if (PHONE_KEYS.has(key)) {
+          // Empty clears; otherwise canonicalise to 10 digits. Backend
+          // also enforces — fallback keeps form submittable even if the
+          // user types a 10-digit partial.
+          body[key] = raw === "" ? "" : normalizePhone(raw) || raw;
+        } else {
+          body[key] = raw;
+        }
       }
     }
     if (Object.keys(body).length === 0) {
@@ -268,21 +279,17 @@ export default function ProfileTab() {
             />
           </Field>
           <Field label="Mobile phone" testId="profile-mobile">
-            <Input
+            <PhoneInput
               value={form.mobile_phone}
               onChange={set("mobile_phone")}
-              maxLength={40}
-              placeholder="+1-555-123-4567"
               className="rounded-sm"
               data-testid="profile-mobile-input"
             />
           </Field>
           <Field label="Work phone" testId="profile-work-phone">
-            <Input
+            <PhoneInput
               value={form.work_phone}
               onChange={set("work_phone")}
-              maxLength={40}
-              placeholder="+1-555-987-6543"
               className="rounded-sm"
               data-testid="profile-work-phone-input"
             />

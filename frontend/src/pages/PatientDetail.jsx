@@ -6,6 +6,7 @@ import { api, formatApiError } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { useProviders } from "../contexts/ProvidersContext";
 import { formatDate, formatDateTime, relativeFromNow } from "../utils/time";
+import { formatPhoneDisplay } from "../utils/phone";
 import { PatientWizardDialog } from "../components/patient-wizard/PatientWizardDialog";
 import { payloadToForm } from "./patientWizardLogic";
 import { Button } from "../components/ui/button";
@@ -282,9 +283,9 @@ function PatientOverview({ patient, providers, onEdit, canEdit }) {
         hint="Default contact details — patients may update these in the portal."
         testId="overview-contact"
       >
-        <OverviewField label="Mobile phone" value={contact.phone || patient.phone} testId="ov-mobile" />
-        <OverviewField label="Home phone" value={contact.phone_alt} testId="ov-home" />
-        <OverviewField label="Work phone" value={contact.phone_work} testId="ov-work" />
+        <OverviewField label="Mobile phone" value={formatPhoneDisplay(contact.phone || patient.phone)} testId="ov-mobile" />
+        <OverviewField label="Home phone" value={formatPhoneDisplay(contact.phone_alt)} testId="ov-home" />
+        <OverviewField label="Work phone" value={formatPhoneDisplay(contact.phone_work)} testId="ov-work" />
         <OverviewField label="Email" value={contact.email || patient.email} testId="ov-email" />
         <OverviewField label="Preferred contact method" value={contact.preferred_contact_method} testId="ov-pcm" />
         <OverviewField label="Communication consents" value={consentSummary} testId="ov-comm-consents" />
@@ -301,8 +302,8 @@ function PatientOverview({ patient, providers, onEdit, canEdit }) {
       >
         <OverviewField label="Name" value={ec.name || patient.emergency_contact} testId="ov-ec-name" />
         <OverviewField label="Relationship" value={ec.relationship} testId="ov-ec-rel" />
-        <OverviewField label="Phone" value={ec.phone} testId="ov-ec-phone" />
-        <OverviewField label="Alt phone" value={ec.phone_alt} testId="ov-ec-alt" />
+        <OverviewField label="Phone" value={formatPhoneDisplay(ec.phone)} testId="ov-ec-phone" />
+        <OverviewField label="Alt phone" value={formatPhoneDisplay(ec.phone_alt)} testId="ov-ec-alt" />
         <OverviewField label="Email" value={ec.email} testId="ov-ec-email" />
       </OverviewSection>
 
@@ -319,7 +320,7 @@ function PatientOverview({ patient, providers, onEdit, canEdit }) {
       <OverviewSection title="Employment" testId="overview-employment">
         <OverviewField label="Occupation" value={demo.occupation} testId="ov-occupation" />
         <OverviewField label="Employer" value={demo.employer} testId="ov-employer" />
-        <OverviewField label="Employer phone" value={demo.employer_phone} testId="ov-employer-phone" />
+        <OverviewField label="Employer phone" value={formatPhoneDisplay(demo.employer_phone)} testId="ov-employer-phone" />
       </OverviewSection>
 
       <OverviewSection
@@ -339,11 +340,11 @@ function PatientOverview({ patient, providers, onEdit, canEdit }) {
             <OverviewField label="Name" value={guarantorName || null} testId="ov-g-name" />
             <OverviewField label="Relationship" value={g.relationship} testId="ov-g-rel" />
             <OverviewField label="Date of birth" value={g.date_of_birth} testId="ov-g-dob" />
-            <OverviewField label="Phone" value={g.phone} testId="ov-g-phone" />
+            <OverviewField label="Phone" value={formatPhoneDisplay(g.phone)} testId="ov-g-phone" />
             <OverviewField label="Email" value={g.email} testId="ov-g-email" />
             <OverviewField label="Address" value={g.address} testId="ov-g-addr" />
             <OverviewField label="Employer" value={g.employer} testId="ov-g-employer" />
-            <OverviewField label="Employer phone" value={g.employer_phone} testId="ov-g-employer-phone" />
+            <OverviewField label="Employer phone" value={formatPhoneDisplay(g.employer_phone)} testId="ov-g-employer-phone" />
           </>
         )}
       </OverviewSection>
@@ -711,16 +712,16 @@ function IntakeSections({ patient, onDownloadConsent }) {
             <Row label="Language">{demo.language}</Row>
             <Row label="Occupation">{demo.occupation}</Row>
             <Row label="Employer">{demo.employer}</Row>
-            <Row label="Employer phone">{demo.employer_phone}</Row>
+            <Row label="Employer phone">{formatPhoneDisplay(demo.employer_phone)}</Row>
             <Row label="SSN (last 4)">{demo.ssn_last4 ? `•••• ${demo.ssn_last4}` : null}</Row>
           </IntakeCard>
         )}
 
         {hasValue(contact) && (
           <IntakeCard title="Contact" testId="intake-contact">
-            <Row label="Mobile phone">{contact.phone || patient.phone}</Row>
-            <Row label="Home phone">{contact.phone_alt}</Row>
-            <Row label="Work phone">{contact.phone_work}</Row>
+            <Row label="Mobile phone">{formatPhoneDisplay(contact.phone || patient.phone)}</Row>
+            <Row label="Home phone">{formatPhoneDisplay(contact.phone_alt)}</Row>
+            <Row label="Work phone">{formatPhoneDisplay(contact.phone_work)}</Row>
             <Row label="Email">{contact.email || patient.email}</Row>
             <Row label="Preferred method">{contact.preferred_contact_method}</Row>
             <Row label="SMS consent">
@@ -751,8 +752,8 @@ function IntakeSections({ patient, onDownloadConsent }) {
           <IntakeCard title="Emergency contact" testId="intake-emergency-contact">
             <Row label="Name">{ec.name}</Row>
             <Row label="Relationship">{ec.relationship}</Row>
-            <Row label="Primary phone">{ec.phone}</Row>
-            <Row label="Alternate phone">{ec.phone_alt}</Row>
+            <Row label="Primary phone">{formatPhoneDisplay(ec.phone)}</Row>
+            <Row label="Alternate phone">{formatPhoneDisplay(ec.phone_alt)}</Row>
             <Row label="Email">{ec.email}</Row>
             <Row label="Address">{ec.address}</Row>
             {/* Legacy fallback: when structured details are absent but the scalar is, show it. */}
@@ -788,11 +789,11 @@ function IntakeSections({ patient, onDownloadConsent }) {
                 </Row>
                 <Row label="Relationship">{guarantor.relationship}</Row>
                 <Row label="Date of birth">{guarantor.date_of_birth}</Row>
-                <Row label="Phone">{guarantor.phone}</Row>
+                <Row label="Phone">{formatPhoneDisplay(guarantor.phone)}</Row>
                 <Row label="Email">{guarantor.email}</Row>
                 <Row label="Address">{guarantor.address}</Row>
                 <Row label="Employer">{guarantor.employer}</Row>
-                <Row label="Employer phone">{guarantor.employer_phone}</Row>
+                <Row label="Employer phone">{formatPhoneDisplay(guarantor.employer_phone)}</Row>
               </>
             )}
           </IntakeCard>
@@ -846,9 +847,9 @@ function IntakeSections({ patient, onDownloadConsent }) {
             <Row label="Auto carrier">{caseDetails.auto_carrier}</Row>
             <Row label="Claim #">{caseDetails.claim_number}</Row>
             <Row label="Adjuster name">{caseDetails.adjuster_name}</Row>
-            <Row label="Adjuster phone">{caseDetails.adjuster_phone}</Row>
+            <Row label="Adjuster phone">{formatPhoneDisplay(caseDetails.adjuster_phone)}</Row>
             <Row label="Attorney name">{caseDetails.attorney_name}</Row>
-            <Row label="Attorney phone">{caseDetails.attorney_phone}</Row>
+            <Row label="Attorney phone">{formatPhoneDisplay(caseDetails.attorney_phone)}</Row>
             <Row label="Attorney email">{caseDetails.attorney_email}</Row>
             <Row label="Employer for claim">{caseDetails.employer_for_claim}</Row>
             <Row label="Workers' comp carrier">{caseDetails.work_comp_carrier}</Row>
@@ -1222,7 +1223,7 @@ export default function PatientDetail() {
           </h1>
           <div className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-sm text-muted-foreground">
             {patient.date_of_birth && <span>DOB {patient.unmasked ? formatDate(patient.date_of_birth) : patient.date_of_birth}</span>}
-            {patient.phone && <span>{patient.phone}</span>}
+            {patient.phone && <span>{formatPhoneDisplay(patient.phone)}</span>}
             {patient.email && <span>{patient.email}</span>}
             {patient.gender && <span>{patient.gender}</span>}
             {patient.status === "deleted" && (

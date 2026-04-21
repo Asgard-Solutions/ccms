@@ -1,0 +1,28 @@
+{
+  "summary": "Task Prompt 10 (phone standardisation) — end-to-end verification PASSED. 32 phone_utils tests, 125+1-skipped regression (profile/clinic_profile/professional_licenses/npi/dea/security_hardening), 75 clinical+password+pin+reauth, and 10 new targeted scenario tests all green against the live preview backend. Frontend node-test suites (7 phone + 39 wizard) green. UI smoke confirmed live-formatting on Profile mobile/work, Clinic Settings primary, Register phone, and that Patients advanced-search normalises '(615) 555-1212' → '?phone=6155551212' before hitting the API. Profile save+reload renders '(615) 555-1212' confirming canonical storage + pretty display round-trip.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_phone_utils.py",
+    "/app/backend/tests/test_phone_scenarios.py",
+    "/app/test_reports/pytest/phone_utils.xml",
+    "/app/test_reports/pytest/phone_scenarios.xml",
+    "/app/test_reports/pytest/phone_regression.xml",
+    "/app/test_reports/pytest/phone_clinical.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "tests/test_phone_utils.py (and several other test files in this repo) rely on REACT_APP_BACKEND_URL being exported in the shell; when it isn't, the suite silently falls back to http://localhost:8001/api which leads to misleading 401s. Consider sourcing backend/.env or failing-fast in conftest if the var is missing — would save debugging time across iterations.",
+    "Patient GET masks the `phone` field (e.g. '***-***-1212') while PATCH response returns it unmasked. The inconsistency is intentional (PHI masking) but worth documenting in the API contract so future test authors don't hit the same surprise."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_phone_scenarios.py (new — 10 targeted scenario tests covering profile/register/admin-create/patient-soft/search equivalence)"
+  ],
+  "success_rate": {"backend": "100% (242/242 relevant tests, 1 skipped by design)", "frontend": "100% (46/46 node-tests + all 5 UI flows)"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (as supplied)",
+  "seed_data_creation": "Ephemeral: each scenario class provisions its own throw-away staff user / patient record via admin. Patient MRNs prefixed 'TEST_' per the cleanup convention.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phone canonicalisation is stable end-to-end. Backend identity/clinic/workforce paths are strict-422 on malformed; patient demographics are soft-normalise (preserve legacy values). Frontend uses <PhoneInput/> everywhere except patient wizard which uses its own PhoneField wrapper. Search normalisation happens client-side in Patients.jsx before the `/patients/search?phone=` call. To rerun: `cd /app/backend && REACT_APP_BACKEND_URL=https://ccms-clinic-hub.preview.emergentagent.com pytest tests/test_phone_utils.py tests/test_phone_scenarios.py -v`.",
+  "rca of the issue": "N/A — feature implementation verified working as designed."
+}

@@ -8,6 +8,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Skeleton } from "../components/ui/skeleton";
 import { PatientWizardDialog } from "../components/patient-wizard/PatientWizardDialog";
+import { formatPhoneDisplay, searchNormalize } from "../utils/phone";
 
 const STAFF_ROLES = ["admin", "doctor", "staff"];
 
@@ -118,9 +119,15 @@ export default function Patients() {
 
   const buildParams = useCallback(() => {
     if (mode === "global") return q.trim() ? { q: q.trim(), limit: 10 } : null;
-    const active = Object.fromEntries(
-      Object.entries(fields).filter(([, v]) => v.trim())
-    );
+    const active = {};
+    for (const [k, raw] of Object.entries(fields)) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      // Normalise phone search: strip formatting before the API call so
+      // `(615) 555-1212` and `6155551212` behave identically and the URL
+      // stays clean.
+      active[k] = k === "phone" ? searchNormalize(trimmed) : trimmed;
+    }
     return Object.keys(active).length ? { ...active, limit: 25 } : null;
   }, [mode, q, fields]);
 
@@ -392,7 +399,7 @@ function SearchResults({ results, loading, activeIdx, meta, onOpen, highlightRx 
                 <div className="mt-0.5 text-xs text-muted-foreground">
                   <Highlight value={`DOB ${r.date_of_birth || "—"}`} rx={highlightRx} />
                   <span className="mx-2 text-muted-foreground/70">·</span>
-                  <Highlight value={r.primary_phone || "—"} rx={highlightRx} />
+                  <Highlight value={formatPhoneDisplay(r.primary_phone) || "—"} rx={highlightRx} />
                   <span className="mx-2 text-muted-foreground/70">·</span>
                   <Highlight value={r.address_summary || "—"} rx={highlightRx} />
                 </div>

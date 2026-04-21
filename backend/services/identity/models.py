@@ -68,6 +68,19 @@ class UserRegister(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     phone: str | None = None
 
+    @model_validator(mode="after")
+    def _normalize_phone(self):
+        from core.phone import normalize_us_phone
+
+        if self.phone in (None, ""):
+            self.phone = None
+        else:
+            try:
+                self.phone = normalize_us_phone(self.phone)
+            except ValueError as exc:
+                raise ValueError(f"Phone: {exc}") from exc
+        return self
+
 
 class AdminUserCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -77,6 +90,19 @@ class AdminUserCreate(BaseModel):
     phone: str | None = None
     role: Role = "staff"
     tenant_id: str | None = None  # platform_admin may override; otherwise inherit from creator
+
+    @model_validator(mode="after")
+    def _normalize_phone(self):
+        from core.phone import normalize_us_phone
+
+        if self.phone in (None, ""):
+            self.phone = None
+        else:
+            try:
+                self.phone = normalize_us_phone(self.phone)
+            except ValueError as exc:
+                raise ValueError(f"Phone: {exc}") from exc
+        return self
 
 
 class UserLogin(BaseModel):
@@ -241,6 +267,35 @@ class ProfileUpdate(BaseModel):
         default=None, max_length=10,
         description="ISO YYYY-MM-DD expiry date for the DEA registration.",
     )
+
+    @model_validator(mode="after")
+    def _validate_phones(self):
+        # Normalise US phone numbers to 10-digit canonical form.
+        # Empty string → None (clears). Non-empty must be a valid
+        # 10-digit US number or we raise 422. See `core/phone.py`.
+        #
+        # We only touch fields that were actually supplied in the
+        # request body (`__pydantic_fields_set__`) so an empty PATCH
+        # remains an empty PATCH — otherwise the router would see
+        # spurious `phone=None` entries and treat the call as a
+        # no-op update instead of rejecting it.
+        from core.phone import normalize_us_phone
+
+        supplied = self.__pydantic_fields_set__
+        for attr in ("phone", "mobile_phone", "work_phone"):
+            if attr not in supplied:
+                continue
+            value = getattr(self, attr)
+            if value in (None, ""):
+                setattr(self, attr, None)
+                continue
+            try:
+                setattr(self, attr, normalize_us_phone(value))
+            except ValueError as exc:
+                raise ValueError(
+                    f"{attr.replace('_', ' ').title()}: {exc}",
+                ) from exc
+        return self
 
     @model_validator(mode="after")
     def _validate_npi(self):
