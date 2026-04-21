@@ -9,8 +9,10 @@ import { toast } from "sonner";
 import {
   CalendarCheck2,
   FileText,
+  GitBranch,
   NotebookPen,
   Stethoscope,
+  Target,
   Timer,
 } from "lucide-react";
 import { api, formatApiError } from "../../api/client";
@@ -22,6 +24,8 @@ const KIND_META = {
   encounter: { Icon: CalendarCheck2, tone: "text-primary" },
   initial_exam: { Icon: Stethoscope, tone: "text-warning" },
   follow_up_note: { Icon: NotebookPen, tone: "text-success" },
+  re_exam: { Icon: GitBranch, tone: "text-primary" },
+  treatment_plan: { Icon: Target, tone: "text-foreground" },
 };
 
 const STATUS_TONE = {
@@ -31,6 +35,9 @@ const STATUS_TONE = {
   in_progress: "border-primary/30 bg-primary/10 text-primary",
   completed: "border-success/30 bg-success-soft text-success",
   cancelled: "border-border bg-muted text-muted-foreground",
+  active: "border-success/40 bg-success-soft text-success",
+  on_hold: "border-warning/40 bg-warning-soft text-warning",
+  discharged: "border-border bg-muted text-muted-foreground",
 };
 
 export default function CareTimelineCard({ patientId }) {

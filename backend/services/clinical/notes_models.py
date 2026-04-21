@@ -183,6 +183,7 @@ class FollowUpNotePublic(BaseModel):
     copied_from_note_id: str | None = None
     copied_fields: list[str] = Field(default_factory=list)
     completeness: FollowUpNoteCompleteness | None = None
+    active_plan_summary: dict | None = None
     marked_sign_ready_at: str | None = None
     marked_sign_ready_by: str | None = None
     signed_at: str | None = None
@@ -204,7 +205,7 @@ class FollowUpNoteNarrative(BaseModel):
 
 class CareTimelineEntry(BaseModel):
     model_config = ConfigDict(extra="ignore")
-    kind: Literal["encounter", "initial_exam", "follow_up_note"]
+    kind: Literal["encounter", "initial_exam", "follow_up_note", "re_exam", "treatment_plan"]
     id: str
     date_of_service: str
     status: str

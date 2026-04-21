@@ -160,7 +160,7 @@ function CancelDialog({ open, onOpenChange, encounter, onSubmit, submitting }) {
   );
 }
 
-function EncounterRow({ enc, canWrite, isHighlighted, onOpenAppt, onComplete, onCancel, onLaunchExam, onLaunchNote }) {
+function EncounterRow({ enc, canWrite, isHighlighted, onOpenAppt, onComplete, onCancel, onLaunchExam, onLaunchReExam, onLaunchNote }) {
   const tone = STATUS_TONE[enc.status] || "border-border bg-muted";
   return (
     <div
@@ -232,7 +232,7 @@ function EncounterRow({ enc, canWrite, isHighlighted, onOpenAppt, onComplete, on
           </Button>
           {canWrite && enc.status === "in_progress" && (
             <>
-              {enc.encounter_type === "new_patient_exam" || enc.encounter_type === "re_evaluation" ? (
+              {enc.encounter_type === "new_patient_exam" ? (
                 <Button
                   size="sm"
                   variant="default"
@@ -242,6 +242,17 @@ function EncounterRow({ enc, canWrite, isHighlighted, onOpenAppt, onComplete, on
                 >
                   <FilePlus2 className="mr-1.5 h-3.5 w-3.5" />
                   Start Initial Exam
+                </Button>
+              ) : enc.encounter_type === "re_evaluation" ? (
+                <Button
+                  size="sm"
+                  variant="default"
+                  onClick={() => onLaunchReExam(enc)}
+                  data-testid={`encounter-start-reexam-${enc.id}`}
+                  className="rounded-sm"
+                >
+                  <FilePlus2 className="mr-1.5 h-3.5 w-3.5" />
+                  Start Re-Exam
                 </Button>
               ) : (
                 <Button
@@ -375,6 +386,18 @@ export default function EncountersCard({ patientId, canWrite, onReauthNeeded }) 
     }
   };
 
+  const handleLaunchReExam = async (enc) => {
+    try {
+      const { data } = await api.post(
+        `/patients/${patientId}/clinical/re-exams`,
+        { encounter_id: enc.id },
+      );
+      navigate(`/patients/${patientId}/clinical/re-exams/${data.id}`);
+    } catch (e) {
+      if (!handleReauthAware(e)) toast.error(formatApiError(e));
+    }
+  };
+
   const handleLaunchNote = async (enc) => {
     try {
       const { data } = await api.post(
@@ -456,6 +479,7 @@ export default function EncountersCard({ patientId, canWrite, onReauthNeeded }) 
               onComplete={setCompleting}
               onCancel={setCancelling}
               onLaunchExam={handleLaunchExam}
+              onLaunchReExam={handleLaunchReExam}
               onLaunchNote={handleLaunchNote}
             />
           ))}

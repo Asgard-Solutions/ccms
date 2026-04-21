@@ -37,6 +37,8 @@ import EncountersCard from "./EncountersCard";
 import InitialExamsCard from "./InitialExamsCard";
 import FollowUpNotesCard from "./FollowUpNotesCard";
 import CareTimelineCard from "./CareTimelineCard";
+import TreatmentPlansCard from "./TreatmentPlansCard";
+import ReExamsCard from "./ReExamsCard";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Badge } from "../../components/ui/badge";
@@ -569,6 +571,8 @@ export default function ClinicalTab({
     return [
       { label: "In-progress visits", value: s.encounters?.open ?? "—", id: "stat-encounters" },
       { label: "Open exams", value: s.initial_exams?.open ?? "—", id: "stat-exams" },
+      { label: "Active plans", value: s.treatment_plans?.open ?? "—", id: "stat-treatment-plans" },
+      { label: "Open re-exams", value: s.re_exams?.open ?? "—", id: "stat-reexams" },
       { label: "Open notes", value: s.notes?.open ?? "—", id: "stat-notes" },
       {
         label: "Active diagnoses",
@@ -704,8 +708,19 @@ export default function ClinicalTab({
         canWrite={canWrite}
       />
 
+      {/* Phase 6 — Treatment Plans */}
+      <TreatmentPlansCard
+        patientId={patientId}
+        canWrite={canWrite}
+        episodes={episodes || []}
+        onReauthNeeded={onReauthNeeded}
+      />
+
       {/* Phase 5 — Follow-up / Daily Visit notes */}
       <FollowUpNotesCard patientId={patientId} />
+
+      {/* Phase 6 — Re-Exams */}
+      <ReExamsCard patientId={patientId} />
 
       {/* Phase 5 — Care Timeline */}
       <CareTimelineCard patientId={patientId} />
@@ -716,18 +731,6 @@ export default function ClinicalTab({
           Chart sections
         </h3>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-          <PlaceholderCard
-            icon={Activity}
-            title="Re-Exams"
-            description="Recurring re-evaluations comparing measurable findings against the initial exam baseline."
-            testId="clinical-placeholder-re-exams"
-          />
-          <PlaceholderCard
-            icon={Target}
-            title="Treatment Plans"
-            description="Frequency, duration, goals, modalities. Active plan drives appointment type suggestions and billing readiness."
-            testId="clinical-placeholder-treatment-plans"
-          />
           <PlaceholderCard
             icon={ImageIcon}
             title="Imaging &amp; Clinical Media"

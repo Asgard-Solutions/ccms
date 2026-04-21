@@ -455,6 +455,63 @@ export default function FollowUpNoteEditor() {
           )}
         </div>
 
+        {/* Phase 6 — Active plan read-only strip */}
+        {note.active_plan_summary && (
+          <div
+            data-testid="note-active-plan-strip"
+            className="rounded-lg border border-primary/30 bg-primary/5 p-4"
+          >
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className="border-primary/40 bg-primary/10 text-[10px] text-primary">
+                    Active plan
+                  </Badge>
+                  <span className="font-display text-sm font-semibold text-foreground">
+                    {note.active_plan_summary.title}
+                  </span>
+                </div>
+                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                  {note.active_plan_summary.frequency_visits_per_week && (
+                    <span>{note.active_plan_summary.frequency_visits_per_week}x/wk</span>
+                  )}
+                  {note.active_plan_summary.frequency_total_visits && (
+                    <span>{note.active_plan_summary.frequency_total_visits} total visits</span>
+                  )}
+                  {note.active_plan_summary.expected_duration_weeks && (
+                    <span>{note.active_plan_summary.expected_duration_weeks} wks</span>
+                  )}
+                  {note.active_plan_summary.re_exam_date && (
+                    <span>Re-exam · {note.active_plan_summary.re_exam_date}</span>
+                  )}
+                </div>
+                {(note.active_plan_summary.goals || []).length > 0 && (
+                  <ul className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+                    {note.active_plan_summary.goals.map((g) => (
+                      <li key={g.id} data-testid={`note-plan-goal-${g.id}`}>
+                        • {g.description}
+                        {g.target_value != null ? ` → target ${g.target_value}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <div
+                data-testid="note-active-plan-progress"
+                className="shrink-0 text-right"
+              >
+                <div className="font-display text-sm font-semibold text-foreground">
+                  {note.active_plan_summary.progress?.visits_completed ?? 0}/
+                  {note.active_plan_summary.progress?.total_visits ?? "—"}
+                </div>
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  {note.active_plan_summary.progress?.percent ?? 0}% visits
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Subjective */}
         <SectionCard
           title="Subjective (S)"

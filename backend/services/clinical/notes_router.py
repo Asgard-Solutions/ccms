@@ -128,6 +128,44 @@ async def _hydrate(db, tenant_id: str, doc: dict) -> dict:
         if u:
             out["signed_by_name"] = u.get("name") or u.get("email")
     out["completeness"] = _compute_completeness(out)
+    # Phase 6 — surface the active plan summary read-only on GETs.
+    plan_doc = await db.clinical_treatment_plans.find_one(
+        {
+            "tenant_id": tenant_id, "patient_id": out["patient_id"],
+            "episode_id": out.get("episode_id"), "plan_status": "active",
+        },
+        {"_id": 0},
+    )
+    if plan_doc:
+        # Progress computed on the fly
+        visit_q: dict = {
+            "tenant_id": tenant_id, "patient_id": out["patient_id"],
+            "status": "signed",
+        }
+        if plan_doc.get("episode_id"):
+            visit_q["episode_id"] = plan_doc["episode_id"]
+        if plan_doc.get("start_date"):
+            visit_q["date_of_service"] = {"$gte": plan_doc["start_date"]}
+        visits = await db.clinical_follow_up_notes.count_documents(visit_q)
+        total = plan_doc.get("frequency_total_visits")
+        pct = min(100, round((visits / total) * 100)) if total else None
+        out["active_plan_summary"] = {
+            "id": plan_doc["id"],
+            "title": plan_doc.get("title"),
+            "plan_status": plan_doc.get("plan_status"),
+            "frequency_visits_per_week": plan_doc.get("frequency_visits_per_week"),
+            "frequency_total_visits": total,
+            "expected_duration_weeks": plan_doc.get("expected_duration_weeks"),
+            "re_exam_date": plan_doc.get("re_exam_date"),
+            "goals": (plan_doc.get("goals") or [])[:3],
+            "progress": {
+                "visits_completed": visits,
+                "total_visits": total,
+                "percent": pct,
+            },
+        }
+    else:
+        out["active_plan_summary"] = None
     return out
 
 
@@ -955,10 +993,15 @@ async def get_care_timeline(
     encounters = [d async for d in db.clinical_encounters.find(q, {"_id": 0}).sort("date_of_service", -1).limit(limit)]
     exams = [d async for d in db.clinical_initial_exams.find(q, {"_id": 0}).sort("date_of_service", -1).limit(limit)]
     notes = [d async for d in db.clinical_follow_up_notes.find(q, {"_id": 0}).sort("date_of_service", -1).limit(limit)]
-    for bucket in (encounters, exams, notes):
+    reexams = [d async for d in db.clinical_reexams.find(q, {"_id": 0}).sort("date_of_service", -1).limit(limit)]
+    plans = [d async for d in db.clinical_treatment_plans.find(q, {"_id": 0}).sort("start_date", -1).limit(limit)]
+    for bucket in (encounters, exams, notes, reexams):
         for r in bucket:
             if r.get("provider_id"):
                 provider_ids.add(r["provider_id"])
+    for p in plans:
+        if p.get("responsible_provider_id"):
+            provider_ids.add(p["responsible_provider_id"])
 
     prov_map: dict[str, str] = {}
     if provider_ids:
@@ -1019,6 +1062,42 @@ async def get_care_timeline(
             "provider_id": n.get("provider_id"),
             "provider_name": prov_map.get(n.get("provider_id")),
             "link_path": f"/patients/{patient_id}/clinical/follow-up/{n['id']}",
+        })
+    for r in reexams:
+        bits = []
+        if r.get("visit_number_at_reexam") is not None:
+            bits.append(f"After {r['visit_number_at_reexam']} visits")
+        if r.get("recommendation_decision"):
+            bits.append(r["recommendation_decision"].replace("_", " "))
+        entries.append({
+            "kind": "re_exam",
+            "id": r["id"],
+            "date_of_service": r.get("date_of_service"),
+            "status": r.get("status"),
+            "title": "Re-exam",
+            "subtitle": " · ".join(bits) if bits else None,
+            "episode_id": r.get("episode_id"),
+            "provider_id": r.get("provider_id"),
+            "provider_name": prov_map.get(r.get("provider_id")),
+            "link_path": f"/patients/{patient_id}/clinical/re-exams/{r['id']}",
+        })
+    for p in plans:
+        bits = []
+        if p.get("frequency_visits_per_week"):
+            bits.append(f"{p['frequency_visits_per_week']}x/wk")
+        if p.get("expected_duration_weeks"):
+            bits.append(f"{p['expected_duration_weeks']} wks")
+        entries.append({
+            "kind": "treatment_plan",
+            "id": p["id"],
+            "date_of_service": p.get("start_date"),
+            "status": p.get("plan_status"),
+            "title": p.get("title") or "Treatment plan",
+            "subtitle": " · ".join(bits) if bits else None,
+            "episode_id": p.get("episode_id"),
+            "provider_id": p.get("responsible_provider_id"),
+            "provider_name": prov_map.get(p.get("responsible_provider_id")),
+            "link_path": f"/patients/{patient_id}/clinical/treatment-plans/{p['id']}",
         })
 
     entries.sort(key=lambda r: (r.get("date_of_service") or ""), reverse=True)
