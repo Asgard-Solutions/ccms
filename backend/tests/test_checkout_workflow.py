@@ -63,8 +63,8 @@ def _appt_ready_for_checkout(s) -> dict:
     providers = s.get(f"{API}/auth/providers", timeout=10).json()
     provider_id = providers[0]["id"]
     _ensure_completed_intake(s, patient_id)
-    offset = (uuid.uuid4().int >> 32) % 200000
-    start = datetime.now(timezone.utc) + timedelta(days=30, minutes=offset)
+    offset = (uuid.uuid4().int >> 32) % 500000
+    start = datetime.now(timezone.utc) + timedelta(days=60, minutes=offset)
     end = start + timedelta(minutes=15)
     r = s.post(f"{API}/appointments", json={
         "patient_id": patient_id, "provider_id": provider_id,
@@ -100,8 +100,8 @@ def test_start_checkout_rejected_from_wrong_state():
     patients = s.get(f"{API}/patients", timeout=10).json()
     providers = s.get(f"{API}/auth/providers", timeout=10).json()
     _ensure_completed_intake(s, patients[0]["id"])
-    offset = (uuid.uuid4().int >> 32) % 200000
-    start = datetime.now(timezone.utc) + timedelta(days=30, minutes=offset)
+    offset = (uuid.uuid4().int >> 32) % 500000
+    start = datetime.now(timezone.utc) + timedelta(days=60, minutes=offset)
     end = start + timedelta(minutes=15)
     r = s.post(f"{API}/appointments", json={
         "patient_id": patients[0]["id"], "provider_id": providers[0]["id"],

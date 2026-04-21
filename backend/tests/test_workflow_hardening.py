@@ -80,8 +80,8 @@ def _book(s, patient_id, provider_id, start: datetime, end: datetime, **kw):
 def test_cancelled_slot_unblocks_future_booking():
     s = _login(*DEFAULT_ADMIN)
     patient_id, provider_id = _ctx(s)
-    offset = (uuid.uuid4().int >> 32) % 200000
-    start = datetime.now(timezone.utc) + timedelta(days=30, minutes=offset)
+    offset = (uuid.uuid4().int >> 32) % 500000
+    start = datetime.now(timezone.utc) + timedelta(days=60, minutes=offset)
     end = start + timedelta(minutes=15)
 
     # First booking wins the slot.
@@ -112,8 +112,8 @@ def test_active_non_scheduled_status_still_blocks_rebooking():
     s = _login(*DEFAULT_ADMIN)
     patient_id, provider_id = _ctx(s)
     _ensure_completed_intake(s, patient_id)
-    offset = (uuid.uuid4().int >> 32) % 200000
-    start = datetime.now(timezone.utc) + timedelta(days=30, minutes=offset)
+    offset = (uuid.uuid4().int >> 32) % 500000
+    start = datetime.now(timezone.utc) + timedelta(days=60, minutes=offset)
     end = start + timedelta(minutes=15)
     r = _book(s, patient_id, provider_id, start, end)
     assert r.status_code == 201, r.text
@@ -134,8 +134,8 @@ def test_undo_ready_for_provider_returns_to_checked_in_and_clears_stamps():
     s = _login(*DEFAULT_ADMIN)
     patient_id, provider_id = _ctx(s)
     _ensure_completed_intake(s, patient_id)
-    offset = (uuid.uuid4().int >> 32) % 200000
-    start = datetime.now(timezone.utc) + timedelta(days=30, minutes=offset)
+    offset = (uuid.uuid4().int >> 32) % 500000
+    start = datetime.now(timezone.utc) + timedelta(days=60, minutes=offset)
     r = _book(s, patient_id, provider_id, start, start + timedelta(minutes=15))
     aid = r.json()["id"]
     s.post(f"{API}/appointments/{aid}/check-in", json={}, timeout=10)
@@ -156,8 +156,8 @@ def test_undo_ready_for_checkout_returns_to_in_progress_and_clears_stamps():
     s = _login(*DEFAULT_ADMIN)
     patient_id, provider_id = _ctx(s)
     _ensure_completed_intake(s, patient_id)
-    offset = (uuid.uuid4().int >> 32) % 200000
-    start = datetime.now(timezone.utc) + timedelta(days=30, minutes=offset)
+    offset = (uuid.uuid4().int >> 32) % 500000
+    start = datetime.now(timezone.utc) + timedelta(days=60, minutes=offset)
     r = _book(s, patient_id, provider_id, start, start + timedelta(minutes=15))
     aid = r.json()["id"]
     for ep in ("check-in", "ready-for-provider", "start-visit", "ready-for-checkout"):
@@ -174,8 +174,8 @@ def test_undo_check_in_clears_all_forward_stamps():
     s = _login(*DEFAULT_ADMIN)
     patient_id, provider_id = _ctx(s)
     _ensure_completed_intake(s, patient_id)
-    offset = (uuid.uuid4().int >> 32) % 200000
-    start = datetime.now(timezone.utc) + timedelta(days=30, minutes=offset)
+    offset = (uuid.uuid4().int >> 32) % 500000
+    start = datetime.now(timezone.utc) + timedelta(days=60, minutes=offset)
     r = _book(s, patient_id, provider_id, start, start + timedelta(minutes=15))
     aid = r.json()["id"]
     # Drive through to in_progress then reach back via override.

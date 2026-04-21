@@ -85,6 +85,7 @@ class AppointmentCreate(BaseModel):
     reason: str | None = Field(default=None, max_length=255)
     notes: str | None = None
     location_id: str | None = None
+    appointment_type_id: str | None = None
 
 
 class AppointmentUpdate(BaseModel):
@@ -94,6 +95,7 @@ class AppointmentUpdate(BaseModel):
     notes: str | None = None
     status: AppointmentStatus | None = None
     location_id: str | None = None
+    appointment_type_id: str | None = None
 
 
 class WorkflowTransitionRequest(BaseModel):
@@ -131,6 +133,8 @@ class AppointmentPublic(BaseModel):
     id: str
     tenant_id: str | None = None
     location_id: str | None = None
+    appointment_type_id: str | None = None
+    appointment_type_name: str | None = None
     patient_id: str
     patient_name: str | None = None
     patient_phone: str | None = None

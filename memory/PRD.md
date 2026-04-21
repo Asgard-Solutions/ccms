@@ -2997,3 +2997,76 @@ rule in one place.
 - **Testing-agent iteration 58**: pytest green on live preview, UI
   verified (status-tinted calendar cards + overdue pills + statusMeta
   canonical labels). `retest_needed=false`.
+
+
+
+## 2026-04-22 — appointment_type_id persistence + Checkout hooks
+
+Two cleanup items shipped together.
+
+### appointment_type_id persistence (P2 carry-over)
+
+- `AppointmentCreate` + `AppointmentUpdate` now accept `appointment_type_id`.
+- Tenant-scoped validation on create/patch: must exist + be active. 400
+  on invalid id (runs BEFORE conflict check for a clear error).
+- Hydrator surfaces `appointment_type_name` so UI never needs a second
+  lookup.
+- `BookDialog` now persists the selected type on both create and
+  reschedule; preserves the saved type when opening an existing
+  appointment.
+
+### Checkout hooks on `appointment.checkout`
+
+New event-bus subscriber module `services/scheduling/checkout_hooks.py`.
+Registered from server startup via `register_hooks()`. Every subscriber
+is opt-in, isolated (failure doesn't block the others), and idempotent
+per `appointment_id`.
+
+**Hook 1 — follow-up suggestion**
+When a checked-out appointment carries an `appointment_type_id` whose
+type has `default_follow_up_days`, a `follow_up_suggestions` doc is
+created at `checked_out_at + N days` with `status='pending'`,
+`source='checkout_hook'`.
+
+**Hook 2 — draft invoice stub**
+A zero-amount `billing_invoices_stub` row is written with
+`status='draft'` + `source='checkout_hook'`. Acts as the stable
+anchor row that the future billing engine will enrich.
+
+**Model update**
+`AppointmentType.default_follow_up_days` (1-365, optional). Editable
+via the existing Clinic Settings → Appointment Types manager.
+
+**New API**
+- `GET /api/appointments/follow-up-suggestions?status=pending&patient_id=…`
+  (ordered by `suggested_at`; doctor role auto-filtered to own patients;
+  declared BEFORE `/{appointment_id}` so the path is not shadowed).
+- `POST /api/appointments/follow-up-suggestions/{id}/dismiss`
+  (audited `follow_up_suggestion.dismissed`).
+
+**Frontend**
+- `CheckoutPage` gains a "Follow-ups suggested" section: each row shows
+  patient, suggested date, appointment type, a quick "Book follow-up"
+  button (routes to `/scheduling?...` with the pre-fill params), and a
+  Dismiss action.
+- `AppointmentTypesManager` gains a "Follow-up (days, optional)" field
+  on both create and edit.
+
+**Tests**
+- `test_checkout_hooks.py` — 7/7 green:
+  - valid appointment_type_id persists + hydrates name
+  - unknown appointment_type_id rejected (400)
+  - patch can change appointment_type_id
+  - checkout hook creates follow_up_suggestion (idempotent, correct
+    date offset, fields populated)
+  - hook no-ops when no `default_follow_up_days`
+  - checkout hook creates `billing_invoices_stub` draft (direct Mongo
+    verification)
+  - dismiss endpoint moves status to dismissed
+- Full regression: **65/65 scheduling tests green**.
+
+**Future phases plug into the same event-bus payload**
+Payment collection, invoice enrichment, document print/email,
+automated follow-up booking — all subscribe to `appointment.checkout`
+or consume `billing_invoices_stub` / `follow_up_suggestions` without
+touching the hot path.

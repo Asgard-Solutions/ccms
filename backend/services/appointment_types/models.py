@@ -33,6 +33,10 @@ class AppointmentTypeBase(BaseModel):
     default_duration_minutes: int = Field(ge=5, le=480)
     description: str | None = Field(default=None, max_length=1000)
     sort_order: int = Field(default=0, ge=0, le=10_000)
+    # Optional: recommended follow-up interval in days. When set, the
+    # checkout hook will auto-create a `follow_up_suggestions` row for
+    # front desk to turn into a real appointment.
+    default_follow_up_days: int | None = Field(default=None, ge=1, le=365)
 
     @field_validator("name")
     @classmethod
@@ -54,6 +58,7 @@ class AppointmentTypeUpdate(BaseModel):
     description: str | None = Field(default=None, max_length=1000)
     sort_order: int | None = Field(default=None, ge=0, le=10_000)
     is_active: bool | None = None
+    default_follow_up_days: int | None = Field(default=None, ge=1, le=365)
 
     @field_validator("name")
     @classmethod
@@ -75,6 +80,7 @@ class AppointmentTypePublic(BaseModel):
     description: str | None = None
     sort_order: int = 0
     is_active: bool = True
+    default_follow_up_days: int | None = None
     created_at: str
     updated_at: str
     created_by: str | None = None

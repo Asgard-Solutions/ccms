@@ -65,8 +65,8 @@ def _create_future_appt(s: requests.Session, *, complete_intake: bool = True) ->
 
     # Stagger start times per test to avoid provider-double-booking conflicts.
     # Use a wide pseudo-random minute offset so concurrent tests don't collide.
-    offset_minutes = (uuid.uuid4().int >> 32) % 200000
-    start = datetime.now(timezone.utc) + timedelta(days=30, minutes=offset_minutes)
+    offset_minutes = (uuid.uuid4().int >> 32) % 500000
+    start = datetime.now(timezone.utc) + timedelta(days=60, minutes=offset_minutes)
     end = start + timedelta(minutes=15)
     r = s.post(
         f"{API}/appointments",
@@ -374,8 +374,8 @@ def test_ready_for_provider_blocked_when_intake_incomplete():
 
     providers = s.get(f"{API}/auth/providers", timeout=10).json()
     provider_id = providers[0]["id"]
-    offset_minutes = (uuid.uuid4().int >> 32) % 200000
-    start = datetime.now(timezone.utc) + timedelta(days=30, minutes=offset_minutes)
+    offset_minutes = (uuid.uuid4().int >> 32) % 500000
+    start = datetime.now(timezone.utc) + timedelta(days=60, minutes=offset_minutes)
     end = start + timedelta(minutes=15)
     ar = s.post(
         f"{API}/appointments",

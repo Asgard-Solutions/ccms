@@ -104,6 +104,7 @@ async def create_appointment_type(
             "description": payload.description,
             "sort_order": payload.sort_order,
             "is_active": payload.is_active,
+            "default_follow_up_days": payload.default_follow_up_days,
             "created_at": now,
             "updated_at": now,
             "created_by": user["id"],

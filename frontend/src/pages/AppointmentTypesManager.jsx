@@ -14,6 +14,7 @@ const EMPTY_DRAFT = {
   description: "",
   is_active: true,
   sort_order: 0,
+  default_follow_up_days: "",
 };
 
 /**
@@ -71,6 +72,9 @@ export default function AppointmentTypesManager() {
         description: newDraft.description?.trim() || null,
         is_active: newDraft.is_active,
         sort_order: Number(newDraft.sort_order) || 0,
+        default_follow_up_days:
+          newDraft.default_follow_up_days === "" || newDraft.default_follow_up_days === null
+            ? null : Number(newDraft.default_follow_up_days),
       });
       toast.success(`Added "${newDraft.name.trim()}"`);
       setNewDraft(EMPTY_DRAFT);
@@ -94,6 +98,7 @@ export default function AppointmentTypesManager() {
       description: row.description || "",
       is_active: row.is_active,
       sort_order: row.sort_order ?? 0,
+      default_follow_up_days: row.default_follow_up_days ?? "",
     });
   }
 
@@ -110,6 +115,9 @@ export default function AppointmentTypesManager() {
         default_duration_minutes: Number(editDraft.default_duration_minutes),
         description: editDraft.description?.trim() || null,
         sort_order: Number(editDraft.sort_order) || 0,
+        default_follow_up_days:
+          editDraft.default_follow_up_days === "" || editDraft.default_follow_up_days === null
+            ? null : Number(editDraft.default_follow_up_days),
       });
       toast.success("Saved");
       setEditingId(null);
@@ -205,6 +213,23 @@ export default function AppointmentTypesManager() {
                 onChange={(e) =>
                   setNewDraft((d) => ({ ...d, default_duration_minutes: e.target.value }))
                 }
+                className="rounded-sm"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Follow-up (days, optional)
+              </Label>
+              <Input
+                type="number"
+                min={1}
+                max={365}
+                data-testid="appt-type-new-followup"
+                value={newDraft.default_follow_up_days}
+                onChange={(e) =>
+                  setNewDraft((d) => ({ ...d, default_follow_up_days: e.target.value }))
+                }
+                placeholder="e.g. 14"
                 className="rounded-sm"
               />
             </div>

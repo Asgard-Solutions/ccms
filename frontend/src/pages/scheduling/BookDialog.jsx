@@ -101,6 +101,10 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
         reason: initial.reason || "",
         notes: initial.notes || "",
       });
+      // Preserve the saved appointment type so reschedule doesn't drop it.
+      if (initial.appointment_type_id) {
+        setSelectedTypeId(initial.appointment_type_id);
+      }
       // Reschedule mode respects the saved end time — treat as manual.
       endManuallyEditedRef.current = true;
       return;
@@ -171,6 +175,8 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
     e.preventDefault();
     setSubmitting(true);
     try {
+      const effectiveTypeId =
+        selectedTypeId && selectedTypeId !== CUSTOM_TYPE_VALUE ? selectedTypeId : null;
       const payload = {
         patient_id: form.patient_id,
         provider_id: form.provider_id,
@@ -178,6 +184,7 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
         end_time: localInputToIso(form.end_time),
         reason: form.reason || null,
         notes: form.notes || null,
+        appointment_type_id: effectiveTypeId,
       };
       let saved;
       if (mode === "reschedule") {
@@ -186,6 +193,7 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
           end_time: payload.end_time,
           reason: payload.reason,
           notes: payload.notes,
+          appointment_type_id: effectiveTypeId,
         });
         saved = res.data;
         toast.success("Appointment rescheduled");

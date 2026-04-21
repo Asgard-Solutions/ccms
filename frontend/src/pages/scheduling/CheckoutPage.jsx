@@ -11,6 +11,8 @@ import {
   PlayCircle,
   RefreshCw,
   Stethoscope,
+  CalendarPlus,
+  X,
 } from "lucide-react";
 import { api } from "../../api/client";
 import { Badge } from "../../components/ui/badge";
@@ -72,6 +74,7 @@ export default function CheckoutPage() {
   const [appointments, setAppointments] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [completeDialog, setCompleteDialog] = useState(null);
+  const [followUps, setFollowUps] = useState([]);
 
   // Tick every minute so "ago" labels stay fresh without refetch.
   const [, setTick] = useState(0);
@@ -80,6 +83,17 @@ export default function CheckoutPage() {
     return () => clearInterval(t);
   }, []);
 
+  async function fetchFollowUps() {
+    try {
+      const { data } = await api.get("/appointments/follow-up-suggestions", {
+        params: { status: "pending", limit: 20 },
+      });
+      setFollowUps(data || []);
+    } catch {
+      setFollowUps([]);
+    }
+  }
+
   async function fetchData({ silent = false } = {}) {
     if (silent) setRefreshing(true);
     try {
@@ -87,6 +101,7 @@ export default function CheckoutPage() {
       const params = { from: `${today}T00:00:00Z`, to: `${today}T23:59:59Z` };
       const { data } = await api.get("/appointments", { params });
       setAppointments(data || []);
+      await fetchFollowUps();
     } catch (err) {
       toast.error(err.response?.data?.detail || "Failed to load");
       setAppointments([]);
@@ -258,6 +273,19 @@ export default function CheckoutPage() {
             </Button>
           )
         }
+      />
+
+      <FollowUpSuggestions
+        rows={followUps}
+        onDismiss={async (sid) => {
+          try {
+            await api.post(`/appointments/follow-up-suggestions/${sid}/dismiss`);
+            setFollowUps((xs) => xs.filter((s) => s.id !== sid));
+            toast.success("Dismissed");
+          } catch (err) {
+            toast.error(err.response?.data?.detail || "Failed to dismiss");
+          }
+        }}
       />
 
       <CompleteCheckoutDialog
@@ -524,3 +552,110 @@ function CompleteCheckoutDialog({ open, appointment, onSubmit, onClose }) {
     </Dialog>
   );
 }
+
+function FollowUpSuggestions({ rows, onDismiss }) {
+  if (!rows || rows.length === 0) {
+    return (
+      <section
+        data-testid="followups-section"
+        className="rounded-sm border border-border bg-card"
+      >
+        <header className="flex items-center justify-between border-b border-border px-5 py-3">
+          <div className="flex items-center gap-2">
+            <CalendarPlus className="h-4 w-4 text-muted-foreground" />
+            <h2 className="font-display text-base font-medium">Follow-ups suggested</h2>
+            <span className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">0</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Created when a checked-out visit had a follow-up interval on its appointment type.
+          </p>
+        </header>
+        <div
+          data-testid="followups-empty"
+          className="px-5 py-10 text-center text-sm text-muted-foreground"
+        >
+          No follow-ups pending.
+        </div>
+      </section>
+    );
+  }
+  return (
+    <section
+      data-testid="followups-section"
+      className="rounded-sm border border-border bg-card"
+    >
+      <header className="flex items-center justify-between border-b border-border px-5 py-3">
+        <div className="flex items-center gap-2">
+          <CalendarPlus className="h-4 w-4 text-muted-foreground" />
+          <h2 className="font-display text-base font-medium">Follow-ups suggested</h2>
+          <span
+            data-testid="followups-count"
+            className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+          >
+            {rows.length}
+          </span>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Turn each into a real booking — or dismiss.
+        </p>
+      </header>
+      <ul className="divide-y divide-border">
+        {rows.map((r) => (
+          <li
+            key={r.id}
+            data-testid={`followup-row-${r.id}`}
+            className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 text-sm"
+          >
+            <div className="min-w-0">
+              <p className="truncate font-medium">
+                <span data-testid={`followup-name-${r.id}`}>{r.patient_name || r.patient_id}</span>
+                <span className="ml-2 text-xs text-muted-foreground">
+                  suggested {new Date(r.suggested_at).toLocaleDateString(undefined, {
+                    month: "short", day: "numeric", year: "numeric",
+                  })}
+                </span>
+              </p>
+              <p className="truncate text-[11px] text-muted-foreground">
+                {r.appointment_type_name ? `${r.appointment_type_name} · ` : ""}
+                {r.note || "follow-up"}
+              </p>
+            </div>
+            <div className="flex gap-1.5">
+              <Button
+                size="sm"
+                data-testid={`followup-book-${r.id}`}
+                onClick={() => {
+                  // Minimal-click: take the user to Scheduling with hints in
+                  // the URL. A future phase can consume these to pre-fill
+                  // BookDialog and dismiss the suggestion on save.
+                  const params = new URLSearchParams({
+                    patient_id: r.patient_id,
+                    provider_id: r.provider_id,
+                    date: r.suggested_at,
+                    appointment_type_id: r.appointment_type_id || "",
+                    follow_up_suggestion_id: r.id,
+                  });
+                  window.location.href = `/scheduling?${params.toString()}`;
+                }}
+                className="h-8 rounded-sm bg-primary px-3 text-xs hover:bg-[var(--primary-hover)]"
+              >
+                Book follow-up
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                data-testid={`followup-dismiss-${r.id}`}
+                onClick={() => onDismiss(r.id)}
+                className="h-8 rounded-sm px-2 text-xs text-muted-foreground"
+              >
+                <X className="mr-1 h-3 w-3" />
+                Dismiss
+              </Button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+

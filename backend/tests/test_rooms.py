@@ -69,8 +69,8 @@ def _create_appt(s: requests.Session, location_id: str,
     patient_id = patients[0]["id"]
     providers = s.get(f"{API}/auth/providers", timeout=10).json()
     provider_id = providers[0]["id"]
-    offset = (uuid.uuid4().int >> 32) % 200000
-    start = datetime.now(timezone.utc) + timedelta(days=30, minutes=offset)
+    offset = (uuid.uuid4().int >> 32) % 500000
+    start = datetime.now(timezone.utc) + timedelta(days=60, minutes=offset)
     end = start + timedelta(minutes=15)
     r = s.post(f"{API}/appointments", json={
         "patient_id": patient_id, "provider_id": provider_id,

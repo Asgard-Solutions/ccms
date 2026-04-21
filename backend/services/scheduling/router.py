@@ -97,6 +97,15 @@ async def _hydrate(apps: list[dict]) -> list[dict]:
             {"_id": 0, "id": 1, "name": 1, "type": 1},
         ):
             rooms_by_id[r["id"]] = r
+    # Appointment type names — only for appts with a type set.
+    type_ids = list({a.get("appointment_type_id") for a in apps if a.get("appointment_type_id")})
+    types_by_id: dict[str, dict] = {}
+    if type_ids:
+        async for t in db.appointment_types.find(
+            {"id": {"$in": type_ids}},
+            {"_id": 0, "id": 1, "name": 1},
+        ):
+            types_by_id[t["id"]] = t
     for a in apps:
         a["provider_name"] = providers.get(a["provider_id"])
         info = patients.get(a["patient_id"]) or {}
@@ -121,6 +130,8 @@ async def _hydrate(apps: list[dict]) -> list[dict]:
         r = rooms_by_id.get(a.get("current_room_id") or "")
         a["current_room_name"] = r.get("name") if r else None
         a["current_room_type"] = r.get("type") if r else None
+        t = types_by_id.get(a.get("appointment_type_id") or "")
+        a["appointment_type_name"] = t.get("name") if t else None
     return apps
 
 
@@ -201,6 +212,20 @@ async def create_appointment(
 
     start_iso = _to_iso(payload.start_time)
     end_iso = _to_iso(payload.end_time)
+
+    # Validate appointment_type_id BEFORE the conflict check so we return
+    # a clear 400 instead of a misleading "slot busy" 409 when the type
+    # id is malformed or inactive.
+    if payload.appointment_type_id:
+        at_q: dict = {"id": payload.appointment_type_id, "is_active": True}
+        if ctx.tenant_id and not ctx.is_platform_admin:
+            at_q["tenant_id"] = ctx.tenant_id
+        at_row = await db.appointment_types.find_one(at_q, {"_id": 0, "id": 1})
+        if not at_row:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "Invalid appointment_type_id",
+            )
+
     await _check_conflict(payload.provider_id, start_iso, end_iso, tenant_id=ctx.tenant_id)
 
     now = _now_iso()
@@ -208,6 +233,7 @@ async def create_appointment(
         "id": str(uuid.uuid4()),
         "patient_id": payload.patient_id,
         "provider_id": payload.provider_id,
+        "appointment_type_id": payload.appointment_type_id,
         "start_time": start_iso,
         "end_time": end_iso,
         "reason": payload.reason,
@@ -476,6 +502,90 @@ async def appointment_counts(
     return await cache.get_or_set(cache_key, 30, _aggregate)
 
 
+# ---------------------------------------------------------------------------
+# Follow-up suggestions — written by the checkout event-bus hooks.
+# Declared BEFORE /{appointment_id} so the path is not shadowed by the
+# generic single-appointment fetch route.
+# ---------------------------------------------------------------------------
+
+@router.get("/follow-up-suggestions")
+async def list_follow_up_suggestions(
+    request: Request,
+    user: dict = Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
+    status_filter: str | None = Query(default="pending", alias="status"),
+    patient_id: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    """Return the queue of pending follow-up suggestions created by
+    the checkout hook (scaffold for the future follow-up scheduler UI).
+    Providers see only their own queue; admin/staff see the full queue."""
+    db = get_db_read()
+    q: dict = {}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        q["tenant_id"] = ctx.tenant_id
+    if status_filter and status_filter != "all":
+        q["status"] = status_filter
+    if patient_id:
+        q["patient_id"] = patient_id
+    if user.get("role") == "doctor":
+        q["provider_id"] = user["id"]
+    cursor = db.follow_up_suggestions.find(q, {"_id": 0}).sort("suggested_at", 1).limit(limit)
+    rows = [r async for r in cursor]
+    pids = list({r["patient_id"] for r in rows if r.get("patient_id")})
+    tids = list({r["appointment_type_id"] for r in rows if r.get("appointment_type_id")})
+    patients = {
+        p["id"]: f"{p['first_name']} {p['last_name']}"
+        async for p in db.patients.find(
+            {"id": {"$in": pids}},
+            {"_id": 0, "id": 1, "first_name": 1, "last_name": 1},
+        )
+    } if pids else {}
+    types = {
+        t["id"]: t["name"]
+        async for t in db.appointment_types.find(
+            {"id": {"$in": tids}}, {"_id": 0, "id": 1, "name": 1},
+        )
+    } if tids else {}
+    for r in rows:
+        r["patient_name"] = patients.get(r.get("patient_id"))
+        r["appointment_type_name"] = types.get(r.get("appointment_type_id"))
+    return rows
+
+
+@router.post("/follow-up-suggestions/{suggestion_id}/dismiss")
+async def dismiss_follow_up_suggestion(
+    suggestion_id: str,
+    request: Request,
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    db = get_db_write()
+    q: dict = {"id": suggestion_id}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        q["tenant_id"] = ctx.tenant_id
+    row = await db.follow_up_suggestions.find_one(q, {"_id": 0})
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Suggestion not found")
+    await db.follow_up_suggestions.update_one(
+        {"id": suggestion_id},
+        {"$set": {
+            "status": "dismissed",
+            "resolved_at": _now_iso(),
+            "resolved_by": actor["id"],
+        }},
+    )
+    await audit_success(
+        actor, "follow_up_suggestion.dismissed", request,
+        entity_type="follow_up_suggestion", entity_id=suggestion_id,
+        metadata={"tenant_id": ctx.tenant_id},
+    )
+    return {"ok": True}
+
+
+
 @router.get("/{appointment_id}", response_model=AppointmentPublic)
 async def get_appointment(
     appointment_id: str, request: Request,
@@ -548,6 +658,16 @@ async def update_appointment(
         updates["notes"] = payload.notes
     if payload.status is not None:
         updates["status"] = payload.status
+    if payload.appointment_type_id is not None:
+        # Validate the type exists + is active + tenant-scoped.
+        at_q: dict = {"id": payload.appointment_type_id, "is_active": True}
+        if ctx.tenant_id and not ctx.is_platform_admin:
+            at_q["tenant_id"] = ctx.tenant_id
+        if not await db.appointment_types.find_one(at_q, {"_id": 0, "id": 1}):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "Invalid appointment_type_id",
+            )
+        updates["appointment_type_id"] = payload.appointment_type_id
 
     if not updates:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No fields to update")
@@ -975,4 +1095,5 @@ async def appointment_room_history(
         .sort("at", 1)
     ]
     return rows
+
 
