@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ArrowLeft, Download, Eye, EyeOff, FileText, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, formatApiError } from "../api/client";
@@ -963,6 +963,13 @@ export default function PatientDetail() {
   const { id } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => searchParams.get("tab") || "overview");
+  useEffect(() => {
+    const urlTab = searchParams.get("tab");
+    if (urlTab && urlTab !== tab) setTab(urlTab);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
   const canAddRecord = user.role === "admin" || user.role === "doctor";
   const canDelete = user.role === "admin";
   const canEditIntake = ["admin", "doctor", "staff"].includes(user.role);
@@ -1234,7 +1241,18 @@ export default function PatientDetail() {
         </div>
       </header>
 
-      <Tabs defaultValue="overview" data-testid="patient-detail-tabs">
+      <Tabs
+        value={tab}
+        onValueChange={(v) => {
+          setTab(v);
+          // keep URL in sync so deep-links (e.g. ?tab=clinical) survive
+          const next = new URLSearchParams(searchParams);
+          if (v === "overview") next.delete("tab");
+          else next.set("tab", v);
+          setSearchParams(next, { replace: true });
+        }}
+        data-testid="patient-detail-tabs"
+      >
         <TabsList
           data-testid="patient-detail-tablist"
           className="flex h-auto w-full flex-wrap justify-start gap-1 rounded-sm bg-muted/60 p-1"

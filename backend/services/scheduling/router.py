@@ -437,6 +437,18 @@ async def get_appointment(
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Forbidden")
     a = decrypt_fields(a, ENCRYPTED)
     (hydrated,) = await _hydrate([a])
+    # Attach clinical encounter linkage (read-only projection).
+    enc = await db.clinical_encounters.find_one(
+        {
+            "tenant_id": a.get("tenant_id"),
+            "appointment_id": appointment_id,
+            "status": {"$ne": "cancelled"},
+        },
+        {"_id": 0, "id": 1, "status": 1},
+    )
+    if enc:
+        hydrated["clinical_encounter_id"] = enc["id"]
+        hydrated["clinical_encounter_status"] = enc["status"]
     return hydrated
 
 

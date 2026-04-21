@@ -33,6 +33,7 @@ import {
 import { api, formatApiError } from "../../api/client";
 import IntakeHistoryCard from "./IntakeHistoryCard";
 import DiagnosesCard from "./DiagnosesCard";
+import EncountersCard from "./EncountersCard";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Badge } from "../../components/ui/badge";
@@ -563,8 +564,8 @@ export default function ClinicalTab({
   const stats = useMemo(() => {
     const s = summary || {};
     return [
+      { label: "In-progress visits", value: s.encounters?.open ?? "—", id: "stat-encounters" },
       { label: "Open episodes", value: s.episodes?.open ?? "—", id: "stat-open-episodes" },
-      { label: "Total episodes", value: s.episodes?.total ?? "—", id: "stat-total-episodes" },
       {
         label: "Active diagnoses",
         value: s.diagnoses?.open ?? "—",
@@ -687,6 +688,13 @@ export default function ClinicalTab({
       <DiagnosesCard
         patientId={patientId}
         episodes={episodes || []}
+        canWrite={canWrite}
+        onReauthNeeded={onReauthNeeded}
+      />
+
+      {/* Phase 3 — Appointment-launched encounters */}
+      <EncountersCard
+        patientId={patientId}
         canWrite={canWrite}
         onReauthNeeded={onReauthNeeded}
       />

@@ -296,3 +296,13 @@ async def create_indexes() -> None:
     await db.clinical_diagnoses.create_index(
         [("tenant_id", 1), ("episode_id", 1)],
     )
+    # Phase 3 — encounters
+    await db.clinical_encounters.create_index(
+        [("tenant_id", 1), ("patient_id", 1), ("date_of_service", -1)],
+    )
+    await db.clinical_encounters.create_index(
+        [("tenant_id", 1), ("appointment_id", 1)],
+    )
+    await db.clinical_encounters.create_index(
+        [("tenant_id", 1), ("status", 1)],
+    )

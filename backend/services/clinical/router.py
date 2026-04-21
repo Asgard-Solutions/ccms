@@ -168,6 +168,10 @@ async def get_clinical_summary(
     dx_open = await db.clinical_diagnoses.count_documents(
         {**tenant_q, "status": "active"}
     )
+    enc_total = await db.clinical_encounters.count_documents(tenant_q)
+    enc_open = await db.clinical_encounters.count_documents(
+        {**tenant_q, "status": "in_progress"}
+    )
     history_doc = await db.clinical_history.find_one(tenant_q, {"_id": 0, "id": 1})
     history_present = 1 if history_doc else 0
 
@@ -187,6 +191,7 @@ async def get_clinical_summary(
         "outcomes": ClinicalSectionCount().model_dump(),
         "media": ClinicalSectionCount().model_dump(),
         "encounter_links": ClinicalSectionCount().model_dump(),
+        "encounters": ClinicalSectionCount(total=enc_total, open=enc_open).model_dump(),
         "history_present": history_present,
         "generated_at": now_iso(),
     }

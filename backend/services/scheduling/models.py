@@ -62,3 +62,6 @@ class AppointmentPublic(BaseModel):
     created_by: str
     created_at: str
     updated_at: str
+    # Phase 3 — populated by GET /appointments/{id} when an encounter exists.
+    clinical_encounter_id: str | None = None
+    clinical_encounter_status: str | None = None

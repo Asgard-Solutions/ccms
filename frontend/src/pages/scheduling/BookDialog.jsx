@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Stethoscope } from "lucide-react";
 import { api } from "../../api/client";
 import { isoToLocalInput, localInputToIso } from "../../utils/time";
 import { Button } from "../../components/ui/button";
+import EncounterLaunchDialog from "../clinical/EncounterLaunchDialog";
 import {
   Dialog,
   DialogContent,
@@ -44,7 +46,7 @@ const DEFAULT_DURATION_MIN = 30;
  *     preserved (we stop fighting the user).
  *   - "Custom" keeps Reason free-text with the legacy 30-min duration.
  */
-export default function BookDialog({ open, onClose, onSaved, onCancelAppointment, initial = null, defaultStart = null }) {
+export default function BookDialog({ open, onClose, onSaved, onCancelAppointment, onReauthNeeded, initial = null, defaultStart = null }) {
   const mode = initial ? "reschedule" : "create";
   const [patients, setPatients] = useState([]);
   const [providers, setProviders] = useState([]);
@@ -59,6 +61,7 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
   const [selectedTypeId, setSelectedTypeId] = useState(CUSTOM_TYPE_VALUE);
   const endManuallyEditedRef = useRef(false);
   const [submitting, setSubmitting] = useState(false);
+  const [launchOpen, setLaunchOpen] = useState(false);
 
   // Only fetch types while the dialog is open to avoid background chatter.
   const { types } = useAppointmentTypes({ activeOnly: true, enabled: open });
@@ -332,16 +335,30 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
             />
           </div>
           <DialogFooter className="flex-wrap gap-2 sm:justify-between">
-            {mode === "reschedule" && initial?.status === "scheduled" && onCancelAppointment ? (
-              <Button
-                type="button"
-                variant="ghost"
-                data-testid="appt-cancel-appointment-btn"
-                onClick={() => onCancelAppointment(initial)}
-                className="rounded-sm text-destructive hover:bg-destructive-soft"
-              >
-                Cancel appointment
-              </Button>
+            {mode === "reschedule" ? (
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setLaunchOpen(true)}
+                  data-testid="appt-launch-encounter-btn"
+                  className="rounded-sm"
+                >
+                  <Stethoscope className="mr-1.5 h-4 w-4" />
+                  Launch encounter
+                </Button>
+                {initial?.status === "scheduled" && onCancelAppointment && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    data-testid="appt-cancel-appointment-btn"
+                    onClick={() => onCancelAppointment(initial)}
+                    className="rounded-sm text-destructive hover:bg-destructive-soft"
+                  >
+                    Cancel appointment
+                  </Button>
+                )}
+              </div>
             ) : (
               <span />
             )}
@@ -361,6 +378,14 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
           </DialogFooter>
         </form>
       </DialogContent>
+      {mode === "reschedule" && initial && (
+        <EncounterLaunchDialog
+          open={launchOpen}
+          onOpenChange={setLaunchOpen}
+          appointment={initial}
+          onReauthNeeded={onReauthNeeded}
+        />
+      )}
     </Dialog>
   );
 }
