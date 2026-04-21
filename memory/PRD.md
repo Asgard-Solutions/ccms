@@ -2882,3 +2882,62 @@ at the authz layer. Current role grants already include FD / PR / CM
 
 **Out of scope (by request):** financial/billing features, full
 checkout UI beyond the handoff state support already present.
+
+
+
+## 2026-04-22 — Checkout Workflow (Phase 6)
+
+Front-desk operational checkout — notes/summary captured at complete
+time, clean hook points for future payment / follow-up integrations.
+
+**New endpoints**
+- `POST /api/appointments/{id}/start-checkout` — physical motion only.
+  Allowed from `ready_for_checkout` or `completed`. Sets
+  `current_location_type='checkout'` and stamps `checkout_started_at`
+  + `checkout_started_by_user_id`. Status unchanged.
+- `POST /api/appointments/{id}/checkout` — now accepts
+  `{checkout_notes, checkout_summary}` on the existing `CheckoutRequest`.
+  Both fields persist encrypted at rest via the appointment encryption
+  pipeline (AES-256-GCM field-level). The endpoint publishes
+  `appointment.checkout` on the event bus with the full updated doc —
+  the clean hook point for future payment / invoice / print / follow-up
+  subscribers.
+
+**Model additions**
+- `checkout_started_at`, `checkout_started_by_user_id`
+- `checkout_notes`, `checkout_summary` (encrypted via ENCRYPTED_FIELDS)
+
+**UX fix from testing-agent iteration 57**
+`ready_for_checkout` no longer auto-sets `current_location_type=checkout`
+— the front desk now drives that with `/start-checkout`. This populates
+the UI's "Ready for Checkout" staging section as intended (previously
+always empty because the transition immediately bumped location to
+checkout).
+
+**New frontend page `/scheduling/checkout`** (admin + staff) —
+`CheckoutPage` with three sections:
+  - Ready for Checkout (staging)
+  - At Checkout Counter (`location_type==checkout`)
+  - Recently Checked Out (within last 2h) — Mark Departed / Departed
+    badge.
+
+`CompleteCheckoutDialog` captures `checkout_notes` (max 2k chars) +
+`checkout_summary` (max 4k). When launched from a `ready_for_checkout`
+row it auto-advances through `/complete` then `/checkout` for
+minimal-click front-desk UX.
+
+**Tests**
+- `test_checkout_workflow.py` — 6/6 green (start-checkout motion,
+  wrong-state rejection, notes+summary capture, encryption-at-rest
+  round trip, depart sets location, patient-portal deny).
+- Combined scheduling regression — **53/53 green**
+  (checkout 6 + provider 7 + workflow 17 + rooms 11 + counts 5 + types 7).
+- **Testing-agent iteration 57**: full E2E validated — pytest green
+  on live preview, UI sections + dialog testids confirmed, auto-
+  advance wire-trace confirmed, role gating verified for
+  patient-portal.
+
+**Out of scope (by request)**
+Payment processing buildout, invoice engine changes. The event-bus
+payload and checkout_notes/summary fields are the hook points for
+those phases.

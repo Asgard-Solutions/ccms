@@ -151,7 +151,8 @@ def test_workflow_full_happy_path():
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["status"] == "ready_for_checkout"
-    assert body["current_location_type"] == "checkout"
+    # Phase-6 UX note: ready-for-checkout no longer auto-moves location to
+    # 'checkout'; the front desk drives that via /start-checkout.
     assert body["ready_for_checkout_at"]
 
     # complete

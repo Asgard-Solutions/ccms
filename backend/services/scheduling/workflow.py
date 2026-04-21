@@ -143,7 +143,12 @@ TRANSITIONS: dict[str, TransitionSpec] = {
         allowed_from=frozenset({"in_progress"}),
         stamp_at="ready_for_checkout_at",
         stamp_by="ready_for_checkout_by_user_id",
-        default_location="checkout",
+        # Intentionally do NOT default-set location=checkout — keeping the
+        # patient's current physical location lets the front desk decide
+        # when the patient actually moves to the counter (via
+        # /start-checkout). Without this, the UI's "Ready for Checkout"
+        # staging section would always be empty.
+        default_location=None,
         audit_action="appointment.ready_for_checkout",
         reject_msg="Visit must be in progress to mark ready for checkout",
     ),
