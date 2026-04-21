@@ -2254,3 +2254,73 @@ without implying NPPES registration verification.
 - **P3 (future)** — Real NPPES registry lookup integration (separate
   verification story — not covered by this checksum validator).
 
+
+---
+
+## 2026-04-21 — DEA Number Field + Validation (Task Prompt 9)
+
+### Problem
+Prescribing clinicians need to record a DEA registration number on
+their provider profile. Needs **structural + checksum** validation
+(not registry verification) on both frontend and backend, visibly
+caveated that it does not prove federal registration.
+
+### Fix
+- **Shared validator (backend)**: `backend/core/dea.py` — exposes
+  `is_valid_dea`, `compute_dea_check_digit`, `validate_dea_or_raise`,
+  `matches_last_name_initial`, `VALID_REGISTRANT_CODES`
+  (`ABCDEFGHJKLMPRSTUX` — DEA-published set).
+  Checksum spec: `(d1+d3+d5 + 2*(d2+d4+d6)) mod 10 == check_digit`.
+- **Shared validator (frontend)**: `frontend/src/utils/dea.js` —
+  mirrors the backend contract with `isValidDea`, `describeDeaError`,
+  `DEA_CHECKSUM_DISCLAIMER`, `matchesLastNameInitial`.
+- **Data model**: `UserPublic` + `ProfileUpdate` now carry
+  `dea_number` (9 chars, normalised upper) and optional
+  `dea_expires_at` (ISO `YYYY-MM-DD`). Invalid values → 422 with
+  specific error per failure mode.
+- **Backend enforcement**: model_validator `_validate_dea` delegates
+  to `validate_dea_or_raise`; the `_PROFILE_STRING_FIELDS` tuple in
+  the router now includes both DEA fields so the writable allowlist
+  covers them.
+- **Audit**: DEA create/update/clear flow through the existing
+  `user.profile_updated` action with `metadata.fields` listing
+  `dea_number` and/or `dea_expires_at`.
+- **Frontend**: `LicensesTab.jsx` gained a `DeaCard` mounted right
+  below `NpiCard`. Clinician-only (visibility already gated at the
+  Licenses tab level). Auto-uppercases input, strips non-alphanumeric,
+  enforces `maxLength=9`, distinct inline errors by failure mode,
+  `aria-invalid` + `aria-describedby`. Disclaimer:
+  *"Format and checksum are validated locally — this does not confirm
+  federal DEA registration status."* No claim of federal verification.
+
+### Tests & verification
+- `backend/tests/test_dea_validation.py` **(new, 47 tests)** — unit
+  (compute_check_digit, is_valid_dea variants, validate_dea_or_raise
+  error messaging, matches_last_name_initial, registrant-set
+  spot-check), backend PATCH (valid, lowercase-normalisation,
+  checksum failure, invalid registrant, wrong length, non-alnum,
+  empty-clears, ISO expiry, bad expiry format), audit trail.
+- Regression: 107 passed (+1 skipped by design) across DEA, NPI,
+  professional licenses, and profile self-service.
+- Testing agent iteration_48: backend unit + integration + audit +
+  frontend UX all green. Acceptance criteria met exactly.
+
+### Canonical examples pinned in tests
+- **Valid DEAs**: `AB1234563`, `AB9876547`, `BM9999991`, `CF1000001`.
+- **Invalid checksum (same length)**: `AB1234567`, `AB1234560`.
+- **Invalid registrant letter**: `IB1234563`, `NA1234563`, `QA1234563`.
+
+### Task Prompt 9 — CLOSED ✅
+
+### Remaining backlog (unchanged)
+- **P1** — Global retry-after-reauth Axios interceptor.
+- **P2** — Persist `appointment_type_id` on Appointments.
+- **P2** — Reorder Appointment Types (drag-drop).
+- **P2** — Restore green for pre-existing iteration4/5/8/9/11/12/13 files.
+- **P2 / deferred** — Unmock Resend email delivery.
+- **P2 (future)** — Enterprise Auth (WebAuthn / SAML / OIDC / SCIM).
+- **P2 (future)** — PostgreSQL migration.
+- **P3 (future)** — Real registry lookups (NPPES for NPI, DEA registry
+  for DEA). Structural validators pave the way; lookup integrations
+  are separate stories.
+
