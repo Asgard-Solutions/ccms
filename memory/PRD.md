@@ -2541,3 +2541,56 @@ backend/tests/test_reports_phase2_e2e.py      # +7 API E2E tests (new)
 frontend/src/pages/reports/ReportViewer.jsx   # PhiConsentDialog + protection-aware copy
 ```
 
+
+## 2026-04-21 — Reports Phase 3-9 (catalog expansion, views, docs, tests)
+
+### Catalog — now **22 reports across 7 categories**
+
+| Category      | Count | Reports                                                                                  |
+| ------------- | ----- | ---------------------------------------------------------------------------------------- |
+| Operational   | 3     | appointments_list, patient_roster, provider_productivity                                 |
+| Clinical      | 2     | unsigned_clinical_notes, notes_by_provider                                               |
+| Financial     | 6     | claims_list, invoices_list, payments_received, denials_log, payments_by_method_summary, patient_balance |
+| Compliance    | 5     | audit_activity, phi_access_activity, failed_logins, export_history, license_expiration   |
+| Patient       | 3     | new_patients, patient_contact_completeness, active_patients_summary                      |
+| Scheduling    | 1     | cancellations_no_shows                                                                   |
+| Workforce     | 2     | user_last_login, workforce_invitations                                                   |
+
+### New framework capabilities
+- **Saved-view column whitelist** (`views._validate_columns_against_definition`)
+  — rejects forged column keys at POST/PATCH with 400.
+- **Column reorder** — up/down arrows on selected columns in the picker.
+  Preserves user-chosen order across sorts and paging.
+- **Reset View** button — clears filters, columns, sort, and active
+  saved view back to the report's defaults.
+- **Object-valued aggregates** — `AggregatesBar` flattens
+  `{by_status: {active: 156, deleted: 3}}` into per-sub-key tiles.
+
+### Deferred reports (need data not yet captured)
+- Referral source
+- Patient insurance coverage summary
+- Birthday / age cohort (can be derived, no stakeholder demand yet)
+- CPT / procedure utilisation
+- ICD / diagnosis distribution
+- Appointment-type volume (blocked on P2 appointment_type_id persistence)
+
+### Tests
+- **88/88 pytests green**: framework 14 + phase2 e2e 7 + catalog 50 +
+  phase3-9 e2e 17.
+- Frontend flows re-verified via testing agent (iteration 53) — UI
+  column reorder, Reset, tenant isolation, PHI consent gate.
+
+### Documentation
+- `/app/backend/services/reports/README.md` — full architecture note,
+  how-to-add-a-report, permission matrix, PHI export protection rules
+  per format, audit event taxonomy, storage/cleanup operational notes.
+
+### Security
+- Every report is permission-gated (resource + action) and tenant-scoped
+  via `core.tenancy`.
+- Audit events for every run/export/view/download.
+- `/api/exports/{id}/download` uses HMAC-signed short-lived tokens —
+  no public or unscoped URLs.
+- PHI exports use native PDF encryption (AES-128) for PDF and
+  AES-256 password-protected ZIP for CSV/XLSX.
+

@@ -800,14 +800,25 @@ function AggregatesBar({ aggregates, columns }) {
     return `${v < 0 ? "-" : ""}$${Math.floor(abs / 100).toLocaleString()}.${String(abs % 100).padStart(2, "0")}`;
   };
   const entries = [];
+  const pushNumber = (key, label, n) => {
+    const isCents = key.endsWith("_cents");
+    entries.push({
+      key,
+      label: label.replace(/_cents$/, "").replace(/_/g, " "),
+      value: isCents ? cents(n) : n.toLocaleString(),
+    });
+  };
   for (const [k, v] of Object.entries(aggregates)) {
     if (typeof v === "number") {
-      const isCents = k.endsWith("_cents");
-      entries.push({
-        key: k,
-        label: k.replace(/_cents$/, "").replace(/_/g, " "),
-        value: isCents ? cents(v) : v.toLocaleString(),
-      });
+      pushNumber(k, k, v);
+    } else if (v && typeof v === "object" && !Array.isArray(v)) {
+      // Object-valued aggregates (e.g. `by_status: {active: 156, deleted: 3}`)
+      // get flattened to one tile per sub-key.
+      for (const [sub, num] of Object.entries(v)) {
+        if (typeof num === "number") {
+          pushNumber(`${k}.${sub}`, `${k.replace(/_/g, " ")}: ${sub}`, num);
+        }
+      }
     }
   }
   if (!entries.length) return null;
