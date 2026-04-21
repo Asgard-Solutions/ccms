@@ -105,8 +105,13 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
-  const reauth = useCallback(async (password) => {
-    const { data } = await api.post("/auth/reauth", { password });
+  const reauth = useCallback(async (payload) => {
+    // Backwards-compatible: accept a raw password string for legacy
+    // call sites, or a {password} / {pin} / {password|pin, reason}
+    // object for step-up verification.
+    const body =
+      typeof payload === "string" ? { password: payload } : payload;
+    const { data } = await api.post("/auth/reauth", body);
     return data;
   }, []);
 

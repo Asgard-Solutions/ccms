@@ -780,7 +780,13 @@ async def remove_pin(
     user: dict = Depends(get_current_user),
 ):
     """Remove an existing PIN. Gated on the password as proof-of-presence
-    (same bar as setting one)."""
+    (same bar as setting one). PIN-only payloads are rejected so an
+    attacker who only has the PIN cannot silently remove it."""
+    if not payload.password:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Password is required to remove a PIN.",
+        )
     db = get_db_write()
     full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
     if not full:
@@ -1118,14 +1124,102 @@ async def reauth(
     response: Response,
     user: dict = Depends(get_current_user),
 ):
+    """Step-up re-authentication.
+
+    Accepts either `password` or `pin`. PIN verification shares its
+    rate-limit + 15-min lockout with `/auth/me/pin/verify`, so the
+    step-up endpoint can't be used to side-step that protection. On
+    success, sets the same 5-min `reauth_token` cookie as before so
+    every existing consumer (interceptor + `require_reauth()` gates)
+    works unchanged.
+
+    `reason` (optional) is copied into the audit metadata for review.
+    """
     db = get_db()
     full = await db.users.find_one({"id": user["id"]}, {"_id": 0})
-    if not full or not verify_password(payload.password, full["password_hash"]):
-        await audit_failure(
-            action="auth.reauth", request=request, actor_email=user["email"],
-            reason="wrong_password",
+    if not full:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired")
+
+    audit_metadata: dict = {"factor": "password"}
+    if payload.reason:
+        audit_metadata["reason"] = payload.reason[:500]
+
+    if payload.pin is not None:
+        audit_metadata["factor"] = "pin"
+        if not full.get("pin_hash"):
+            await log_audit(
+                action="auth.reauth",
+                actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+                tenant_id=user.get("tenant_id"),
+                outcome="failure",
+                reason="pin_not_configured",
+                metadata=audit_metadata,
+                request=request,
+            )
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "No PIN configured for this account. Use password instead.",
+            )
+        if _pin_is_locked(full):
+            await log_audit(
+                action="auth.reauth",
+                actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+                tenant_id=user.get("tenant_id"),
+                outcome="failure",
+                reason="pin_locked",
+                metadata=audit_metadata,
+                request=request,
+            )
+            raise HTTPException(
+                status.HTTP_423_LOCKED,
+                "PIN is temporarily locked due to too many failed attempts. "
+                "Reset your PIN or sign in with your password.",
+            )
+        if not verify_password(payload.pin, full["pin_hash"]):
+            fails = int(full.get("pin_failed_attempts") or 0) + 1
+            update = {
+                "pin_failed_attempts": fails,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            locked = fails >= PIN_MAX_FAILED_ATTEMPTS
+            if locked:
+                update["pin_locked_until"] = (
+                    datetime.now(timezone.utc)
+                    + timedelta(minutes=PIN_LOCKOUT_MINUTES)
+                ).isoformat()
+            await db.users.update_one({"id": user["id"]}, {"$set": update})
+            await log_audit(
+                action="auth.reauth",
+                actor_id=user["id"], actor_email=user["email"], actor_role=user["role"],
+                tenant_id=user.get("tenant_id"),
+                outcome="failure",
+                reason="wrong_pin" if not locked else "locked_out",
+                metadata={**audit_metadata,
+                          "failed_attempts": fails, "locked": locked},
+                request=request,
+            )
+            raise HTTPException(
+                status.HTTP_423_LOCKED if locked else status.HTTP_401_UNAUTHORIZED,
+                "PIN locked after too many wrong attempts." if locked
+                else "Invalid PIN",
+            )
+        # Success — clear PIN counters.
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {
+                "pin_failed_attempts": 0,
+                "pin_locked_until": None,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }},
         )
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid password")
+    else:
+        if not verify_password(payload.password, full["password_hash"]):
+            await audit_failure(
+                action="auth.reauth", request=request, actor_email=user["email"],
+                reason="wrong_password",
+            )
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid password")
+
     token = create_reauth_token(user["id"])
     response.set_cookie("reauth_token", token, **_cookie_kwargs(5 * 60))
     await log_audit(
@@ -1133,9 +1227,11 @@ async def reauth(
         actor_id=user["id"],
         actor_email=user["email"],
         actor_role=user["role"],
+        tenant_id=user.get("tenant_id"),
+        metadata=audit_metadata,
         request=request,
     )
-    return {"reauth_token": token}
+    return {"reauth_token": token, "factor": audit_metadata["factor"]}
 
 
 # ---------------- MFA enrolment ----------------

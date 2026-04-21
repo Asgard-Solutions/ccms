@@ -13,7 +13,7 @@ Future relational schema (delta from Phase 1):
 """
 from datetime import datetime
 from typing import Literal
-from pydantic import BaseModel, EmailStr, Field, ConfigDict
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, model_validator
 
 Role = Literal["admin", "doctor", "staff", "patient", "platform_admin", "super_admin"]
 UserStatus = Literal["active", "disabled"]
@@ -94,7 +94,32 @@ class PasswordChange(BaseModel):
 
 
 class ReauthRequest(BaseModel):
-    password: str
+    """Step-up re-authentication payload.
+
+    Exactly one of `password` or `pin` must be supplied. `pin` is only
+    accepted for users who have configured a Security PIN; it reuses
+    the same server-side rate-limit / lockout machinery as
+    `/auth/me/pin/verify` so brute-force protections can't be bypassed
+    via this endpoint.
+
+    `reason` is an optional free-text audit note (e.g. a break-glass
+    justification). It's recorded alongside the `auth.reauth` audit
+    row so reviewers can see *why* a step-up happened.
+    """
+    model_config = ConfigDict(extra="forbid")
+    password: str | None = None
+    pin: str | None = Field(
+        default=None, min_length=6, max_length=6, pattern=r"^\d{6}$",
+    )
+    reason: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def _one_factor(self):
+        if not self.password and not self.pin:
+            raise ValueError("Either password or pin is required")
+        if self.password and self.pin:
+            raise ValueError("Provide password or pin, not both")
+        return self
 
 
 class MfaSetupResponse(BaseModel):

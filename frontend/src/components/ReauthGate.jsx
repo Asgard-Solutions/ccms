@@ -36,13 +36,15 @@ const ReauthContext = createContext(null);
 
 export function ReauthProvider({ children }) {
   const [open, setOpen] = useState(false);
+  const [opts, setOpts] = useState({});
   // Each pending promise waits on the same resolver; we resolve `true`
   // when the dialog confirms and `false` if the user cancels.
   const waitersRef = useRef([]);
 
-  const requestReauth = useCallback(() => {
+  const requestReauth = useCallback((options = {}) => {
     return new Promise((resolve) => {
       waitersRef.current.push(resolve);
+      setOpts(options);
       setOpen(true);
     });
   }, []);
@@ -83,8 +85,10 @@ export function ReauthProvider({ children }) {
       {children}
       <ReauthDialog
         open={open}
-        title="Confirm it's you"
-        description="This action is logged to the audit trail. Please re-enter your password to continue."
+        title={opts.title}
+        description={opts.description}
+        requireReason={!!opts.requireReason}
+        defaultReason={opts.defaultReason || ""}
         onConfirmed={() => {
           setOpen(false);
           drain(true);
