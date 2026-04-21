@@ -2678,3 +2678,45 @@ location change, and patient-portal permission deny.
 **Not yet done (explicitly out of Phase 1 scope):**
 room management UI, patient flow board UI, intake UI integration,
 checkout UI, calendar visual polish.
+
+
+
+## 2026-04-22 — Check-In + Intake Integration (Workflow Phase 2)
+
+Front-desk arrival UI + intake gating on top of the Phase 1 backbone.
+
+**Intake gating:** `ready_for_provider` is now blocked when the patient
+has no completed `patient_intake_forms` row. Explicit `override=true`
++ `reason` bypasses and the audit row records
+`intake_gate_bypassed=True`.
+
+**Appointment hydration** now surfaces (from `_hydrate` in the
+scheduling router):
+- `intake_status`: `not_started` / `in_progress` / `completed`
+- `intake_completed_at`, `intake_completed_by_name`
+- `intake_form_id` (latest relevant form, completed wins over draft)
+
+**Frontend:**
+- New `AppointmentWorkflowPanel` component embedded at the top of the
+  existing `BookDialog` in reschedule mode. Renders a status badge,
+  intake badge (with completion timestamp + user), quick-action buttons
+  (Check in / Undo check-in / No-show / Ready for provider), an "Open
+  intake" link, and an operational timeline.
+- `SchedulingPage` now opens the BookDialog for appointments in any
+  status (no longer restricted to scheduled/cancelled) so check-in is
+  reachable from the calendar.
+- `PatientDetail` appointment history row shows intake status +
+  fuller status badges.
+
+**Tests:**
+- `test_appointment_workflow.py` extended to 17 tests covering intake
+  gating (blocked when incomplete, override path, passing once intake
+  is completed) and intake status hydration.
+- Combined suite 29/29 green.
+- Testing-agent iteration 54: Full E2E validated (workflow endpoints,
+  validation rules, intake gating, override prompt, intake badge,
+  timeline, reauth flow). `retest_needed=false`.
+
+**Out of scope (by request):** room assignment, room settings, flow
+board beyond simple arrival visibility, provider workflow beyond intake
+gating, checkout UI.
