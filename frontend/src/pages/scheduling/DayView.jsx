@@ -38,9 +38,18 @@ function minutesSince(dayStart, iso) {
 
 function layoutColumns(appts) {
   if (!appts.length) return [];
-  const sorted = [...appts].sort(
-    (a, b) => new Date(a.start_time) - new Date(b.start_time)
-  );
+  // Primary sort: start_time asc (so the greedy column fit is chronological).
+  // Secondary sort: active appointments BEFORE cancelled ones at the same
+  // start. This guarantees active rows claim the leftmost column while
+  // cancelled/struck-through rows slide to the right when two appointments
+  // collide on the same time slot.
+  const sorted = [...appts].sort((a, b) => {
+    const ta = new Date(a.start_time) - new Date(b.start_time);
+    if (ta !== 0) return ta;
+    const aCancelled = a.status === "cancelled" ? 1 : 0;
+    const bCancelled = b.status === "cancelled" ? 1 : 0;
+    return aCancelled - bCancelled;
+  });
   const clusters = [];
   let cluster = [];
   let clusterEnd = 0;
