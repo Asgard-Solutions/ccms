@@ -20,7 +20,7 @@
     "design_issues": []
   },
   "verified_flows": [
-    "Backend pytest /app/backend/tests/test_clinical_phase3.py — 9/9 passing against https://clinic-phase7-ui.preview.emergentagent.com/api",
+    "Backend pytest /app/backend/tests/test_clinical_phase3.py — 9/9 passing against https://care-platform-45.preview.emergentagent.com/api",
     "Backend pytest /app/backend/tests/test_clinical_phase1.py + test_clinical_phase2.py — 24/24 regression green",
     "POST /appointments/{aid}/clinical/encounters 201 + existed=false + snapshot frozen; idempotent relaunch 200 existed=true same id, encounter_type NOT altered; appointment PATCH after launch does NOT mutate encounter.appointment_snapshot",
     "GET /appointments/{aid} surfaces clinical_encounter_id + clinical_encounter_status",

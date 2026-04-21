@@ -8,26 +8,17 @@
 **User's preferred language**: English (INSTRUCT: Next agent MUST respond in English only)
 
 **what currently exists?** 
-A highly secure, HIPAA-compliant MVP of the CCMS. Billing Phases 1-6 are complete. Clinic Settings refactoring is complete. **Clinical Module Phases 1 through 6 are fully implemented and tested** (encompassing Episodes, Intake, Diagnoses, Encounters, Initial Exams, Follow-up/Daily Notes, Treatment Plans, and Re-Exams). **Phase 7 (Imaging & Clinical Media, Outcomes/Functional Measures) backend is fully implemented and tested.** The frontend components for Phase 7 have just been created but need to be wired into the main UI.
+A highly secure, HIPAA-compliant MVP of the CCMS. Billing Phases 1-6 are complete. Clinic Settings refactoring is complete. Clinical Module Phases 1 through 8 are now fully implemented and tested. Phase 7 (Imaging & Clinical Media, Outcomes/Functional Measures) and Phase 8 (Billing Readiness, Note Lifecycle, Addenda, Audit Logging) are completely wired and verified. The frontend handles complex rendering for chart-level treatment plans, dynamic re-exams, and encounter-linked billing readiness checks. 
 
 **Last working item**:
-- **Last item agent was working**: Phase 7 Frontend UI implementation. The agent successfully built and tested the backend APIs for Clinical Media and Outcomes. It then created  and  but was interrupted before wiring these components into , updating  with new entry kinds, and running frontend E2E tests.
-- **Status**: IN PROGRESS
-- **Agent Testing Done**: N (Backend tests passed, but frontend E2E testing for Phase 7 is pending)
-- **Which testing method agent to use?**:  (Frontend testing after completing the UI wiring)
+- **Last item agent was working**: Removing stale UI elements. The agent responded to user feedback indicating that the Charts section on the Clinical tab still showed a Phase 2 placeholder. The agent completely removed the  component and references from  because Billing Readiness is now live per-encounter (Phase 8).
+- **Status**: USER VERIFICATION PENDING
+- **Agent Testing Done**: Y
+- **Which testing method agent to use?**: NA (Testing was completed using screenshots and backend tests, and  was heavily utilized in previous steps iteration 37 and 38).
 - **User Testing Done**: N
 
 **All Pending/In progress Issue list**:  
-  Issue 1: Finish Phase 7 UI Wiring & Testing (P0)
-     - Attempted fixes: Created  and .
-     - Next debug checklist: Mount  and  in  (remove their placeholders). Update  to support , , and  entry kinds. Update  to show the latest outcomes snapshot. Run frontend lint, take a screenshot, and call .
-     - Why fix this issue and what will be achieved with the fix? Completes Phase 7 requirements, providing full chart-level media and outcomes tracking.
-     - Status: IN PROGRESS
-     - Is recurring issue? N
-     - Should Test frontend/backend/both after fix? Frontend
-     - Blocked on other issue: None
-
-  Issue 2: Global retry-after-reauth Axios Interceptor (UX Polish) (P2)
+  Issue 1: Global retry-after-reauth Axios Interceptor (UX Polish) (P2)
      - Attempted fixes: Flagged previously by testing agent.
      - Next debug checklist: Implement an interceptor that silently replays the last privileged action the moment a user confirms their password in the reauth dialog.
      - Why fix this issue and what will be achieved with the fix? Smooths UX for privileged actions across the app.
@@ -36,45 +27,48 @@ A highly secure, HIPAA-compliant MVP of the CCMS. Billing Phases 1-6 are complet
      - Should Test frontend/backend/both after fix? Frontend E2E
      - Blocked on other issue: None
 
-  Issue 3: Provide  for Email delivery (P2)
+  Issue 2: Provide  for Email delivery (P2)
      - Attempted fixes: Mocked for local tests.
      - Next debug checklist: User explicitly asked to DEFER this and keep it mocked for now.
      - Why fix this issue and what will be achieved with the fix? Required to operationalize Patient Statement emails.
-     - Status: USER VERIFICATION PENDING
+     - Status: BLOCKED (User Deferred)
      - Is recurring issue? N
      - Should Test frontend/backend/both after fix? Backend
      - Blocked on other issue: None
 
 **In progress Task List**:
-  Task 1: Clinical Module Phase 7 (Media & Outcomes) Frontend
-     - Where to resume: Update  to import and mount  and . Update .
-     - What will be achieved with this? Gives chiropractors a complete picture including media and longitudinal progress measures.
-     - Status: IN PROGRESS
-     - Should Test frontend/backend/both after fix? Frontend E2E using 
-     - Blocked on something: None
-
-**Upcoming and Future Tasks**
-    Future Tasks:
-    - Task 2: **Persist  on Appointments** (Currently only drives UI prefill durations, needs DB persistence). (P2)
-    - Task 3: **Reorder Appointment Types** (Add drag-and-drop or ordering logic in Clinic Settings). (P2)
-    - Task 4: **Enterprise Auth Integrations** (WebAuthn/passkeys, SAML/OIDC SSO, SCIM scaffolding). (P2)
-    - Task 5: **PostgreSQL Migration** (Executing the planned migration from MongoDB to PostgreSQL). (P2)
-    - Task 6: **Reporting Service Read-Heavy Analytics** (Analytics leveraging the replica abstractions). (P2)
-    - Task 7: **Providers Context Refactor** (Create a lightweight  context to cache ). (P3)
-
-**Completed work in this session**
-- Phase 4 documentation closeout (PRD.md & CHANGELOG.md updated) (DONE).
-- **Clinical Phase 5**: Built Follow-up / Daily Notes workflow, copy-forward logic, and Care Timeline entry types (DONE & TESTED).
-- **Clinical Phase 6**: Built Treatment Plans, Re-Exams workflow, and auto-linking baseline snapshots (DONE & TESTED).
-- **Clinical Phase 7 Backend**: Built , , schemas, timeline aggregations, and passed all pytests (DONE).
-
-**Earlier issues found/mentioned but not fixed**
 None.
 
+**Upcoming and Future Tasks**
+    Upcoming Tasks:
+    - Task 1: **Sweep and replace  usage** (P1). Since  failed silently in the iframe environment (fixed in this session for Treatment Plans),  used for Delete draft addendum and Delete media needs to be refactored into proper Shadcn UI Dialogs to avoid silent failures.
+    - Task 2: **Phase 9: Billing / Claims from Encounter** (P1). Building a  endpoint to convert a Ready encounter from Phase 8 into a pre-filled claim skeleton.
+
+    Future Tasks:
+    - Task 3: **Persist  on Appointments** (P2) (Currently only drives UI prefill durations, needs DB persistence).
+    - Task 4: **Reorder Appointment Types** (P2) (Add drag-and-drop or ordering logic in Clinic Settings).
+    - Task 5: **Enterprise Auth Integrations** (P2) (WebAuthn/passkeys, SAML/OIDC SSO, SCIM scaffolding).
+    - Task 6: **PostgreSQL Migration** (P2) (Executing the planned migration from MongoDB to PostgreSQL).
+    - Task 7: **Reporting Service Read-Heavy Analytics** (P2) (Analytics leveraging the replica abstractions).
+    - Task 8: **Providers Context Refactor** (P3) (Create a lightweight  context to cache ).
+
+**Completed work in this session**
+- Phase 7 UI Wiring: Mounted  and  in  and updated  (DONE).
+- Phase 8 Clinical Module Backend: Built , , , and updated endpoints to support strict document locking and addenda appending (DONE).
+- Phase 8 Clinical Module Frontend: Created , , and , wiring them into , , , and  (DONE).
+- Bug Fix: Fixed the New Plan button in  which was silently failing due to  in an iframe. Replaced with shadcn  (DONE).
+- UI Cleanup: Removed stale Phase 2 placeholder for Billing Readiness from the  (DONE).
+
+**Earlier issues found/mentioned but not fixed**
+   - Issue 1:  usage.
+   - Debug checklist: Look for  across frontend files, especially related to deleting addenda or media, and convert to Shadcn Dialog modals.
+   - Why to solve this issue and what will be achieved with this? Prevents silent UI failures in iframed environments.
+   - Should Test frontend/backend/both after fix: Frontend
+   - Is recurring issue? Y
+
 **Known issue recurrence from previous fork**
-  - Issue recurrence in previous fork:  system library missing for Python  module.
-  - Recurrence count: 2
-  - Status: RESOLVED (Agent executed Reading package lists...
+  - Issue recurrence in previous fork:  system library missing for Python  module crashing the backend during file uploads/media test runs.
+  - Recurrence count: 3 (Fixed again in this session using Reading package lists...
 Building dependency tree...
 Reading state information...
 Suggested packages:
@@ -86,7 +80,7 @@ Need to get 403 kB of archives.
 After this operation, 8587 kB of additional disk space will be used.
 Get:1 https://cloudfront.debian.net/debian bookworm/main arm64 libmagic-mgc arm64 1:5.44-3 [305 kB]
 Get:2 https://cloudfront.debian.net/debian bookworm/main arm64 libmagic1 arm64 1:5.44-3 [98.5 kB]
-Fetched 403 kB in 0s (1412 kB/s)
+Fetched 403 kB in 0s (1375 kB/s)
 Selecting previously unselected package libmagic-mgc.
 (Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 44543 files and directories currently installed.)
 Preparing to unpack .../libmagic-mgc_1%3a5.44-3_arm64.deb ...
@@ -96,74 +90,100 @@ Preparing to unpack .../libmagic1_1%3a5.44-3_arm64.deb ...
 Unpacking libmagic1:arm64 (1:5.44-3) ...
 Setting up libmagic-mgc (1:5.44-3) ...
 Setting up libmagic1:arm64 (1:5.44-3) ...
-Processing triggers for libc-bin (2.36-9+deb12u13) ... and it succeeded. Next agent may need to re-verify if container restarts).
+Processing triggers for libc-bin (2.36-9+deb12u13) ...).
+  - Status: RESOLVED (Next agent MUST be aware that if the backend container crashes throwing an , they need to run Hit:1 https://cloudfront.debian.net/debian bookworm InRelease
+Get:2 https://cloudfront.debian.net/debian bookworm-updates InRelease [55.4 kB]
+Get:3 https://cloudfront.debian.net/debian-security bookworm-security InRelease [48.0 kB]
+Get:4 https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 InRelease [3005 B]
+Hit:5 https://deb.nodesource.com/node_20.x nodistro InRelease
+Get:6 https://cloudfront.debian.net/debian-security bookworm-security/main arm64 Packages [291 kB]
+Get:7 https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0/multiverse amd64 Packages [111 kB]
+Get:8 https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0/multiverse arm64 Packages [109 kB]
+Fetched 618 kB in 1s (765 kB/s)
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+libmagic-mgc is already the newest version (1:5.44-3).
+libmagic1 is already the newest version (1:5.44-3).
+0 upgraded, 0 newly installed, 0 to remove and 7 not upgraded.).
 
 **Code Architecture**
 
 
 **Key Technical Concepts**
-FastAPI multi-router aggregation (all clinical sections grouped into single ), Tenant-scoped Database routing, React Context (), frozen snapshots (baseline snapshotted into Re-Exams), auto-emission of standalone outcomes upon Re-Exam sign. 
+FastAPI multi-router aggregation, Tenant-scoped Database routing, Document immutability (Signed notes block PATCH/DELETE, require Addendum), Billing Readiness evaluative engine (read-only validation against chart state), React Context () for privileged actions.
 
 **key DB schema**
 - : 
 - : 
 - : 
 - : 
-- : 
 
 **changes in tech stack**
-None. Object storage uses pre-existing .
+None. 
 
 **All files of reference** 
-- : Clinical module backend files (Phases 5-7 newly added).
-- : Clinical module UI components.
--  & : Updated for Phases 4, 5, 6. **Needs update for Phase 7 upon completion.**
-- , , : New backend tests.
+-  &  (Created)
+-  (Created)
+-  (Created)
+-  (Created)
+-  (Created)
+-  (Updated to fix iframe prompt bug)
+-  (Updated for wiring and cleanup)
+-  &  (Updated for Phases 7 & 8)
 
 **Areas that need refactoring**
-Global Reauth Interceptor (Frontend). Redundant  logic exists across many components.
+Global Reauth Interceptor (Frontend) remains unaddressed.  usage needs to be scrubbed and replaced with React Dialogs.
 
 **key api endpoints**
-- 
-- 
-- 
-- 
+-  (New)
+-  (New)
+-  (New)
 - 
 
 **Critical Info for New Agent** 
-- **Start by wiring Phase 7 UI:** The backend for Phase 7 is fully tested and working.  and  have been created but are *not yet imported or mounted* in .  needs to be updated to render the new , , and  entry kinds. 
-- **Finish tool pending:** Once Phase 7 frontend is wired and successfully E2E tested via , update  and  and use the  tool. 
-- Ignore Redis connection warnings in backend logs; the system safely falls back to in-memory caching.
-- Email API key is explicitly deferred per the user's request. Do not block on it.
+- **Environment Setup:** If Python tests fail complaining about , run Reading package lists...
+Building dependency tree...
+Reading state information...
+libmagic-mgc is already the newest version (1:5.44-3).
+libmagic1 is already the newest version (1:5.44-3).
+0 upgraded, 0 newly installed, 0 to remove and 7 not upgraded..
+- **UI Interaction:** Do NOT use  or . They fail silently in the iframed preview environment. Use Shadcn /.
+- **Billing Readiness:** Currently operates purely evaluatively (read-only) and is visible in the .
+- **Document Locking:** Any note/exam with  blocks  at the router level and only permits .
 
 **documents and test reports created in this job** 
--  (Phase 5 E2E tests passed)
--  (Phase 6 E2E tests passed)
+-  (Phase 7 UI tests)
+-  (Phase 8 frontend UI tests)
+-  (Phase 8 Backend Tests - 9/9 passing)
+- Updated:  and 
 
 **Last 10 User Messages and any pending HUMAN messages** 
-- **User**: Requested to close out Phase 4, defer email integration, and proceed with Phase 5 (Follow-up Notes). (COMPLETED)
-- **User**: Approved Phase 5 plan with guardrails (SOAP narrative allowed but structured data first, explicit copy-forward). (COMPLETED)
-- **User**: Requested Phase 6 (Treatment Plans & Re-Exams). (COMPLETED)
-- **User**: Approved Phase 6 plan with guardrails (auto-link re-exams, explicit versioning, structured outcomes). (COMPLETED)
-- **User**: Requested Phase 7 (Imaging/Media & Outcomes/Care Timeline). (BACKEND COMPLETED, FRONTEND PENDING)
-- **User**: Approved Phase 7 plan with guardrails (reuse , auto-emit standalone outcomes, simple SVG charts). (IN PROGRESS)
+- **User**: Uploaded screenshot. Charts section in the clinical tab still shows phase 2 placeholder. (COMPLETED)
+- **User**: Uploaded screenshot showing the New plan button does nothing. (COMPLETED)
+- **User**: Requested to build Phase 6 (Treatment plans and Re-Exam workflow). (AGENT IDENTIFIED AS ALREADY COMPLETED PREVIOUSLY)
+- **User**: Approved Phase 8 plan with timeline guardrails. (COMPLETED)
+- **User**: Approved Phase 8 baseline plan (Billing readiness, addenda, strict model, read-only readiness). (COMPLETED)
+- **User**: Requested to build Phase 8 (Billing Readiness, note lifecycle hardening, signatures, addenda, audit logging). (COMPLETED)
+- **User**: Approved Phase 7 UI wiring plan. (COMPLETED)
 
 **Project Health Check:**
-- Broken: Phase 7 UI is unwired.
-- Mocked: SMS/Email notifications.
+- Broken:  is still used in a few frontend files, risking silent failure.
+- Mocked: SMS/Email notifications (Resend).
 
 **3rd Party Integrations** 
 -  Object Storage — uses Emergent LLM Key.
 -  (Email) — requires User API Key () - *Deferred*.
 
 **Testing status**
-- Testing agent used after significant changes: YES (Generated  and  successfully).
+- Testing agent used after significant changes: YES (Generated  and ).
 - Troubleshoot agent used after agent stuck in loop: NO
-- Test files created: , , .
+- Test files created: .
 - Known regressions: None.
 
 **Credentials to test flow:**
 Read  (e.g., ).
 
 **What agent forgot to execute**
-The agent successfully built the backend for Phase 7 (Media & Outcomes) and created the standalone React components for the frontend ( and ), but ran out of context before mounting them into  and . It needs to finish this UI wiring, run the  for Phase 7, update /, and complete the task.</analysis>
+The agent proposed doing a sweep to replace  with Shadcn Dialogs since they identified the iframe blocking issue, but the user immediately submitted a new request to remove the Phase 2 placeholder before the agent could execute the  cleanup. This needs to be prioritized.</analysis>
