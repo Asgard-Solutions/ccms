@@ -2324,3 +2324,108 @@ caveated that it does not prove federal registration.
   for DEA). Structural validators pave the way; lookup integrations
   are separate stories.
 
+
+---
+
+## 2026-04-21 — US Phone Standardisation (Task Prompt 10)
+
+### Problem
+Phone numbers were entered, stored, and displayed inconsistently
+across the app — identity/register (freeform), clinic_profile
+(freeform), patient wizard (freeform), and 10+ display touchpoints
+rendering raw stored strings. No backend validation, no canonical
+storage, no consistent display format.
+
+### Canonical contract
+- **Storage**: 10 digits only (`6155551212`). Leading `+1` / `1` is
+  stripped on write.
+- **Display**: `(XXX) XXX-XXXX` only when the stored value normalises
+  to exactly 10 digits. All other shapes (`+1-555-0102`, 7-digit
+  legacy, empty) echo unchanged so legacy data never gets mangled.
+- **Validation**: strict 422 on malformed input for identity,
+  clinic_profile, and workforce invitation; **soft** normalise (try
+  to canonicalise, preserve input on failure) for patient
+  demographics — avoids retrofit pain on existing patient records.
+
+### Fix
+- **Shared utilities**:
+  - `backend/core/phone.py` — `normalize_us_phone`, `format_us_phone`,
+    `is_valid_us_phone`, `search_normalize_phone`.
+  - `frontend/src/utils/phone.js` — `normalizePhone`,
+    `formatPhoneDisplay`, `isValidPhone`, `searchNormalize`,
+    `formatAsTyped` (live-format helper for inputs).
+- **Frontend control**: `components/PhoneInput.jsx` — drop-in
+  controlled `tel` input that live-formats to `(XXX) XXX-XXXX` as the
+  user types.
+- **Strict backend validators**:
+  `services/identity/models.py::ProfileUpdate._validate_phones`,
+  `UserRegister._normalize_phone`, `AdminUserCreate._normalize_phone`,
+  `services/clinic_profile/models.py::_normalize_phones` (on
+  Create + Update), `services/workforce/models.py::_normalize_phone`
+  (on InviteCreate + InviteAccept). All gated on
+  `__pydantic_fields_set__` so empty PATCH bodies still return 400.
+- **Soft patient validators**: `services/patient/models.py`
+  `_normalize_phone_soft` on Demographics, ContactInfo,
+  EmergencyContactInfo, GuarantorInfo, CaseDetails, and top-level
+  PatientCreate/PatientUpdate — canonicalises when possible,
+  preserves unchanged when not (retrofit-safe).
+- **Frontend wire-up**:
+  - `ProfileTab.jsx` — mobile/work phone use `PhoneInput`; submit
+    normalises; load uses `formatAsTyped`.
+  - `ClinicSettings.jsx` — primary/secondary same pattern.
+  - `Register.jsx` — `PhoneInput` + normalise on submit.
+  - `PatientWizardDialog.jsx` — new `PhoneField` swapped into all
+    ~10 phone inputs (mobile, home, work, EC primary/alt, employer,
+    guarantor, guarantor employer, adjuster, attorney).
+  - `patientWizardLogic.js` — new `cleanPhone` used in `toApiPayload`;
+    new `_coercePhone` used in `payloadToForm` so editing an existing
+    patient opens with pretty-formatted values.
+- **Display formatters wrapped** around every phone render in
+  `PatientDetail.jsx`, `Patients.jsx` (search results table),
+  `scheduling/DayView.jsx` (appointment cards).
+- **Search input**: `Patients.jsx` phone filter runs
+  `searchNormalize` before the API call, so formatted and
+  unformatted queries hit the same URL.
+
+### Tests
+- `backend/tests/test_phone_utils.py` **(new, 32 tests)** — unit
+  (normalize / is_valid / format / search_normalize) + integration
+  (profile PATCH, register, admin-create, patient search formatted
+  vs unformatted parity).
+- `frontend/src/utils/phone.test.js` **(new, 7 tests)** — unit
+  for all four exported helpers.
+- Updated 3 test assertions in `test_profile_self_service.py` and
+  `test_clinic_profile.py` to expect canonical digits instead of the
+  old permissive display.
+- Full regression: **232 tests pass** (157 phone-related group +
+  75 clinical/auth + 39 wizard logic + 7 phone frontend unit) with
+  only the 1 expected test skipped by design.
+- Testing agent iteration_49 confirmed end-to-end live-format,
+  canonical-storage round-trip, search normalisation, and no
+  regressions across Profile / Clinic Settings / Register / Patient
+  Wizard / PatientDetail / Patients search / DayView.
+
+### Behaviour changes to flag
+- **New 422**: identity & clinic_profile & workforce PATCH/POST now
+  reject malformed phone input (previously silently stored).
+- **Stored values**: new writes strip formatting — downstream
+  consumers (claims, billing, messaging) should migrate to use the
+  shared `format_us_phone` / `formatPhoneDisplay` for display.
+- **Legacy seed `+1-555-0102` values**: render unchanged (8 digits
+  after stripping the leading 1). Verified by the permissive display
+  formatter test.
+
+### Task Prompt 10 — CLOSED ✅
+
+### Remaining backlog (unchanged)
+- **P1** — Global retry-after-reauth Axios interceptor.
+- **P2** — Persist `appointment_type_id` on Appointments.
+- **P2** — Reorder Appointment Types (drag-drop).
+- **P2** — Restore green for pre-existing iteration4/5/8/9/11/12/13 files.
+- **P2 / deferred** — Unmock Resend email delivery.
+- **P2 (future)** — Enterprise Auth (WebAuthn / SAML / OIDC / SCIM).
+- **P2 (future)** — PostgreSQL migration.
+- **P3 (future)** — Real registry lookups (NPPES, DEA).
+- **P3 (future)** — International phone support (current contract is
+  US-only by spec).
+
