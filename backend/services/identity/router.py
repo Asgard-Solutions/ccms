@@ -40,7 +40,7 @@ from core.password_policy import (
     reject_password_reuse,
     validate_strength,
 )
-from core.reauth import create_reauth_token
+from core.reauth import create_reauth_token, require_reauth
 from core.security import (
     ACCESS_TOKEN_MINUTES,
     REFRESH_TOKEN_DAYS,
@@ -60,6 +60,7 @@ from services.identity.models import (
     PasswordResetConfirm,
     PasswordResetRequest,
     PreferencesUpdate,
+    ProfileUpdate,
     ReauthRequest,
     UserLogin,
     UserPatch,
@@ -120,6 +121,15 @@ def _to_public(user: dict) -> dict:
         "mfa_policy_required": bool(user.get("mfa_policy_required")),
         "password_changed_at": user.get("password_changed_at"),
         "theme": user.get("theme", "system"),
+        "first_name": user.get("first_name"),
+        "last_name": user.get("last_name"),
+        "display_name": user.get("display_name"),
+        "mobile_phone": user.get("mobile_phone"),
+        "work_phone": user.get("work_phone"),
+        "job_title": user.get("job_title"),
+        "credentials_suffix": user.get("credentials_suffix"),
+        "preferred_signature_name": user.get("preferred_signature_name"),
+        "time_zone": user.get("time_zone"),
         "created_at": user["created_at"],
     }
 
@@ -436,6 +446,128 @@ async def update_preferences(
         user, "user.preferences_updated", request,
         entity_type="user", entity_id=user["id"],
         metadata={"fields": sorted(k for k in updates if k != "updated_at")},
+    )
+    return _to_public(updated)
+
+
+_PROFILE_STRING_FIELDS = (
+    "first_name",
+    "last_name",
+    "display_name",
+    "phone",
+    "mobile_phone",
+    "work_phone",
+    "job_title",
+    "credentials_suffix",
+    "preferred_signature_name",
+    "time_zone",
+)
+
+
+def _resolve_display_name(updates: dict, current: dict) -> str | None:
+    """Pick the best full-name string to write into the legacy `name`
+    column so everywhere that reads `user.name` (audit logs, clinic
+    signatures, scheduler chips) stays in sync. When `display_name` is
+    explicitly cleared (empty string → None) we must NOT fall back to
+    the old value still sitting on `current`."""
+    def _effective(key: str) -> str | None:
+        if key in updates:
+            v = updates[key]
+            return v.strip() if isinstance(v, str) else v
+        return current.get(key)
+
+    disp = _effective("display_name")
+    if disp and disp.strip():
+        return disp.strip()
+    first = _effective("first_name") or ""
+    last = _effective("last_name") or ""
+    full = f"{first} {last}".strip()
+    return full or None
+
+
+@router.patch("/me/profile", response_model=UserPublic)
+async def update_profile(
+    payload: ProfileUpdate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    """Self-service update of the logged-in user's own profile.
+
+    * Email changes require a short-lived reauth token (same gate as
+      other sensitive actions) AND trigger a session-epoch bump so
+      existing JWTs are invalidated — the user must sign in again.
+    * All name-related writes keep the legacy `name` column in sync
+      with `display_name` / `first_name` / `last_name` so audit rows
+      and clinical signatures don't drift.
+    * Empty strings reset a field to null (so users can clear an
+      optional field by sending "").
+    """
+    dumped = payload.model_dump(exclude_unset=True)
+    if not dumped:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "No profile fields supplied.",
+        )
+
+    updates: dict = {}
+    for key in _PROFILE_STRING_FIELDS:
+        if key in dumped:
+            value = dumped[key]
+            if isinstance(value, str):
+                stripped = value.strip()
+                updates[key] = stripped or None
+            else:
+                updates[key] = value
+
+    db = get_db_write()
+    email_change = False
+    if "email" in dumped and dumped["email"]:
+        new_email = str(dumped["email"]).lower().strip()
+        if new_email != (user.get("email") or "").lower():
+            require_reauth(request, user)
+            existing = await db.users.find_one(
+                {"email": new_email, "id": {"$ne": user["id"]}},
+                {"_id": 0, "id": 1},
+            )
+            if existing:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    "Email already in use by another account.",
+                )
+            updates["email"] = new_email
+            email_change = True
+
+    # Keep the legacy `name` column in sync with display/first/last so
+    # downstream readers (audit, care timeline, clinical signatures)
+    # don't show a stale value.
+    if any(k in updates for k in ("first_name", "last_name", "display_name")):
+        synced = _resolve_display_name(updates, user)
+        if synced:
+            updates["name"] = synced
+
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    if email_change:
+        # Session epoch bump → invalidate every existing access/refresh
+        # token for this user. UI will bounce to login.
+        await _bump_session_epoch(db, user["id"])
+        updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    updated = await db.users.find_one_and_update(
+        {"id": user["id"]},
+        {"$set": updates},
+        projection={"_id": 0},
+        return_document=True,
+    )
+    if not updated:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+
+    await audit_success(
+        user, "user.profile_updated", request,
+        entity_type="user", entity_id=user["id"],
+        metadata={
+            "fields": sorted(k for k in updates if k != "updated_at"),
+            "email_changed": email_change,
+        },
     )
     return _to_public(updated)
 

@@ -20,6 +20,7 @@ import {
   Unlock,
   Upload,
   UserCog,
+  UserRound,
   Users,
   Wallet,
 } from "lucide-react";
@@ -190,9 +191,9 @@ export const NAV_GROUPS = [
       },
       {
         to: "/security",
-        label: "Security Dashboard",
+        label: "My account",
         testId: "nav-security-dashboard",
-        icon: ShieldCheck,
+        icon: UserRound,
         roles: ["admin", "doctor", "staff", "patient"],
       },
       {

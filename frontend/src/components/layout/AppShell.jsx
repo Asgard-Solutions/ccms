@@ -245,8 +245,8 @@ export default function AppShell({ children }) {
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem asChild>
-                  <Link to="/security" data-testid="menu-security">
-                    <ShieldCheck className="mr-2 h-4 w-4" /> Security
+                  <Link to="/security?tab=profile" data-testid="menu-security">
+                    <ShieldCheck className="mr-2 h-4 w-4" /> My account
                   </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />

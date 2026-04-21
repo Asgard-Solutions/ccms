@@ -101,6 +101,7 @@ export default function App() {
               <Route path="/access-review" element={<Shell roles={["admin"]}><AccessReview /></Shell>} />
               <Route path="/elevation" element={<Shell><Elevation /></Shell>} />
               <Route path="/security" element={<Shell><Security /></Shell>} />
+              <Route path="/account" element={<Shell><Security /></Shell>} />
               <Route path="/settings/theme-preview" element={<Shell><ThemePreview /></Shell>} />
             </Routes>
           </BrowserRouter>

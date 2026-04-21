@@ -35,6 +35,16 @@ class UserPublic(BaseModel):
     mfa_policy_required: bool = False
     password_changed_at: str | None = None
     theme: Theme = "system"
+    # Self-service profile fields (editable via PATCH /auth/me/profile).
+    first_name: str | None = None
+    last_name: str | None = None
+    display_name: str | None = None
+    mobile_phone: str | None = None
+    work_phone: str | None = None
+    job_title: str | None = None
+    credentials_suffix: str | None = None
+    preferred_signature_name: str | None = None
+    time_zone: str | None = None
     created_at: datetime
 
 
@@ -117,3 +127,26 @@ class PreferencesUpdate(BaseModel):
     All fields optional; only keys that are present are written."""
     model_config = ConfigDict(extra="forbid")
     theme: Theme | None = None
+
+
+class ProfileUpdate(BaseModel):
+    """Self-service update for the logged-in user's own profile.
+
+    All fields are optional — only present fields are written. Email
+    changes require a valid re-auth token because email is the login
+    identifier. Name fields stay in sync: whenever first_name/last_name
+    or display_name is written, the legacy `name` column is recomputed
+    as display_name if present, else "first_name last_name".
+    """
+    model_config = ConfigDict(extra="forbid")
+    first_name: str | None = Field(default=None, max_length=80)
+    last_name: str | None = Field(default=None, max_length=80)
+    display_name: str | None = Field(default=None, max_length=160)
+    email: EmailStr | None = None
+    phone: str | None = Field(default=None, max_length=40)
+    mobile_phone: str | None = Field(default=None, max_length=40)
+    work_phone: str | None = Field(default=None, max_length=40)
+    job_title: str | None = Field(default=None, max_length=120)
+    credentials_suffix: str | None = Field(default=None, max_length=40)
+    preferred_signature_name: str | None = Field(default=None, max_length=160)
+    time_zone: str | None = Field(default=None, max_length=64)
