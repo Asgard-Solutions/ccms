@@ -12,6 +12,86 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Clinical module — Phase 3 (2026-02-21).** Appointment-first encounter
+  launch infrastructure. Providers launch documentation from the
+  appointment; the clinical record stays patient-owned. No full SOAP /
+  exam note forms yet — plumbing only.
+  - New backend router
+    (`services/clinical/encounters_router.py` + `encounters_models.py`)
+    mounted on both `/api/appointments/{aid}/clinical/*` (launch +
+    lookup) and `/api/patients/{pid}/clinical/encounters/*`
+    (authoritative chart surface):
+    - `POST /appointments/{aid}/clinical/encounters` — launch;
+      idempotent (returns `{encounter, existed: bool}` with 201 or 200).
+    - `GET /appointments/{aid}/clinical/encounter` — fetch existing
+      non-cancelled encounter for an appointment.
+    - `GET /patients/{pid}/clinical/encounters` + filters.
+    - `GET/PATCH /patients/{pid}/clinical/encounters/{eid}`.
+    - `POST .../encounters/{eid}/complete` and `.../cancel`.
+  - Encounter types: `new_patient_exam`, `follow_up`, `re_evaluation`,
+    `treatment_visit`.
+  - Lifecycle statuses: `in_progress → completed | cancelled`.
+  - Frozen `appointment_snapshot` captured at launch (patient/provider/
+    location/start/end/status/reason) so post-launch appointment edits
+    NEVER mutate the chart encounter record.
+  - Exception workflow: cancelled appointments require
+    `exception_reason` AND `admin|doctor` role. Resulting encounter
+    carries `is_exception=true`, `exception_reason`,
+    `exception_invoked_by`, `exception_invoked_at`, and the original
+    `appointment_status_at_launch`. Staff are blocked (403).
+  - `GET /api/appointments/{id}` now projects `clinical_encounter_id`
+    and `clinical_encounter_status`.
+  - Summary endpoint exposes live `encounters.{total, open}` counts.
+  - Writes require reauth; every mutation audited to both
+    `audit_logs` AND `clinical_audit_events` (scoped chart projection).
+  - Tenant isolation verified — cross-tenant probes return 404.
+  - Indexes added for `clinical_encounters` in `core/db.py`.
+  - **Frontend**:
+    - `pages/clinical/EncounterLaunchDialog.jsx` — opened from
+      BookDialog's new `appt-launch-encounter-btn` with a Stethoscope
+      icon. Picks encounter type (auto-inferred from reason),
+      optional episode (any status), and — for cancelled
+      appointments — a required exception reason. Routes to
+      `/patients/{pid}?tab=clinical&encounter={eid}` on success; shows
+      an "existing encounter" banner if the POST comes back with
+      `existed=true`.
+    - `pages/clinical/EncountersCard.jsx` — new live card on the
+      Clinical tab. Lists encounters with type, status, duration,
+      provider, episode, exception flag. Inline complete/cancel
+      transitions. Highlights the encounter whose id matches the
+      `?encounter=` query param. "Appointment" button deep-links to
+      the scheduling page on the correct day.
+    - `pages/clinical/ClinicalTab.jsx` — summary row leads with a
+      live `stat-encounters` tile (in-progress count); `EncountersCard`
+      renders below the Diagnoses card.
+    - `pages/PatientDetail.jsx` — tabs now URL-synced via
+      `?tab=...`; deep-links from Launch land on the Clinical tab.
+    - `pages/scheduling/SchedulingPage.jsx` + `DayView.jsx` —
+      Day/Week/Month views all route cancelled appointments through
+      BookDialog so admins/doctors can invoke the exception-launch
+      workflow. Day view's cancelled tile now has a clickable
+      "Canceled · Open" pill (`scheduling-day-appt-open-{id}`) while
+      the underlying slot remains freely re-bookable.
+  - **Tests**: `backend/tests/test_clinical_phase3.py` — 9 cases
+    covering context freeze, idempotent relaunch, chart visibility,
+    cancelled-without-reason 409, cancelled-with-reason 201 +
+    exception flags, staff blocked from exception path, cross-tenant/
+    cross-patient episode 400, complete/cancel lifecycle, PATCH on
+    non-in-progress blocked (409), tenant isolation, reauth required
+    on writes, summary reflects live encounter counts.
+  - **Test-ids**: `appt-launch-encounter-btn`,
+    `encounter-launch-dialog`, `encounter-existing-banner`,
+    `encounter-exception-banner`, `encounter-exception-reason`,
+    `encounter-type-select`, `encounter-episode-select`,
+    `encounter-open-existing-btn`, `encounter-launch-submit-btn`,
+    `clinical-encounters-card`, `encounter-filter-status`,
+    `encounters-empty`, `encounters-list`, `encounter-row-{id}`,
+    `encounter-row-{id}-status`, `encounter-row-{id}-exception`,
+    `encounter-open-appt-{id}`, `encounter-complete-{id}`,
+    `encounter-cancel-{id}`, `encounter-complete-dialog`,
+    `encounter-cancel-dialog`, `stat-encounters`,
+    `scheduling-day-appt-open-{id}`.
+
 - **Clinical module — Phase 2 (2026-02-21).** Intake & History integration
   + Diagnoses / Problem List under Patient Profile > Clinical. Chart-first;
   no exam or follow-up workflows yet.

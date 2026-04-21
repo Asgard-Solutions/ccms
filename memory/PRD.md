@@ -1,6 +1,6 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-02-21 (Clinical module Phase 2 — Intake & History + Diagnoses / Problem List)
+**Last updated:** 2026-02-21 (Clinical module Phase 3 — appointment-first encounter launch infrastructure)
 
 ## 0. Design system (binding)
 The Chiro Software design system is authoritative for every UI surface.
@@ -48,6 +48,94 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### Clinical module Phase 3 — appointment-launched encounter shell (2026-02-21)
+- **Workflow standard locked in**: providers begin documentation from
+  the appointment/calendar; the appointment is the encounter shell; the
+  resulting clinical record is stored in and viewable from Patient
+  Profile > Clinical.
+- **New backend entity `clinical_encounters`**
+  (`services/clinical/encounters_router.py` + `encounters_models.py`):
+  - Convenience launch on the appointment prefix:
+    - `POST /api/appointments/{aid}/clinical/encounters` — idempotent.
+      Returns `{encounter, existed: bool}` with 201 on new, 200 on reuse.
+    - `GET /api/appointments/{aid}/clinical/encounter` — latest
+      non-cancelled encounter for the appointment.
+  - Authoritative patient-owned surface:
+    - `GET /api/patients/{pid}/clinical/encounters` — list with
+      `status_in` + `episode_id` filters.
+    - `GET/PATCH /api/patients/{pid}/clinical/encounters/{eid}`.
+    - `POST .../encounters/{eid}/complete` and
+      `POST .../encounters/{eid}/cancel`.
+  - Context auto-fill: launch captures a **frozen**
+    `appointment_snapshot` (patient_id, provider_id, location_id,
+    start_time, end_time, status, reason) plus
+    `scheduled_start`, `scheduled_end`, `scheduled_duration_min`,
+    `date_of_service`, `appointment_status_at_launch`. Later edits to
+    the appointment do NOT mutate the snapshot — the chart record is
+    defensibly reproducible.
+  - Four encounter types: `new_patient_exam`, `follow_up`,
+    `re_evaluation`, `treatment_visit`.
+  - Three lifecycle statuses: `in_progress → completed` or `cancelled`.
+- **Exception workflow (cancelled / no-show path)**:
+  - Launching against a `cancelled` appointment without
+    `exception_reason` → 409.
+  - With a reason (≥3 chars) AND a role of `admin|doctor` →
+    encounter created with `is_exception=True`, `exception_reason`,
+    `exception_invoked_by`, `exception_invoked_at` stamped into the
+    encounter. Staff cannot bend the rule (403).
+  - The exception is surfaced visually in the chart as a warning badge.
+- **Appointment → chart linkage**: `GET /api/appointments/{id}` now
+  projects `clinical_encounter_id` + `clinical_encounter_status` so
+  the calendar UI can tell at a glance whether a visit is already
+  launched.
+- **Access + audit**: reads `admin|doctor|staff`; writes
+  `admin|doctor` + `require_reauth`. Every mutation emits both a
+  global `audit_logs` row AND a `clinical_audit_events` row scoped to
+  the patient chart (events: `encounter.launched`, `encounter.updated`,
+  `encounter.completed`, `encounter.cancelled`) — the exception flag
+  and appointment_status_at_launch ride along in the metadata so
+  chart-history UI can show the provenance of every launch decision.
+- **Indexes** in `core/db.py`:
+  `clinical_encounters` on
+  `(tenant_id, patient_id, date_of_service)`,
+  `(tenant_id, appointment_id)`, and
+  `(tenant_id, status)`.
+- **Frontend**
+  - `pages/clinical/EncounterLaunchDialog.jsx` — opened from
+    BookDialog's new **Launch encounter** button (`appt-launch-encounter-btn`).
+    Picks encounter type (auto-inferred from the appointment reason),
+    optional episode (any active / on-hold / closed patient episode),
+    and — for cancelled appointments — a required `exception_reason`.
+    On submit routes to
+    `/patients/{pid}?tab=clinical&encounter={eid}`; if an encounter
+    already exists the dialog shows a banner and "Open in chart" shortcut.
+  - `pages/clinical/EncountersCard.jsx` — new live card on the
+    Clinical tab. Lists encounters with type, status, duration,
+    provider, episode, exception flag. Inline
+    `complete` + `cancel` transitions, plus an **Appointment** deep
+    link that opens the scheduling page on the correct day.
+  - `pages/clinical/ClinicalTab.jsx` — summary row now leads with a
+    live `stat-encounters` tile (in-progress count) and mounts
+    `EncountersCard`.
+  - `pages/PatientDetail.jsx` — tabs are now URL-synced via
+    `?tab=...&encounter=...`; deep-linking from Launch lands the
+    clinician right on the new encounter with its row highlighted.
+  - `pages/scheduling/SchedulingPage.jsx` + `DayView.jsx` — Day view's
+    cancelled-appointment tile now carries a clickable
+    "Canceled · Open" pill (`scheduling-day-appt-open-{id}`) so
+    doctors can still reach cancelled appointments to invoke the
+    exception-launch flow. The slot underneath remains freely
+    re-bookable. Week and Month views already routed cancelled
+    appointments through BookDialog.
+- **Tests** `backend/tests/test_clinical_phase3.py` — **9 tests** (1
+  conditionally skipped when no staff user is seeded):
+  context freeze + idempotent relaunch + chart visibility + cancelled
+  rejection + exception-with-reason + cross-tenant/cross-patient
+  episode 400 + complete/cancel lifecycle + PATCH rules + tenant
+  isolation + reauth requirement + summary reflects encounter counts.
+- **Phase 1 + Phase 2 regression** still 24/24 green. Total clinical
+  test suite: **33/33**.
+
 ### Clinical module Phase 2 — Intake & History + Diagnoses (2026-02-21)
 - **Chart-first workflow standard reinforced:** intake-derived history and
   diagnoses live under the patient chart; future appointment-launched note

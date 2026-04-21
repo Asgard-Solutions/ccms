@@ -443,6 +443,10 @@ export default function DayView({
                 // with a thin dashed border, strikethrough patient name,
                 // and a "Canceled" pill. Full details are surfaced via the
                 // `title` tooltip so operators get the history context.
+                // A small "Open" pill in the top-right corner is explicitly
+                // clickable so admins/doctors can still reach the appointment
+                // (needed for the Phase-3 exception-launch workflow for
+                // same-day documentation against a cancelled appt).
                 return (
                   <div
                     key={appt.id}
@@ -458,9 +462,18 @@ export default function DayView({
                       <span className="truncate font-medium text-destructive line-through">
                         {appt.patient_name || "Unknown patient"}
                       </span>
-                      <span className="shrink-0 rounded-sm bg-destructive/15 px-1 py-[1px] text-[9px] font-semibold uppercase tracking-wider text-destructive">
-                        Canceled
-                      </span>
+                      <button
+                        type="button"
+                        data-testid={`scheduling-day-appt-open-${appt.id}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenAppointment?.(appt);
+                        }}
+                        title="Open cancelled appointment (exception-launch access)"
+                        className="pointer-events-auto shrink-0 rounded-sm bg-destructive/15 px-1.5 py-[1px] text-[9px] font-semibold uppercase tracking-wider text-destructive transition-colors hover:bg-destructive hover:text-destructive-foreground"
+                      >
+                        Canceled · Open
+                      </button>
                     </div>
                     <div className="truncate text-[11px] text-destructive/80">
                       {formatHHMM(new Date(appt.start_time))}
