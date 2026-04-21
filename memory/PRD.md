@@ -2053,3 +2053,83 @@ from this change. Left for a later hardening pass.
 - **P2 (future)** — Enterprise Auth (WebAuthn, SAML/OIDC, SCIM).
 - **P2 (future)** — PostgreSQL migration.
 - **P2 (future)** — Reporting read-heavy analytics.
+
+---
+
+## 2026-04-21 — Security Hardening Pass (Task Prompt 6)
+
+### Problem
+A consistency/hardening pass on the existing Security Settings (password
+change, MFA, recent sign-ins) plus the new Profile / PIN / Licenses
+additions. Scope: audit coverage, throttling, abuse paths, DRY.
+
+### Fix (backend)
+- **New helpers in `services/identity/router.py`**:
+  `_guard_sensitive_auth(action, user, request)` + `_record_sensitive_auth_failure(action, user_id)`.
+  Shared per-user failure counter (5 / 15 min) and per-IP volume
+  ceiling (60 / 60 s) keyed by action. Reuses `core/rate_limit.py` —
+  no new throttling model.
+- **Wired into**: `create_pin`, `change_pin`, `remove_pin` (all
+  password / PIN mismatches count toward the user budget); `reauth`
+  password path; `mfa_disable`; and the email-change branch of
+  `update_profile` (benign profile edits stay unthrottled — verified
+  with 80-iteration test).
+- **Audit gaps closed**:
+  - `auth.mfa_disable` wrong-password now writes a failure row with
+    `reason=invalid_password`.
+  - `/me/preferences` PATCH writes `user.preferences_updated` with
+    changed field names in metadata (license number / secrets still
+    never logged).
+- **Audit reason vocabulary normalised** across PIN / reauth / password
+  flows: `invalid_password`, `invalid_pin`, `locked_out`,
+  `rate_limited_volume`, `pin_not_configured`, `bad_code`.
+- **Frontend hygiene**: grep-verified — zero `localStorage` /
+  `sessionStorage` usage in `/app/frontend/src/pages/account/` or
+  `ReauthDialog.jsx`. All dialogs clear password / PIN state in a
+  `useEffect(() => !open)` and on successful submit.
+
+### Tests
+- `backend/tests/test_security_hardening.py` **(new, 12 tests)**:
+  PIN create/change/remove lockout, reauth password lockout, benign
+  profile PATCH not throttled, email change returns 401 not 429, MFA
+  disable failure audit, preferences audit, reason normalisation, no
+  secret echo in error bodies.
+- Regression: 82/82 pass across `test_password_change_hardening`,
+  `test_professional_licenses`, `test_pin_security`,
+  `test_reauth_pin_step_up`, `test_profile_self_service`.
+- Broader smoke: 81 pass across billing / clinic_profile /
+  appointment_types / theme_preference.
+
+### Docs
+- `backend/docs/ACCOUNT_SECURITY.md` **(new)**: one-page reference —
+  endpoint matrix, throttling contract, audit reason vocabulary,
+  step-up flow, frontend hygiene, session hardening, data at rest.
+
+### Endpoint behavior changes introduced
+- `/auth/me/pin` (POST/PATCH/DELETE), `/auth/mfa/disable`, `/auth/reauth`
+  password path, and email-change branch of `/auth/me/profile` now
+  return **429** after 5 failed attempts in 15 min per user, or after
+  60 requests in 60 s per IP. Prior behaviour: unlimited 401s.
+- Audit `reason` strings renamed from `wrong_current_password` /
+  `wrong_pin` / `wrong_password` / `pin_locked` → `invalid_password` /
+  `invalid_pin` / `locked_out`. No external integrations depend on
+  these strings (test suite passes).
+
+### Lockout UX
+Locked-out users see a generic 429 with
+"Too many failed attempts. Please wait a few minutes and try again."
+Counter naturally expires after 15 minutes of no further attempts.
+A successful credential verify does not reset the counter — it falls
+off naturally. Matches the pre-existing `/change-password` pattern.
+
+### Task Prompt 6 — CLOSED ✅
+
+### Remaining backlog (unchanged from previous session)
+- **P1** — Global retry-after-reauth Axios interceptor.
+- **P2** — Persist `appointment_type_id` on Appointments.
+- **P2** — Reorder Appointment Types (drag-drop).
+- **P2** — Restore green test suite for pre-existing iteration4/5/8/9/11/12/13 files.
+- **P2 / deferred** — Unmock Resend email delivery.
+- **P2 (future)** — Enterprise Auth (WebAuthn / SAML / OIDC / SCIM).
+- **P2 (future)** — PostgreSQL migration.
+
