@@ -585,6 +585,61 @@ async def dismiss_follow_up_suggestion(
     return {"ok": True}
 
 
+@router.post("/follow-up-suggestions/{suggestion_id}/resolve")
+async def resolve_follow_up_suggestion(
+    suggestion_id: str,
+    payload: dict,
+    request: Request,
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Mark a suggestion as scheduled — called after a follow-up booking
+    from the Checkout page lands in BookDialog and saves successfully.
+    Links the new appointment id so the suggestion is not duplicated.
+
+    Idempotent: re-calling with the same or different appointment id on an
+    already-resolved suggestion returns 200 without mutating history.
+    """
+    appointment_id = (payload or {}).get("appointment_id")
+    if not appointment_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "appointment_id is required")
+    db = get_db_write()
+    q: dict = {"id": suggestion_id}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        q["tenant_id"] = ctx.tenant_id
+    row = await db.follow_up_suggestions.find_one(q, {"_id": 0})
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Suggestion not found")
+    # Verify the target appointment belongs to the same tenant.
+    appt_q: dict = {"id": appointment_id}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        appt_q["tenant_id"] = ctx.tenant_id
+    appt = await db.appointments.find_one(appt_q, {"_id": 0, "id": 1})
+    if not appt:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown appointment")
+    if row.get("status") == "pending":
+        await db.follow_up_suggestions.update_one(
+            {"id": suggestion_id},
+            {"$set": {
+                "status": "scheduled",
+                "resolved_at": _now_iso(),
+                "resolved_by": actor["id"],
+                "resolved_appointment_id": appointment_id,
+            }},
+        )
+        await audit_success(
+            actor, "follow_up_suggestion.resolved", request,
+            entity_type="follow_up_suggestion", entity_id=suggestion_id,
+            metadata={
+                "tenant_id": ctx.tenant_id,
+                "resolved_appointment_id": appointment_id,
+            },
+        )
+    return {"ok": True}
+
+
 
 @router.get("/{appointment_id}", response_model=AppointmentPublic)
 async def get_appointment(

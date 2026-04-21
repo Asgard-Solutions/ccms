@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "../../api/client";
 import { useAuth } from "../../contexts/AuthContext";
@@ -71,6 +72,43 @@ export default function SchedulingPage() {
   const openNew = () => setDialog({ open: true, initial: null, defaultStart: null });
   const openNewAt = (d) => setDialog({ open: true, initial: null, defaultStart: d });
   const openReschedule = (a) => setDialog({ open: true, initial: a, defaultStart: null });
+
+  // Consume URL params coming from the Checkout page's "Book follow-up"
+  // button. Pre-fill BookDialog with patient/provider/type + optional
+  // follow-up suggestion id so we can mark it resolved on save.
+  const location = useLocation();
+  const navigate = useNavigate();
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const patientId = params.get("patient_id");
+    const providerId = params.get("provider_id");
+    const appointmentTypeId = params.get("appointment_type_id");
+    const dateParam = params.get("date");
+    const suggestionId = params.get("follow_up_suggestion_id");
+    if (!patientId && !providerId && !suggestionId) return;
+    let start = null;
+    if (dateParam) {
+      const d = new Date(dateParam);
+      if (!Number.isNaN(d.getTime())) {
+        // Seed with a reasonable mid-morning slot on the suggested date.
+        d.setHours(9, 0, 0, 0);
+        start = d;
+        setDate(d);
+      }
+    }
+    setDialog({
+      open: true,
+      initial: null,
+      defaultStart: start,
+      defaultPatientId: patientId,
+      defaultProviderId: providerId,
+      defaultAppointmentTypeId: appointmentTypeId,
+      followUpSuggestionId: suggestionId,
+    });
+    // Clean the URL so a refresh doesn't re-open the dialog.
+    navigate("/scheduling", { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function doCancel(a) {
     try {
@@ -169,6 +207,10 @@ export default function SchedulingPage() {
         open={dialog.open}
         initial={dialog.initial}
         defaultStart={dialog.defaultStart}
+        defaultPatientId={dialog.defaultPatientId}
+        defaultProviderId={dialog.defaultProviderId}
+        defaultAppointmentTypeId={dialog.defaultAppointmentTypeId}
+        followUpSuggestionId={dialog.followUpSuggestionId}
         onClose={() => setDialog({ open: false, initial: null, defaultStart: null })}
         onCancelAppointment={(a) => {
           setDialog({ open: false, initial: null, defaultStart: null });

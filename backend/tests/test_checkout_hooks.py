@@ -239,3 +239,77 @@ def test_dismiss_follow_up_suggestion():
     rows = s.get(f"{API}/appointments/follow-up-suggestions",
                  params={"patient_id": patient_id}, timeout=10).json()
     assert not [r for r in rows if r["id"] == sid]
+
+
+def test_resolve_follow_up_suggestion_links_new_appointment():
+    """Follow-up suggestion gets marked `scheduled` with the newly booked
+    appointment id when BookDialog resolves it post-save."""
+    s = _login(*DEFAULT_ADMIN)
+    at = _ensure_type(s, follow_up_days=10)
+    patient_id, provider_id = _ctx(s)
+    aid = _drive_to_checkout(s, patient_id, provider_id, at["id"])
+    rows = s.get(f"{API}/appointments/follow-up-suggestions",
+                 params={"patient_id": patient_id}, timeout=10).json()
+    matching = [r for r in rows if r["appointment_id"] == aid]
+    assert matching, "No suggestion to resolve"
+    sid = matching[0]["id"]
+
+    # Book the follow-up appointment explicitly.
+    offset = (uuid.uuid4().int >> 32) % 200000
+    start = datetime.now(timezone.utc) + timedelta(days=25, minutes=offset)
+    r = s.post(f"{API}/appointments", json={
+        "patient_id": patient_id, "provider_id": provider_id,
+        "start_time": start.isoformat(),
+        "end_time": (start + timedelta(minutes=30)).isoformat(),
+        "appointment_type_id": at["id"],
+        "reason": "resolved follow-up",
+    }, timeout=10)
+    assert r.status_code == 201, r.text
+    new_aid = r.json()["id"]
+
+    # Resolve.
+    r = s.post(f"{API}/appointments/follow-up-suggestions/{sid}/resolve",
+               json={"appointment_id": new_aid}, timeout=10)
+    assert r.status_code == 200, r.text
+
+    # Suggestion no longer pending; status=scheduled; linked appointment stored.
+    rows = s.get(f"{API}/appointments/follow-up-suggestions",
+                 params={"patient_id": patient_id, "status": "scheduled"}, timeout=10).json()
+    resolved = [r for r in rows if r["id"] == sid]
+    assert resolved, "Suggestion not moved to scheduled"
+    assert resolved[0]["resolved_appointment_id"] == new_aid
+
+    # Idempotent: second call returns 200 without error.
+    r = s.post(f"{API}/appointments/follow-up-suggestions/{sid}/resolve",
+               json={"appointment_id": new_aid}, timeout=10)
+    assert r.status_code == 200, r.text
+
+
+def test_resolve_follow_up_suggestion_requires_appointment_id():
+    s = _login(*DEFAULT_ADMIN)
+    at = _ensure_type(s, follow_up_days=5)
+    patient_id, provider_id = _ctx(s)
+    aid = _drive_to_checkout(s, patient_id, provider_id, at["id"])
+    rows = s.get(f"{API}/appointments/follow-up-suggestions",
+                 params={"patient_id": patient_id}, timeout=10).json()
+    matching = [r for r in rows if r["appointment_id"] == aid]
+    assert matching, "No suggestion to resolve"
+    sid = matching[0]["id"]
+    r = s.post(f"{API}/appointments/follow-up-suggestions/{sid}/resolve",
+               json={}, timeout=10)
+    assert r.status_code == 400, r.text
+
+
+def test_resolve_follow_up_suggestion_unknown_appointment_400():
+    s = _login(*DEFAULT_ADMIN)
+    at = _ensure_type(s, follow_up_days=5)
+    patient_id, provider_id = _ctx(s)
+    aid = _drive_to_checkout(s, patient_id, provider_id, at["id"])
+    rows = s.get(f"{API}/appointments/follow-up-suggestions",
+                 params={"patient_id": patient_id}, timeout=10).json()
+    matching = [r for r in rows if r["appointment_id"] == aid]
+    assert matching, "No suggestion to resolve"
+    sid = matching[0]["id"]
+    r = s.post(f"{API}/appointments/follow-up-suggestions/{sid}/resolve",
+               json={"appointment_id": "bogus-does-not-exist"}, timeout=10)
+    assert r.status_code == 400, r.text
