@@ -2192,3 +2192,65 @@ the Security tab, confirmed:
 - **P2 (future)** — Enterprise Auth (WebAuthn / SAML / OIDC / SCIM).
 - **P2 (future)** — PostgreSQL migration.
 
+
+---
+
+## 2026-04-21 — NPI Luhn Validation (Task Prompt 8)
+
+### Problem
+The existing NPI field on My Account > Licenses only enforced "10
+digits". NPI has an official CMS check digit (Luhn over the implicit
+`80840` prefix + first 9 digits); obvious typos like `1234567890` were
+accepted. Need both frontend + backend to enforce structure + checksum
+without implying NPPES registration verification.
+
+### Fix
+- **Shared validator** (backend): `backend/core/npi.py` exposes
+  `is_valid_npi`, `compute_check_digit`, `validate_npi_or_raise`,
+  `NpiValidationError`. Uses the `+24` prefix-constant shortcut (Luhn
+  contribution of literal `"80840"` positions).
+- **Shared validator** (frontend): `frontend/src/utils/npi.js` mirrors
+  the backend contract (`isValidNpi`, `describeNpiError`,
+  `computeCheckDigit`, `NPI_CHECKSUM_DISCLAIMER`).
+- **Backend enforcement**: `ProfileUpdate._validate_npi` delegates to
+  `validate_npi_or_raise`. Invalid NPIs now return 422 with specific
+  messages (`exactly 10 digits`, `digits only`, `checksum`).
+- **Frontend UX**: `NpiCard` uses `describeNpiError` for distinct
+  inline errors (length vs digits-only vs checksum), disables Save
+  until valid, renders `NPI_CHECKSUM_DISCLAIMER` as help text,
+  `aria-invalid` + `aria-describedby` attached. Existing
+  `npi-card` / `npi-input` / `npi-save-btn` testids preserved;
+  `npi-error` + `npi-disclaimer` added.
+- **Audit**: NPI changes continue to flow through `user.profile_updated`
+  with `metadata.fields=["npi_number"]`. Verified in integration test.
+- **Terminology guardrail**: UI never says "NPPES verified" — the
+  disclaimer explicitly states "does not confirm NPPES registration
+  status."
+
+### Tests
+- `backend/tests/test_npi_validation.py` **(new, 30 tests)** — unit
+  (compute_check_digit, is_valid_npi, validate_npi_or_raise), backend
+  PATCH enforcement, whitespace trim, audit trail.
+- `test_professional_licenses.py` updated to use the canonical
+  Luhn-valid example `1234567893` (previously `1234567890`, which now
+  correctly fails).
+- Full regression: **123 passed** across NPI + licenses + profile +
+  password + PIN + reauth + security-hardening suites.
+
+### Canonical examples pinned in tests
+- Valid: `1234567893`, `0000000006`, `1679576722`.
+- Invalid (length OK, checksum fails): `1234567890`, `1234567892`.
+
+### Task Prompt 8 — CLOSED ✅
+
+### Remaining backlog (unchanged)
+- **P1** — Global retry-after-reauth Axios interceptor.
+- **P2** — Persist `appointment_type_id` on Appointments.
+- **P2** — Reorder Appointment Types (drag-drop).
+- **P2** — Restore green for pre-existing iteration4/5/8/9/11/12/13 files.
+- **P2 / deferred** — Unmock Resend email delivery.
+- **P2 (future)** — Enterprise Auth (WebAuthn / SAML / OIDC / SCIM).
+- **P2 (future)** — PostgreSQL migration.
+- **P3 (future)** — Real NPPES registry lookup integration (separate
+  verification story — not covered by this checksum validator).
+
