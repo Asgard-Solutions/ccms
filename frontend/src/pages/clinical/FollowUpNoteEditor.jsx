@@ -846,6 +846,7 @@ export default function FollowUpNoteEditor() {
           parentSigned={note.status === "signed"}
           canWrite={canWrite}
           currentUser={user}
+          onChanged={load}
           onReauthNeeded={() => requestReauth(async () => load())}
         />
       </div>

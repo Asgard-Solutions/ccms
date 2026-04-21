@@ -12,6 +12,84 @@ public release yet — we're pre-1.0).
 ## [Unreleased]
 
 ### Added
+- **Clinical module — Phase 8 (2026-04-21).** Billing Readiness,
+  lifecycle hardening, addenda, and audit coverage. The chart is now
+  "defensibly billable": every appointment-linked encounter exposes a
+  read-only Billing Readiness evaluation; signed follow-up notes,
+  initial exams, and re-exams are fully immutable and extended only
+  through append-only, individually-signed addenda; all
+  create/edit/sign/delete/linkage events are captured in the global
+  `audit_logs` stream plus the patient-scoped
+  `clinical_audit_events` projection.
+  - **Backend** under `services/clinical/`:
+    - `addenda_models.py` + `addenda_router.py` — new collection
+      `clinical_addenda`. Strict authorship: any writer may create;
+      only the addendum's author or an admin may edit / sign /
+      delete that addendum. Parent must be signed (409 otherwise).
+      Post-sign PATCH/DELETE return 409.
+    - `billing_readiness_router.py` — single GET endpoint, read-only.
+      Response schema future-billing-friendly:
+      `{encounter_id, appointment_id, provider_id, provider_name,
+      date_of_service, episode_id, visit_type, visit_type_label,
+      note {kind,status,signed_at,signed_by,addendum_count,has_addenda},
+      diagnoses[], procedures[], treatment_plan, overall_status,
+      checks[], generated_at}`. Checks cover patient/provider/DOS
+      presence, appointment linkage, encounter completeness, note
+      existence + signed + signature present, diagnosis linkage,
+      treatment documented, objective findings, response / progress
+      documented, treatment-plan linkage (fail for follow-up/treatment
+      visits; info for NPE/re-eval), and re-exam-overdue.
+      `overall_status` is `blocked` if any fail-severity check fails,
+      `warnings` if any warn-severity fails, else `ready`. Never
+      mutates billing data.
+    - `notes_models.py` — `CareTimelineEntry.kind` adds `addendum`;
+      `FollowUpNotePublic` adds `has_addenda`, `addendum_count`,
+      `latest_addendum_at`.
+    - `exams_models.py`, `reexams_models.py` — same three addendum
+      fields on `InitialExamPublic`, `ReExamPublic`.
+    - Hydrate functions on notes/exams/re-exams now count addenda
+      per parent so editor headers can show
+      `Signed · +N addendum(s)`.
+    - `notes_router.py` care-timeline endpoint aggregates signed
+      addenda (kind=`addendum`), anchored to the parent artifact's
+      deep-link.
+    - `notes_router.py` PATCH now emits dedicated
+      `follow_up_note.treatment_plan_linkage_changed` and
+      `follow_up_note.diagnosis_linkage_changed` clinical-audit
+      events in addition to the generic `updated` audit.
+  - **Frontend** under `pages/clinical/`:
+    - `BillingReadinessPanel.jsx` — collapsible per-encounter;
+      persistent header status chip; check rows + future-billing
+      summary with diagnoses and procedures.
+    - `AddendumPanel.jsx` — mounts under each signed
+      note/exam/re-exam editor; create dialog (reason + narrative),
+      sign, delete-draft. Post-sign actions disappear; non-author
+      drafts hide author-only actions.
+    - `LifecycleBadge.jsx` — shared lifecycle pill for chart-wide
+      use.
+    - `EncountersCard.jsx` — mounts `BillingReadinessPanel` per row.
+    - `FollowUpNoteEditor.jsx`, `InitialExamEditor.jsx`,
+      `ReExamEditor.jsx` — mount `AddendumPanel` (with `onChanged`
+      callback so the editor's status badge refreshes the addendum
+      suffix without a page reload). Badges show
+      `Signed · +N addendum(s)` when applicable.
+    - `CareTimelineCard.jsx` — `KIND_META` extended for `addendum`
+      with `MessageSquarePlus` icon; timeline rows for addenda show
+      the reason as subtitle and deep-link to the parent artifact.
+  - **Testing**: `backend/tests/test_clinical_phase8.py` — nine
+    tests, all green (sign-locks-PATCH, addendum requires-signed-parent,
+    addendum create/edit/sign/lock lifecycle, non-author-forbidden +
+    admin-can-sign, billing readiness blocked / ready / missing-plan,
+    timeline addendum kind, linkage-change audit). Frontend
+    validated via `testing_agent_v3_fork` iteration 38 (all addendum
+    + billing-readiness + timeline flows pass; minor
+    auto-refresh polish already resolved).
+  - **Guardrails**: billing readiness stays read-only and evaluative;
+    signed base artifacts stay locked; addenda are append-only +
+    individually signed + immutable once signed; no billing
+    automation, no CPT suggestion, no claim generation in this
+    phase.
+
 - **Clinical module — Phase 7 (2026-04-21).** Imaging & Clinical
   Media + Outcomes / Functional Measures + Care Timeline v2. Chart
   gets first-class file storage for x-rays / MRI / CT / ultrasound /

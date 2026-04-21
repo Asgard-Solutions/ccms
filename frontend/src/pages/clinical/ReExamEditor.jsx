@@ -642,6 +642,7 @@ export default function ReExamEditor() {
           parentSigned={rx.status === "signed"}
           canWrite={canWrite}
           currentUser={user}
+          onChanged={load}
           onReauthNeeded={() => requestReauth(async () => load())}
         />
       </div>

@@ -47,6 +47,9 @@ import { formatDateTime } from "../../utils/time";
  * @param {boolean} props.canWrite
  * @param {{id?:string, role?:string}} [props.currentUser]
  * @param {() => void} [props.onReauthNeeded]
+ * @param {() => void} [props.onChanged]   Called after any successful
+ *   create/edit/sign/delete so the parent editor can refetch the parent
+ *   artifact and update its status badge (addendum count).
  */
 export default function AddendumPanel({
   patientId,
@@ -56,6 +59,7 @@ export default function AddendumPanel({
   canWrite,
   currentUser,
   onReauthNeeded,
+  onChanged,
 }) {
   const [rows, setRows] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -96,6 +100,7 @@ export default function AddendumPanel({
       await api.post(`/patients/${patientId}/clinical/addenda/${row.id}/sign`);
       toast.success("Addendum signed");
       load();
+      onChanged?.();
     } catch (e) {
       if (!reauthAware(e)) toast.error(formatApiError(e));
     }
@@ -107,6 +112,7 @@ export default function AddendumPanel({
       await api.delete(`/patients/${patientId}/clinical/addenda/${row.id}`);
       toast.success("Draft addendum deleted");
       load();
+      onChanged?.();
     } catch (e) {
       if (!reauthAware(e)) toast.error(formatApiError(e));
     }
@@ -244,6 +250,7 @@ export default function AddendumPanel({
         onSaved={() => {
           setCreateOpen(false);
           load();
+          onChanged?.();
         }}
         onReauthNeeded={onReauthNeeded}
       />
@@ -256,6 +263,7 @@ export default function AddendumPanel({
         onSaved={() => {
           setEditing(null);
           load();
+          onChanged?.();
         }}
         onReauthNeeded={onReauthNeeded}
       />

@@ -1,6 +1,6 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-04-21 (Clinical module Phase 7 — Imaging/Media + Outcomes + Care Timeline expanded)
+**Last updated:** 2026-04-21 (Clinical module Phase 8 — Billing Readiness, lifecycle hardening, addenda, audit coverage)
 
 ## 0. Design system (binding)
 The Chiro Software design system is authoritative for every UI surface.
@@ -48,6 +48,106 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Components: `BreakGlassDialog`, `ReauthDialog`
 
 ## 4. What's implemented
+### Clinical module Phase 8 — Billing Readiness + Lifecycle Hardening + Addenda + Audit Coverage (2026-04-21)
+- **Workflow realized**: the chart is now "defensibly billable" — each
+  appointment-linked encounter exposes a read-only Billing Readiness
+  evaluation; signed notes / exams / re-exams are fully immutable and
+  may only be extended through append-only, individually-signed
+  addenda; every create / edit / sign / delete / linkage change is
+  captured in both the global `audit_logs` stream and the
+  patient-scoped `clinical_audit_events` projection.
+- **Backend** under `services/clinical/`:
+  - `addenda_models.py` — `ClinicalAddendumCreate/Update/Public`,
+    `parent_type` enum (`follow_up_note | initial_exam | re_exam`),
+    reason (3-160 chars) + narrative (10-8000 chars), status
+    (`draft | signed`), signed_at / signed_by hydration.
+  - `addenda_router.py` — `GET/POST /patients/{pid}/clinical/{parent_type}/{parent_id}/addenda`,
+    `GET/PATCH/DELETE /patients/{pid}/clinical/addenda/{aid}`,
+    `POST .../addenda/{aid}/sign`, and a chart-level
+    `GET /patients/{pid}/clinical/addenda` list. Strict authorship
+    (option 2a): any writer (admin/doctor) may create; only the
+    addendum author OR an admin may edit / sign / delete that
+    addendum. Parent must be signed (409 otherwise). Post-sign
+    PATCH/DELETE return 409.
+  - `billing_readiness_router.py` — single endpoint
+    `GET /patients/{pid}/clinical/encounters/{eid}/billing-readiness`.
+    Read-only (option 1a): no persistence, no billing mutation.
+    Response shape intentionally future-billing-friendly:
+    `encounter_id, appointment_id, provider_id, provider_name,
+    date_of_service, episode_id, visit_type, visit_type_label,
+    note {kind, id, status, signed_at, signed_by, has_addenda,
+    addendum_count}, diagnoses[], procedures[], treatment_plan,
+    overall_status, checks[], generated_at`. Check keys: `patient_present`,
+    `provider_present`, `dos_present`, `appointment_linked`,
+    `encounter_completed`, `note_exists`, `note_signed`,
+    `signature_present`, `diagnosis_linked`, `treatment_documented`,
+    `objective_findings`, `response_documented`, `plan_linkage`
+    (severity=fail for follow_up/treatment_visit, info otherwise),
+    `reexam_not_overdue`. Overall status derivation: `blocked` if
+    any fail-severity check fails, `warnings` if any warn-severity
+    fails, `ready` otherwise.
+  - `notes_models.py` — `CareTimelineEntry.kind` extended with
+    `addendum`; `FollowUpNotePublic` gains `has_addenda`,
+    `addendum_count`, `latest_addendum_at`.
+  - `exams_models.py` + `reexams_models.py` — same three new
+    addendum-metadata fields on `InitialExamPublic` and
+    `ReExamPublic`.
+  - `notes_router.py` `_hydrate`, `exams_router.py` `_hydrate`,
+    `reexams_router.py` `_hydrate` — each fetch their
+    parent-specific addendum count + latest timestamp so the
+    editor header badges can surface "Signed · +N addendum(s)".
+  - `notes_router.py` care-timeline endpoint — aggregates signed
+    addenda with kind=`addendum`, anchored to the parent artifact's
+    deep-link. Signed-only (drafts don't leak onto the timeline).
+  - `notes_router.py` PATCH — emits specific
+    `follow_up_note.treatment_plan_linkage_changed` and
+    `follow_up_note.diagnosis_linkage_changed` clinical-audit events
+    in addition to the generic `updated` audit, so downstream
+    compliance consumers can filter linkage changes without
+    introspecting the generic payload.
+- **Frontend** under `pages/clinical/`:
+  - `BillingReadinessPanel.jsx` — collapsible; persistent header chip
+    (`ready` green / `warnings` amber / `blocked` red); check rows
+    with pass/fail icons and failure detail; future-billing summary
+    block (encounter / appointment / provider / DOS / visit_type /
+    note status + addendum count / treatment plan / episode /
+    diagnoses[] / procedures[]).
+  - `AddendumPanel.jsx` — beneath each signed note/exam/re-exam.
+    Lists all addenda for that parent. Create dialog (reason +
+    narrative), sign, delete-draft. Post-sign edit/sign/delete
+    buttons disappear (server-side immutability mirrored in UI).
+    Non-author drafts hide author-only actions.
+  - `LifecycleBadge.jsx` — single source of truth for status pills
+    (reused where lifecycle is displayed; existing editor badges
+    append the `· +N addendum` suffix inline).
+  - `EncountersCard.jsx` — mounts `BillingReadinessPanel` under each
+    encounter row.
+  - `FollowUpNoteEditor.jsx`, `InitialExamEditor.jsx`,
+    `ReExamEditor.jsx` — mount `AddendumPanel` at the bottom; status
+    badge now surfaces the addendum suffix when signed; `onChanged`
+    callback refetches the parent artifact after sign/delete so the
+    badge updates without a page reload.
+  - `CareTimelineCard.jsx` — `KIND_META` extended for `addendum`
+    kind (MessageSquarePlus icon); timeline row shows reason as
+    subtitle and deep-links to the parent artifact surface.
+- **Tests**: `/app/backend/tests/test_clinical_phase8.py` —
+  `signed_note_blocks_patch`, `addendum_requires_signed_parent`,
+  `addendum_create_edit_sign_lock`,
+  `addendum_non_author_cannot_sign_but_admin_can`,
+  `billing_readiness_blocked_when_note_draft`,
+  `billing_readiness_ready_when_fully_documented`,
+  `billing_readiness_warns_on_missing_plan`,
+  `timeline_surfaces_signed_addendum`,
+  `audit_events_for_linkage_changes` — all 9 passing. Frontend
+  validated via `testing_agent_v3_fork` iteration 38 (all Phase 8
+  flows pass; minor polish action item resolved with `onChanged`
+  callback).
+- **Guardrails observed**: Billing Readiness stays read-only and
+  evaluative; signed base artifacts stay locked; addenda are
+  append-only + individually signed + immutable once signed; no
+  billing automation, no CPT suggestion, no claim generation in
+  this phase.
+
 ### Clinical module Phase 7 — Imaging & Clinical Media + Outcomes + Care Timeline v2 (2026-04-21)
 - **Workflow realized**: providers upload x-rays, MRI/CT reports,
   ultrasound, clinical photos, outside records, and PDFs to the

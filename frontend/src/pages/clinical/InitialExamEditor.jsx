@@ -960,6 +960,7 @@ export default function InitialExamEditor() {
           parentSigned={exam.status === "signed"}
           canWrite={canWrite}
           currentUser={user}
+          onChanged={load}
           onReauthNeeded={() => requestReauth(async () => load())}
         />
 
