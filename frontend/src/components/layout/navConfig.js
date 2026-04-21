@@ -264,22 +264,8 @@ export const NAV_GROUPS = [
         roles: ["admin"],
       },
       {
-        to: "/roles",
-        label: "Advanced: Role matrix",
-        testId: "nav-roles",
-        icon: UserCog,
-        roles: ["admin"],
-      },
-      {
-        to: "/permissions",
-        label: "Advanced: Permission Matrix",
-        testId: "nav-permissions",
-        icon: Table2,
-        roles: ["admin"],
-      },
-      {
         to: "/access-review",
-        label: "Advanced: Access Review",
+        label: "Access Review",
         testId: "nav-access-review",
         icon: FileBarChart,
         roles: ["admin"],

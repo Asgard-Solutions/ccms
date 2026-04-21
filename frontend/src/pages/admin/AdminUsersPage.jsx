@@ -25,7 +25,6 @@ import {
   UserPlus,
   UserX,
   UserCheck,
-  AlertTriangle,
   Lock,
 } from "lucide-react";
 import { api } from "../../api/client";
@@ -276,24 +275,6 @@ export default function AdminUsersPage() {
           </ul>
         )}
       </section>
-
-      <div className="rounded-sm border border-border bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
-        <AlertTriangle className="mr-1.5 inline h-3.5 w-3.5" />
-        Advanced tools —
-        {" "}
-        <Link to="/roles" className="font-medium text-primary hover:underline" data-testid="admin-users-advanced-roles">
-          Role management
-        </Link>
-        ,{" "}
-        <Link to="/permissions" className="font-medium text-primary hover:underline" data-testid="admin-users-advanced-permissions">
-          Permission matrix
-        </Link>
-        ,{" "}
-        <Link to="/access-review" className="font-medium text-primary hover:underline" data-testid="admin-users-advanced-access-review">
-          Access review
-        </Link>
-        {" "}— remain available for power users during the new experience rollout.
-      </div>
 
       <CreateUserDialog
         open={createOpen}

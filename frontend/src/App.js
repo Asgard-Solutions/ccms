@@ -27,8 +27,6 @@ import Compliance from "./pages/Compliance";
 import Privacy from "./pages/Privacy";
 import SecurityConfig from "./pages/SecurityConfig";
 import PasswordReset from "./pages/PasswordReset";
-import PermissionMatrix from "./pages/PermissionMatrix";
-import RoleManagement from "./pages/RoleManagement";
 import AccessReview from "./pages/AccessReview";
 import AdminUsersPage from "./pages/admin/AdminUsersPage";
 import AdminRolesPage from "./pages/admin/AdminRolesPage";
@@ -112,8 +110,6 @@ export default function App() {
               <Route path="/security-config" element={<Shell roles={["admin"]}><SecurityConfig /></Shell>} />
               <Route path="/admin/users" element={<Shell roles={["admin"]}><AdminUsersPage /></Shell>} />
               <Route path="/admin/roles" element={<Shell roles={["admin"]}><AdminRolesPage /></Shell>} />
-              <Route path="/roles" element={<Shell roles={["admin"]}><RoleManagement /></Shell>} />
-              <Route path="/permissions" element={<Shell roles={["admin"]}><PermissionMatrix /></Shell>} />
               <Route path="/access-review" element={<Shell roles={["admin"]}><AccessReview /></Shell>} />
               <Route path="/elevation" element={<Shell><Elevation /></Shell>} />
               <Route path="/security" element={<Shell><Security /></Shell>} />

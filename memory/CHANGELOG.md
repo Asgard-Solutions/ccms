@@ -4,6 +4,36 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-02-15 — Legacy access-management pages removed
+
+**Scope:** Clean removal per user request — application is still in
+development, new `/admin/users` + `/admin/roles` fully replace the old
+experience.
+
+**Deleted**
+- `frontend/src/pages/RoleManagement.jsx` (534 lines)
+- `frontend/src/pages/PermissionMatrix.jsx` (183 lines)
+- Routes `/roles`, `/permissions` removed from `App.js`
+- Nav entries `nav-roles`, `nav-permissions` removed from `navConfig.js`
+- "Deprecated advanced tools" footer removed from `AdminUsersPage.jsx`
+  (along with the `AlertTriangle` import it needed).
+
+**Kept**
+- `/access-review` + `AccessReview.jsx` — evolves into the Phase 5
+  Access Change History surface.
+- Backend `GET /api/authz/matrix` + `GET /api/authz/permissions`
+  endpoints retained — they may be useful for future exports or
+  admin scripting.
+
+**Verified** (smoke-test after cleanup):
+- `nav-admin-users` present ✓
+- `nav-admin-roles` present ✓
+- `nav-roles` absent ✓
+- `nav-permissions` absent ✓
+- `admin-users-advanced-*` links absent ✓
+
+---
+
 ## 2026-02-15 — Access Management Phase 4: Roles screen + grouped Role Editor
 
 **Scope:** Frontend-only. Backend CRUD shipped in Phase 2.
