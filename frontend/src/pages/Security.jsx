@@ -9,17 +9,20 @@
  */
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { ShieldCheck, User2 } from "lucide-react";
+import { BadgeCheck, ShieldCheck, User2 } from "lucide-react";
 import {
   Tabs,
   TabsContent,
   TabsList,
   TabsTrigger,
 } from "../components/ui/tabs";
+import { useAuth } from "../contexts/AuthContext";
 import ProfileTab from "./account/ProfileTab";
 import SecurityTab from "./account/SecurityTab";
+import LicensesTab from "./account/LicensesTab";
 
-const VALID_TABS = new Set(["profile", "security"]);
+const CLINICIAN_ROLES = new Set(["admin", "doctor"]);
+const VALID_TABS = new Set(["profile", "security", "licenses"]);
 
 function tabFromLocation(location) {
   const search = new URLSearchParams(location.search);
@@ -33,6 +36,8 @@ function tabFromLocation(location) {
 export default function Account() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isClinician = CLINICIAN_ROLES.has(user?.role);
   const [tab, setTab] = useState(() => tabFromLocation(location));
 
   const changeTab = (next) => {
@@ -84,6 +89,16 @@ export default function Account() {
             <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
             Security
           </TabsTrigger>
+          {isClinician && (
+            <TabsTrigger
+              value="licenses"
+              data-testid="account-tab-licenses"
+              className="rounded-sm"
+            >
+              <BadgeCheck className="mr-1.5 h-3.5 w-3.5" />
+              Licenses
+            </TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="profile">
@@ -93,6 +108,12 @@ export default function Account() {
         <TabsContent value="security">
           <SecurityTab />
         </TabsContent>
+
+        {isClinician && (
+          <TabsContent value="licenses">
+            <LicensesTab />
+          </TabsContent>
+        )}
       </Tabs>
 
       <p className="text-[11px] text-muted-foreground">

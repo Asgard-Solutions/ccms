@@ -52,6 +52,9 @@ from core.security import (
 )
 from services.identity.models import (
     AdminUserCreate,
+    LicenseCreate,
+    LicensePublic,
+    LicenseUpdate,
     LoginResult,
     MfaChallenge,
     MfaSetupResponse,
@@ -136,6 +139,7 @@ def _to_public(user: dict) -> dict:
         "credentials_suffix": user.get("credentials_suffix"),
         "preferred_signature_name": user.get("preferred_signature_name"),
         "time_zone": user.get("time_zone"),
+        "npi_number": user.get("npi_number"),
         "created_at": user["created_at"],
     }
 
@@ -467,6 +471,7 @@ _PROFILE_STRING_FIELDS = (
     "credentials_suffix",
     "preferred_signature_name",
     "time_zone",
+    "npi_number",
 )
 
 
@@ -891,6 +896,181 @@ async def verify_pin(
         entity_type="user", entity_id=user["id"],
     )
     return {"verified": True}
+
+
+# ---------------------------------------------------------------------------
+# Professional licenses (multi) — doctors + admins.
+# ---------------------------------------------------------------------------
+# Roles allowed to add their own licenses. Staff/patient users get a
+# clean 403 on write (they can still GET their own — trivially empty —
+# list so the UI can hide the section without extra wiring).
+LICENSE_CAPABLE_ROLES = {"admin", "doctor"}
+
+
+def _license_public(doc: dict) -> dict:
+    return {
+        "id": doc["id"],
+        "user_id": doc["user_id"],
+        "license_type": doc["license_type"],
+        "license_number": doc["license_number"],
+        "issuing_state": doc["issuing_state"],
+        "expiration_date": doc["expiration_date"],
+        "specialty": doc.get("specialty"),
+        "board_notes": doc.get("board_notes"),
+        "created_at": doc["created_at"],
+        "updated_at": doc["updated_at"],
+    }
+
+
+def _require_license_capable(user: dict) -> None:
+    if user.get("role") not in LICENSE_CAPABLE_ROLES:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Only clinicians can manage professional licenses on their own profile.",
+        )
+
+
+@router.get("/me/licenses", response_model=list[LicensePublic])
+async def list_my_licenses(user: dict = Depends(get_current_user)):
+    """List the caller's own licenses, newest first. Works for every
+    role so the frontend can uniformly hide the section when empty."""
+    db = get_db_read()
+    cursor = db.professional_licenses.find(
+        {"user_id": user["id"]}, {"_id": 0},
+    ).sort("created_at", -1)
+    rows = [r async for r in cursor]
+    return [_license_public(r) for r in rows]
+
+
+@router.post("/me/licenses", response_model=LicensePublic, status_code=201)
+async def create_my_license(
+    payload: LicenseCreate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    _require_license_capable(user)
+    db = get_db_write()
+
+    # Avoid duplicate rows for (type, state, number) since that's the
+    # real-world uniqueness key for a license.
+    existing = await db.professional_licenses.find_one({
+        "user_id": user["id"],
+        "license_type": payload.license_type,
+        "issuing_state": payload.issuing_state.upper(),
+        "license_number": payload.license_number.strip(),
+    }, {"_id": 0, "id": 1})
+    if existing:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "A license with this type + state + number already exists.",
+        )
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "tenant_id": user.get("tenant_id"),
+        "license_type": payload.license_type,
+        "license_number": payload.license_number.strip(),
+        "issuing_state": payload.issuing_state.upper(),
+        "expiration_date": payload.expiration_date,
+        "specialty": (payload.specialty or "").strip() or None,
+        "board_notes": (payload.board_notes or "").strip() or None,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+    }
+    await db.professional_licenses.insert_one(doc)
+    await audit_success(
+        user, "user.license_added", request,
+        entity_type="professional_license", entity_id=doc["id"],
+        metadata={
+            "license_type": doc["license_type"],
+            "issuing_state": doc["issuing_state"],
+            # license_number is mildly sensitive — log its length only,
+            # never the value itself.
+            "license_number_length": len(doc["license_number"]),
+        },
+    )
+    return _license_public(doc)
+
+
+@router.patch("/me/licenses/{license_id}", response_model=LicensePublic)
+async def update_my_license(
+    license_id: str,
+    payload: LicenseUpdate,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    _require_license_capable(user)
+    db = get_db_write()
+    existing = await db.professional_licenses.find_one(
+        {"id": license_id, "user_id": user["id"]}, {"_id": 0},
+    )
+    if not existing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "License not found")
+
+    dumped = payload.model_dump(exclude_unset=True)
+    if not dumped:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "No fields supplied to update.",
+        )
+
+    updates: dict = {}
+    if "license_type" in dumped:
+        updates["license_type"] = dumped["license_type"]
+    if "license_number" in dumped:
+        updates["license_number"] = (dumped["license_number"] or "").strip()
+    if "issuing_state" in dumped:
+        updates["issuing_state"] = (dumped["issuing_state"] or "").upper()
+    if "expiration_date" in dumped:
+        updates["expiration_date"] = dumped["expiration_date"]
+    if "specialty" in dumped:
+        spec = (dumped["specialty"] or "").strip()
+        updates["specialty"] = spec or None
+    if "board_notes" in dumped:
+        notes = (dumped["board_notes"] or "").strip()
+        updates["board_notes"] = notes or None
+    updates["updated_at"] = datetime.now(timezone.utc).isoformat()
+
+    await db.professional_licenses.update_one(
+        {"id": license_id, "user_id": user["id"]}, {"$set": updates},
+    )
+    fresh = await db.professional_licenses.find_one(
+        {"id": license_id}, {"_id": 0},
+    )
+    await audit_success(
+        user, "user.license_updated", request,
+        entity_type="professional_license", entity_id=license_id,
+        metadata={"fields": sorted(k for k in updates if k != "updated_at")},
+    )
+    return _license_public(fresh)
+
+
+@router.delete("/me/licenses/{license_id}", status_code=204)
+async def delete_my_license(
+    license_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+):
+    _require_license_capable(user)
+    db = get_db_write()
+    existing = await db.professional_licenses.find_one(
+        {"id": license_id, "user_id": user["id"]}, {"_id": 0},
+    )
+    if not existing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "License not found")
+    await db.professional_licenses.delete_one(
+        {"id": license_id, "user_id": user["id"]},
+    )
+    await audit_success(
+        user, "user.license_removed", request,
+        entity_type="professional_license", entity_id=license_id,
+        metadata={
+            "license_type": existing["license_type"],
+            "issuing_state": existing["issuing_state"],
+        },
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me/export")

@@ -46,6 +46,7 @@ class UserPublic(BaseModel):
     credentials_suffix: str | None = None
     preferred_signature_name: str | None = None
     time_zone: str | None = None
+    npi_number: str | None = None
     created_at: datetime
 
 
@@ -226,3 +227,74 @@ class ProfileUpdate(BaseModel):
     credentials_suffix: str | None = Field(default=None, max_length=40)
     preferred_signature_name: str | None = Field(default=None, max_length=160)
     time_zone: str | None = Field(default=None, max_length=64)
+    npi_number: str | None = Field(
+        default=None, max_length=10,
+        description="CMS 10-digit National Provider Identifier (clinicians only).",
+    )
+
+    @model_validator(mode="after")
+    def _validate_npi(self):
+        # NPI is always exactly 10 digits. Empty string is allowed as a
+        # "clear this field" signal (mirrors the other string fields).
+        if self.npi_number not in (None, ""):
+            if not self.npi_number.isdigit() or len(self.npi_number) != 10:
+                raise ValueError("NPI must be exactly 10 digits.")
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Professional license — multi-license clinicians (DC in CA, DC in NV, etc.)
+# ---------------------------------------------------------------------------
+LICENSE_TYPES = Literal[
+    "DC", "MD", "DO", "PT", "DPT", "RN", "NP", "PA", "LMT", "ATC",
+    "DACBR", "DACNB", "CCSP", "other",
+]
+
+
+def _upper_strip(v: str | None) -> str | None:
+    if v is None:
+        return None
+    return v.strip().upper() or None
+
+
+class LicenseBase(BaseModel):
+    """Shared fields between create + update. `issuing_state` is a
+    two-letter USPS code, uppercased on the fly."""
+    model_config = ConfigDict(extra="forbid")
+    license_type: LICENSE_TYPES = "DC"
+    license_number: str = Field(min_length=2, max_length=40)
+    issuing_state: str = Field(min_length=2, max_length=2, pattern=r"^[A-Za-z]{2}$")
+    expiration_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    specialty: str | None = Field(default=None, max_length=120)
+    board_notes: str | None = Field(default=None, max_length=500)
+
+
+class LicenseCreate(LicenseBase):
+    pass
+
+
+class LicenseUpdate(BaseModel):
+    """All fields optional — PATCH semantics."""
+    model_config = ConfigDict(extra="forbid")
+    license_type: LICENSE_TYPES | None = None
+    license_number: str | None = Field(default=None, min_length=2, max_length=40)
+    issuing_state: str | None = Field(
+        default=None, min_length=2, max_length=2, pattern=r"^[A-Za-z]{2}$",
+    )
+    expiration_date: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    specialty: str | None = Field(default=None, max_length=120)
+    board_notes: str | None = Field(default=None, max_length=500)
+
+
+class LicensePublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    user_id: str
+    license_type: str
+    license_number: str
+    issuing_state: str
+    expiration_date: str
+    specialty: str | None = None
+    board_notes: str | None = None
+    created_at: str
+    updated_at: str
