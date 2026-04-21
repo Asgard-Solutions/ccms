@@ -474,29 +474,35 @@ export default function PinCard() {
       className="rounded-sm border border-border bg-card p-6"
     >
       <div className="flex items-center gap-2">
-        <Hash className="h-5 w-5 text-primary" />
+        <Hash className="h-5 w-5 text-primary" aria-hidden="true" />
         <h2 className="font-display text-2xl font-medium">Security PIN</h2>
-        {configured && (
-          <span
-            data-testid="pin-status-enabled"
-            className="ml-auto rounded-sm bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary"
-          >
-            Configured
+        <span className="ml-auto flex items-center gap-2">
+          <span className="rounded-sm bg-muted px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            In-app only
           </span>
-        )}
-        {!configured && status && (
-          <span
-            data-testid="pin-status-disabled"
-            className="ml-auto rounded-sm bg-muted px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
-          >
-            Not set
-          </span>
-        )}
+          {configured && (
+            <span
+              data-testid="pin-status-enabled"
+              className="rounded-sm bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary"
+            >
+              Configured
+            </span>
+          )}
+          {!configured && status && (
+            <span
+              data-testid="pin-status-disabled"
+              className="rounded-sm bg-muted px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+            >
+              Not set
+            </span>
+          )}
+        </span>
       </div>
       <p className="mt-2 text-sm text-muted-foreground">
-        A 6-digit PIN you can use for fast in-app re-verification (e.g. signing
-        a note or viewing sensitive PHI) without retyping your password. PINs
-        are hashed and cannot be displayed back to you.
+        A 6-digit PIN for fast in-app re-verification of sensitive actions
+        (e.g. signing a note, viewing sensitive PHI) after you&rsquo;ve already
+        signed in. It <strong>does not replace your password</strong> and
+        cannot be used to sign in. PINs are hashed and never displayed back.
       </p>
 
       {err && (

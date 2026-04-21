@@ -13,7 +13,6 @@ import { toast } from "sonner";
 import {
   Lock,
   ShieldCheck,
-  KeyRound,
   CheckCircle2,
   Eye,
   EyeOff,
@@ -142,15 +141,19 @@ function PasswordChangeCard() {
       className="rounded-sm border border-border bg-card p-6"
     >
       <div className="flex items-center gap-2">
-        <Lock className="h-5 w-5 text-primary" />
+        <Lock className="h-5 w-5 text-primary" aria-hidden="true" />
         <h2 className="font-display text-2xl font-medium">Password</h2>
+        <span className="ml-auto rounded-sm bg-muted px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          Primary login credential
+        </span>
       </div>
       <p className="mt-2 text-sm text-muted-foreground">
-        Must be at least 12 characters with upper, lower, digit, and symbol.
-        We remember your last 5 passwords — you cannot reuse them. Changing
-        your password signs you out of all <em>other</em> sessions.
+        Used to sign in to the clinic system. Must be at least 12 characters
+        with upper, lower, digit, and symbol. We remember your last 5 passwords
+        — you cannot reuse them. Changing your password signs you out of all{" "}
+        <em>other</em> sessions.
       </p>
-      <form onSubmit={submit} className="mt-5 space-y-4">
+      <form onSubmit={submit} className="mt-5 space-y-4" aria-label="Change password">
         <PasswordField
           label="Current password"
           testId="pw-current"
@@ -175,6 +178,8 @@ function PasswordChangeCard() {
           {sameAsCurrent && (
             <p
               data-testid="pw-same-as-current-hint"
+              role="alert"
+              aria-live="polite"
               className="text-[11px] text-destructive"
             >
               New password must differ from your current password.
@@ -194,6 +199,8 @@ function PasswordChangeCard() {
           {form.confirm && !matches && (
             <p
               data-testid="pw-mismatch-hint"
+              role="alert"
+              aria-live="polite"
               className="text-[11px] text-destructive"
             >
               Passwords do not match.
@@ -223,11 +230,14 @@ function PasswordField({
   autoComplete,
   minLength,
 }) {
+  const inputId = `${testId}-input`;
+  const hintId = `${testId}-hint`;
   return (
     <div className="space-y-1">
-      <Label>{label}</Label>
+      <Label htmlFor={inputId}>{label}</Label>
       <div className="relative">
         <Input
+          id={inputId}
           type={show ? "text" : "password"}
           data-testid={testId}
           value={value}
@@ -235,19 +245,22 @@ function PasswordField({
           autoComplete={autoComplete}
           minLength={minLength}
           required
-          className="rounded-sm pr-10"
+          aria-describedby={hintId}
+          className="rounded-sm pr-10 focus-visible:ring-2 focus-visible:ring-primary"
         />
         <button
           type="button"
           onClick={onToggleShow}
           data-testid={`${testId}-toggle`}
           aria-label={show ? "Hide password" : "Show password"}
-          className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-muted-foreground hover:text-foreground"
+          aria-pressed={show}
+          aria-controls={inputId}
+          className="absolute inset-y-0 right-0 flex w-9 items-center justify-center text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:rounded-sm"
         >
           {show ? (
-            <EyeOff className="h-4 w-4" />
+            <EyeOff className="h-4 w-4" aria-hidden="true" />
           ) : (
-            <Eye className="h-4 w-4" />
+            <Eye className="h-4 w-4" aria-hidden="true" />
           )}
         </button>
       </div>
@@ -300,25 +313,32 @@ function MfaCard() {
   }
 
   return (
-    <div className="rounded-sm border border-border bg-card p-6">
+    <div className="rounded-sm border border-border bg-card p-6" data-testid="mfa-card">
       <div className="flex items-center gap-2">
-        <ShieldCheck className="h-5 w-5 text-primary" />
+        <ShieldCheck className="h-5 w-5 text-primary" aria-hidden="true" />
         <h2 className="font-display text-2xl font-medium">
           Two-factor authentication
         </h2>
-        {user?.mfa_enabled && (
-          <span
-            data-testid="mfa-status-enabled"
-            className="ml-auto rounded-sm bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary"
-          >
-            Enabled
+        <span className="ml-auto flex items-center gap-2">
+          <span className="rounded-sm bg-muted px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Extra sign-in check
           </span>
-        )}
+          {user?.mfa_enabled && (
+            <span
+              data-testid="mfa-status-enabled"
+              className="rounded-sm bg-primary/10 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider text-primary"
+            >
+              Enabled
+            </span>
+          )}
+        </span>
       </div>
       <p className="mt-2 text-sm text-muted-foreground">
-        Required for admin, doctor and staff accounts in production. Uses the
-        TOTP standard — scan the QR code with Google Authenticator, 1Password,
-        Authy, or any compatible app.
+        After you enter your password at sign-in we&rsquo;ll also ask for a
+        rotating 6-digit code from your authenticator app. Strongly
+        recommended for clinical roles and required for admin, doctor, and
+        staff accounts in production. Uses the TOTP standard (Google
+        Authenticator, 1Password, Authy, etc.).
       </p>
 
       {!user?.mfa_enabled && !setup && (
@@ -377,16 +397,20 @@ function MfaCard() {
             </div>
           </div>
 
-          <form onSubmit={verify} className="space-y-3">
+          <form onSubmit={verify} className="space-y-3" aria-label="Enable multi-factor authentication">
             <div className="space-y-1">
-              <Label>3. Enter the 6-digit code from your app</Label>
+              <Label htmlFor="mfa-verify-code-input">3. Enter the 6-digit code from your app</Label>
               <Input
+                id="mfa-verify-code-input"
                 data-testid="mfa-verify-code"
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
+                inputMode="numeric"
                 autoComplete="one-time-code"
                 required
-                className="max-w-xs rounded-sm tracking-widest"
+                maxLength={6}
+                pattern="\d{6}"
+                className="max-w-xs rounded-sm tracking-widest focus-visible:ring-2 focus-visible:ring-primary"
               />
             </div>
             <Button
@@ -405,16 +429,21 @@ function MfaCard() {
         <form
           onSubmit={disable}
           className="mt-4 flex flex-wrap items-end gap-3"
+          aria-label="Disable multi-factor authentication"
         >
           <div className="flex-1 space-y-1 min-w-[220px]">
-            <Label>Disable MFA — confirm your password</Label>
+            <Label htmlFor="mfa-disable-password-input">
+              Disable MFA — confirm your password
+            </Label>
             <Input
+              id="mfa-disable-password-input"
               type="password"
               data-testid="mfa-disable-password"
               value={disablePassword}
               onChange={(e) => setDisablePassword(e.target.value)}
+              autoComplete="current-password"
               required
-              className="rounded-sm"
+              className="rounded-sm focus-visible:ring-2 focus-visible:ring-primary"
             />
           </div>
           <Button
@@ -555,6 +584,102 @@ function RecentSignInsCard() {
   );
 }
 
+function SecurityPostureStrip({ user, passwordAge }) {
+  const mfaOn = !!user?.mfa_enabled;
+  const pinOn = !!user?.pin_configured;
+  const ageLabel =
+    passwordAge === null
+      ? "—"
+      : `${passwordAge} day${passwordAge === 1 ? "" : "s"}`;
+  const ageTone =
+    passwordAge === null
+      ? "muted"
+      : passwordAge >= 90
+      ? "warn"
+      : "ok";
+
+  const tiles = [
+    {
+      key: "mfa",
+      label: "Two-factor auth",
+      value: mfaOn ? "Enabled" : "Off",
+      tone: mfaOn ? "ok" : "warn",
+      hint: mfaOn
+        ? "Login requires an authenticator code."
+        : "Recommended — add a second factor below.",
+    },
+    {
+      key: "pin",
+      label: "Security PIN",
+      value: pinOn ? "Configured" : "Not set",
+      tone: pinOn ? "ok" : "muted",
+      hint: pinOn
+        ? "Used for fast in-app re-verification."
+        : "Optional — skip re-typing your password for sensitive actions.",
+    },
+    {
+      key: "pwage",
+      label: "Password age",
+      value: ageLabel,
+      tone: ageTone,
+      hint:
+        passwordAge === null
+          ? "Unknown."
+          : passwordAge >= 90
+          ? "Rotate — exceeds 90-day window."
+          : "Within the 90-day rotation window.",
+    },
+  ];
+
+  return (
+    <section
+      data-testid="security-posture-strip"
+      aria-label="Security posture summary"
+      className="grid gap-3 sm:grid-cols-3"
+    >
+      {tiles.map((t) => (
+        <div
+          key={t.key}
+          data-testid={`posture-tile-${t.key}`}
+          className="rounded-sm border border-border bg-card p-4"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+              {t.label}
+            </span>
+            <span
+              className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
+                t.tone === "ok"
+                  ? "bg-primary/10 text-primary"
+                  : t.tone === "warn"
+                  ? "bg-warning-soft text-foreground"
+                  : "bg-muted text-muted-foreground"
+              }`}
+            >
+              {t.value}
+            </span>
+          </div>
+          <p className="mt-2 text-xs text-muted-foreground">{t.hint}</p>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function SectionHeader({ eyebrow, title, description }) {
+  return (
+    <header className="space-y-1">
+      <span className="text-[11px] font-semibold uppercase tracking-[0.15em] text-muted-foreground">
+        {eyebrow}
+      </span>
+      <h2 className="font-display text-xl font-medium tracking-tight">
+        {title}
+      </h2>
+      <p className="max-w-2xl text-sm text-muted-foreground">{description}</p>
+    </header>
+  );
+}
+
 export default function SecurityTab() {
   const { user } = useAuth();
   const [passwordAge, setPasswordAge] = useState(null);
@@ -571,53 +696,61 @@ export default function SecurityTab() {
   return (
     <section
       data-testid="security-tab"
-      className="space-y-6 animate-in fade-in duration-200"
+      className="space-y-10 animate-in fade-in duration-200"
     >
-      {passwordAge !== null && (
+      <SecurityPostureStrip user={user} passwordAge={passwordAge} />
+
+      <div className="space-y-5">
+        <SectionHeader
+          eyebrow="Sign-in methods"
+          title="How you sign in and verify sensitive actions"
+          description="Your password lets you sign in. Two-factor auth adds a second step at sign-in. Your optional Security PIN is a shortcut for re-verifying once you're already signed in — it does not replace your password."
+        />
         <div
-          data-testid="password-age-banner"
-          className={`flex items-start gap-3 rounded-sm border p-4 ${
-            passwordAge >= 90
-              ? "border-warning bg-warning-soft text-muted-foreground"
-              : "border-border bg-card text-muted-foreground"
-          }`}
+          data-testid="signin-methods-group"
+          className="space-y-6"
+          aria-labelledby="signin-methods-heading"
         >
-          <KeyRound className="mt-0.5 h-4 w-4" />
-          <div className="text-sm">
-            <div className="font-medium text-foreground">
-              Password age: {passwordAge} day{passwordAge === 1 ? "" : "s"}
+          <PasswordChangeCard />
+          <MfaCard />
+          <PinCard />
+        </div>
+      </div>
+
+      <div className="space-y-5">
+        <SectionHeader
+          eyebrow="Session activity & posture"
+          title="Recent sign-ins and protections in effect"
+          description="Review where and when your account was used, and see which platform-level safeguards are active. Unexpected sign-in? Update your password to end all other sessions."
+        />
+        <div
+          data-testid="session-activity-group"
+          className="space-y-6"
+        >
+          <RecentSignInsCard />
+
+          <div
+            data-testid="session-hardening-card"
+            className="rounded-sm border border-border bg-card p-6 text-sm text-muted-foreground"
+          >
+            <div className="flex items-center gap-2 text-foreground">
+              <CheckCircle2 className="h-4 w-4 text-primary" aria-hidden="true" />
+              <span className="font-display text-base font-medium">
+                Session hardening active
+              </span>
             </div>
-            <div>
-              {passwordAge >= 90
-                ? "Rotation recommended — update your password below."
-                : "Within rotation window (<90 days)."}
-            </div>
+            <ul className="mt-2 list-disc space-y-1 pl-5">
+              <li>15-minute idle auto-logoff; 12-hour absolute session cap.</li>
+              <li>Lockout after 5 failed logins (15-minute window).</li>
+              <li>
+                Password / role / status / MFA changes immediately revoke all
+                sessions.
+              </li>
+              <li>Step-up re-auth required for delete patient + add medical record.</li>
+              <li>All PHI accesses recorded in the audit log.</li>
+            </ul>
           </div>
         </div>
-      )}
-
-      <PasswordChangeCard />
-      <MfaCard />
-      <PinCard />
-      <RecentSignInsCard />
-
-      <div className="rounded-sm border border-border bg-card p-6 text-sm text-muted-foreground">
-        <div className="flex items-center gap-2 text-foreground">
-          <CheckCircle2 className="h-4 w-4 text-primary" />
-          <span className="font-display text-base font-medium">
-            Session hardening active
-          </span>
-        </div>
-        <ul className="mt-2 list-disc space-y-1 pl-5">
-          <li>15-minute idle auto-logoff; 12-hour absolute session cap.</li>
-          <li>Lockout after 5 failed logins (15-minute window).</li>
-          <li>
-            Password / role / status / MFA changes immediately revoke all
-            sessions.
-          </li>
-          <li>Step-up re-auth required for delete patient + add medical record.</li>
-          <li>All PHI accesses recorded in the audit log.</li>
-        </ul>
       </div>
     </section>
   );
