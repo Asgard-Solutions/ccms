@@ -14,6 +14,7 @@ import { api } from "../../api/client";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import RoomAssignmentControl from "./RoomAssignmentControl";
+import { statusMeta } from "./statusMeta";
 
 /**
  * Appointment workflow + intake panel.
@@ -29,20 +30,6 @@ import RoomAssignmentControl from "./RoomAssignmentControl";
  *   - Intake status badge + link out to the existing intake form
  *   - Operational timeline (who + when for each milestone)
  */
-
-const STATUS_META = {
-  scheduled:           { label: "Scheduled",          variant: "outline" },
-  confirmed:           { label: "Confirmed",          variant: "outline" },
-  checked_in:          { label: "Checked in",         variant: "default" },
-  ready_for_provider:  { label: "Ready for provider", variant: "default" },
-  in_progress:         { label: "In progress",        variant: "default" },
-  ready_for_checkout:  { label: "Ready for checkout", variant: "default" },
-  completed:           { label: "Completed",          variant: "secondary" },
-  checked_out:         { label: "Checked out",        variant: "secondary" },
-  no_show:             { label: "No-show",            variant: "destructive" },
-  canceled:            { label: "Canceled",           variant: "destructive" },
-  cancelled:           { label: "Canceled",           variant: "destructive" },
-};
 
 const INTAKE_META = {
   not_started: { label: "Not started", variant: "outline",   tone: "text-muted-foreground" },
@@ -91,7 +78,7 @@ export default function AppointmentWorkflowPanel({
 
   const status = appointment?.status || "scheduled";
   const intakeStatus = appointment?.intake_status || "not_started";
-  const statusMeta = STATUS_META[status] || STATUS_META.scheduled;
+  const meta = statusMeta(status);
   const intakeMeta = INTAKE_META[intakeStatus] || INTAKE_META.not_started;
 
   const timeline = useMemo(() => buildTimeline(appointment), [appointment]);
@@ -145,10 +132,10 @@ export default function AppointmentWorkflowPanel({
         </span>
         <Badge
           data-testid="appt-status-badge"
-          variant={statusMeta.variant}
+          variant={meta.badgeVariant}
           className="rounded-sm"
         >
-          {statusMeta.label}
+          {meta.label}
         </Badge>
         <span className="ml-3 text-xs uppercase tracking-wider text-muted-foreground">
           Intake
@@ -244,7 +231,7 @@ export default function AppointmentWorkflowPanel({
           data-testid="appt-terminal-notice"
           className="text-xs italic text-muted-foreground"
         >
-          This appointment is {statusMeta.label.toLowerCase()} — arrival
+          This appointment is {meta.label.toLowerCase()} — arrival
           actions are no longer available.
         </p>
       )}

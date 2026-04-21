@@ -30,6 +30,7 @@ import {
 import { useProviders } from "../../contexts/ProvidersContext";
 import { useAppointmentTypes } from "./useAppointmentTypes";
 import RoomAssignmentControl from "./RoomAssignmentControl";
+import { overdueFor, statusMeta } from "./statusMeta";
 
 /**
  * Patient Flow Board — single-page operational view of every appointment's
@@ -505,25 +506,47 @@ function FlowRow({ appointment, columnKey, providerName, typeById, rooms, occupa
             {typeName ? ` · ${typeName}` : ""}
           </p>
         </div>
-        {elapsed && (
-          <span
-            data-testid={`flow-row-elapsed-${appointment.id}`}
-            className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground"
-            title={`In "${columnKey.replaceAll("_", " ")}" for ${elapsed}`}
-          >
-            {elapsed}
-          </span>
-        )}
+        <div className="flex shrink-0 items-center gap-1">
+          {(() => {
+            const od = overdueFor(appointment);
+            if (!od) return null;
+            return (
+              <span
+                data-testid={`flow-row-overdue-${appointment.id}`}
+                className={`rounded-sm px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wider ${
+                  od.tone === "destructive"
+                    ? "bg-destructive/15 text-destructive"
+                    : "bg-amber-400/20 text-amber-700 dark:text-amber-300"
+                }`}
+                title={`Stage has exceeded the expected duration`}
+              >
+                {od.label}
+              </span>
+            );
+          })()}
+          {elapsed && (
+            <span
+              data-testid={`flow-row-elapsed-${appointment.id}`}
+              className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px] text-foreground"
+              title={`In "${columnKey.replaceAll("_", " ")}" for ${elapsed}`}
+            >
+              {elapsed}
+            </span>
+          )}
+        </div>
       </header>
 
       <div className="flex flex-wrap gap-1.5 text-[10px]">
-        <Badge
-          data-testid={`flow-row-status-${appointment.id}`}
-          variant="outline"
-          className="rounded-sm"
-        >
-          {String(appointment.status || "").replaceAll("_", " ")}
-        </Badge>
+        {(() => { const meta = statusMeta(appointment.status); const Icon = meta.Icon; return (
+          <Badge
+            data-testid={`flow-row-status-${appointment.id}`}
+            variant={meta.badgeVariant}
+            className="rounded-sm"
+          >
+            <Icon className="mr-1 h-2.5 w-2.5" />
+            {meta.label}
+          </Badge>
+        ); })()}
         <Badge
           data-testid={`flow-row-intake-${appointment.id}`}
           variant="outline"

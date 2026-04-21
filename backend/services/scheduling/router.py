@@ -129,9 +129,15 @@ async def _check_conflict(
     exclude_id: str | None = None, tenant_id: str | None = None,
 ) -> None:
     db = get_db_write()  # conflict checks must read latest committed state
+    # Block booking against any *active* appointment. Cancelled, canceled,
+    # no-show, and already-checked-out visits must NOT block rebooking —
+    # the spec requires cancelled slots to remain historically visible
+    # but fully reusable, and completed visits have vacated the slot.
     q: dict = {
         "provider_id": provider_id,
-        "status": "scheduled",
+        "status": {"$nin": [
+            "cancelled", "canceled", "no_show", "checked_out",
+        ]},
         "start_time": {"$lt": end_iso},
         "end_time": {"$gt": start_iso},
     }
@@ -715,6 +721,22 @@ async def appointment_ready_for_provider(
     )
 
 
+@router.post("/{appointment_id}/undo-ready-for-provider", response_model=AppointmentPublic)
+async def appointment_undo_ready_for_provider(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Reverse an accidental Ready-for-Provider click — returns to checked_in."""
+    return await _run_transition(
+        "undo_ready_for_provider", appointment_id, payload, request, actor, ctx,
+    )
+
+
 @router.post("/{appointment_id}/start-visit", response_model=AppointmentPublic)
 async def appointment_start_visit(
     appointment_id: str,
@@ -740,6 +762,22 @@ async def appointment_ready_for_checkout(
 ):
     return await _run_transition(
         "ready_for_checkout", appointment_id, payload, request, actor, ctx,
+    )
+
+
+@router.post("/{appointment_id}/undo-ready-for-checkout", response_model=AppointmentPublic)
+async def appointment_undo_ready_for_checkout(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Reverse an accidental Ready-for-Checkout — returns to in_progress."""
+    return await _run_transition(
+        "undo_ready_for_checkout", appointment_id, payload, request, actor, ctx,
     )
 
 

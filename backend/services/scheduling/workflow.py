@@ -75,6 +75,9 @@ class TransitionSpec:
     # metadata fields to stamp: field_prefix -> (at_field, by_field)
     stamp_at: str | None = None
     stamp_by: str | None = None
+    # Stamps to *clear* as part of this transition (used by undo-style
+    # transitions so re-walking the workflow doesn't carry stale timestamps).
+    clear_stamps: tuple[str, ...] = ()
     # default physical location if none explicitly supplied by caller
     default_location: str | None = None
     audit_action: str = ""
@@ -100,6 +103,11 @@ TRANSITIONS: dict[str, TransitionSpec] = {
         target_status="scheduled",
         allowed_from=frozenset({"checked_in", "ready_for_provider"}),
         overridable_from=frozenset({"in_progress"}),  # only with override=True
+        clear_stamps=(
+            "checked_in_at", "checked_in_by_user_id",
+            "ready_for_provider_at", "ready_for_provider_by_user_id",
+            "visit_started_at", "visit_started_by_user_id",
+        ),
         default_location="not_arrived",
         audit_action="appointment.undo_check_in",
         reject_msg="Cannot undo check-in after the visit has started",
@@ -124,6 +132,14 @@ TRANSITIONS: dict[str, TransitionSpec] = {
         default_location="roomed",
         audit_action="appointment.ready_for_provider",
         reject_msg="Patient must be checked in before marking ready for provider",
+    ),
+    "undo_ready_for_provider": TransitionSpec(
+        name="undo_ready_for_provider",
+        target_status="checked_in",
+        allowed_from=frozenset({"ready_for_provider"}),
+        clear_stamps=("ready_for_provider_at", "ready_for_provider_by_user_id"),
+        audit_action="appointment.undo_ready_for_provider",
+        reject_msg="Can only undo while patient is ready for provider",
     ),
     "start_visit": TransitionSpec(
         name="start_visit",
@@ -151,6 +167,14 @@ TRANSITIONS: dict[str, TransitionSpec] = {
         default_location=None,
         audit_action="appointment.ready_for_checkout",
         reject_msg="Visit must be in progress to mark ready for checkout",
+    ),
+    "undo_ready_for_checkout": TransitionSpec(
+        name="undo_ready_for_checkout",
+        target_status="in_progress",
+        allowed_from=frozenset({"ready_for_checkout"}),
+        clear_stamps=("ready_for_checkout_at", "ready_for_checkout_by_user_id"),
+        audit_action="appointment.undo_ready_for_checkout",
+        reject_msg="Can only undo while waiting for checkout",
     ),
     "start_checkout": TransitionSpec(
         name="start_checkout",
@@ -259,6 +283,8 @@ def _guard_and_build(
         update[spec.stamp_at] = now
     if spec.stamp_by:
         update[spec.stamp_by] = actor_id
+    for field in spec.clear_stamps:
+        update[field] = None
 
     # Physical location handling — caller may override, else use the spec
     # default (if any). Location updates are always stamped when written.
