@@ -228,6 +228,29 @@ PayerType = Literal["commercial", "medicare", "medicaid", "workers_comp",
                     "auto", "self_pay", "other"]
 RemitMethod = Literal["era", "paper_eob", "none"]
 
+# Phase 2a — clearinghouse routing
+#
+# `clearinghouse_route` names the adapter used to transmit claims /
+# pull ERAs for this payer. `"none"` keeps the current manual workflow
+# (operator posts claims via paper/fax/portal). Additional adapters
+# register in `services.billing.clearinghouse.routing`.
+ClearinghouseRoute = Literal[
+    "none",
+    "change_healthcare",
+    "optum",
+    "availity",
+    "waystar",
+]
+# How claims leave the system for this payer. Defaults to `portal` to
+# preserve the existing manual workflow until clearinghouse enrollment
+# has flipped the payer to `edi`.
+ClaimSubmissionMode = Literal["edi", "portal", "paper"]
+# Enrollment progress toward a clearinghouse adapter. Gate real EDI
+# submission on `enrolled`.
+EnrollmentStatus = Literal[
+    "not_started", "in_progress", "enrolled", "suspended",
+]
+
 
 class PayerCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -237,6 +260,11 @@ class PayerCreate(BaseModel):
     electronic_payer_id: str | None = Field(default=None, max_length=40)
     remit_method: RemitMethod = "era"
     notes: str | None = Field(default=None, max_length=2000)
+    # Phase 2a — clearinghouse routing (all optional / safe defaults)
+    clearinghouse_route: ClearinghouseRoute = "none"
+    claim_submission_mode: ClaimSubmissionMode = "portal"
+    enrollment_status: EnrollmentStatus = "not_started"
+    trading_partner_id: str | None = Field(default=None, max_length=60)
 
     @field_validator("name")
     @classmethod
@@ -256,6 +284,11 @@ class PayerUpdate(BaseModel):
     remit_method: RemitMethod | None = None
     notes: str | None = Field(default=None, max_length=2000)
     status: Literal["active", "inactive"] | None = None
+    # Phase 2a — clearinghouse routing
+    clearinghouse_route: ClearinghouseRoute | None = None
+    claim_submission_mode: ClaimSubmissionMode | None = None
+    enrollment_status: EnrollmentStatus | None = None
+    trading_partner_id: str | None = Field(default=None, max_length=60)
 
 
 class PayerPublic(BaseModel):
@@ -269,6 +302,11 @@ class PayerPublic(BaseModel):
     remit_method: RemitMethod
     notes: str | None = None
     status: Literal["active", "inactive"] = "active"
+    # Phase 2a — clearinghouse routing (defaults keep legacy rows valid).
+    clearinghouse_route: ClearinghouseRoute = "none"
+    claim_submission_mode: ClaimSubmissionMode = "portal"
+    enrollment_status: EnrollmentStatus = "not_started"
+    trading_partner_id: str | None = None
     created_at: str
     updated_at: str
 
@@ -800,3 +838,60 @@ class AgingBucket(BaseModel):
     max_days: int | None # null means "open-ended 120+"
     balance_cents: int
     invoice_count: int
+
+
+# ---------------------------------------------------------------------------
+# Phase 2a — Claim event stream
+# ---------------------------------------------------------------------------
+# An append-only chronological record of every transport- or state-
+# significant thing that happened to a claim. Unlike the claim status
+# enum (which stays minimal and portable), events let us record
+# adapter-specific acknowledgments (999 / 277CA), ERA linkage,
+# resubmissions, and appeal lifecycle without exploding the canonical
+# status vocabulary.
+#
+# Writers: services/billing/events.py::emit_claim_event
+# Readers: GET /api/billing/claims/{id}/events, ClaimDetail timeline.
+ClaimEventType = Literal[
+    "created",
+    "validated",
+    "submitted",
+    "resubmitted",
+    "ack_999_accepted",
+    "ack_999_rejected",
+    "ack_277ca_accepted",
+    "ack_277ca_rejected",
+    "outcome_recorded",
+    "era_posted",
+    "denied",
+    "appeal_filed",
+    "assigned",
+    "voided",
+    "closed",
+]
+
+
+class ClaimEventPublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    tenant_id: str
+    claim_id: str
+    event_type: ClaimEventType
+    # Optional links to transport records / remittances.
+    submission_id: str | None = None
+    remittance_id: str | None = None
+    # Which clearinghouse adapter (if any) emitted this event.
+    adapter_route: str | None = None
+    # Optional CARC/denial code or payer reference surfaced on the event.
+    denial_code: str | None = None
+    # Free-form structured payload — intentionally untyped so adapter-
+    # specific echoes (999 details, 277CA snapshots, etc.) can ride along
+    # without bloating the canonical model.
+    payload: dict | None = None
+    # `from_status` / `to_status` are populated for status-moving events
+    # so the timeline can render "draft → ready" without re-joining.
+    from_status: str | None = None
+    to_status: str | None = None
+    occurred_at: str
+    recorded_by: str | None = None
+    created_at: str

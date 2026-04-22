@@ -53,12 +53,15 @@ from services.billing.submission import (
     followup_claim_ids,
     followup_threshold_iso,
 )
+from services.billing.clearinghouse import get_adapter_for_payer
+from services.billing.events import emit_claim_event
 from services.billing.models import (
     AdjustmentCreate,
     AdjustmentPublic,
     AgingBucket,
     ClaimAssignmentUpdate,
     ClaimCreate,
+    ClaimEventPublic,
     ClaimPublic,
     ClaimStatus,
     ClaimSubmissionCreate,
@@ -299,6 +302,11 @@ async def create_payer(
         "remit_method": payload.remit_method,
         "notes": payload.notes,
         "status": "active",
+        # Phase 2a — clearinghouse routing defaults
+        "clearinghouse_route": payload.clearinghouse_route,
+        "claim_submission_mode": payload.claim_submission_mode,
+        "enrollment_status": payload.enrollment_status,
+        "trading_partner_id": payload.trading_partner_id,
         "created_at": now,
         "updated_at": now,
         "created_by": user["id"],
@@ -1094,6 +1102,17 @@ async def create_claim(
                   "payer_id": payload.payer_id,
                   "billed_cents": billed_cents,
                   "lines": len(line_docs)},
+    )
+    await emit_claim_event(
+        db, ctx,
+        claim_id=claim_id,
+        event_type="created",
+        actor_id=user["id"],
+        payload={"billed_cents": billed_cents,
+                 "line_count": len(line_docs),
+                 "diagnosis_count": len(diag_docs)},
+        to_status="draft",
+        location_id=payload.location_id,
     )
     return _public(claim_doc)
 
@@ -2417,6 +2436,21 @@ async def validate_claim(
                   "from_status": claim["status"],
                   "to_status": new_status},
     )
+    await emit_claim_event(
+        db, ctx,
+        claim_id=claim_id,
+        event_type="validated",
+        actor_id=user["id"],
+        payload={"error_count": len(result["errors"]),
+                 "warning_count": len(result["warnings"]),
+                 "passed": result["passed"],
+                 "top_error_codes": [
+                     e.get("code") for e in result["errors"][:5]
+                 ]},
+        from_status=claim["status"],
+        to_status=new_status,
+        location_id=claim.get("location_id"),
+    )
     return {
         "claim_id": claim_id,
         "status": new_status,
@@ -2751,6 +2785,32 @@ async def create_claim_submission(
         patient=patient, payer=payer, policy=policy,
     )
 
+    # Phase 2a — every submission goes through the clearinghouse
+    # adapter abstraction. Payers with `clearinghouse_route="none"`
+    # (the default) resolve to `NoneAdapter`, which performs no
+    # transmission — preserving the existing manual workflow exactly.
+    adapter = get_adapter_for_payer(payer)
+    try:
+        adapter_result = await adapter.submit(
+            claim_id=claim_id,
+            payload_json=payload_json,
+            payload_x12=payload_x12,
+            method=body.method,
+            external_reference=body.external_reference,
+            payer=payer or {},
+        )
+    except Exception:   # pragma: no cover — defensive; no-op adapter never raises
+        import logging as _logging
+        _logging.getLogger("ccms.billing.clearinghouse").exception(
+            "billing.clearinghouse.submit_failed",
+            extra={"claim_id": claim_id,
+                   "route": (payer or {}).get("clearinghouse_route")},
+        )
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Clearinghouse submission failed; please retry.",
+        )
+
     now = _now()
     sub_id = str(uuid.uuid4())
     sub_doc = stamp_for_write({
@@ -2764,6 +2824,13 @@ async def create_claim_submission(
         "payload_json": payload_json,
         "payload_x12": payload_x12,
         "payload_size_bytes": len(payload_x12),
+        # Phase 2a — adapter handoff metadata. Kept alongside the
+        # canonical submission record so the timeline can reference
+        # both "what we sent" and "how we sent it" without joining.
+        "adapter_route": adapter_result.adapter_route,
+        "adapter_status": adapter_result.status,
+        "adapter_external_id": adapter_result.external_id,
+        "adapter_message": adapter_result.message,
         "outcome": None,
         "outcome_at": None,
         "outcome_by": None,
@@ -2799,7 +2866,33 @@ async def create_claim_submission(
         entity_type="claim", entity_id=claim_id,
         metadata={"submission_id": sub_id, "method": body.method,
                   "external_reference": body.external_reference,
-                  "from": current, "to": new_status},
+                  "from": current, "to": new_status,
+                  "adapter_route": adapter_result.adapter_route,
+                  "adapter_status": adapter_result.status},
+    )
+    await emit_claim_event(
+        db, ctx,
+        claim_id=claim_id,
+        # A claim landing back on `ready` from `rejected` and then
+        # moving to `submitted` is a resubmission; the initial flow
+        # (draft→ready→submitted) is `submitted`. We detect via the
+        # existing submission_count counter incremented just above.
+        event_type=(
+            "resubmitted"
+            if (claim.get("submission_count") or 0) >= 1 else "submitted"
+        ),
+        actor_id=user["id"],
+        submission_id=sub_id,
+        adapter_route=adapter_result.adapter_route,
+        payload={"method": body.method,
+                 "external_reference": body.external_reference,
+                 "adapter_status": adapter_result.status,
+                 "adapter_external_id": adapter_result.external_id,
+                 "payload_size_bytes": len(payload_x12)},
+        from_status=current,
+        to_status=new_status,
+        occurred_at=adapter_result.submitted_at or now,
+        location_id=claim.get("location_id"),
     )
     fresh = await db.claim_submissions.find_one(
         {"id": sub_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
@@ -2936,6 +3029,38 @@ async def record_submission_outcome(
         metadata={"submission_id": sub_id, "outcome": body.outcome,
                   "from": claim["status"], "to": new_status},
     )
+    await emit_claim_event(
+        db, ctx,
+        claim_id=claim_id,
+        event_type="outcome_recorded",
+        actor_id=user["id"],
+        submission_id=sub_id,
+        adapter_route=sub.get("adapter_route"),
+        denial_code=body.denial_code,
+        payload={"outcome": body.outcome,
+                 "payer_reference": body.payer_reference,
+                 "paid_cents": body.paid_cents},
+        from_status=claim["status"],
+        to_status=new_status,
+        location_id=claim.get("location_id"),
+    )
+    # A denied/rejected outcome also emits a dedicated `denied` event
+    # so the Denials Queue timeline can filter on it without joining.
+    if body.outcome in ("denied", "rejected"):
+        await emit_claim_event(
+            db, ctx,
+            claim_id=claim_id,
+            event_type="denied",
+            actor_id=user["id"],
+            submission_id=sub_id,
+            adapter_route=sub.get("adapter_route"),
+            denial_code=body.denial_code,
+            payload={"outcome": body.outcome,
+                     "payer_reference": body.payer_reference},
+            from_status=claim["status"],
+            to_status=new_status,
+            location_id=claim.get("location_id"),
+        )
     fresh = await db.claim_submissions.find_one(
         {"id": sub_id, "tenant_id": ctx.tenant_id},
         {"_id": 0, "payload_json": 0, "payload_x12": 0},
@@ -3028,6 +3153,42 @@ async def read_claim_timeline(
         "current_status": claim["status"],
         "entries": entries,
     }
+
+
+# ---------------------------------------------------------------------------
+# Phase 2a — Claim event stream (read endpoint)
+# ---------------------------------------------------------------------------
+@router.get(
+    "/claims/{claim_id}/events",
+    response_model=list[ClaimEventPublic],
+)
+async def list_claim_events(
+    claim_id: str,
+    event_type: str | None = Query(default=None,
+                                   description="filter to a single event_type"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    user: dict = Depends(require_permission("claim", "read")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Return the append-only event log for one claim.
+
+    Ordered newest-first. Populated by `services.billing.events.emit_claim_event`
+    and read by the ClaimDetail timeline / Claims Queue filters. This
+    stream is the canonical place for clearinghouse-specific
+    acknowledgments (999 / 277CA) so the main `ClaimStatus` enum stays
+    minimal.
+    """
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+    q: dict = {"tenant_id": ctx.tenant_id, "claim_id": claim_id}
+    if event_type:
+        q["event_type"] = event_type
+    cursor = db.claim_events.find(q, {"_id": 0}).sort(
+        [("occurred_at", -1), ("created_at", -1)],
+    ).limit(limit)
+    return [e async for e in cursor]
 
 
 @router.patch("/claims/{claim_id}/assignment", response_model=ClaimPublic)
@@ -3169,6 +3330,24 @@ async def create_and_post_remittance(
             "payment_id": result["payment_id"],
         },
     )
+    # Phase 2a — one `era_posted` event per claim covered by this
+    # remittance. Adapters that poll ERAs upstream will fill in the
+    # `adapter_route` field once Phase 2c lands; for manually-posted
+    # remittances the field remains null.
+    for c in body.claims:
+        await emit_claim_event(
+            db, ctx,
+            claim_id=c.claim_id,
+            event_type="era_posted",
+            actor_id=user["id"],
+            remittance_id=result["remittance_id"],
+            denial_code=c.denial_code,
+            payload={"billed_cents": int(c.billed_cents),
+                     "paid_cents": int(c.paid_cents),
+                     "contractual_cents": int(c.contractual_cents),
+                     "patient_resp_cents": int(c.patient_resp_cents),
+                     "denied_cents": int(c.denied_cents)},
+        )
     remit = await db.remittances.find_one(
         {"id": result["remittance_id"], "tenant_id": ctx.tenant_id},
         {"_id": 0},
@@ -3805,6 +3984,24 @@ async def commit_remittance_import(
                   "claim_count": len(claims_payload),
                   "denial_count": result["denial_count"]},
     )
+    # Phase 2a — emit `era_posted` events for each matched claim so
+    # the claim-level timeline reflects clearinghouse-imported ERAs
+    # identically to manually-posted remittances.
+    for c in claims_payload:
+        await emit_claim_event(
+            db, ctx,
+            claim_id=c["claim_id"],
+            event_type="era_posted",
+            actor_id=user["id"],
+            remittance_id=result["remittance_id"],
+            denial_code=c.get("denial_code"),
+            payload={"billed_cents": c["billed_cents"],
+                     "paid_cents": c["paid_cents"],
+                     "contractual_cents": c["contractual_cents"],
+                     "patient_resp_cents": c["patient_resp_cents"],
+                     "denied_cents": c["denied_cents"],
+                     "import_staged_id": staged_id},
+        )
     return {
         "import_id": staged_id, "status": "committed",
         **result,

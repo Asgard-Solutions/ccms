@@ -93,3 +93,27 @@ async def seed_billing() -> None:
         "billing.seed complete: %d CPT codes / %d modifiers (system defaults)",
         len(_CPT_CATALOG), len(_MODIFIER_CATALOG),
     )
+
+    # Phase 2a — clearinghouse routing backfill.
+    #
+    # Existing payer rows created before the clearinghouse-routing
+    # fields existed are missing the four new keys. Fill them in with
+    # the safe defaults (none / portal / not_started / null) so
+    # `PayerPublic` validation and routing both keep working without a
+    # dedicated migration script. Idempotent — only rows missing the
+    # field are touched.
+    for field_name, default_value in (
+        ("clearinghouse_route", "none"),
+        ("claim_submission_mode", "portal"),
+        ("enrollment_status", "not_started"),
+        ("trading_partner_id", None),
+    ):
+        res = await db.billing_payers.update_many(
+            {field_name: {"$exists": False}},
+            {"$set": {field_name: default_value, "updated_at": now}},
+        )
+        if res.modified_count:
+            logger.info(
+                "billing.seed backfilled %s on %d payer rows",
+                field_name, res.modified_count,
+            )
