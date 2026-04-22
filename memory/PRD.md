@@ -2,6 +2,76 @@
 
 **Last updated:** 2026-04-22 (Regression fixes — AppointmentWorkflowPanel `useEffect` import + billing/payments currency)
 
+## 4l. 837P wire — X12 spec alignment (2026-04-22)
+
+**User feedback:** "Where it would be expecting a NPI number you have the provider's name. You need to fully understand what you need in the claim and what you should be sending in the claim are aligned. The source of truth right now is the 837 files and what is needed in them."
+
+**RCA:** Three distinct alignment failures on the 837P wire:
+
+1. **NM1*82 rendering provider was one smooshed string** — `DR. NOAH CARTER, DC` in NM103 (last-name slot), empty NM104 / NM105 / NM107. X12 5010 spec for person entities (NM102=1) requires the name split: `NM103=last, NM104=first, NM105=middle, NM107=suffix`. Root cause: providers seeded with only a single `name` field; no `entity_type`, `first_name`, `last_name`, `name_suffix`.
+
+2. **ISA/GS envelope + NM1*41/*40 carried placeholder IDs** — `CCMS` and `PAYER` literals instead of real trading-partner IDs. Root cause: demo seed called `build_x12_837p_wire` without a `submitter` / `receiver` kwarg, so the builder used the "never-crash defaults".
+
+3. **Billing provider (NM1*85) relied on UI-cosmetic `name`** — "Riverbend Chiropractic & Wellness, **LLC**" is the UI display; the X12 2010AA NM103 should be the legal entity name. Now prefers `organization_name` over `name`.
+
+### Fixes
+
+**Data** — `services/demo/seed.py::_PROVIDER_DIRECTORY` augmented:
+- Every entry gets `entity_type: "org" | "person"`
+- Person providers carry explicit `last_name`, `first_name`, `name_suffix`
+- Org providers carry `organization_name`
+- `_upsert_providers()` persists all four new fields onto each `providers` doc
+
+**Builder** — `services/billing/clearinghouse/x12_837p.py`:
+- `_write_rendering_provider_2310B` — reads split name fields when `entity_type=person` and emits `NM1*82*1*LAST*FIRST***SUFFIX*XX*NPI`. Defensive parser falls back from a combined "Dr. Last, Suffix" string so legacy data still renders cleanly.
+- `_write_billing_provider_2010AA` — prefers `organization_name` over `name` for orgs; adds `name_suffix` for persons.
+
+**Seed envelope** — `services/demo/billing_seed.py` now passes proper `submitter` + `receiver`:
+- `submitter.id` = billing provider's EIN (`843210987`) = ISA06 + GS02 + NM1*41 ID
+- `receiver.id` = payer's `electronic_payer_id` (`PAC1234`) = ISA08 + GS03 + NM1*40 ID
+- `submitter.name` = legal org name; contact phone included
+
+### Before → After (Claire Morgan paid claim, 837P wire)
+
+```diff
+- ISA*00* ... *ZZ*CCMS       *ZZ*PAYER      ...
++ ISA*00* ... *ZZ*843210987  *ZZ*PAC1234    ...
+- GS*HC*CCMS*PAYER*...
++ GS*HC*843210987*PAC1234*...
+- NM1*41*2*CCMS BILLING*****46*CCMS~
++ NM1*41*2*RIVERBEND CHIROPRACTIC & WELLNESS, LLC*****46*843210987~
+- PER*IC*BILLING~
++ PER*IC*BILLING*TE*5035550100~
+- NM1*40*2*PACIFICCARE COMMERCIAL*****46*PAYER~
++ NM1*40*2*PACIFICCARE COMMERCIAL*****46*PAC1234~
+- NM1*82*1*DR. NOAH CARTER, DC*****XX*1841792253~
++ NM1*82*1*CARTER*NOAH***DC*XX*1841792253~
++ PRV*PE*PXC*111N00000X~
+```
+
+### JSON payload ↔ 837P wire alignment
+
+Every business identifier now matches 1:1 between JSON and wire:
+
+| JSON field | 837P segment | Value |
+|---|---|---|
+| `claim.control_number` | CLM01 | `RB-PAID_OLD` |
+| `billing_provider_npi` | NM1*85 NM109 | `1194567893` |
+| `rendering_provider_npi` | NM1*82 NM109 | `1841792253` |
+| `facility_npi` | NM1*77 NM109 | `1356789012` |
+| `payer.electronic_payer_id` | NM1*PR NM109 + ISA08 | `PAC1234` |
+| `policy.member_id` | NM1*IL NM109 (qual MI) | `PAC-MOR-1009` |
+| `policy.group_number` | SBR03 | `RPBIO-HR` |
+
+**Regression:** pytest 48/48 (test_riverbend_demo_sanitation + test_billing_phase4), integrity verifier 0 violations.
+
+**Files changed**
+- `/app/backend/services/demo/seed.py` — provider directory X12-spec fields
+- `/app/backend/services/demo/billing_seed.py` — submitter/receiver envelope
+- `/app/backend/services/billing/clearinghouse/x12_837p.py` — NM1 name-split fixes
+- `/app/memory/PRD.md` (§4l)
+
+
 ## 4k. JSON payload — no more internal UUIDs (2026-04-22)
 
 **Issue:** User reported the JSON tab of the Submission payload modal was leaking Mongo UUIDs for `claim.id`, `patient.id`, `payer.id`, `policy.id`, `billing_provider_id`, `rendering_provider_id`, `facility_id`. A biller looking at this payload should see *business* identifiers — NPIs, payer codes, MRNs, member IDs — not internal DB hashes.

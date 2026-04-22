@@ -301,13 +301,19 @@ def _write_billing_provider_2010AA(
     # 2010AA — entity identifier code 85 = billing provider.
     entity_type = "2" if (bp.get("entity_type") or "organization").lower().startswith("org") else "1"
     if entity_type == "2":
-        name_last = _upper_no_specials(bp.get("name") or "BILLING PROVIDER", 60)
+        # X12 spec 2010AA NM103 for organizations — prefer the stored
+        # `organization_name` (the clean legal entity name) before
+        # the UI-friendly `name` which may carry suffixes like ", LLC".
+        name_last = _upper_no_specials(
+            bp.get("organization_name") or bp.get("name") or "BILLING PROVIDER", 60,
+        )
         w.add("NM1", "85", "2", name_last, "", "", "", "",
               "XX", bp.get("npi") or "")
     else:
         last = _upper_no_specials(bp.get("last_name") or bp.get("name") or "", 60)
         first = _upper_no_specials(bp.get("first_name") or "", 35)
-        w.add("NM1", "85", "1", last, first, "", "", "",
+        suffix = _upper_no_specials(bp.get("name_suffix") or "", 10)
+        w.add("NM1", "85", "1", last, first, "", "", suffix,
               "XX", bp.get("npi") or "")
     street, city, state, zip_ = _addr_tuple(bp.get("address"))
     if street:
@@ -517,14 +523,44 @@ def _write_claim_2300(w: _Writer, claim_ctx: dict) -> None:
 def _write_rendering_provider_2310B(
     w: _Writer, rp: dict,
 ) -> None:
+    # NM1*82 — 2310B Rendering provider. Person vs. org drives the
+    # name fields per X12 5010 spec:
+    #   entity=1 (person):  NM103=last, NM104=first, NM107=suffix
+    #   entity=2 (org):      NM103=org legal name
     entity = "2" if (rp.get("entity_type") or "person").lower().startswith("org") else "1"
     if entity == "2":
-        last = _upper_no_specials(rp.get("name") or "", 60)
+        last = _upper_no_specials(
+            rp.get("organization_name") or rp.get("name") or "", 60,
+        )
         first = ""
+        suffix = ""
     else:
-        last = _upper_no_specials(rp.get("last_name") or rp.get("name") or "", 60)
+        last = _upper_no_specials(rp.get("last_name") or "", 60)
         first = _upper_no_specials(rp.get("first_name") or "", 35)
-    w.add("NM1", "82", entity, last, first, "", "", "",
+        suffix = _upper_no_specials(rp.get("name_suffix") or "", 10)
+        # Defensive fallback: if the caller didn't pass split-name
+        # fields, derive them from a "First Last, Suffix" or
+        # "Dr. First Last, DC" style `name`. Last resort so we never
+        # emit a blank NM103 (clearinghouse reject).
+        if not last:
+            raw = (rp.get("name") or "").strip()
+            # strip leading "Dr." / "Dr " honorific
+            for pref in ("dr.", "dr ", "dr. "):
+                if raw.lower().startswith(pref):
+                    raw = raw[len(pref):].strip()
+                    break
+            # split off trailing ", DC" / ", MD" etc.
+            if "," in raw:
+                raw, tail = [p.strip() for p in raw.rsplit(",", 1)]
+                if tail and not suffix:
+                    suffix = _upper_no_specials(tail, 10)
+            parts = raw.split()
+            if len(parts) >= 2:
+                first = _upper_no_specials(parts[0], 35)
+                last = _upper_no_specials(" ".join(parts[1:]), 60)
+            elif parts:
+                last = _upper_no_specials(parts[0], 60)
+    w.add("NM1", "82", entity, last, first, "", "", suffix,
           "XX", rp.get("npi") or "")
     if rp.get("taxonomy_code"):
         w.add("PRV", "PE", "PXC", rp["taxonomy_code"])

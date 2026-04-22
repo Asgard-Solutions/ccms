@@ -722,6 +722,33 @@ async def _seed_one_claim(
                         mods_by_line.setdefault(m["claim_line_id"], []).append(code)
                 for ln in line_rows:
                     ln["modifiers"] = mods_by_line.get(ln["id"], [])
+                # Pre-compose the envelope parties so the ISA/GS
+                # header and NM1*41/*40 carry real trading-partner
+                # identifiers instead of the default "CCMS"/"PAYER"
+                # placeholders. Spec:
+                #   submitter.id     = billing provider's EIN (tax id)
+                #                      padded per ISA fixed-width rules
+                #   receiver.id      = payer's electronic_payer_id
+                submitter_id = (
+                    (bill_prov or {}).get("tax_id") or "CCMS"
+                ).replace("-", "")
+                receiver_id = (
+                    payer.get("electronic_payer_id")
+                    or payer.get("payer_code")
+                    or "PAYER"
+                )
+                submitter = {
+                    "id": submitter_id,
+                    "name": (bill_prov or {}).get("organization_name")
+                             or (bill_prov or {}).get("name")
+                             or "RIVERBEND BILLING",
+                    "contact_name": "BILLING",
+                    "contact_phone": (bill_prov or {}).get("phone"),
+                }
+                receiver_obj = {
+                    "id": receiver_id,
+                    "name": payer.get("name") or "PAYER",
+                }
                 payload_x12 = build_x12_837p_wire(
                     claim=claim_doc,
                     diagnoses=diag_rows,
@@ -732,6 +759,8 @@ async def _seed_one_claim(
                     billing_provider=bill_prov,
                     rendering_provider=rend_prov,
                     service_facility=fac,
+                    submitter=submitter,
+                    receiver=receiver_obj,
                 )
             except Exception as exc:  # noqa: BLE001
                 # Never block the seed on a preview-build glitch — the

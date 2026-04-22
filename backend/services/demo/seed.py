@@ -427,7 +427,9 @@ _ROOMS = [
 # ---------------------------------------------------------------------------
 _PROVIDER_DIRECTORY = [
     {"key": "billing_group", "kind": "billing",
+     "entity_type": "org",
      "name": "Riverbend Chiropractic & Wellness, LLC",
+     "organization_name": "Riverbend Chiropractic & Wellness, LLC",
      "npi": "1194567893", "tax_id": "84-3210987",
      "taxonomy_code": "193200000X",  # Multi-Specialty Group
      "phone": "5035550100",
@@ -435,6 +437,10 @@ _PROVIDER_DIRECTORY = [
                  "city": "Portland", "state": "OR",
                  "postal_code": "97209", "country": "US"}},
     {"key": "rendering_lead", "kind": "rendering",
+     "entity_type": "person",
+     # NM1*82 needs last/first/suffix split — the display `name`
+     # is kept for UI, but the 837P builder reads these three.
+     "last_name": "Carter", "first_name": "Noah", "name_suffix": "DC",
      "name": "Dr. Noah Carter, DC",
      "user_email": "doctor@ccms.app",
      "npi": "1841792253", "tax_id": None,
@@ -444,6 +450,8 @@ _PROVIDER_DIRECTORY = [
                  "city": "Portland", "state": "OR",
                  "postal_code": "97209", "country": "US"}},
     {"key": "rendering_associate", "kind": "rendering",
+     "entity_type": "person",
+     "last_name": "Ito", "first_name": "Samuel", "name_suffix": "DC",
      "name": "Dr. Samuel Ito, DC",
      "user_email": "dr.samuel.ito@riverbend-chiro.app",
      "npi": "1558762341", "tax_id": None,
@@ -453,6 +461,8 @@ _PROVIDER_DIRECTORY = [
                  "city": "Portland", "state": "OR",
                  "postal_code": "97209", "country": "US"}},
     {"key": "rendering_pediatric", "kind": "rendering",
+     "entity_type": "person",
+     "last_name": "Patel", "first_name": "Maya", "name_suffix": "DC",
      "name": "Dr. Maya Patel, DC",
      "user_email": "dr.maya.patel@riverbend-chiro.app",
      "npi": "1729384501", "tax_id": None,
@@ -1273,6 +1283,15 @@ async def _upsert_providers(
             **key,
             "id": pid,
             "name": spec["name"],
+            # X12 NM1 expects entity type + split name parts for
+            # person-type providers (NM1*82 rendering). Persist
+            # these alongside the UI-friendly `name`.
+            "entity_type": spec.get("entity_type")
+                           or ("org" if spec["kind"] == "billing" else "person"),
+            "first_name": spec.get("first_name"),
+            "last_name": spec.get("last_name"),
+            "name_suffix": spec.get("name_suffix"),
+            "organization_name": spec.get("organization_name"),
             "tax_id": spec.get("tax_id"),
             "taxonomy_code": spec.get("taxonomy_code"),
             "phone": spec.get("phone"),
