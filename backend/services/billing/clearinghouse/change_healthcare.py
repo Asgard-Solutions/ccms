@@ -97,6 +97,27 @@ class ChangeHealthcareAdapter:
         self._base_url: str = _env(
             f"{self._env_prefix}_BASE_URL", default=_DEFAULT_BASE_URL,
         )
+        # Phase 6 — ISA/GS/1000B identity fields. Stored as captured
+        # (never logged in full). When absent, submission synthesises
+        # placeholders so sandbox-mode payloads still look well-formed.
+        self._receiver_id: str | None = _env(f"{self._env_prefix}_RECEIVER_ID")
+        self._receiver_name: str | None = _env(f"{self._env_prefix}_RECEIVER_NAME")
+        self._biller_id: str | None = _env(f"{self._env_prefix}_BILLER_ID")
+        self._submitter_id: str | None = _env(f"{self._env_prefix}_SUBMITTER_ID")
+        # Phase 6 — per-service credentials. Change/Optum separate
+        # claims submission creds from report/ERA retrieval creds.
+        self._claims_username: str | None = _env(
+            f"{self._env_prefix}_CLAIMS_USERNAME",
+        )
+        self._claims_password: str | None = _env(
+            f"{self._env_prefix}_CLAIMS_PASSWORD",
+        )
+        self._reports_username: str | None = _env(
+            f"{self._env_prefix}_REPORTS_USERNAME",
+        )
+        self._reports_password: str | None = _env(
+            f"{self._env_prefix}_REPORTS_PASSWORD",
+        )
         # Auto-downgrade: production-mode without creds cannot transmit.
         if self._mode == "production" and not self._has_credentials():
             log.warning(
@@ -113,6 +134,22 @@ class ChangeHealthcareAdapter:
     def _has_credentials(self) -> bool:
         return bool(self._client_id and self._client_secret)
 
+    def submission_identity(self) -> dict:
+        """Snapshot of envelope-level identifiers for a submission.
+
+        Persisted alongside the `claim_submissions` row so we can
+        reproduce the exact envelope (ISA / GS / 1000B) that went on
+        the wire, independently of any config change that happens
+        afterwards.
+        """
+        return {
+            "adapter_route": self.route_id,
+            "receiver_id": self._receiver_id,
+            "receiver_name": self._receiver_name,
+            "biller_id": self._biller_id,
+            "submitter_id": self._submitter_id,
+        }
+
     def config_summary(self) -> dict[str, Any]:
         """Return a PHI/secret-safe summary for the settings page."""
         return {
@@ -126,6 +163,19 @@ class ChangeHealthcareAdapter:
             "supports_edi": self.supports_edi,
             "supports_era": self.supports_era,
             "supports_eligibility": self.supports_eligibility,
+            # Phase 6 — envelope identity + service credentials.
+            # Never return the raw secret values. `has_*` + redacted
+            # hint strings are the only knobs exposed.
+            "receiver_id": self._receiver_id,
+            "receiver_name": self._receiver_name,
+            "biller_id": self._biller_id,
+            "submitter_id": self._submitter_id,
+            "has_claims_username": bool(self._claims_username),
+            "has_claims_password": bool(self._claims_password),
+            "claims_username_hint": _redact(self._claims_username),
+            "has_reports_username": bool(self._reports_username),
+            "has_reports_password": bool(self._reports_password),
+            "reports_username_hint": _redact(self._reports_username),
         }
 
     # ------------------------------------------------------------------

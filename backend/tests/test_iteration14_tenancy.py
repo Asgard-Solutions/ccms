@@ -34,7 +34,7 @@ import uuid
 
 import requests
 
-API = os.environ.get("CCMS_BASE_URL", "https://clinic-access-hub.preview.emergentagent.com/api")
+API = os.environ.get("CCMS_BASE_URL", "https://ccms-claims-phase6.preview.emergentagent.com/api")
 
 DEFAULT_ADMIN = ("admin@ccms.app", "Admin@ComplianceClinic1")
 DEFAULT_DOCTOR = ("doctor@ccms.app", "Doctor@ComplianceClinic1")

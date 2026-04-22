@@ -265,6 +265,15 @@ class PayerCreate(BaseModel):
     claim_submission_mode: ClaimSubmissionMode = "portal"
     enrollment_status: EnrollmentStatus = "not_started"
     trading_partner_id: str | None = Field(default=None, max_length=60)
+    # Phase 6 — clearinghouse-side routing identifiers. The CPID /
+    # realtime payer id are assigned by the clearinghouse and
+    # SEPARATE from the insurance-card `electronic_payer_id`. We
+    # never assume the two are equal — 837P must use `claims_cpid`
+    # on the wire when present.
+    claims_cpid: str | None = Field(default=None, max_length=40)
+    realtime_payer_id: str | None = Field(default=None, max_length=40)
+    enrollment_required: bool = False
+    routing_metadata: dict | None = None
 
     @field_validator("name")
     @classmethod
@@ -289,6 +298,11 @@ class PayerUpdate(BaseModel):
     claim_submission_mode: ClaimSubmissionMode | None = None
     enrollment_status: EnrollmentStatus | None = None
     trading_partner_id: str | None = Field(default=None, max_length=60)
+    # Phase 6
+    claims_cpid: str | None = Field(default=None, max_length=40)
+    realtime_payer_id: str | None = Field(default=None, max_length=40)
+    enrollment_required: bool | None = None
+    routing_metadata: dict | None = None
 
 
 class PayerPublic(BaseModel):
@@ -307,6 +321,12 @@ class PayerPublic(BaseModel):
     claim_submission_mode: ClaimSubmissionMode = "portal"
     enrollment_status: EnrollmentStatus = "not_started"
     trading_partner_id: str | None = None
+    # Phase 6 — clearinghouse-side routing identifiers + cache.
+    claims_cpid: str | None = None
+    realtime_payer_id: str | None = None
+    enrollment_required: bool = False
+    routing_metadata: dict | None = None
+    routing_last_resolved_at: str | None = None
     created_at: str
     updated_at: str
 
@@ -1100,3 +1120,52 @@ class ClearinghouseConfigSummary(BaseModel):
     supports_edi: bool = False
     supports_era: bool = False
     supports_eligibility: bool = False
+    # Phase 6 — envelope identity + per-service credential indicators.
+    # None of these fields ever carry raw secret values — hints are
+    # obfuscated via the adapter's `_redact()` helper.
+    receiver_id: str | None = None
+    receiver_name: str | None = None
+    biller_id: str | None = None
+    submitter_id: str | None = None
+    has_claims_username: bool = False
+    has_claims_password: bool = False
+    claims_username_hint: str | None = None
+    has_reports_username: bool = False
+    has_reports_password: bool = False
+    reports_username_hint: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — Clearinghouse reports / acknowledgments
+# ---------------------------------------------------------------------------
+# An append-only log of every 999 / 277CA / portal-confirmation / ERA
+# receipt from the adapter. This is the raw persistence target for
+# any response the clearinghouse hands back — parsers downstream (999
+# accept/reject, 277CA status) read from here and emit canonical
+# `claim_events`.
+ClearinghouseReportKind = Literal[
+    "999", "277ca", "portal_confirmation", "batch_ack",
+    "era_835_receipt", "other",
+]
+
+
+class ClearinghouseReportPublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    tenant_id: str
+    clearinghouse: str
+    report_type: ClearinghouseReportKind
+    status: Literal["accepted", "rejected", "warning", "info"] = "info"
+    # Optional links — batch-level acks may not reference a specific
+    # claim or submission.
+    claim_id: str | None = None
+    submission_id: str | None = None
+    # Transport fields.
+    external_id: str | None = None
+    received_at: str
+    raw_content: str | None = None    # full text payload
+    raw_hash: str | None = None       # sha256(raw_content)
+    # Loose parsed payload — schema varies by report kind.
+    parsed: dict | None = None
+    notes: str | None = None
+    created_at: str

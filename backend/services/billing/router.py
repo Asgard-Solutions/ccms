@@ -326,6 +326,12 @@ async def create_payer(
         "claim_submission_mode": payload.claim_submission_mode,
         "enrollment_status": payload.enrollment_status,
         "trading_partner_id": payload.trading_partner_id,
+        # Phase 6 — clearinghouse-side routing ids + enrollment flag
+        "claims_cpid": payload.claims_cpid,
+        "realtime_payer_id": payload.realtime_payer_id,
+        "enrollment_required": payload.enrollment_required,
+        "routing_metadata": payload.routing_metadata,
+        "routing_last_resolved_at": None,
         "created_at": now,
         "updated_at": now,
         "created_by": user["id"],
@@ -2861,6 +2867,18 @@ async def create_claim_submission(
 
     now = _now()
     sub_id = str(uuid.uuid4())
+    # Phase 6 — envelope identity snapshot. Captured at submission
+    # time so changes to adapter config don't alter historical rows.
+    identity = {}
+    snapshot_fn = getattr(adapter, "submission_identity", None)
+    if callable(snapshot_fn):
+        identity = snapshot_fn() or {}
+    # ST02 transaction set control number — monotonically unique per
+    # submission. Format: last 9 digits of a UUIDv4 integer, which
+    # keeps it within the 4..9 numeric range the ST02 spec allows.
+    st02_control = f"{uuid.uuid4().int % 10**9:09d}"
+    # SHA-256 of the raw 837P for idempotency / dedup / audit.
+    raw_hash = hashlib.sha256((payload_x12 or "").encode("utf-8")).hexdigest()
     sub_doc = stamp_for_write({
         "id": sub_id,
         "claim_id": claim_id,
@@ -2879,6 +2897,15 @@ async def create_claim_submission(
         "adapter_status": adapter_result.status,
         "adapter_external_id": adapter_result.external_id,
         "adapter_message": adapter_result.message,
+        # Phase 6 — envelope identity snapshot + ST02 + raw 837 hash.
+        "receiver_id": identity.get("receiver_id"),
+        "receiver_name": identity.get("receiver_name"),
+        "biller_id": identity.get("biller_id"),
+        "submitter_id": identity.get("submitter_id"),
+        "st02_control_number": st02_control,
+        "raw_837_hash": raw_hash,
+        "sent_at": now,
+        "received_at": None,
         "outcome": None,
         "outcome_at": None,
         "outcome_by": None,
