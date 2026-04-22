@@ -154,6 +154,7 @@ async def _upsert_past_appointment(
         "duration_minutes": spec["duration"],
         "status": "completed",
         "source": "demo_seed",
+        "created_by": provider_id,
         "updated_at": _now(),
     }
     if existing:
@@ -292,6 +293,102 @@ async def _upsert_initial_exam(
         doc["created_at"] = _now()
         doc["created_by"] = provider_id
         await db.clinical_initial_exams.insert_one(doc)
+
+
+async def _upsert_reexam(
+    db, tenant_id: str, location_id: str | None,
+    encounter_id: str, patient_id: str, appointment_id: str,
+    provider_id: str | None, episode_id: str | None,
+    treatment_plan_id: str | None,
+    date_of_service: str, diagnosis_ids: list[str],
+    blueprint_plan: dict, visit_number: int,
+) -> None:
+    """Progress re-exam authored against a `re_evaluation` encounter.
+    Idempotent on (tenant, encounter_id). Snapshots the plan's baseline
+    + goals at the time of the re-exam so reviewers can see the before/
+    after against the same yardstick."""
+    key = {"tenant_id": tenant_id, "encounter_id": encounter_id}
+    existing = await db.clinical_reexams.find_one(key, {"_id": 0, "id": 1})
+    rid = existing["id"] if existing else str(uuid.uuid4())
+    baselines = blueprint_plan.get("baselines") or {}
+    goals = blueprint_plan.get("goals") or []
+    baseline_pain = baselines.get("pain_scale_0_10") or 5
+    # Discharge: goals met. Otherwise: continue with improvement.
+    is_discharge = blueprint_plan.get("plan_status") in ("completed", "discharged")
+    goal_progress = []
+    for g in goals:
+        gid = g.get("id") or str(uuid.uuid5(
+            uuid.NAMESPACE_DNS,
+            f"plan-goal-{treatment_plan_id}-{g.get('description','')[:32]}",
+        ))
+        status = "met" if (is_discharge or g.get("status") == "met") else "improved"
+        goal_progress.append({
+            "goal_id": gid,
+            "current_value": g.get("target_value") if status == "met"
+                             else g.get("baseline_value"),
+            "status": status,
+            "note": None,
+        })
+    current_pain = 2 if is_discharge else max(2, baseline_pain - 3)
+    doc = {
+        **key, "id": rid,
+        "location_id": location_id,
+        "patient_id": patient_id,
+        "appointment_id": appointment_id,
+        "provider_id": provider_id,
+        "episode_id": episode_id,
+        "treatment_plan_id": treatment_plan_id,
+        "initial_exam_id": None,
+        "prior_reexam_id": None,
+        "date_of_service": date_of_service,
+        "status": "signed",
+        "visit_number_at_reexam": visit_number,
+        "baseline_snapshot": {
+            "baselines": baselines,
+            "goals": goals,
+            "diagnoses": diagnosis_ids,
+        },
+        "current_findings": {
+            "vitals": {"bp_systolic": 118, "bp_diastolic": 76, "pulse": 70},
+            "regions": [
+                {"body_region": r, "rom_summary": "Full pain-free ROM"
+                 if is_discharge else "Improved",
+                 "findings": "Goals met; pain-free on ADLs."
+                 if is_discharge else "Progressing toward goals."}
+                for r in (blueprint_plan.get("target_body_regions") or ["lumbar"])
+            ],
+            "global_notes": (
+                f"Pain {current_pain}/10 (down from {baseline_pain}/10)."
+            ),
+        },
+        "goal_progress": goal_progress,
+        "outcome_updates": [],
+        "updated_diagnosis_ids": diagnosis_ids,
+        "new_diagnoses": [],
+        "materialized_diagnosis_ids": diagnosis_ids,
+        "recommendation_decision": "discharge" if is_discharge else "continue",
+        "recommendation_reason": (
+            "All documented goals met; pain-free with full ROM; "
+            "discharging to home exercise program."
+            if is_discharge else
+            "Objective and subjective gains consistent with plan; "
+            "continue at current frequency and re-evaluate again in 2 weeks."
+        ),
+        "revised_plan_summary": None,
+        "marked_sign_ready_at": _now(),
+        "marked_sign_ready_by": provider_id,
+        "signed_at": _now(),
+        "signed_by": provider_id,
+        "signed_by_name": None,
+        "updated_at": _now(),
+        "updated_by": provider_id,
+    }
+    if existing:
+        await db.clinical_reexams.update_one({"id": rid}, {"$set": doc})
+    else:
+        doc["created_at"] = _now()
+        doc["created_by"] = provider_id
+        await db.clinical_reexams.insert_one(doc)
 
 
 async def _upsert_follow_up_note(
@@ -480,7 +577,11 @@ async def seed_demo_clinical_workflow(
                 appt["status"] or "completed",
             )
 
-            # Initial exam OR follow-up note.
+            # Initial exam → Re-exam → Follow-up note, in that priority
+            # order. `new_patient_exam` + `is_initial` creates the
+            # Initial Exam; `re_evaluation` creates a progress re-exam
+            # (or discharge re-exam if the plan is closed); everything
+            # else gets a signed Follow-up Note.
             if spec.get("is_initial"):
                 await _upsert_initial_exam(
                     db, tenant_id, location_id,
@@ -488,6 +589,14 @@ async def seed_demo_clinical_workflow(
                     _iso(start_dt), dx_ids,
                     bp.get("history") or {},
                     bp.get("treatment_plan") or {},
+                )
+            elif spec["encounter_type"] == "re_evaluation":
+                visit_number += 1
+                await _upsert_reexam(
+                    db, tenant_id, location_id,
+                    eid, pid, aid, lead_doc_id, ep_id,
+                    plan_id, _iso(start_dt), dx_ids,
+                    bp.get("treatment_plan") or {}, visit_number,
                 )
             else:
                 visit_number += 1

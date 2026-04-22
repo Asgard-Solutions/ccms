@@ -1,0 +1,38 @@
+{
+  "summary": "Full backend + UI regression on the Riverbend clinical-workflow reseed. Backend is fully green: pytest tests/test_riverbend_demo_sanitation.py = 26/26 pass (including the 4 new TestRiverbendClinicalWorkflowChain tests), scripts/verify_demo_integrity.py reports 0 violations with exact expected counts (patients=8, encounters=26, initial_exams=7, follow_up_notes=18, reexams=1, appointments=37), and GET /api/appointments (unfiltered + date-ranged) returns 200 with 32 rows including past 'completed' appointments (no more ResponseValidationError). Frontend login works for doctor@ccms.app, all 8 personas are searchable on /patients, and the Clinical tab renders per-persona episode, intake, treatment plan, diagnoses, and re-exam sections. ONE real regression: an 'Internal server error' toast fires on the Clinical tab for 3 of 5 sampled personas (Hannah, Isabella, Derrick) — chart body still renders but one sub-call is 500ing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET (clinical sub-endpoint used by Clinical tab)", "issue": "Red 'Internal server error. Contact support with the correlation id below.' toast appears when loading Clinical tab for Hannah Whitaker, Isabella Cho, Derrick Stone. Claire Morgan and Ethan Parker load cleanly. Chart summary widgets still populate (counts render), but some parallel fetch (likely encounters or follow_up_notes list for active injury episodes) is 500-ing for the patients with active injury/MVA/WC episodes. Did NOT reproduce for closed episode (Claire) or maintenance (Ethan). Worth tailing /var/log/supervisor/backend.*.log while loading Hannah's Clinical tab to grab the stack trace + correlation id."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Open patient -> Clinical tab (Hannah/Isabella/Derrick)", "issue": "Toast 'Internal server error. Contact support with the correlation id below.' appears top-right on load. Page otherwise renders Clinical Summary, Episodes & Cases, Intake & History.", "affected_selectors": ["role=tab[name=Clinical]", "[class*=error]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/test_riverbend_demo_sanitation.py", "/app/test_reports/pytest/iteration_65.xml"],
+  "action_items": [
+    "Investigate the 500 on Clinical tab for patients with an ACTIVE injury/MVA/WC episode (Hannah, Isabella, Derrick). Closed (Claire) and maintenance (Ethan) load clean — suggests the bug is in whatever clinical list endpoint is called when episode_status=active. Tail backend log with correlation id from the toast to get the stack trace. Likely candidates: encounters_router / notes_router / exams_router list-by-patient endpoints."
+  ],
+  "critical_code_review_comments": [
+    "Clinical tab silently degrades: one sub-fetch fails with 500, but the chart summary widgets still render zeros/counts — users will see a scary error toast without understanding which section is broken. Consider per-section error boundaries and a console-visible correlation id.",
+    "PHI masking on patient detail is strong (H. W. / I. C. / D. S.) — good HIPAA posture. The break-glass 'Open patient record' reason modal is enforced even for the doctor role, which is correct but slows test automation; consider a data-testid on the reason textarea + confirm button."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (26/26 pytest, integrity 0 violations, /api/appointments 200)", "frontend": "~85% (login + patient search + clinical tab render work; 3/5 personas throw an error toast on Clinical tab load)"},
+  "test_credentials": "doctor@ccms.app / Doctor@ComplianceClinic1 used for all UI + API tests (no MFA). Admin credentials not re-verified in this iteration; iter64 already verified admin login.",
+  "seed_data_creation": "None. Reseed was NOT re-run in this iteration — we validated the already-seeded state created by the main agent.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend is fully green on the workflow-chain reseed. The remaining issue is a 500 on one of the Clinical-tab sub-endpoints for active-episode patients only. To reproduce: login doctor@ccms.app, search 'Hannah', press Enter, fill reason '8+ chars', click Record & continue, click Clinical tab — red toast appears top-right. Does NOT repro on Claire (closed) or Ethan (maintenance). Main agent should tail /var/log/supervisor/backend.err.log while loading Hannah's Clinical tab to grab the exact failing endpoint + stack, then patch it.",
+  "rca of the issue": {
+    "summary": "500 on Clinical tab for patients with ACTIVE injury/MVA/WC episodes only.",
+    "evidence": "UI toast 'Internal server error. Contact support with the correlation id below.' visible in screenshots /app/test_reports/hannah_clinical_v2.png, isabella_clinical_v2.png, derrick_clinical_v2.png. Absent in claire_clinical_v2.png (closed episode) and ethan_clinical_v2.png (maintenance).",
+    "likely_cause": "One of the new clinical list endpoints (encounters / initial_exams / follow_up_notes / reexams by patient_id) may be dereferencing a field that only exists on active-episode seed rows (e.g. a missing ObjectId exclusion, or a Pydantic response model that can't serialize a null field on active encounters). The chain counts are correct on the backend, so the bug is in the list-shape, not the data.",
+    "reproduction": "1) login doctor@ccms.app, 2) /patients -> search 'Hannah' -> Enter, 3) reason='Clinical review' -> Record & continue, 4) click Clinical tab, 5) observe red toast top-right within ~2s.",
+    "mitigation": "Inspect backend log for correlation id when Hannah Clinical tab loads; fix the failing list endpoint (probable fix: exclude _id, or make a nullable field optional in the response Pydantic model)."
+  }
+}

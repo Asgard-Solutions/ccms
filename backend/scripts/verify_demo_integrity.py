@@ -110,6 +110,10 @@ async def verify_riverbend_integrity(tenant_slug: str = "default") -> tuple[int,
     episode_ids    = await _load_ids(db, "clinical_episode_cases",tid)
     claim_ids      = await _load_ids(db, "claims",                tid)
     policy_ids     = await _load_ids(db, "patient_insurance_policies", tid)
+    # Workflow chain counts (reported in `counts` below).
+    initial_exam_ids = await _load_ids(db, "clinical_initial_exams", tid)
+    follow_up_note_ids = await _load_ids(db, "clinical_follow_up_notes", tid)
+    reexam_ids = await _load_ids(db, "clinical_reexams", tid)
 
     # Providers map also accepts user IDs (some billing entry points
     # stored a user UUID as provider_id before the 4c audit).
@@ -236,6 +240,87 @@ async def verify_riverbend_integrity(tenant_slug: str = "default") -> tuple[int,
         ref_field="patient_id", valid_ids=patient_ids, allow_null=False,
         violations=violations, description="intake_form.patient_id missing")
 
+    # ---- clinical workflow chain (Encounter → Exam/Note/Re-Exam) -----
+    encounter_ids = await _load_ids(db, "clinical_encounters", tid)
+    # Encounters must point at real patients, appointments, and (if
+    # set) episodes/providers/locations.
+    c += await _check_refs(db, collection="clinical_encounters", tenant_id=tid,
+        ref_field="patient_id", valid_ids=patient_ids, allow_null=False,
+        violations=violations, description="encounter.patient_id missing")
+    c += await _check_refs(db, collection="clinical_encounters", tenant_id=tid,
+        ref_field="appointment_id", valid_ids=appointment_ids, allow_null=False,
+        violations=violations, description="encounter.appointment_id missing — orphan encounter")
+    c += await _check_refs(db, collection="clinical_encounters", tenant_id=tid,
+        ref_field="episode_id", valid_ids=episode_ids, allow_null=True,
+        violations=violations, description="encounter.episode_id missing")
+    c += await _check_refs(db, collection="clinical_encounters", tenant_id=tid,
+        ref_field="provider_id", valid_ids=all_user_ids, allow_null=True,
+        violations=violations, description="encounter.provider_id missing in users")
+    c += await _check_refs(db, collection="clinical_encounters", tenant_id=tid,
+        ref_field="location_id", valid_ids=location_ids, allow_null=True,
+        violations=violations, description="encounter.location_id missing")
+
+    # Initial Exams must reference a real encounter + appointment.
+    c += await _check_refs(db, collection="clinical_initial_exams", tenant_id=tid,
+        ref_field="patient_id", valid_ids=patient_ids, allow_null=False,
+        violations=violations, description="initial_exam.patient_id missing")
+    c += await _check_refs(db, collection="clinical_initial_exams", tenant_id=tid,
+        ref_field="encounter_id", valid_ids=encounter_ids, allow_null=False,
+        violations=violations, description="initial_exam.encounter_id missing — floating exam")
+    c += await _check_refs(db, collection="clinical_initial_exams", tenant_id=tid,
+        ref_field="appointment_id", valid_ids=appointment_ids, allow_null=True,
+        violations=violations, description="initial_exam.appointment_id missing")
+    c += await _check_refs(db, collection="clinical_initial_exams", tenant_id=tid,
+        ref_field="episode_id", valid_ids=episode_ids, allow_null=True,
+        violations=violations, description="initial_exam.episode_id missing")
+
+    # Follow-up Notes must reference a real encounter.
+    c += await _check_refs(db, collection="clinical_follow_up_notes", tenant_id=tid,
+        ref_field="patient_id", valid_ids=patient_ids, allow_null=False,
+        violations=violations, description="follow_up_note.patient_id missing")
+    c += await _check_refs(db, collection="clinical_follow_up_notes", tenant_id=tid,
+        ref_field="encounter_id", valid_ids=encounter_ids, allow_null=False,
+        violations=violations, description="follow_up_note.encounter_id missing — floating note")
+    c += await _check_refs(db, collection="clinical_follow_up_notes", tenant_id=tid,
+        ref_field="appointment_id", valid_ids=appointment_ids, allow_null=True,
+        violations=violations, description="follow_up_note.appointment_id missing")
+
+    # Re-Exams must reference a real encounter + plan.
+    c += await _check_refs(db, collection="clinical_reexams", tenant_id=tid,
+        ref_field="patient_id", valid_ids=patient_ids, allow_null=False,
+        violations=violations, description="reexam.patient_id missing")
+    c += await _check_refs(db, collection="clinical_reexams", tenant_id=tid,
+        ref_field="encounter_id", valid_ids=encounter_ids, allow_null=False,
+        violations=violations, description="reexam.encounter_id missing — floating re-exam")
+
+    # "No floating treatment plans" guard: every persona with a plan
+    # must also have at least one encounter in the chart. A plan
+    # without a prior encounter implies we're seeding documentation
+    # that never actually happened in the workflow.
+    plan_patient_ids = {
+        d["patient_id"] async for d in db.clinical_treatment_plans.find(
+            {"tenant_id": tid}, {"_id": 0, "patient_id": 1},
+        )
+    }
+    encounter_patient_ids = {
+        d["patient_id"] async for d in db.clinical_encounters.find(
+            {"tenant_id": tid}, {"_id": 0, "patient_id": 1},
+        )
+    }
+    for pid in plan_patient_ids:
+        if pid not in encounter_patient_ids:
+            violations.append({
+                "collection": "clinical_treatment_plans",
+                "row_id": pid,
+                "ref_field": "(workflow chain)",
+                "value": pid,
+                "description": (
+                    "patient has a treatment_plan but no clinical_encounter — "
+                    "plan is floating without an upstream encounter"
+                ),
+            })
+            c += 1
+
     # ---- uniqueness: no duplicate personas ---------------------------
     by_name = {}
     async for p in db.patients.find(
@@ -269,6 +354,10 @@ async def verify_riverbend_integrity(tenant_slug: str = "default") -> tuple[int,
             "episodes": len(episode_ids),
             "claims": len(claim_ids),
             "policies": len(policy_ids),
+            "encounters": len(encounter_ids),
+            "initial_exams": len(initial_exam_ids),
+            "follow_up_notes": len(follow_up_note_ids),
+            "reexams": len(reexam_ids),
         },
         "violations_count": c,
         "violations": violations,

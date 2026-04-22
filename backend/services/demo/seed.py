@@ -1805,6 +1805,13 @@ async def seed_demo_clinic() -> None:
     # `case_details` grouped sections on patient docs.
     from services.demo.clinical_seed import seed_demo_clinical_charts
     await seed_demo_clinical_charts(tenant_id, location_id, lead_doc_id)
+    # Clinical workflow chain — backfills past appointments then walks
+    # each persona's history creating the Appointment → Encounter →
+    # (Initial Exam | Re-Exam | Follow-up Note) chain so no treatment
+    # plan or diagnosis is "floating" without a launched encounter
+    # upstream. Runs AFTER charts so episode/plan/dx IDs exist.
+    from services.demo.clinical_workflow_seed import seed_demo_clinical_workflow
+    await seed_demo_clinical_workflow(tenant_id, location_id, lead_doc_id)
     # Notification log + follow-up rebooking queue — populates the
     # Communication panel and Checkout page's suggestions card.
     await _seed_notifications(tenant_id, location_id)

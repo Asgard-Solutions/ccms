@@ -621,3 +621,130 @@ class TestRiverbendIntegrity:
         assert c["payers"] == 6, f"payers={c['payers']} (expected 6)"
         assert c["episodes"] == 8, f"episodes={c['episodes']} (expected 8)"
         assert c["claims"] == 14, f"claims={c['claims']} (expected 14)"
+
+
+# --------- Clinical workflow chain (Appointment → Encounter → Exam) ---------
+class TestRiverbendClinicalWorkflowChain:
+    """Every clinical artifact must sit in the correct workflow order:
+      appointment (past, completed)
+        → encounter (launched from appointment)
+           → initial_exam (first visit) OR
+             follow_up_note (treatment visits) OR
+             re_exam (progress / discharge evaluation)
+
+    No treatment plan, exam, or note should exist without an upstream
+    encounter + appointment.
+    """
+
+    def _run(self, coro_fn):
+        """Run a single async function that opens its own Mongo client
+        inside the event loop (motor is bound to the loop it was
+        created in, so sharing a db handle across asyncio.run() calls
+        fails)."""
+        import asyncio
+        import os
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from dotenv import load_dotenv
+        load_dotenv("/app/backend/.env")
+
+        async def _body():
+            client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+            db = client[os.environ["DB_NAME"]]
+            t = await db.tenants.find_one(
+                {"slug": "default"}, {"_id": 0, "id": 1},
+            )
+            try:
+                return await coro_fn(db, t["id"])
+            finally:
+                client.close()
+        return asyncio.run(_body())
+
+    def test_every_persona_with_plan_has_encounter(self):
+        """P0: no floating treatment plans. Every patient who has a
+        treatment plan must also have at least one encounter."""
+        async def _check(db, tid):
+            plan_pids = {
+                d["patient_id"] async for d in db.clinical_treatment_plans.find(
+                    {"tenant_id": tid}, {"_id": 0, "patient_id": 1},
+                )
+            }
+            enc_pids = {
+                d["patient_id"] async for d in db.clinical_encounters.find(
+                    {"tenant_id": tid}, {"_id": 0, "patient_id": 1},
+                )
+            }
+            missing = plan_pids - enc_pids
+            assert not missing, (
+                f"{len(missing)} patients have treatment plans without "
+                f"encounters (floating plans): {list(missing)[:5]}"
+            )
+        self._run(_check)
+
+    def test_encounters_anchor_to_appointments(self):
+        """Every seeded encounter must reference a real appointment."""
+        async def _check(db, tid):
+            appt_ids = {
+                d["id"] async for d in db.appointments.find(
+                    {"tenant_id": tid}, {"_id": 0, "id": 1},
+                )
+            }
+            bad = []
+            async for e in db.clinical_encounters.find(
+                {"tenant_id": tid}, {"_id": 0, "id": 1, "appointment_id": 1},
+            ):
+                if not e.get("appointment_id") or e["appointment_id"] not in appt_ids:
+                    bad.append(e["id"])
+            assert not bad, (
+                f"{len(bad)} orphan encounters (no appointment): {bad[:5]}"
+            )
+        self._run(_check)
+
+    def test_initial_exam_precedes_follow_ups(self):
+        """For every persona with an initial exam, the exam's date of
+        service must precede every follow-up note on the same patient."""
+        async def _check(db, tid):
+            violations = []
+            async for x in db.clinical_initial_exams.find(
+                {"tenant_id": tid},
+                {"_id": 0, "patient_id": 1, "date_of_service": 1},
+            ):
+                pid = x["patient_id"]
+                exam_dt = x["date_of_service"]
+                async for n in db.clinical_follow_up_notes.find(
+                    {"tenant_id": tid, "patient_id": pid},
+                    {"_id": 0, "id": 1, "date_of_service": 1},
+                ):
+                    if n["date_of_service"] < exam_dt:
+                        violations.append((pid, n["id"]))
+            assert not violations, (
+                f"{len(violations)} follow-up notes dated before the "
+                f"patient's initial exam: {violations[:5]}"
+            )
+        self._run(_check)
+
+    def test_riverbend_workflow_chain_counts(self):
+        """Lock the expected chain shape so silent drift fails loudly."""
+        import asyncio as _a
+        import sys
+        sys.path.insert(0, "/app/backend")
+        from scripts.verify_demo_integrity import verify_riverbend_integrity
+
+        _, report = _a.run(verify_riverbend_integrity())
+        c = report["counts"]
+        # 7 personas with a fresh/active episode launched from an
+        # initial-exam appointment (every persona except Ethan, who is
+        # a long-running maintenance case whose initial exam predates
+        # our 120-day seeded horizon).
+        assert c["initial_exams"] == 7, (
+            f"initial_exams={c['initial_exams']} (expected 7)"
+        )
+        # At least 15 follow-up notes across the personas' histories.
+        assert c["follow_up_notes"] >= 15, (
+            f"follow_up_notes={c['follow_up_notes']} (expected ≥ 15)"
+        )
+        # Claire Morgan's discharge re-exam.
+        assert c["reexams"] >= 1, f"reexams={c['reexams']} (expected ≥ 1)"
+        # Every encounter = at least one persona visit.
+        assert c["encounters"] >= 20, (
+            f"encounters={c['encounters']} (expected ≥ 20)"
+        )
