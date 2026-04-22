@@ -4,6 +4,63 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-04-22 — Phase 1–12 verification audit + follow-up / self-assign UI
+
+**Scope:** Full audit of the 12-phase professional medical claims
+pipeline (queue UI, canonical lifecycle, real claim model, validation
+workflow, Change/Optum foundation + submission, chiropractic rules,
+rejected/denied/follow-up operations, assignment/governance/audit,
+API+frontend deliverables, hardening, final integration). Audit
+closed two real UI gaps; backend required no changes.
+
+**Gaps closed**
+- **Follow-up row** on ClaimDetail ► Workflow — previously the backend
+  exposed `POST /api/billing/claims/{id}/flag-followup` and `DELETE`
+  counterparts, but the UI never rendered a button to drive them. A
+  new `FollowupRow` now renders a reason input + `Flag for follow-up`
+  button (data-testid `claim-followup-flag`) when the claim is
+  unflagged, and switches to a status view with `Clear follow-up`
+  button (data-testid `claim-followup-clear`) when the flag is live.
+  Tested end-to-end: claim surfaces on the `follow-up` tab
+  immediately, aging badge + row chip wire up from the queue work
+  already shipped in the previous session.
+- **Self-assign + unassign shortcuts** on ClaimDetail ► Workflow —
+  AssignmentRow now exposes `Assign to me` (data-testid
+  `claim-assignee-self-assign`) when the claim is assigned to someone
+  else or unassigned, and `Unassign` (data-testid
+  `claim-assignee-clear`) when it's assigned. Both drive the existing
+  PATCH /api/billing/claims/{id}/assignment endpoint — backend
+  already enforces `claim.assign` permission and emits the same
+  `billing.claim.assignment_*` audit events.
+
+**Files touched**
+- `/app/frontend/src/pages/billing/ClaimWorkflow.jsx` — import
+  `useAuth`, import new followup helpers; new `FollowupRow`
+  component; `AssignmentRow` extended with `Assign to me` + `Unassign`
+  actions.
+- `/app/frontend/src/pages/billing/useClaims.js` — new exports
+  `flagClaimForFollowup` / `clearClaimFollowupFlag` matching the
+  existing `/flag-followup` routes.
+
+**Backend — untouched; re-verified**
+- 94/94 Phase 6–11 suites, 8/8 `test_claims_queue_v2.py`, 6/6
+  `test_claims_queue_phase2b.py`, 14/14
+  `test_canonical_status_phase3.py`. Total: 128/128 on Phase 1–12
+  scope. Three pre-existing flakes remain on unrelated billing
+  modules and are explicitly tracked as a separate P2 cleanup
+  (`test_run_rules_clean_claim`, `test_statement_body_deterministic`,
+  `test_email_mock_path_when_no_key`).
+
+**Verification status**
+- Testing agent iteration_63 confirmed every new UX flow (FollowupRow
+  flag ► status ► clear, AssignmentRow self-assign ► unassign).
+- Live curl smoke for all four endpoints passed against the admin
+  tenant on sandbox.
+
+---
+
+
+
 ## 2026-04-22 — Phase 12: Claims pipeline handoff — filter-aware billed totals + UI wiring for follow-up / assignment
 
 **Scope:** Final integration pass for the 12-phase professional medical
