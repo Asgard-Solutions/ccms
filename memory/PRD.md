@@ -2,7 +2,65 @@
 
 **Last updated:** 2026-04-22 (Demo sanitation pass — clinic profile, appointment types, rooms, profile scrub)
 
-## 4a. Demo sanitation pass (2026-04-22)
+## 4b. Notifications + follow-up rebooking seed (2026-04-22)
+Addressed the second prompt after the sanitation pass — populate the
+notification/reminder panels so the communication surface feels live.
+
+- **`_seed_notifications`** (idempotent; wipes rows where `source == "demo_seed"` on this tenant before re-inserting) creates **62 realistic Notification rows** keyed to the 12 seeded Riverbend appointments:
+  - `appointment.booked` — email + SMS for every seeded appointment (26 rows)
+  - `appointment.reminder` — 24h-before email + SMS (24 rows)
+  - `appointment.same_day_reminder` — morning-of SMS for today's/past visits (5 rows)
+  - `appointment.cancelled` — email + SMS for Aria's cancelled slot (2 rows)
+  - `appointment.follow_up` — "haven't seen you in a while" standalone
+    email to Ethan Parker (1 row)
+  - `review.request` — email + SMS pair 1 day post-visit for completed
+    appointments (4 rows)
+  - Status mix: 57 delivered · 2 sent · 2 failed (Marcus SMS — carrier
+    rejection) · 1 suppressed (Claire email — opted out of marketing).
+- **`_seed_follow_up_suggestions`** populates the Checkout page's
+  rebook queue with 3 curated pending suggestions (Ethan Parker → 30d
+  maintenance, Marcus Reid → 3d new-patient followup, Hannah Whitaker →
+  7d follow-up). Each carries a real `appointment_type_id` link so the
+  "Book follow-up" jump-to-BookDialog flow prefills duration correctly.
+- **Frontend filter update** — `pages/Notifications.jsx` FILTERS array
+  expanded so the new event types get dedicated filter chips ("24h
+  reminder", "Same-day", "Follow-up", "Review request"). Existing
+  masking/unmask/admin/audit behaviors are untouched.
+- **Phone-format polish** — `_CLINIC_PROFILE.primary_phone` /
+  `.secondary_phone` are now stored as 10-digit canonical
+  (`5035550100`), matching the output of `core.phone.normalize_us_phone`.
+  Previously stored `+1-503-555-0100`, which `formatAsTyped` in
+  `frontend/src/utils/phone.js` misread (stripped country code,
+  re-sliced wrong offsets, rendered as `(150) 355-5010`). Fixed —
+  Settings now displays `(503) 555-0100`.
+- **Panels / screens that light up on first login**
+  - `/notifications` — 62-row chronological log grouped by day, with
+    filter chips for every new event type.
+  - `/scheduling/checkout` → "Follow-ups suggested" card — 3 queued
+    rebook suggestions with "Book follow-up" / "Dismiss" per row.
+  - Per-patient chart → Communication history (when navigated via
+    `/notifications?patient_id=…`) — all cross-checked.
+
+### Remaining empty-state demo gaps (after this pass)
+- The Workforce / Roles / Access-Review admin panels still render
+  empty on first login (not in scope for either the sanitation or
+  reminder passes).
+- The Compliance Ops surface (Evidence / Incidents / Vendors /
+  Risks / Policies / Access Reviews) has minimal data — enough for
+  screenshots but not a full walkthrough.
+- Reports dashboards (A/R aging charts, payer mix, denial heat map)
+  render fine but numbers are modest because the billing seed is a
+  14-claim curated sample — not a year's worth of history.
+
+### Files modified in this pass
+- `/app/backend/services/demo/seed.py` — +_seed_notifications,
+  +_seed_follow_up_suggestions (both idempotent via
+  `source == "demo_seed"` sweep); `_CLINIC_PROFILE` phone values
+  normalised to 10-digit canonical
+- `/app/frontend/src/pages/Notifications.jsx` — FILTERS array extended
+- `/app/memory/PRD.md` — §4b added
+
+
 Addressed the user's "full demo-environment sanitation" request on top of
 the Riverbend seed already landed by the previous agent. Deliverables:
 - **ClinicProfile** — `services/demo/seed.py::_upsert_clinic_profile`

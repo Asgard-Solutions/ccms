@@ -302,8 +302,12 @@ _CLINIC_PROFILE = {
     "state": "OR",
     "postal_code": "97209",
     "country": "US",
-    "primary_phone": "+1-503-555-0100",
-    "secondary_phone": "+1-503-555-0101",
+    # Stored as 10-digit canonical (matches `core.phone.normalize_us_phone`
+    # output) so the frontend `formatPhoneDisplay` can render it as
+    # `(503) 555-0100`. Never store pre-formatted `+1-503-555-0100`
+    # here — it defeats the frontend's 10-digit canonicalisation path.
+    "primary_phone": "5035550100",
+    "secondary_phone": "5035550101",
     "email": "hello@riverbend-chiro.app",
     "website": "https://riverbend-chiro.app",
     "timezone": "America/Los_Angeles",
@@ -1272,6 +1276,358 @@ async def _upsert_rooms(tenant_id: str, location_id: str | None) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Notification + follow-up seed — populates the Notification Log,
+# Checkout panel's Follow-up Suggestions queue, and the patient-chart
+# communication history so the demo feels like a live clinic. All rows
+# are keyed to existing Riverbend appointments so the reseed can wipe +
+# re-insert deterministically.
+#
+# Event types covered (must stay in sync with frontend `FILTERS` in
+# `pages/Notifications.jsx`):
+#   - appointment.booked           (every scheduled appt)
+#   - appointment.reminder         (24h before scheduled)
+#   - appointment.same_day_reminder (morning of the appt)
+#   - appointment.cancelled        (the Aria cancellation)
+#   - appointment.follow_up        ("haven't seen you in a while")
+#   - review.request               (after completed visit)
+# ---------------------------------------------------------------------------
+def _render_body(template: str, patient_name: str, provider_name: str,
+                 when: str, reason: str) -> str:
+    return template.format(
+        patient_name=patient_name or "Patient",
+        provider_name=provider_name,
+        when=when, reason=reason or "Chiropractic consultation",
+    )
+
+
+def _iso(dt: datetime) -> str:
+    return dt.isoformat()
+
+
+def _fmt_when(dt: datetime) -> str:
+    return dt.strftime("%a %b %d, %Y at %I:%M %p")
+
+
+async def _seed_notifications(
+    tenant_id: str, location_id: str | None,
+) -> None:
+    """Wipe + re-seed realistic notification/communication rows for the
+    Riverbend tenant, keyed on the seeded appointments."""
+    db = get_db_write()
+    now_dt = datetime.now(timezone.utc)
+
+    # 1. Wipe any prior demo-seeded notifications on this tenant so the
+    # shape stays curated (the communication subscriber's live rows
+    # also live here — but those fire from real user actions, not the
+    # seed; tests that book appointments emit their own rows that get
+    # swept by reseed_demo_clinic.py separately).
+    await db.notifications.delete_many({
+        "tenant_id": tenant_id,
+        "source": "demo_seed",
+    })
+
+    # 2. Load every seeded appointment with patient + provider names.
+    appts = [a async for a in db.appointments.find(
+        {"tenant_id": tenant_id}, {"_id": 0},
+    )]
+    patients = {
+        p["id"]: p
+        async for p in db.patients.find(
+            {"tenant_id": tenant_id},
+            {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+             "email": 1, "phone": 1},
+        )
+    }
+    providers = {
+        u["id"]: u.get("display_name") or u.get("name") or "your provider"
+        async for u in db.users.find(
+            {}, {"_id": 0, "id": 1, "name": 1, "display_name": 1},
+        )
+    }
+
+    docs: list[dict] = []
+
+    def _add(appt: dict, *, channel: str, to_address: str | None,
+             event_type: str, subject: str, body: str, status: str,
+             created_dt: datetime, extra: dict | None = None) -> None:
+        if not to_address:
+            return
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "location_id": location_id,
+            "appointment_id": appt["id"] if appt else None,
+            "patient_id": appt["patient_id"] if appt else None,
+            "channel": channel,
+            "to_address": to_address,
+            "event_type": event_type,
+            "subject": subject,
+            "body": body,
+            "status": status,
+            "created_at": _iso(created_dt),
+            "source": "demo_seed",
+            **(extra or {}),
+        })
+
+    for appt in appts:
+        pid = appt.get("patient_id")
+        patient = patients.get(pid) or {}
+        patient_name = (
+            f"{patient.get('first_name','')} {patient.get('last_name','')}"
+            .strip() or "Patient"
+        )
+        email = patient.get("email") or ""
+        phone = patient.get("phone") or ""
+        provider_name = providers.get(appt.get("provider_id")) or "your provider"
+        start = datetime.fromisoformat(appt["start_time"])
+        when_pretty = _fmt_when(start)
+        reason = appt.get("reason") or "Chiropractic consultation"
+
+        # --- Booked (sent at booking) -----------------------------------
+        booked_at = start - timedelta(days=7)
+        _add(appt, channel="email", to_address=email,
+             event_type="appointment.booked",
+             subject="Your appointment is confirmed",
+             body=_render_body(
+                 "Hi {patient_name}, your appointment with {provider_name} "
+                 "is confirmed for {when}. Reason: {reason}. "
+                 "Reply to this email if you need to reschedule.",
+                 patient_name, provider_name, when_pretty, reason),
+             status="delivered", created_dt=booked_at)
+        _add(appt, channel="sms", to_address=phone,
+             event_type="appointment.booked",
+             subject=None,
+             body=_render_body(
+                 "Riverbend Chiropractic: {patient_name}, your visit with "
+                 "{provider_name} is booked for {when}. Reply STOP to "
+                 "opt out.",
+                 patient_name, provider_name, when_pretty, reason),
+             status="delivered", created_dt=booked_at)
+
+        status = appt.get("status")
+
+        # --- Cancellation notice ----------------------------------------
+        if status == "cancelled":
+            cancel_at = start - timedelta(days=1)
+            _add(appt, channel="email", to_address=email,
+                 event_type="appointment.cancelled",
+                 subject="Your appointment was cancelled",
+                 body=_render_body(
+                     "Hi {patient_name}, your appointment with "
+                     "{provider_name} scheduled for {when} has been "
+                     "cancelled. We will reach out to reschedule.",
+                     patient_name, provider_name, when_pretty, reason),
+                 status="delivered", created_dt=cancel_at)
+            _add(appt, channel="sms", to_address=phone,
+                 event_type="appointment.cancelled",
+                 subject=None,
+                 body=_render_body(
+                     "Riverbend: {patient_name}, your {when} visit was "
+                     "cancelled. We'll call you to rebook.",
+                     patient_name, provider_name, when_pretty, reason),
+                 status="delivered", created_dt=cancel_at)
+            continue  # don't send reminders for cancelled appts
+
+        # --- 24h reminder -----------------------------------------------
+        reminder_at = start - timedelta(hours=24)
+        # Mix in one `failed` SMS (carrier rejection) for Marcus Reid's
+        # future active-treatment visit, and one `suppressed` email for
+        # Claire Morgan (opted out of email marketing) — so Ops can
+        # show "delivered | failed | suppressed" side-by-side.
+        first_name = patient.get("first_name")
+        sms_status = "failed" if (first_name == "Marcus" and start > now_dt) else "delivered"
+        email_status = "suppressed" if first_name == "Claire" else "delivered"
+
+        if reminder_at < now_dt + timedelta(days=5):
+            _add(appt, channel="email", to_address=email,
+                 event_type="appointment.reminder",
+                 subject=f"Reminder: appointment tomorrow with {provider_name}",
+                 body=_render_body(
+                     "Hi {patient_name}, this is a reminder that your "
+                     "appointment with {provider_name} is tomorrow at "
+                     "{when}. Please arrive 10 minutes early to update "
+                     "any paperwork.",
+                     patient_name, provider_name, when_pretty, reason),
+                 status=email_status, created_dt=reminder_at,
+                 extra={"failure_reason": (
+                     "patient opted out of email marketing"
+                     if email_status == "suppressed" else None)})
+            _add(appt, channel="sms", to_address=phone,
+                 event_type="appointment.reminder",
+                 subject=None,
+                 body=_render_body(
+                     "Riverbend: reminder — {patient_name} has a visit "
+                     "with {provider_name} tomorrow at {when}.",
+                     patient_name, provider_name, when_pretty, reason),
+                 status=sms_status, created_dt=reminder_at,
+                 extra={"failure_reason": (
+                     "carrier rejected (handset unreachable)"
+                     if sms_status == "failed" else None)})
+
+        # --- Same-day reminder (SMS only) -------------------------------
+        same_day_at = start.replace(hour=8, minute=0, second=0, microsecond=0)
+        # Only send the same-day ping if the appointment is today or has
+        # already happened (completed visits also had a same-day ping).
+        if same_day_at.date() <= now_dt.date() and status != "cancelled":
+            _add(appt, channel="sms", to_address=phone,
+                 event_type="appointment.same_day_reminder",
+                 subject=None,
+                 body=_render_body(
+                     "Riverbend today: hi {patient_name}, see you at "
+                     "{when} with {provider_name}. Our address: "
+                     "1840 NW Riverside Dr, Suite 210.",
+                     patient_name, provider_name, when_pretty, reason),
+                 status="delivered", created_dt=same_day_at)
+
+        # --- Review request (after completed visits) --------------------
+        if status == "completed":
+            review_at = start + timedelta(days=1)
+            _add(appt, channel="email", to_address=email,
+                 event_type="review.request",
+                 subject="How was your visit with Riverbend Chiropractic?",
+                 body=_render_body(
+                     "Hi {patient_name}, thanks for visiting "
+                     "{provider_name} on {when}. If you have a moment, "
+                     "we'd love a quick review — it helps others find "
+                     "us. https://riverbend-chiro.app/review",
+                     patient_name, provider_name, when_pretty, reason),
+                 status="delivered", created_dt=review_at)
+            _add(appt, channel="sms", to_address=phone,
+                 event_type="review.request",
+                 subject=None,
+                 body=_render_body(
+                     "Thanks for visiting Riverbend! Leave a quick "
+                     "review: https://riverbend-chiro.app/review "
+                     "Reply STOP to opt out.",
+                     patient_name, provider_name, when_pretty, reason),
+                 status="sent", created_dt=review_at + timedelta(hours=2))
+
+    # --- Standalone "haven't seen you" follow-up for Ethan Parker -----
+    ethan = next(
+        (p for p in patients.values() if p.get("first_name") == "Ethan"
+         and p.get("last_name") == "Parker"), None,
+    )
+    if ethan:
+        follow_dt = now_dt - timedelta(days=1, hours=4)
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "location_id": location_id,
+            "appointment_id": None,
+            "patient_id": ethan["id"],
+            "channel": "email",
+            "to_address": ethan.get("email") or "",
+            "event_type": "appointment.follow_up",
+            "subject": "We haven't seen you in a while — time for a tune-up?",
+            "body": (
+                f"Hi {ethan.get('first_name') or 'there'}, it's been a "
+                "few weeks since your last maintenance adjustment. "
+                "Chiropractic care works best when it's consistent — "
+                "book your next visit at "
+                "https://riverbend-chiro.app/book."
+            ),
+            "status": "delivered",
+            "created_at": _iso(follow_dt),
+            "source": "demo_seed",
+        })
+
+    if docs:
+        # Drop any row whose recipient address didn't resolve (the
+        # communication subscriber also does this; be defensive).
+        docs = [d for d in docs if d.get("to_address")]
+        await db.notifications.insert_many(docs)
+
+    logger.info(
+        "demo.seed: notifications seeded — %d rows across %d appointments",
+        len(docs), len(appts),
+    )
+
+
+async def _seed_follow_up_suggestions(
+    tenant_id: str, location_id: str | None,
+) -> None:
+    """Seed a curated queue of rebooking suggestions (what the Checkout
+    page's FollowUpSuggestions card surfaces to front desk)."""
+    db = get_db_write()
+    now_dt = datetime.now(timezone.utc)
+
+    # Wipe prior demo rows on this tenant.
+    await db.follow_up_suggestions.delete_many({
+        "tenant_id": tenant_id,
+        "source": "demo_seed",
+    })
+
+    # Map appointment-type name → id so we can link the suggestion to
+    # the visit type Olivia would have picked at checkout.
+    type_by_name = {
+        t["name"]: t["id"]
+        async for t in db.appointment_types.find(
+            {"tenant_id": tenant_id}, {"_id": 0, "id": 1, "name": 1},
+        )
+    }
+
+    # Pull the two completed appts seeded by `_seed_appointments` —
+    # Ethan (maintenance, 2 days ago) and Marcus (new patient exam,
+    # 1 day ago) — plus the `today` Hannah appt as an advance
+    # rebook-attempt that front desk hasn't acted on yet.
+    def _find_appt(first: str, last: str, status: str | None = None) -> dict | None:
+        return None  # placeholder; async lookup below
+
+    async def _load(first: str, last: str, statuses: tuple[str, ...]) -> dict | None:
+        pt = await db.patients.find_one(
+            {"tenant_id": tenant_id, "first_name": first, "last_name": last},
+            {"_id": 0, "id": 1},
+        )
+        if not pt:
+            return None
+        appt = await db.appointments.find_one(
+            {"tenant_id": tenant_id, "patient_id": pt["id"],
+             "status": {"$in": list(statuses)}},
+            sort=[("start_time", -1)],
+        )
+        if not appt:
+            return None
+        return appt
+
+    candidates: list[tuple[str, str, str, int]] = [
+        # (first, last, visit_type, days_until_next)
+        ("Ethan",  "Parker", "Maintenance / Wellness Visit", 30),
+        ("Marcus", "Reid",   "New Patient Exam",              3),
+        ("Hannah", "Whitaker", "Follow-up Visit",             7),
+    ]
+
+    docs: list[dict] = []
+    for first, last, type_name, days in candidates:
+        appt = await _load(first, last, ("completed", "scheduled"))
+        if not appt:
+            continue
+        type_id = type_by_name.get(type_name)
+        suggested_at = (now_dt + timedelta(days=days)).date().isoformat()
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "tenant_id": tenant_id,
+            "location_id": location_id,
+            "appointment_id": appt["id"],
+            "patient_id": appt["patient_id"],
+            "provider_id": appt["provider_id"],
+            "appointment_type_id": type_id,
+            "suggested_at": suggested_at,
+            "source": "demo_seed",
+            "status": "pending",
+            "note": f"Rebook {type_name} ({days}d after last visit)",
+            "created_at": _iso(now_dt),
+            "created_by": appt.get("provider_id"),
+        })
+
+    if docs:
+        await db.follow_up_suggestions.insert_many(docs)
+
+    logger.info(
+        "demo.seed: follow_up_suggestions seeded — %d rows", len(docs),
+    )
+
+
+# ---------------------------------------------------------------------------
 async def seed_demo_clinic() -> None:
     """Idempotent realistic seed for the Riverbend demo tenant. Safe
     to call on every boot. Returns silently when the default tenant
@@ -1308,6 +1664,10 @@ async def seed_demo_clinic() -> None:
     await _upsert_clinic_profile(tenant_id, location_id, owner_id)
     await _upsert_appointment_types(tenant_id, owner_id)
     await _upsert_rooms(tenant_id, location_id)
+    # Notification log + follow-up rebooking queue — populates the
+    # Communication panel and Checkout page's suggestions card.
+    await _seed_notifications(tenant_id, location_id)
+    await _seed_follow_up_suggestions(tenant_id, location_id)
     logger.info(
         "demo.seed complete: staff=%d personas=%d payers=%d "
         "appt_types=%d rooms=%d clinic_profile=1",

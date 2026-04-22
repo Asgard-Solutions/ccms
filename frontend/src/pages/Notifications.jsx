@@ -11,8 +11,12 @@ import BreakGlassDialog from "../components/BreakGlassDialog";
 const FILTERS = [
   { v: "all", l: "All events" },
   { v: "appointment.booked", l: "Booked" },
+  { v: "appointment.reminder", l: "24h reminder" },
+  { v: "appointment.same_day_reminder", l: "Same-day" },
   { v: "appointment.updated", l: "Updated" },
   { v: "appointment.cancelled", l: "Cancelled" },
+  { v: "appointment.follow_up", l: "Follow-up" },
+  { v: "review.request", l: "Review request" },
 ];
 
 export default function Notifications() {
