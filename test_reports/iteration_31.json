@@ -18,7 +18,7 @@
     ]
   },
   "verified_flows": [
-    "Backend pytest /app/backend/tests/test_clinical_phase1.py — 9/9 passing against https://demo-cleanup.preview.emergentagent.com/api",
+    "Backend pytest /app/backend/tests/test_clinical_phase1.py — 9/9 passing against https://demo-data-integrity-1.preview.emergentagent.com/api",
     "Reauth gate — POST /api/patients/{pid}/clinical/episodes without x-reauth-token → 401; GET summary without reauth → 200",
     "Frontend login group-admin@sunrise.ccms.app → direct nav /patients/{pid} without break-glass prompt for masked patient",
     "Clinical tab (data-testid=tab-clinical) sits between Intake and Documents & Attachments; click renders patient-clinical-tab",
