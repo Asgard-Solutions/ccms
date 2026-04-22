@@ -2,6 +2,52 @@
 
 **Last updated:** 2026-04-22 (Regression fixes — AppointmentWorkflowPanel `useEffect` import + billing/payments currency)
 
+## 4h. Clinical Summary + Scrubber cleanup (2026-04-22)
+
+### Fix 1 — Clinical Summary showed all zeros for closed/maintenance patients
+**Root cause:** the summary stat cards bound to `s.<section>.open` only. For a closed episode (Claire Morgan) or a long-running maintenance case (Ethan Parker) everything is signed / active=false, so every card rendered `0` — making the summary read as a blank chart even when the patient had a full history below.
+
+**Fix:** `ClinicalTab.jsx` now reads `<section>.total` as the primary value and surfaces the open/active count as a small hint underneath. Labels shortened ("Visits / Exams / Plans / Re-exams / Notes / Diagnoses") so the cards are scannable.
+
+**Result (Claire Morgan, closed):** Visits 4 (0 in progress) · Exams 1 · Plans 1 · Re-exams 1 · Notes 2 · Diagnoses 1 — matches the chart sections below.
+
+### Fix 2 — Scrubber surfacing PROVIDER_NPI_FORMAT on every Riverbend claim
+**Root cause:** `rule_provider_npi_format` treated `claim.billing_provider_id` / `rendering_provider_id` as raw NPIs. Riverbend stores canonical `providers.id` UUIDs and the submission adapter translates them at wire time, but the scrubber never got that context.
+
+**Fix:** `_load_claim_context` now resolves the two provider UUIDs against `providers` + `service_facilities` and passes `{provider_npi_by_id, facility_npi_by_id}` into `ScrubberContext.extras`. The rule accepts any UUID that resolves to a 10-digit NPI on the canonical row. Pure UUIDs that don't resolve still trigger the warning.
+
+### Fix 3 — Seed claims tripping CMT_MODIFIER_MISSING / CMT_SUBLUXATION_DX_MISSING
+**Root cause:** the Riverbend claim catalog carried CMT (98940/98941) lines with no AT modifier and no M99.0x subluxation dx. The scrubber is correct — these denials are real in the field — so the right fix was seeding clean data on the payable claims (vs. muting the rule).
+
+**Fix:** Updated CLAIM_CATALOG in `billing_seed.py` so every "should-pay" claim now carries:
+- AT modifier on every CMT line, and
+- M99.01/02/03/04 primary subluxation dx with the pain/injury code as secondary (clinically realistic per region).
+
+**Intentionally retained failures** (for the "denial management" demo):
+- `whitaker_cbs_validation_failed` — no AT, no subluxation dx → still blocks in scrubber
+- `stone_wc_denied_missing_case` — no AT, no subluxation dx + WC case-number missing → intentional story
+- `johnson_pac_denied_coding` — intentional "rebill with M99.03 primary" story
+
+### Scrubber results (all 14 Riverbend claims)
+```
+11 clean claims → 0 errors, 0 warnings
+ 3 demo denial claims → still carry only their intended teaching codes
+ 0 PROVIDER_NPI_FORMAT warnings across the board
+```
+
+**Files changed**
+- `/app/frontend/src/pages/clinical/ClinicalTab.jsx` — stat cards now show total + open hint
+- `/app/backend/services/billing/router.py` — `_load_claim_context` resolves provider UUIDs → NPIs
+- `/app/backend/services/billing/scrubber.py` — `rule_provider_npi_format` accepts canonical UUIDs
+- `/app/backend/services/demo/billing_seed.py` — AT modifier + M99.0x primary on payable claims
+- `/app/memory/PRD.md` — §4h added
+
+### Regression
+- 26/26 `test_riverbend_demo_sanitation.py` passing
+- 17/17 `test_validation_phase4.py` passing
+- Integrity verifier: 0 violations
+
+
 ## 4g. P0 Regression fixes (2026-04-22)
 
 ### Bug 1 — Scheduling/AppointmentWorkflowPanel `useEffect is not defined`

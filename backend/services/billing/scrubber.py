@@ -459,8 +459,17 @@ def rule_provider_npi_format(ctx: ScrubberContext) -> list[ScrubberFinding]:
     """NPI must be a 10-digit numeric. We don't require the field to be
     populated here (that's `rule_required_header_fields`) — we only
     flag values that clearly aren't NPIs so submission isn't rejected
-    by the clearinghouse for a silly reason."""
+    by the clearinghouse for a silly reason.
+
+    Resolution order: if `claim.<field>` is already a 10-digit NPI, it's
+    accepted. Otherwise we look up the value in the `providers`
+    directory (resolved at context-build time into
+    `extras['provider_npi_by_id']`) and accept it when it maps to a
+    valid canonical NPI. Only truly unresolvable values get flagged.
+    """
     findings: list[ScrubberFinding] = []
+    npi_by_id = (ctx.extras or {}).get("provider_npi_by_id") or {}
+    facility_npi_by_id = (ctx.extras or {}).get("facility_npi_by_id") or {}
     for field_name, cat_path in (
         ("billing_provider_id", "billing_provider_id"),
         ("rendering_provider_id", "rendering_provider_id"),
@@ -470,14 +479,17 @@ def rule_provider_npi_format(ctx: ScrubberContext) -> list[ScrubberFinding]:
             continue
         if val.isdigit() and len(val) == 10:
             continue
-        # Tolerate alphanumeric "internal" ids (e.g. our seeded IDs
-        # like "BP-TEST") with a warning rather than an error — the
-        # submission adapter is expected to translate them.
+        # Canonical provider directory lookup — accept when the stored
+        # UUID resolves to a 10-digit NPI on the `providers` row.
+        resolved = (npi_by_id.get(val) or facility_npi_by_id.get(val) or "").strip()
+        if resolved.isdigit() and len(resolved) == 10:
+            continue
         findings.append(ScrubberFinding(
             code="PROVIDER_NPI_FORMAT", severity="warning",
             message=(
-                f"{field_name} {val!r} is not a 10-digit NPI; submission "
-                "adapter must translate before sending."
+                f"{field_name} {val!r} is not a 10-digit NPI and no "
+                "canonical provider row resolves it; submission adapter "
+                "cannot translate before sending."
             ),
             entity_path=cat_path,
             category="provider",

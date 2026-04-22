@@ -129,10 +129,12 @@ _CLAIM_SCENARIOS = [
         "status": "draft",
         "billed_cents": 22500,   # 99203 $150 + 98940 $75
         "paid_cents": 0,
-        "diagnoses": [(1, "M54.2")],
+        # M99.01 (cervical subluxation) is the payable primary for CMT;
+        # M54.2 (cervicalgia) is the supporting pain dx.
+        "diagnoses": [(1, "M99.01"), (2, "M54.2")],
         "lines": [
-            (1, CPT_NEW_PT, 1, 15000, [], [1]),
-            (2, CPT_CMT_1_2, 1, 7500, [], [1]),
+            (1, CPT_NEW_PT, 1, 15000, [], [1, 2]),
+            (2, CPT_CMT_1_2, 1, 7500, ["AT"], [1, 2]),
         ],
         "last_event": "draft — ready for scrubber",
     },
@@ -144,9 +146,9 @@ _CLAIM_SCENARIOS = [
         "status": "ready",
         "billed_cents": 7500,
         "paid_cents": 0,
-        "diagnoses": [(1, "M54.2")],
+        "diagnoses": [(1, "M99.01"), (2, "M54.2")],
         "lines": [
-            (1, CPT_CMT_1_2, 1, 7500, [], [1]),
+            (1, CPT_CMT_1_2, 1, 7500, ["AT"], [1, 2]),
         ],
         "last_event": "scrubbed clean — queued for the next 837P batch",
     },
@@ -183,10 +185,12 @@ _CLAIM_SCENARIOS = [
         "status": "submitted",
         "billed_cents": 14500,   # 98940 $75 + 97140 $70
         "paid_cents": 0,
-        "diagnoses": [(1, "S13.4XXA"), (2, "S23.3XXA")],
+        # MVA: cervical subluxation primary (payable) + whiplash/lumbar
+        # sprains as supporting traumatic dx.
+        "diagnoses": [(1, "M99.01"), (2, "S13.4XXA"), (3, "S23.3XXA")],
         "lines": [
-            (1, CPT_CMT_1_2, 1, 7500, [], [1, 2]),
-            (2, CPT_IASTM, 1, 7000, ["59"], [1, 2]),
+            (1, CPT_CMT_1_2, 1, 7500, ["AT"], [1, 2, 3]),
+            (2, CPT_IASTM, 1, 7000, ["59"], [1, 2, 3]),
         ],
         "accident_date_days_ago": 6,
         "submission_method": "portal",
@@ -202,10 +206,10 @@ _CLAIM_SCENARIOS = [
         "paid_cents": 8000,     # PIP paid $80 of $145, $65 still outstanding
         "adjustment_cents": 0,
         "patient_resp_cents": 0,   # PIP — patient never responsible
-        "diagnoses": [(1, "S13.4XXA"), (2, "S23.3XXA")],
+        "diagnoses": [(1, "M99.01"), (2, "S13.4XXA"), (3, "S23.3XXA")],
         "lines": [
-            (1, CPT_CMT_1_2, 1, 7500, [], [1, 2]),
-            (2, CPT_IASTM, 1, 7000, ["59"], [1, 2]),
+            (1, CPT_CMT_1_2, 1, 7500, ["AT"], [1, 2, 3]),
+            (2, CPT_IASTM, 1, 7000, ["59"], [1, 2, 3]),
         ],
         "accident_date_days_ago": 21,
         "submission_method": "portal",
@@ -223,9 +227,11 @@ _CLAIM_SCENARIOS = [
         "status": "submitted",
         "billed_cents": 9000,    # 98941 3-region
         "paid_cents": 0,
-        "diagnoses": [(1, "S33.5XXA")],
+        # Lumbar subluxation primary for CMT + lumbar sprain (S33) as
+        # the workers-comp injury dx.
+        "diagnoses": [(1, "M99.03"), (2, "S33.5XXA")],
         "lines": [
-            (1, CPT_CMT_3_4, 1, 9000, [], [1]),
+            (1, CPT_CMT_3_4, 1, 9000, ["AT"], [1, 2]),
         ],
         "accident_date_days_ago": 3,
         "submission_method": "portal",
@@ -268,10 +274,12 @@ _CLAIM_SCENARIOS = [
         "adjustment_cents": 2500,  # contractual write-off
         "patient_resp_cents": 2500,
         "copay_cents": 2500,
-        "diagnoses": [(1, "M76.30"), (2, "M54.5")],
+        # Sacral (pelvic) subluxation + IT band + lumbar pain support
+        # the CMT + IASTM combo.
+        "diagnoses": [(1, "M99.04"), (2, "M76.30"), (3, "M54.5")],
         "lines": [
-            (1, CPT_CMT_1_2, 1, 7500, [], [1, 2]),
-            (2, CPT_IASTM, 1, 7000, ["59"], [1, 2]),
+            (1, CPT_CMT_1_2, 1, 7500, ["AT"], [1, 2, 3]),
+            (2, CPT_IASTM, 1, 7000, ["59"], [1, 2, 3]),
         ],
         "last_event": "paid — ERA posted, $25 copay collected at visit",
     },
@@ -311,10 +319,11 @@ _CLAIM_SCENARIOS = [
         "adjustment_cents": 2500,
         "patient_resp_cents": 2500,
         "copay_cents": 2500,
-        "diagnoses": [(1, "M54.6")],
+        # Thoracic subluxation + thoracic pain support the CMT re-exam.
+        "diagnoses": [(1, "M99.02"), (2, "M54.6")],
         "lines": [
-            (1, CPT_REEXAM, 1, 7500, [], [1]),
-            (2, CPT_CMT_1_2, 1, 7500, [], [1]),
+            (1, CPT_REEXAM, 1, 7500, [], [1, 2]),
+            (2, CPT_CMT_1_2, 1, 7500, ["AT"], [1, 2]),
         ],
         "last_event": "paid 95d ago — copay collected, claim closed",
     },
@@ -329,9 +338,11 @@ _CLAIM_SCENARIOS = [
         "billed_cents": 6000,
         "paid_cents": 0,
         "patient_resp_cents": 6000,   # pushed to guarantor
-        "diagnoses": [(1, "M54.6")],
+        # Pediatric thoracic subluxation + back pain (coding is clean —
+        # the rejection is a subscriber-match issue, not a clinical one).
+        "diagnoses": [(1, "M99.02"), (2, "M54.6")],
         "lines": [
-            (1, CPT_CMT_1_2, 1, 6000, [], [1]),
+            (1, CPT_CMT_1_2, 1, 6000, ["AT"], [1, 2]),
         ],
         "denial_code": "CO-31",
         "denial_reason": (

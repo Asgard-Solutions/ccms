@@ -2289,10 +2289,41 @@ async def _load_claim_context(db, ctx: TenantContext, claim: dict) -> ScrubberCo
             {"_id": 0},
         )
 
+    # Resolve billing/rendering provider UUIDs to canonical NPIs so
+    # the NPI-format rule accepts stored `providers.id` references
+    # (the submission adapter translates them at wire time).
+    provider_npi_by_id: dict[str, str] = {}
+    facility_npi_by_id: dict[str, str] = {}
+    candidate_ids = [
+        v for v in (
+            claim.get("billing_provider_id"),
+            claim.get("rendering_provider_id"),
+        ) if v
+    ]
+    if candidate_ids:
+        async for p in db.providers.find(
+            {"tenant_id": ctx.tenant_id, "id": {"$in": candidate_ids}},
+            {"_id": 0, "id": 1, "npi": 1},
+        ):
+            if p.get("npi"):
+                provider_npi_by_id[p["id"]] = str(p["npi"]).strip()
+        # Billing provider may also be a `service_facilities` row
+        # (group NPI). Same lookup shape.
+        async for f in db.service_facilities.find(
+            {"tenant_id": ctx.tenant_id, "id": {"$in": candidate_ids}},
+            {"_id": 0, "id": 1, "npi": 1},
+        ):
+            if f.get("npi"):
+                facility_npi_by_id[f["id"]] = str(f["npi"]).strip()
+
     return ScrubberContext(
         claim=claim, diagnoses=diagnoses, lines=lines,
         line_modifiers_by_line=mods_by_line,
         patient=patient, payer=payer, policy=policy,
+        extras={
+            "provider_npi_by_id": provider_npi_by_id,
+            "facility_npi_by_id": facility_npi_by_id,
+        },
     )
 
 
