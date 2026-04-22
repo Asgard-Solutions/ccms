@@ -214,7 +214,7 @@ function InsurancePlanBlock({ plan, label, testId }) {
   );
 }
 
-function PatientOverview({ patient, providers, onEdit, canEdit }) {
+function PatientOverview({ patient, providers, locations, onEdit, canEdit }) {
   const demo = patient.demographics || {};
   const contact = patient.contact || {};
   const addr = patient.address_details || {};
@@ -228,6 +228,10 @@ function PatientOverview({ patient, providers, onEdit, canEdit }) {
   const providerId = admin.primary_provider_id;
   const providerLabel =
     (providers || []).find((p) => p.id === providerId)?.name || providerId || null;
+  const locationLabel =
+    (locations || []).find((l) => l.id === patient.location_id)?.name
+    || patient.location_name
+    || null;
 
   const consentSummary = [
     contact.sms_consent && "SMS",
@@ -314,7 +318,7 @@ function PatientOverview({ patient, providers, onEdit, canEdit }) {
         testId="overview-care"
       >
         <OverviewField label="Assigned provider" value={providerLabel} testId="ov-provider" />
-        <OverviewField label="Preferred location" value={patient.location_id} testId="ov-location" />
+        <OverviewField label="Preferred location" value={locationLabel} testId="ov-location" />
         <OverviewField label="Referral source" value={admin.referral_source} testId="ov-referral" />
       </OverviewSection>
 
@@ -997,6 +1001,14 @@ export default function PatientDetail() {
   const [intakeRefreshKey, setIntakeRefreshKey] = useState(0);
   const [chargeRecord, setChargeRecord] = useState(null);
   const { providers } = useProviders();
+  const [locations, setLocations] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/authz/locations")
+      .then((r) => { if (!cancelled) setLocations(r.data || []); })
+      .catch(() => { if (!cancelled) setLocations([]); });
+    return () => { cancelled = true; };
+  }, []);
   const [recordsRange, setRecordsRange] = useState(null);
   const [appointmentsRange, setAppointmentsRange] = useState(null);
   const [intakeRange, setIntakeRange] = useState(null);
@@ -1266,6 +1278,7 @@ export default function PatientDetail() {
           <PatientOverview
             patient={patient}
             providers={providers}
+            locations={locations}
             canEdit={canEditIntake}
             onEdit={openEditPatientWizard}
           />

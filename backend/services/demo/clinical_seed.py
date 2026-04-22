@@ -1045,16 +1045,26 @@ async def _upsert_intake_forms(
 ) -> None:
     """One completed intake form per persona so the Intake tab's
     "Intake forms" list is populated. Idempotent on
-    (patient_id, notes='demo_seed')."""
+    (patient_id, source='demo_seed') — `source` is an internal
+    provenance marker that never surfaces to the UI (vs. `notes`,
+    which the Intake tab renders verbatim)."""
     db = get_db_write()
     for name_key, bp in CHART_BLUEPRINT.items():
         pid = patients_by_name.get(name_key)
         if not pid:
             continue
+        # New canonical idempotency key.
         key = {"tenant_id": tenant_id, "patient_id": pid,
-               "notes": "demo_seed"}
+               "source": "demo_seed"}
         existing = await db.patient_intake_forms.find_one(
             key, {"_id": 0, "id": 1},
+        ) or await db.patient_intake_forms.find_one(
+            # Legacy rows used `notes="demo_seed"` — match them
+            # once so the reseed updates in place instead of
+            # creating a duplicate.
+            {"tenant_id": tenant_id, "patient_id": pid,
+             "notes": "demo_seed"},
+            {"_id": 0, "id": 1},
         )
         form_id = existing["id"] if existing else str(uuid.uuid4())
         # Both blobs are stored already-encrypted because the patient
@@ -1074,6 +1084,9 @@ async def _upsert_intake_forms(
         )
         doc = {
             **key, "id": form_id,
+            # `notes` is rendered to the user — keep it empty for
+            # seeded rows so no internal marker leaks into the chart.
+            "notes": "",
             "location_id": location_id,
             "status": "completed",
             "version": 1,

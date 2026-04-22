@@ -348,10 +348,21 @@ async def _finalise_login(db, user: dict, response: Response, request: Request) 
     )
     refresh = create_refresh_token(user["id"], epoch, session_started_at)
     _set_auth_cookies(response, access, refresh)
-    await db.users.update_one(
-        {"id": user["id"]},
-        {"$set": {"last_login_at": session_started_at}},
+    # If the user has no MFA factor enrolled, `step_up_required` cannot
+    # be honoured — there is nothing to step up to. Clear it on
+    # successful password login so the user isn't permanently locked
+    # out of MFA-gated actions by a stale suspicious-login flag.
+    # Users WITH MFA enrolled still carry the flag (their MFA
+    # challenge clears it) so this doesn't weaken real step-up.
+    clear_step_up = (
+        bool(user.get("step_up_required"))
+        and not user.get("mfa_enabled")
     )
+    set_doc = {"last_login_at": session_started_at}
+    if clear_step_up:
+        set_doc["step_up_required"] = False
+        set_doc["suspicious_flag"] = False
+    await db.users.update_one({"id": user["id"]}, {"$set": set_doc})
     # Iteration 19 — run suspicious-login detection BEFORE the auth.login
     # audit row so the "prior IP lookup" doesn't match the row we're about
     # to write.

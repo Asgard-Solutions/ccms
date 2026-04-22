@@ -2,6 +2,50 @@
 
 **Last updated:** 2026-04-22 (Regression fixes — AppointmentWorkflowPanel `useEffect` import + billing/payments currency)
 
+## 4i. Demo walkthrough audit fixes (2026-04-22)
+
+Acted on testing-agent iteration 67 findings with 5 root-cause fixes:
+
+### P0 — step_up_required flag locking every demo user out of MFA-gated actions
+**Root cause:** Suspicious-login detection (`record_login_signal`) sets `step_up_required=True` when it sees a new IP + user-agent combo. Playwright / testing-agent / fresh-incognito sessions trip this every login. With no MFA factor enrolled, the demo users had nothing to step up *to* — so every subsequent permission check 401'd with "Re-authentication required". Symptom: Claims queue silently empty because `/api/billing/claims/queue` 401'd.
+
+**Fix (two-layer):**
+1. `services/identity/seed.py` — demo-user upsert now resets `step_up_required=False` + `suspicious_flag=False` on every boot so reseed re-enables the demo.
+2. `services/identity/router.py::_finalise_login` — when a user *without* MFA enrolled successfully logs in with their password, clear `step_up_required`. The flag only makes sense when a second factor exists to step up to. MFA-enrolled users still carry it and clear it via their MFA challenge — real step-up protection is preserved.
+
+### P0 — /api/billing/patients/{id}/statements 500 on Jaxon + Aria
+**Root cause:** `StatementPublic` requires `generated_by`, `as_of_date`, `total_balance_cents`, `invoice_count`; the Riverbend seeded statement rows for Jaxon + Aria omitted all four. Same class of seed-schema drift as the `currency` fix.
+**Fix:** `services/demo/billing_seed.py` — both statement inserts now carry the full set of required fields.
+
+### P0 — Raw UUID leaking into "Preferred location" field on every persona Overview
+**Root cause:** `PatientDetail.jsx::PatientOverview` rendered `patient.location_id` directly (a UUID) without resolving against the locations directory.
+**Fix:** Parent component fetches `/api/authz/locations` once, passes the list down; Overview resolves `location_id → location.name` with a null fallback. Testid `ov-location` now reads "Riverbend — Downtown".
+
+### P1 — `demo_seed` provenance marker leaking into Intake form card UI
+**Root cause:** the seeded intake form used `notes="demo_seed"` as its idempotency key, but `notes` is rendered verbatim to the user under each form card.
+**Fix:** moved the idempotency marker to a separate internal `source="demo_seed"` field; `notes` is now empty on seeded forms. Legacy `notes="demo_seed"` rows still update-in-place so the reseed doesn't create duplicates.
+
+### P1 (investigated, not a bug) — Missing Check-in / Room controls in workflow panel
+**Finding:** `AppointmentWorkflowPanel` correctly gates Check-in on `status ∈ {scheduled, confirmed}` and Room on `!isTerminal`. The testing agent clicked a COMPLETED past appointment where these are intentionally hidden (you cannot check-in an appointment that was completed yesterday). No code change needed — behaviour matches design.
+
+### Post-fix curl verification
+- `/api/billing/claims/queue` → **200**, 14 rows
+- `/api/billing/patients/{jaxon}/statements` → **200**
+- `/api/billing/patients/{aria}/statements` → **200**
+- `/api/authz/locations` → **200** (Riverbend — Downtown + 15 test-residue entries)
+- `db.users.step_up_required` = False for admin/doctor/staff after seed
+- pytest 26/26 on `test_riverbend_demo_sanitation.py`
+- `verify_demo_integrity.py` → 0 violations
+
+**Files changed**
+- `/app/backend/services/identity/seed.py`
+- `/app/backend/services/identity/router.py`
+- `/app/backend/services/demo/billing_seed.py`
+- `/app/backend/services/demo/clinical_seed.py`
+- `/app/frontend/src/pages/PatientDetail.jsx`
+- `/app/memory/PRD.md` (§4i)
+
+
 ## 4h. Clinical Summary + Scrubber cleanup (2026-04-22)
 
 ### Fix 1 — Clinical Summary showed all zeros for closed/maintenance patients

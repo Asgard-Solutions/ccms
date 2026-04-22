@@ -138,6 +138,15 @@ async def _upsert_user(
     base["time_zone"] = "America/Los_Angeles"
     base["mobile_phone"] = ""
     base["work_phone"] = ""
+    # Demo accounts: always reset suspicious-login step-up flags on
+    # seed. Playwright/testing-agent runs log in from fresh browsers
+    # (new user-agent strings) which trip the `record_login_signal`
+    # hook and set `step_up_required=True`; that then 401s every
+    # subsequent authz check because the demo users have no MFA
+    # factor to "step up" to. Clearing here makes the demo walkable
+    # and re-lockdown still fires on a real suspicious-login event.
+    base["step_up_required"] = False
+    base["suspicious_flag"] = False
     if existing is None:
         await db.users.insert_one(
             {
