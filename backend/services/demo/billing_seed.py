@@ -649,6 +649,97 @@ async def _seed_one_claim(
     if scenario["status"] not in ("draft", "validation_failed"):
         sub_id = str(uuid.uuid4())
         is_portal = scenario.get("submission_method") == "portal"
+
+        # Build a realistic JSON + 837P-preview payload so the UI's
+        # "Submission payload" modal has something to show for ALL
+        # outcomes (submitted / accepted / paid / denied / rejected),
+        # not just live submissions. Uses the same helpers the real
+        # submit-claim endpoint uses so the shape matches production.
+        payload_json = None
+        payload_x12 = None
+        if not is_portal:
+            try:
+                from services.billing.submission import build_json_payload
+                from services.billing.clearinghouse.x12_837p import (
+                    build_x12_837p_wire,
+                )
+                # Compose context objects from the scenario we just
+                # wrote. We read back from Mongo (not the scenario
+                # dict) so projections match the runtime submission
+                # path — same fields, same encryption.
+                diag_rows = [r async for r in db.claim_diagnoses.find(
+                    {"tenant_id": tenant_id, "claim_id": claim_id},
+                    {"_id": 0},
+                ).sort("sequence", 1)]
+                line_rows = [r async for r in db.claim_lines.find(
+                    {"tenant_id": tenant_id, "claim_id": claim_id},
+                    {"_id": 0},
+                ).sort("sequence", 1)]
+                # Build the JSON payload from the canonical objects.
+                payload_json = build_json_payload(
+                    claim=claim_doc,
+                    diagnoses=diag_rows,
+                    lines=line_rows,
+                    patient=patient,
+                    payer=payer,
+                    policy=policy,
+                )
+                # Resolve provider/facility NPIs (x12 builder requires
+                # 10-digit NPI, not UUIDs).
+                bill_prov = await db.providers.find_one(
+                    {"tenant_id": tenant_id,
+                     "id": claim_doc["billing_provider_id"]},
+                    {"_id": 0},
+                )
+                rend_prov = await db.providers.find_one(
+                    {"tenant_id": tenant_id,
+                     "id": claim_doc["rendering_provider_id"]},
+                    {"_id": 0},
+                )
+                fac = None
+                if claim_doc.get("facility_id"):
+                    fac = await db.service_facilities.find_one(
+                        {"tenant_id": tenant_id,
+                         "id": claim_doc["facility_id"]},
+                        {"_id": 0},
+                    )
+                line_mods = [r async for r in db.claim_line_modifiers.find(
+                    {"tenant_id": tenant_id,
+                     "claim_line_id": {"$in": [ln["id"] for ln in line_rows]}},
+                    {"_id": 0},
+                ).sort("sequence", 1)]
+                # The builder reads modifiers from each line's own
+                # `modifiers` list as plain code strings — attach
+                # them in memory so the preview includes AT / 59.
+                mods_by_line: dict[str, list[str]] = {}
+                for m in line_mods:
+                    code = (m.get("modifier_code") or "").strip()
+                    if code:
+                        mods_by_line.setdefault(m["claim_line_id"], []).append(code)
+                for ln in line_rows:
+                    ln["modifiers"] = mods_by_line.get(ln["id"], [])
+                payload_x12 = build_x12_837p_wire(
+                    claim=claim_doc,
+                    diagnoses=diag_rows,
+                    lines=line_rows,
+                    patient=patient,
+                    payer=payer,
+                    policy=policy,
+                    billing_provider=bill_prov,
+                    rendering_provider=rend_prov,
+                    service_facility=fac,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Never block the seed on a preview-build glitch — the
+                # payload modal will fall back to "no payload" for that
+                # claim and everything else stays correct.
+                logger.warning(
+                    "demo.billing: payload preview skipped for %s: %s",
+                    scenario["key"], exc,
+                )
+                payload_json = None
+                payload_x12 = None
+
         await db.claim_submissions.insert_one({
             "id": sub_id,
             "demo_seed_key": scenario["key"],
@@ -661,7 +752,12 @@ async def _seed_one_claim(
             "payload_format": (
                 "manual" if is_portal else "x12-837p-preview"
             ),
-            "payload_size_bytes": 0 if is_portal else billed // 4 + 500,
+            "payload_json": payload_json,
+            "payload_x12": payload_x12,
+            "payload_size_bytes": (
+                len(payload_x12) if payload_x12
+                else (0 if is_portal else billed // 4 + 500)
+            ),
             "adapter_route": (
                 "none" if is_portal else "change_healthcare"
             ),

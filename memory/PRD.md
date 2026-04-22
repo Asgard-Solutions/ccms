@@ -2,6 +2,41 @@
 
 **Last updated:** 2026-04-22 (Regression fixes — AppointmentWorkflowPanel `useEffect` import + billing/payments currency)
 
+## 4j. Paid-claim 837P payload preview (2026-04-22)
+
+**Request:** "For a paid claim I should be able to see the payload data too."
+
+**RCA:** The claims-queue "Submission payload" modal was showing `null` for every seeded claim because `billing_seed.py` wrote only scalar metadata on the `claim_submissions` row (`payload_format`, `payload_size_bytes`) — but NOT the actual `payload_json` / `payload_x12` bytes that the payload modal reads via `GET /api/billing/claims/{id}/submissions/{sub}/payload`.
+
+**Fix:** When seeding the submission row for a non-portal, non-validation-failed claim, call the exact same helpers the runtime submission flow uses (`build_json_payload` + `build_x12_837p_wire`) against the just-written canonical claim rows. Attach modifiers (string codes) onto each line in memory so the x12 output includes AT / 59 / etc. Any builder exception is logged and the seed proceeds with `null` payload (graceful degradation) — never blocks the demo boot.
+
+**Result — per-claim payload coverage:**
+```
+reid_medicare_paid_old           paid                  json=Y x12=Y size=1125
+reid_medicare_paid_recent        paid                  json=Y x12=Y size=1125
+reid_medicare_accepted           accepted              json=Y x12=Y size=1121
+cho_pip_submitted_portal         submitted  [PORTAL]   json=N x12=N size=0     ← correct; no 837P for portal
+cho_pip_partially_paid           partially_paid [PORTAL] json=N x12=N size=0
+stone_wc_submitted_portal        submitted  [PORTAL]   json=N x12=N size=0
+stone_wc_denied_missing_case     denied     [PORTAL]   json=N x12=N size=0
+johnson_pac_paid                 paid                  json=Y x12=Y size=1238
+johnson_pac_denied_coding        denied                json=Y x12=Y size=1109
+morgan_pac_paid_old              paid                  json=Y x12=Y size=1219
+morgan_jax_rejected_subscriber   rejected              json=Y x12=Y size=1178
+```
+
+Portal-submitted claims (Isabella PIP + Derrick WC) correctly have no 837P — those went out via web portals / paper — and the UI handles this with a "Manual submission" label.
+
+**Verified:** `GET /api/billing/claims/{id}/submissions/{sub}/payload` for Claire Morgan's paid claim returns:
+- `payload_format: "x12-837p-preview"`, `payload_size_bytes: 1219`
+- `payload_json` with real keys (`schema / claim / patient / payer / policy / diagnoses / lines`)
+- `payload_x12` a complete ISA*GS*ST*BHT envelope with NM1 segments and SE*IEA trailers
+
+**File changed:** `/app/backend/services/demo/billing_seed.py`
+
+**Regression:** pytest 26/26, integrity 0 violations.
+
+
 ## 4i. Demo walkthrough audit fixes (2026-04-22)
 
 Acted on testing-agent iteration 67 findings with 5 root-cause fixes:
