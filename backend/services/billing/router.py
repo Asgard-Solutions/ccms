@@ -61,10 +61,10 @@ from services.billing.events import emit_claim_event
 from services.billing.submission import (
     DEFAULT_FOLLOWUP_DAYS,
     build_json_payload,
-    build_x12_837p_preview,
     followup_claim_ids,
     followup_threshold_iso,
 )
+from services.billing.clearinghouse.x12_837p import build_x12_837p_wire
 from services.billing.models import (
     AdjustmentCreate,
     AdjustmentPublic,
@@ -2770,7 +2770,11 @@ _OUTCOME_TO_STATUS: dict[str, str] = {
 
 
 async def _load_submission_context(db, ctx: TenantContext, claim: dict):
-    """Pull patient + payer + policy + dx + lines for payload builds."""
+    """Pull patient + payer + policy + dx + lines + resolved providers
+    for payload builds. Providers / service facility are resolved by
+    the claim's `billing_provider_id` / `rendering_provider_id` /
+    `facility_id` — first by collection `id`, then by NPI, so legacy
+    free-text NPI values continue to work."""
     tid = ctx.tenant_id
     patient = await db.patients.find_one(
         {"id": claim.get("patient_id"), "tenant_id": tid}, {"_id": 0},
@@ -2793,7 +2797,47 @@ async def _load_submission_context(db, ctx: TenantContext, claim: dict):
             {"tenant_id": tid, "claim_line_id": ln["id"]}, {"_id": 0},
         ).sort([("sequence", 1)])]
         ln["modifiers"] = [m["modifier_code"] for m in mods]
-    return patient, payer, policy, diagnoses, lines
+
+    # Phase 7 — resolve billing / rendering provider + service facility
+    # for the 837P Loop 2010AA / 2310B / 2310C. Resolution is best-
+    # effort: callers that haven't migrated to the providers collection
+    # still get a working claim (the wire builder falls back to the
+    # legacy `billing_provider_id` field carried on the claim).
+    async def _resolve_provider(ref: str | None, *, kind: str | None = None):
+        if not ref:
+            return None
+        q = {"tenant_id": tid, "id": ref}
+        if kind:
+            q["kind"] = kind
+        hit = await db.providers.find_one(q, {"_id": 0})
+        if hit:
+            return hit
+        by_npi = {"tenant_id": tid, "npi": ref}
+        if kind:
+            by_npi["kind"] = kind
+        return await db.providers.find_one(by_npi, {"_id": 0})
+
+    async def _resolve_facility(ref: str | None):
+        if not ref:
+            return None
+        hit = await db.service_facilities.find_one(
+            {"tenant_id": tid, "id": ref}, {"_id": 0},
+        )
+        if hit:
+            return hit
+        return await db.service_facilities.find_one(
+            {"tenant_id": tid, "npi": ref}, {"_id": 0},
+        )
+
+    billing_provider = await _resolve_provider(
+        claim.get("billing_provider_id"), kind="billing",
+    )
+    rendering_provider = await _resolve_provider(
+        claim.get("rendering_provider_id"), kind="rendering",
+    )
+    service_facility = await _resolve_facility(claim.get("facility_id"))
+    return (patient, payer, policy, diagnoses, lines,
+            billing_provider, rendering_provider, service_facility)
 
 
 @router.post(
@@ -2828,23 +2872,49 @@ async def create_claim_submission(
         )
     new_status = transitions.http_advance("claim", current, "submitted")
 
-    patient, payer, policy, diagnoses, lines = \
+    patient, payer, policy, diagnoses, lines, \
+        billing_provider, rendering_provider, service_facility = \
         await _load_submission_context(db, ctx, claim)
 
     payload_json = build_json_payload(
         claim=claim, diagnoses=diagnoses, lines=lines,
         patient=patient, payer=payer, policy=policy,
     )
-    payload_x12 = build_x12_837p_preview(
+
+    # Phase 7 — wire-ready 837P. The adapter owns envelope identity
+    # (submitter / receiver / biller) via `submission_identity()`. When
+    # an adapter doesn't expose one (e.g. `NoneAdapter`), the wire
+    # builder falls back to safe defaults so manual submissions still
+    # persist a valid 837P for audit/debugging.
+    adapter = get_adapter_for_payer(payer)
+    identity_fn = getattr(adapter, "submission_identity", None)
+    envelope = identity_fn() if callable(identity_fn) else {}
+    submitter = {
+        "id": envelope.get("submitter_id") or envelope.get("biller_id") or "CCMS",
+        "name": envelope.get("receiver_name") or "CCMS BILLING",
+        "contact_name": "BILLING",
+    }
+    receiver = {
+        "id": envelope.get("receiver_id") or "PAYER",
+        "name": envelope.get("receiver_name") or (payer or {}).get("name") or "PAYER",
+    }
+    payload_x12 = build_x12_837p_wire(
         claim=claim, diagnoses=diagnoses, lines=lines,
         patient=patient, payer=payer, policy=policy,
+        billing_provider=billing_provider,
+        rendering_provider=rendering_provider,
+        service_facility=service_facility,
+        submitter=submitter,
+        receiver=receiver,
+        control_numbers={
+            "usage_indicator": "P" if getattr(adapter, "_mode", "") == "production" else "T",
+        },
     )
 
     # Phase 2a — every submission goes through the clearinghouse
     # adapter abstraction. Payers with `clearinghouse_route="none"`
     # (the default) resolve to `NoneAdapter`, which performs no
     # transmission — preserving the existing manual workflow exactly.
-    adapter = get_adapter_for_payer(payer)
     try:
         adapter_result = await adapter.submit(
             claim_id=claim_id,
@@ -2887,7 +2957,7 @@ async def create_claim_submission(
         "external_reference": body.external_reference,
         "submitted_at": now,
         "submitted_by": user["id"],
-        "payload_format": "json+x12-837p-preview",
+        "payload_format": "json+x12-837p-005010X222A1",
         "payload_json": payload_json,
         "payload_x12": payload_x12,
         "payload_size_bytes": len(payload_x12),

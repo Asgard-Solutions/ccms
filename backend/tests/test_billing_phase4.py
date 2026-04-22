@@ -255,7 +255,7 @@ class TestSubmissionLifecycle:
         )
         assert pl.status_code == 200, pl.text
         body = pl.json()
-        assert body["payload_format"] == "json+x12-837p-preview"
+        assert body["payload_format"] == "json+x12-837p-005010X222A1"
         assert body["payload_json"]["schema"] == "ccms.claim.v1"
         assert "ST*837*" in body["payload_x12"]
 
