@@ -49,6 +49,7 @@ import BreakGlassDialog from "../components/BreakGlassDialog";
 import ReauthDialog from "../components/ReauthDialog";
 import PatientDocumentsCard from "../components/PatientDocumentsCard";
 import PatientLedgerCard from "./billing/PatientLedgerCard";
+import PatientStatementsCard from "./billing/PatientStatementsCard";
 import PatientInsuranceManager from "./billing/PatientInsuranceManager";
 import ChargeCaptureDialog from "./billing/ChargeCaptureDialog";
 import ClinicalTab from "./clinical/ClinicalTab";
@@ -1460,7 +1461,10 @@ export default function PatientDetail() {
         </TabsContent>
 
         <TabsContent value="billing" className="mt-6">
-          <PatientLedgerCard patientId={id} />
+          <div className="space-y-6">
+            <PatientLedgerCard patientId={id} title="Activity" />
+            <PatientStatementsCard patientId={id} />
+          </div>
         </TabsContent>
       </Tabs>
 
