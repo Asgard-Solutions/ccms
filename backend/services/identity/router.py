@@ -12,6 +12,7 @@ Adds:
   - Admin MFA reset + admin force-require-MFA
 """
 import hashlib
+import os
 import secrets
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -23,6 +24,7 @@ from core import cache, cache_keys
 from core.db import get_db, get_db_read, get_db_write, read_after_write_db
 from core.deps import get_current_user, require_role
 from core import rate_limit
+from services.notifications import send_email
 from core.mfa import (
     MFA_REQUIRED_ROLES,
     create_mfa_ticket,
@@ -1965,6 +1967,28 @@ async def password_reset_request(
                 + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES),
                 "used_at": None,
             }
+        )
+        # Send the reset link email. Falls back to log-only when
+        # RESEND_API_KEY is absent; `dev_token` is still returned in
+        # the response for dev convenience.
+        frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+        reset_link = (f"{frontend}/reset-password?token={raw_token}"
+                      if frontend else f"(token: {raw_token})")
+        await send_email(
+            to=email,
+            subject="Reset your CCMS password",
+            html_body=(
+                f"<p>We received a request to reset your CCMS password.</p>"
+                f"<p>This link expires in {PASSWORD_RESET_TTL_MINUTES} minutes. "
+                f"If you didn't request it, you can safely ignore this email.</p>"
+                f"<p><a href='{reset_link}'>Reset password</a></p>"
+            ),
+            text_body=(
+                f"Reset your CCMS password: {reset_link}\n"
+                f"Expires in {PASSWORD_RESET_TTL_MINUTES} minutes."
+            ),
+            event_type="password_reset_request",
+            correlation_id=user["id"],
         )
         await log_audit(
             action="auth.password_reset_requested",

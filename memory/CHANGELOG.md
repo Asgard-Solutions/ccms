@@ -4,6 +4,123 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-02-15 — Notifications abstraction: Resend + Twilio (log-only fallback)
+
+**Scope:** Provider-agnostic email / SMS / MFA-OTP plumbing. Real
+delivery activates automatically when env vars are set; otherwise the
+helpers run in structured log-only mode so local dev and CI never
+require vendor credentials.
+
+**What shipped**
+- **`services/notifications/email.py`** — `send_email(...)` wraps Resend
+  via `asyncio.to_thread`. Never raises. Structured logging with
+  redacted recipient, correlation id, provider, event type.
+- **`services/notifications/sms.py`** — `send_sms(...)` wraps Twilio
+  Messages API with the same contract.
+- **`services/notifications/verify.py`** — `start_verification(...)` +
+  `check_code(...)` wrap Twilio Verify (managed OTP lifecycle with
+  throttling + abuse controls). Dev-mode fallback accepts any 4–10
+  digit numeric code so local MFA flows stay testable.
+- **`.env.example`** — new file documenting every notification env var
+  (RESEND_API_KEY, SENDER_EMAIL, TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN,
+  TWILIO_FROM_NUMBER, TWILIO_VERIFY_SERVICE_SID) plus core config
+  with generation hints.
+- **Partial-config safe**: email may be live while SMS stays stubbed,
+  and vice versa. Failures are logged + audited but never crash an
+  unrelated user action.
+
+**Callers wired**
+- `POST /api/auth/password-reset/request` — sends the reset link via
+  `send_email`. `dev_token` remains in the response for local dev.
+- `POST /api/workforce/invitations` — sends the invitation email via
+  `send_email` immediately after creating the row.
+- `services/billing/statement_delivery.py` already has its own Resend
+  client for PDF attachments — left as-is since it pre-dates this
+  abstraction. Future work: fold it in + add attachment support.
+
+**Tests** — 11/11 passing in `test_notifications.py`:
+- Email log-only when no credentials
+- Email Resend happy path (mocked SDK)
+- Email Resend swallows errors without crashing caller
+- Email redaction helper
+- SMS log-only when no credentials
+- SMS Twilio happy path (mocked Client)
+- SMS Twilio error handling
+- SMS phone redaction
+- Verify log-only start + check (valid / invalid code shape)
+- Verify Twilio start with Service SID
+- Verify Twilio check approved path
+
+**Not wired yet (backlog)**
+- SMS delivery of zip-password for report exports — the polling-based
+  reveal flow exists; adding SMS delivery is a feature addition, not
+  just wiring. Scaffolding is ready.
+- MFA challenge delivery via Verify API — current MFA uses TOTP only;
+  adding SMS-OTP channel is a future feature.
+
+---
+
+## 2026-02-15 — Drag-and-drop reorder for Appointment Types
+
+**Scope:** Finish the long-pending P2 UX item.
+
+**What shipped**
+- `POST /api/appointment-types/reorder` — accepts
+  `{ordered_ids: [...] }` and writes sequential `sort_order` values.
+  Unknown/cross-tenant ids are filtered; missing ids keep their
+  relative order and land after the explicit block. Admin-only,
+  audit-logged.
+- `AppointmentTypesManager.jsx` — native HTML5 drag-and-drop with
+  grip-handle column, row highlighting on hover, optimistic UI, and
+  rollback on backend failure. Zero new dependencies.
+
+**Tests** — 4/4 passing in `test_appointment_types_reorder.py`:
+reorder persists, foreign ids ignored, auth required, empty list 422.
+
+---
+
+## 2026-02-15 — Retry-after-reauth Axios interceptor: already shipped
+
+Confirmed the previous-session deliverable (`components/ReauthGate.jsx`
+at App.js:69) already implements the global 401-reauth → silent
+dialog → replay original request pattern. No new work required;
+marked backlog item complete.
+
+---
+
+## 2026-02-15 — Access Management Phase 5: Migration + Access History + Security Policies
+
+**Scope:** Close out the 5-phase redesign.
+
+**What shipped**
+- **`services/authz/migration.py`** — `dry_run_legacy_backfill()` +
+  `apply_legacy_backfill()` helpers. Idempotent. Classifies every
+  unassigned user into `mapped` / `ambiguous` / `unmapped`.
+- **`GET /api/authz/migration/legacy/dry-run`** — admin preview.
+- **`POST /api/authz/migration/legacy/apply`** — admin runner,
+  audit-logged, tenant-scoped.
+- **Migration banner** on `/admin/users` — shows candidate count and a
+  one-click "Apply migration" button when any mappable users are
+  found.
+- **`GET /api/authz/access-history?action_prefix=...&limit=...`** —
+  filtered audit-log view for `authz.*` events.
+- **`/admin/access-history`** (`AccessHistoryPage.jsx`) — replaces
+  `/access-review`. Filter dropdown (All / Role changes / Assignments
+  / Overrides / Elevation / Migration), CSV export, plain-English
+  action labels, timestamps, actor + target chips, metadata preview.
+- **Security Policies panel** in `RoleEditorDialog` — collapsible
+  advanced section surfacing per-permission MFA / peer-approval /
+  break-glass-only toggles. Backend `POST/PATCH /api/authz/roles` now
+  accepts a `permission_policies` map alongside `permission_keys`.
+- Legacy `/access-review` route now redirects to `/admin/access-history`.
+  `AccessReview.jsx` deleted.
+- Audit rows for `authz.role.*` + `authz.migration.*` now stamp
+  `tenant_id` correctly so tenant admins see their own history.
+
+**Tests** — 6/6 new + 20 regression still green.
+
+---
+
 ## 2026-02-15 — Legacy access-management pages removed
 
 **Scope:** Clean removal per user request — application is still in

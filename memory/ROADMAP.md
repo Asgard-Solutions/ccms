@@ -11,7 +11,12 @@ Prioritized backlog for remaining P0/P1/P2 work. Most-recent updates on top.
 | 2 — Custom roles CRUD (backend)  | ✅ Done | create / clone / patch / archive + session epoch bump, 14/14 tests |
 | 3 — Users screen + Create flow (frontend) | ✅ Done | `/admin/users`, 3-step dialog, Edit Access dialog, nav wired |
 | 4 — Roles screen + Role Editor (frontend) | ✅ Done | `/admin/roles` card grid, grouped accordion editor, clone/archive flows |
-| 5 — Migration + Access History tab | 🟡 Pending | legacy-role backfill dry-run, Access Change History UI, PermissionMatrix deprecation banner |
+| 5 — Migration + Access History + Security Policies | ✅ Done | legacy backfill, `/admin/access-history`, Security Policies panel |
+
+### Recently completed P2 items
+- ✅ Global retry-after-reauth Axios interceptor (already shipped in an earlier session; confirmed wired).
+- ✅ Drag-and-drop reorder for Appointment Types — backend `POST /api/appointment-types/reorder` + native HTML5 DnD UI, zero deps.
+- ✅ Resend + Twilio integration layer — `services/notifications/{email,sms,verify}.py` with log-only fallback; password-reset + workforce-invitation callers wired; `.env.example` documents all required env vars.
 
 ### Phase 5 sub-tasks (P0 to unblock full rollout)
 - Dry-run migration script: map legacy `user.role` strings → baseline
