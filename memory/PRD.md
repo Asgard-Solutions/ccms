@@ -2,6 +2,40 @@
 
 **Last updated:** 2026-04-22 (Regression fixes — AppointmentWorkflowPanel `useEffect` import + billing/payments currency)
 
+## 4m. 837P wire — decrypt subscriber/patient address (2026-04-22)
+
+**User request:** Following the X12 alignment pass, finish the job by decrypting the encrypted address block (`N3*enc:v1:...`) so the 837P preview reads as a submittable claim file.
+
+**Fix:** Added `_maybe_decrypt` helper + upgraded `_addr_tuple` in the 837P builder to:
+1. Detect `enc:v1:...` sentinels and route through `core.crypto.decrypt_text`.
+2. Handle the three real shapes encountered at rest:
+   - scalar encrypted plaintext (e.g. "1711 SW Park Ave" stored encrypted)
+   - per-field encryption inside a dict (city/state/zip each encrypted)
+   - **whole-dict JSON-encoded then encrypted** (`patient.address_details = encrypt(json(...))`) — detected by the `{` prefix on the decrypted value and recursively re-processed as a dict
+3. Fall back to the stored value on decrypt failure so the wire is never silently blanked.
+
+### Before → After (Claire Morgan paid, subscriber block)
+```diff
+  HL*2*1*22*1~
+  SBR*P*18*RPBIO-HR******CI~
+  NM1*IL*1*MORGAN*CLAIRE****MI*PAC-MOR-1009~
+- N3*enc:v1:Ew1QW6YdN0zSoUulv2wjMmBG-of7Zp9_oSoEFP7qvOUc06TN~
++ N3*1711 SW Park Ave~
++ N4*Portland*OR*97201~
+  DMG*D8*19860909*F~
+```
+
+Zero `enc:v1:` occurrences remain anywhere in the wire for any claim.
+
+**Why this is safe:** The payload-preview endpoint is already MFA-gated via `require_reauth`; decrypting the address for display there doesn't widen PHI exposure. The fix lives in the builder, so it benefits both the demo payload and the runtime submission path identically — real 837P files heading to the clearinghouse also get plaintext addresses (as required by X12 5010).
+
+**Regression:** pytest 48/48 Riverbend + billing_phase4, 26/26 test_x12_837p_phase7, integrity verifier 0 violations.
+
+**Files changed**
+- `/app/backend/services/billing/clearinghouse/x12_837p.py` — `_maybe_decrypt` + `_addr_tuple` upgrades
+- `/app/memory/PRD.md` (§4m)
+
+
 ## 4l. 837P wire — X12 spec alignment (2026-04-22)
 
 **User feedback:** "Where it would be expecting a NPI number you have the provider's name. You need to fully understand what you need in the claim and what you should be sending in the claim are aligned. The source of truth right now is the 837 files and what is needed in them."

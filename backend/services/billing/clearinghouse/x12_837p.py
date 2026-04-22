@@ -154,21 +154,65 @@ def _claim_filing_indicator(payer_type: str | None) -> str:
     return mapping.get((payer_type or "commercial").strip().lower(), "CI")
 
 
+def _maybe_decrypt(value: Any) -> Any:
+    """Unwrap a field that was encrypted at rest (`enc:v1:...`) so the
+    wire output carries the real value. Safe on plaintext — returns
+    the input unchanged when there's no encryption prefix. Any decrypt
+    failure falls back to the stored value rather than propagating;
+    the wire will just carry the encrypted blob in that extreme case,
+    which matches the old behaviour."""
+    if not isinstance(value, str) or not value.startswith("enc:v1:"):
+        return value
+    try:
+        from core.crypto import decrypt_text
+        return decrypt_text(value)
+    except Exception:  # noqa: BLE001
+        return value
+
+
 def _addr_tuple(address: Any) -> tuple[str, str, str, str]:
     """Normalise our legacy-or-structured address shape into
     (street1, city, state, zip). Accepts either a plain string or a
-    dict; strings are treated as street1 and the rest stays blank."""
+    dict; strings are treated as street1 and the rest stays blank.
+
+    Decrypts any `enc:v1:...` values found — subscriber / patient
+    addresses are encrypted at rest, and the 837P wire must carry
+    plaintext per X12 spec. The payload-preview endpoint is already
+    MFA-gated so this doesn't widen PHI exposure.
+
+    Some rows store the full address *dict* as a single encrypted
+    JSON string (e.g. `patient.address_details = encrypt(json(...))`).
+    Decrypt first, then parse-if-JSON so we land on a real dict."""
     if address is None:
         return "", "", "", ""
+    # Decrypt scalar values up-front (covers both whole-address strings
+    # and per-field encryption).
     if isinstance(address, str):
-        return address[:55], "", "", ""
+        plain = _maybe_decrypt(address) or ""
+        # If the decrypted blob is actually JSON, round-trip it into
+        # a dict so we can split the fields properly.
+        if plain.startswith("{"):
+            try:
+                import json as _json
+                as_dict = _json.loads(plain)
+                if isinstance(as_dict, dict):
+                    return _addr_tuple(as_dict)
+            except ValueError:
+                pass
+        return plain[:55], "", "", ""
     if isinstance(address, dict):
-        street1 = (address.get("street1") or address.get("line1")
-                   or address.get("address1") or "")
-        city = address.get("city") or ""
-        state = address.get("state") or address.get("region") or ""
-        postal = (address.get("postal_code") or address.get("zip")
-                  or address.get("postcode") or "")
+        street1 = _maybe_decrypt(
+            address.get("street1") or address.get("line1")
+            or address.get("address1") or ""
+        ) or ""
+        city = _maybe_decrypt(address.get("city") or "") or ""
+        state = _maybe_decrypt(
+            address.get("state") or address.get("region") or ""
+        ) or ""
+        postal = _maybe_decrypt(
+            address.get("postal_code") or address.get("zip")
+            or address.get("postcode") or ""
+        ) or ""
         return (str(street1)[:55], str(city)[:30],
                 str(state)[:2], _digits(postal)[:9])
     return "", "", "", ""
