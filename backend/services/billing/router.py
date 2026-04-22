@@ -75,6 +75,7 @@ from services.billing.models import (
     ClaimPublic,
     ClaimStatus,
     ClaimBulkSubmitRequest,
+    ClaimFollowupFlagRequest,
     ClaimSubmissionCreate,
     ClaimSubmissionOutcome,
     ClaimSubmissionPublic,
@@ -82,6 +83,8 @@ from services.billing.models import (
     ClearinghouseEnrollmentCreate,
     ClearinghouseEnrollmentPublic,
     ClearinghouseEnrollmentUpdate,
+    ClearinghouseReportIngestRequest,
+    ClearinghouseReportPublic,
     DenialWorkItemPublic,
     DenialWorkItemUpdate,
     DEFAULT_CURRENCY,
@@ -122,6 +125,22 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 # ---------------------------------------------------------------------------
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _days_since_iso(iso_ts: str | None) -> int | None:
+    """Return whole-days delta between `iso_ts` and now. Used by the
+    Claims Queue to expose `aging_days` on every row without making
+    the UI parse timestamps client-side."""
+    if not iso_ts:
+        return None
+    try:
+        ts = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - ts
+    return max(0, delta.days)
 
 
 def _public(doc: dict) -> dict:
@@ -3065,6 +3084,352 @@ async def list_clearinghouse_transmissions(
 
 
 # ---------------------------------------------------------------------------
+# Phase 10 — inbound response / report ingest + operational follow-up flag
+# ---------------------------------------------------------------------------
+# Canonical raw-status transitions driven by inbound artifacts. The
+# mapping is intentionally conservative: only `submitted` / `pending`
+# claims are moved by an ack. A claim already sitting in `paid` or
+# `closed` will NOT be flipped by a late-arriving 277CA rejection —
+# the operator must open it manually and retrigger.
+_ACK_STATUS_MAP: dict[tuple[str, str], str] = {
+    # (report_type, status): target raw claim status
+    ("999", "accepted"):         "accepted",
+    ("999", "rejected"):         "rejected",
+    ("277ca", "accepted"):       "accepted",
+    ("277ca", "rejected"):       "rejected",
+    # Portal confirmations + batch acks stamp `accepted` when the
+    # human (or EDI partner) confirmed receipt.
+    ("portal_confirmation", "accepted"): "accepted",
+    ("batch_ack",           "accepted"): "accepted",
+    # ERA receipt is an audit marker only — payment posting is
+    # handled by `services.billing.remittance_import` so we do NOT
+    # flip the claim status here.
+}
+
+
+def _report_event_type(report_type: str, status: str) -> str | None:
+    """Map (report_type, status) to a canonical `ClaimEventType`
+    so the timeline surfaces inbound acks alongside everything else."""
+    key = (report_type, status)
+    return {
+        ("999",   "accepted"): "ack_999_accepted",
+        ("999",   "rejected"): "ack_999_rejected",
+        ("277ca", "accepted"): "ack_277ca_accepted",
+        ("277ca", "rejected"): "ack_277ca_rejected",
+        ("era_835_receipt", "info"):     "era_posted",
+        ("era_835_receipt", "accepted"): "era_posted",
+        ("portal_confirmation", "accepted"): "ack_999_accepted",
+        ("batch_ack",           "accepted"): "ack_999_accepted",
+    }.get(key)
+
+
+@router.post(
+    "/clearinghouse/reports/ingest",
+    response_model=ClearinghouseReportPublic,
+    status_code=201,
+)
+async def ingest_clearinghouse_report(
+    body: ClearinghouseReportIngestRequest,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "submit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Phase 10 — accept an inbound artifact (999 / 277CA / ERA /
+    portal confirmation / batch ack / other) and tie it back to a
+    claim.
+
+    Resolution order for the owning claim:
+      1. `claim_id`
+      2. `submission_id` → `claim_submissions.claim_id`
+      3. `adapter_external_id` → most recent submission with that
+         adapter tracking id
+    Batch-level acks (`report_type == "batch_ack"` without any claim
+    link) are accepted and stored but skip status updates.
+    """
+    db = tenant_db(ctx.tenant_id)
+
+    # Resolve the owning claim and submission.
+    claim: dict | None = None
+    submission: dict | None = None
+    if body.claim_id:
+        claim = await _scoped_one(db.claims, {"id": body.claim_id}, ctx)
+    if body.submission_id and not submission:
+        submission = await db.claim_submissions.find_one(
+            {"id": body.submission_id, "tenant_id": ctx.tenant_id},
+            {"_id": 0},
+        )
+    if body.adapter_external_id and not submission:
+        submission = await db.claim_submissions.find_one(
+            {"adapter_external_id": body.adapter_external_id,
+             "tenant_id": ctx.tenant_id},
+            sort=[("submitted_at", -1)],
+            projection={"_id": 0},
+        )
+    if submission and not claim:
+        claim = await _scoped_one(
+            db.claims, {"id": submission["claim_id"]}, ctx,
+        )
+    if not claim and body.report_type != "batch_ack":
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "No claim matched the provided claim_id / submission_id / "
+            "adapter_external_id. Use report_type='batch_ack' for "
+            "batch-level acknowledgments without a claim link.",
+        )
+
+    now = _now()
+    received_at = body.received_at or now
+    raw_content = body.raw_content or ""
+    raw_hash = (
+        hashlib.sha256(raw_content.encode("utf-8")).hexdigest()
+        if raw_content else None
+    )
+
+    report_id = str(uuid.uuid4())
+    report_doc = stamp_for_write({
+        "id": report_id,
+        "clearinghouse": body.clearinghouse.strip(),
+        "report_type": body.report_type,
+        "status": body.status,
+        "claim_id": (claim or {}).get("id"),
+        "submission_id": (submission or {}).get("id"),
+        "external_id": (body.adapter_external_id
+                        or (submission or {}).get("adapter_external_id")),
+        "received_at": received_at,
+        "raw_content": raw_content or None,
+        "raw_hash": raw_hash,
+        "parsed": body.parsed,
+        "notes": body.notes,
+        "denial_code": body.denial_code,
+        "created_at": now,
+    }, ctx, location_id=(claim or {}).get("location_id"))
+    await db.clearinghouse_reports.insert_one(report_doc)
+
+    await audit_success(
+        user, "billing.clearinghouse.report_ingested", request,
+        entity_type="clearinghouse_report", entity_id=report_id,
+        metadata={"report_type": body.report_type,
+                  "status": body.status,
+                  "clearinghouse": body.clearinghouse,
+                  "claim_id": (claim or {}).get("id"),
+                  "submission_id": (submission or {}).get("id")},
+    )
+
+    # Status update (only when we have a claim AND the map applies
+    # AND the current status is still eligible for an ack flip).
+    status_changed = False
+    if claim is not None:
+        target = _ACK_STATUS_MAP.get((body.report_type, body.status))
+        if target and claim["status"] in ("submitted", "pending"):
+            try:
+                new_raw = transitions.http_advance(
+                    "claim", claim["status"], target,
+                )
+            except HTTPException:
+                new_raw = claim["status"]
+            if new_raw != claim["status"]:
+                await db.claims.update_one(
+                    {"id": claim["id"], "tenant_id": ctx.tenant_id},
+                    {"$set": {
+                        "status": new_raw,
+                        "updated_at": now,
+                        "updated_by": user["id"],
+                     },
+                     "$push": {"history": _history_entry(
+                         user, "ack_received",
+                         report_type=body.report_type,
+                         status=body.status,
+                         report_id=report_id,
+                         from_status=claim["status"],
+                         to_status=new_raw,
+                     )}},
+                )
+                status_changed = True
+                claim["status"] = new_raw
+
+        # Timeline event.
+        event_type = _report_event_type(body.report_type, body.status)
+        if event_type:
+            await emit_claim_event(
+                db, ctx,
+                claim_id=claim["id"],
+                event_type=event_type,
+                actor_id=user["id"],
+                payload={"report_id": report_id,
+                         "clearinghouse": body.clearinghouse,
+                         "report_type": body.report_type,
+                         "report_status": body.status,
+                         "denial_code": body.denial_code,
+                         "notes": body.notes,
+                         "status_changed": status_changed},
+                submission_id=(submission or {}).get("id"),
+                adapter_route=body.clearinghouse,
+                denial_code=body.denial_code,
+                from_status=claim["status"] if not status_changed else None,
+                to_status=claim["status"] if status_changed else None,
+                occurred_at=received_at,
+                location_id=claim.get("location_id"),
+            )
+
+        # Rejected ack => auto-flag for follow-up so operators see it.
+        if body.status == "rejected" and body.report_type in ("999", "277ca"):
+            await _auto_flag_followup(
+                db, ctx, user, claim,
+                reason=f"{body.report_type.upper()} rejection: "
+                       f"{body.notes or 'see report'}"[:280],
+                source="inbound_rejection",
+            )
+
+    fresh = await db.clearinghouse_reports.find_one(
+        {"id": report_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    return fresh
+
+
+@router.get("/clearinghouse/reports")
+async def list_clearinghouse_reports(
+    claim_id: str | None = Query(default=None),
+    submission_id: str | None = Query(default=None),
+    report_type: str | None = Query(default=None),
+    status_: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=50, ge=1, le=500),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """List recent inbound artifacts with payload trimming."""
+    db = tenant_db(ctx.tenant_id)
+    q = scoped_filter({}, ctx, location_scoped=False)
+    if q.get("__deny__"):
+        return []
+    if claim_id:
+        q["claim_id"] = claim_id
+    if submission_id:
+        q["submission_id"] = submission_id
+    if report_type:
+        q["report_type"] = report_type
+    if status_:
+        q["status"] = status_
+    rows = [r async for r in db.clearinghouse_reports.find(
+        q, {"_id": 0},
+    ).sort([("received_at", -1)]).limit(limit)]
+    return rows
+
+
+async def _auto_flag_followup(
+    db, ctx: TenantContext, user: dict, claim: dict,
+    *, reason: str, source: str,
+) -> None:
+    """Helper used by both the manual-flag endpoint and the inbound
+    pipeline. Never raises — a flag is strictly additive, the worst
+    case is the row already had one and we refresh it."""
+    now = _now()
+    # SLA default: next action due in 3 business-ish days.
+    from datetime import timedelta
+    next_action = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    await db.claims.update_one(
+        {"id": claim["id"], "tenant_id": ctx.tenant_id},
+        {"$set": {
+            "followup_flag": True,
+            "followup_reason": reason,
+            "followup_flagged_at": now,
+            "followup_flagged_by": user["id"],
+            "next_action_at": next_action,
+            "updated_at": now,
+        },
+         "$push": {"history": _history_entry(
+             user, "flagged_for_followup",
+             reason=reason, source=source,
+             next_action_at=next_action,
+         )}},
+    )
+
+
+@router.post("/claims/{claim_id}/flag-followup", response_model=ClaimPublic)
+async def flag_claim_for_followup(
+    claim_id: str,
+    body: ClaimFollowupFlagRequest,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "correct_resubmit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Phase 10 — manually flag a claim so it surfaces on the
+    'Follow-up needed' tab with an explicit triage reason."""
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+    now = _now()
+    next_action = body.next_action_at
+    if not next_action:
+        from datetime import timedelta
+        next_action = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    await db.claims.update_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id},
+        {"$set": {
+            "followup_flag": True,
+            "followup_reason": body.reason,
+            "followup_flagged_at": now,
+            "followup_flagged_by": user["id"],
+            "next_action_at": next_action,
+            "updated_at": now,
+            "updated_by": user["id"],
+         },
+         "$push": {"history": _history_entry(
+             user, "flagged_for_followup",
+             reason=body.reason, source="manual",
+             next_action_at=next_action,
+         )}},
+    )
+    await audit_success(
+        user, "billing.claim.followup_flagged", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={"reason": body.reason, "next_action_at": next_action,
+                  "source": "manual"},
+    )
+    fresh = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    return fresh
+
+
+@router.delete("/claims/{claim_id}/flag-followup", response_model=ClaimPublic)
+async def clear_claim_followup_flag(
+    claim_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "correct_resubmit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Clear the manual follow-up flag after the claim is triaged.
+    The aged / partially-paid / appealed / stale-submit branches of
+    the follow-up tab are NOT affected — only the manual flag."""
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+    now = _now()
+    await db.claims.update_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id},
+        {"$set": {
+            "followup_flag": False,
+            "followup_reason": None,
+            "followup_flagged_at": None,
+            "followup_flagged_by": None,
+            "next_action_at": None,
+            "updated_at": now,
+            "updated_by": user["id"],
+         },
+         "$push": {"history": _history_entry(
+             user, "followup_cleared",
+         )}},
+    )
+    await audit_success(
+        user, "billing.claim.followup_cleared", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={},
+    )
+    fresh = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    return fresh
+
+
+# ---------------------------------------------------------------------------
 # Phase 8 — reusable validation + submission pipeline helpers
 # ---------------------------------------------------------------------------
 async def _run_validation_gate(
@@ -3751,14 +4116,16 @@ async def _tab_base_query(tab: str, db, tenant_id: str) -> dict | None:
         q["status"] = {"$in": ["rejected", "denied"]}
         return q
     if t == "follow-up":
-        # Canonical `follow_up` has three raw sources:
+        # Canonical `follow_up` has four raw sources:
         #   1. Partial payment still needs balance / secondary billing
         #   2. Appeal filed, waiting on payer response
         #   3. Stale submitted / rejected / denied (aging out the
         #      follow-up threshold via `followup_claim_ids`)
+        #   4. Phase 10 — manually or auto-flagged via `followup_flag`
         stale_ids = await followup_claim_ids(db, tenant_id)
         branches: list[dict] = [
             {"status": {"$in": ["partially_paid", "appealed"]}},
+            {"followup_flag": True},
         ]
         if stale_ids:
             branches.append({"id": {"$in": stale_ids}})
@@ -3940,6 +4307,31 @@ async def read_claims_queue(
             r["canonical_status_label"] = CANONICAL_LABELS.get(
                 r["canonical_status"], r["canonical_status"],
             )
+            # Phase 10 — aging + operational follow-up enrichment.
+            # Aging is computed against the most meaningful anchor
+            # for the claim's stage: submitted claims age from the
+            # last submission; pre-submit claims age from creation.
+            basis_field = None
+            basis_ts = None
+            if r.get("last_submission_at"):
+                basis_field, basis_ts = "last_submission_at", r["last_submission_at"]
+            elif r.get("submitted_at"):
+                basis_field, basis_ts = "submitted_at", r["submitted_at"]
+            elif r.get("updated_at"):
+                basis_field, basis_ts = "updated_at", r["updated_at"]
+            elif r.get("created_at"):
+                basis_field, basis_ts = "created_at", r["created_at"]
+            r["aging_basis"] = basis_field
+            r["aging_basis_at"] = basis_ts
+            r["aging_days"] = _days_since_iso(basis_ts) if basis_ts else None
+            r["followup_flag"] = bool(r.get("followup_flag") or False)
+            r["followup_reason"] = r.get("followup_reason")
+            r["next_action_at"] = r.get("next_action_at")
+            # "Last activity" is whichever of `last_event_at` or
+            # `updated_at` is most recent — the UI renders this
+            # alongside the assignee.
+            last_activity = r.get("last_event_at") or r.get("updated_at")
+            r["last_activity_at"] = last_activity
 
     # Summary cards — aggregate over the current filtered query (NOT
     # limited by page). `shown` reflects the current page.

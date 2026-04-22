@@ -112,6 +112,13 @@ def canonical_status(claim: dict, *, is_stale: bool = False) -> CanonicalStatus:
     raw = claim.get("status") or "draft"
     base = _RAW_TO_CANONICAL.get(raw, "draft")
 
+    # Phase 10 — a manual / auto follow-up flag always wins over the
+    # underlying raw status, except for terminal `draft` rows. This
+    # keeps a paid-with-an-unresolved-question claim on the Follow-up
+    # tab until staff clear the flag.
+    if claim.get("followup_flag") and raw != "draft":
+        return "follow_up"
+
     # `closed` with a remaining balance still needs human review —
     # most commonly a write-off or secondary filing decision.
     if raw == "closed":

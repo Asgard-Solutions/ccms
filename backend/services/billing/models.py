@@ -801,6 +801,21 @@ class ClaimPublic(BaseModel):
     accident_date: str | None = None
     onset_date: str | None = None
     initial_treatment_date: str | None = None
+    # Phase 10 — operational follow-up workflow fields. Every claim
+    # carries a human-readable flag + reason set either manually by
+    # staff or automatically by the inbound-report pipeline. The
+    # Claims Queue's "Follow-up needed" tab aggregates three sources:
+    #   1. `followup_flag=True` (manual or auto)
+    #   2. raw status ∈ {partially_paid, appealed}
+    #   3. stale submissions (see `followup_claim_ids`)
+    followup_flag: bool = False
+    followup_reason: str | None = None
+    followup_flagged_at: str | None = None
+    followup_flagged_by: str | None = None
+    # Next action date the operator should act by. Computed from
+    # `followup_flagged_at + SLA days` at flag time, or set manually
+    # when staff triage a claim. Ticker-UI consumers sort on this.
+    next_action_at: str | None = None
     status: ClaimStatus
     service_date_from: str
     service_date_to: str
@@ -1221,3 +1236,43 @@ class ClearinghouseReportPublic(BaseModel):
     parsed: dict | None = None
     notes: str | None = None
     created_at: str
+
+
+# ---------------------------------------------------------------------------
+# Phase 10 — inbound ingest + manual follow-up flag requests.
+# ---------------------------------------------------------------------------
+class ClearinghouseReportIngestRequest(BaseModel):
+    """Payload shape for POST /billing/clearinghouse/reports/ingest.
+
+    Either `claim_id` OR `adapter_external_id` (matched against the
+    most recent submission) must be provided so the ingest can tie the
+    report back to a specific claim. Batch-level acks (no claim link)
+    are accepted when `report_type == "batch_ack"`.
+    """
+    model_config = ConfigDict(extra="forbid")
+    clearinghouse: str = Field(min_length=1, max_length=60)
+    report_type: ClearinghouseReportKind
+    status: Literal["accepted", "rejected", "warning", "info"] = "info"
+    claim_id: str | None = None
+    submission_id: str | None = None
+    adapter_external_id: str | None = None
+    received_at: str | None = None
+    raw_content: str | None = Field(default=None, max_length=1_000_000)
+    parsed: dict | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+    denial_code: str | None = Field(default=None, max_length=40)
+
+
+class ClaimFollowupFlagRequest(BaseModel):
+    """Payload shape for POST /billing/claims/{id}/flag-followup.
+
+    `reason` is required so the queue can render a human-readable
+    triage hint. `next_action_at` is optional — when absent, the
+    server defaults it to `now + 3 days` so the claim surfaces back
+    on the triage dashboard.
+    """
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=2, max_length=280)
+    next_action_at: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}(T.*)?$",
+    )
