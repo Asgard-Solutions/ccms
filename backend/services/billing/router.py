@@ -3703,6 +3703,9 @@ async def _do_submit_claim(
     payload_json = build_json_payload(
         claim=claim, diagnoses=diagnoses, lines=lines,
         patient=patient, payer=payer, policy=policy,
+        billing_provider=billing_provider,
+        rendering_provider=rendering_provider,
+        service_facility=service_facility,
     )
 
     adapter = get_adapter_for_payer(payer)

@@ -30,44 +30,85 @@ def build_json_payload(
     patient: dict | None,
     payer: dict | None,
     policy: dict | None,
+    billing_provider: dict | None = None,
+    rendering_provider: dict | None = None,
+    service_facility: dict | None = None,
 ) -> dict[str, Any]:
     """Flat JSON export of the claim — convenient for inspection, debug,
     and portal uploads. Intentionally omits PHI beyond what the payer
     already needs (name, DOB, member_id).
+
+    Emits **business identifiers**, not internal DB UUIDs — the
+    payload is meant to look like what a human biller would see:
+      * patient.mrn (medical record number), not patient.id
+      * payer.payer_id (external payer code), not payer.id
+      * billing_provider_npi / rendering_provider_npi / facility_npi
+        instead of UUID references
+      * policy.member_id / group_number (internal policy UUID omitted)
     """
+    def _npi(obj: dict | None) -> str | None:
+        if not obj:
+            return None
+        v = obj.get("npi")
+        return str(v).strip() if v else None
+
+    payer_code = (
+        (payer or {}).get("payer_code")
+        or (payer or {}).get("external_id")
+        or (payer or {}).get("code")
+    ) if payer else None
+    electronic_payer_id = (
+        (payer or {}).get("electronic_payer_id")
+        or (payer or {}).get("external_id")
+    ) if payer else None
+
     return {
         "schema": "ccms.claim.v1",
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "claim": {
-            "id": claim.get("id"),
+            # Public claim reference — the biller-facing number, not
+            # the Mongo UUID. Falls back to `id` only when the demo /
+            # test fixture hasn't assigned a patient_control_number.
+            "control_number": (
+                claim.get("patient_control_number")
+                or claim.get("control_number")
+                or claim.get("id")
+            ),
             "claim_type": claim.get("claim_type"),
             "place_of_service": claim.get("place_of_service"),
             "frequency_code": claim.get("frequency_code"),
             "service_date_from": claim.get("service_date_from"),
             "service_date_to": claim.get("service_date_to"),
             "billed_cents": claim.get("billed_cents"),
-            "billing_provider_id": claim.get("billing_provider_id"),
-            "rendering_provider_id": claim.get("rendering_provider_id"),
-            "facility_id": claim.get("facility_id"),
+            "billing_provider_npi": _npi(billing_provider),
+            "rendering_provider_npi": _npi(rendering_provider),
+            "facility_npi": _npi(service_facility),
             "authorization_number": claim.get("authorization_number"),
             "referral_number": claim.get("referral_number"),
             "notes": claim.get("notes"),
         },
         "patient": None if not patient else {
-            "id": patient.get("id"),
+            # Medical Record Number when stored; otherwise a short
+            # readable reference derived from the internal UUID so
+            # the payload never leaks a Mongo UUID.
+            "mrn": (
+                patient.get("mrn")
+                or patient.get("medical_record_number")
+                or (f"RB-{patient['id'][:8].upper()}"
+                    if patient.get("id") else None)
+            ),
             "first_name": patient.get("first_name"),
             "last_name": patient.get("last_name"),
             "date_of_birth": patient.get("date_of_birth"),
             "gender": patient.get("gender"),
         },
         "payer": None if not payer else {
-            "id": payer.get("id"),
+            "payer_code": payer_code,
+            "electronic_payer_id": electronic_payer_id,
             "name": payer.get("name"),
             "payer_type": payer.get("payer_type"),
-            "payer_id_external": payer.get("external_id"),
         },
         "policy": None if not policy else {
-            "id": policy.get("id"),
             "rank": policy.get("rank"),
             "member_id": policy.get("member_id"),
             "group_number": policy.get("group_number"),

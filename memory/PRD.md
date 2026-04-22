@@ -2,6 +2,33 @@
 
 **Last updated:** 2026-04-22 (Regression fixes — AppointmentWorkflowPanel `useEffect` import + billing/payments currency)
 
+## 4k. JSON payload — no more internal UUIDs (2026-04-22)
+
+**Issue:** User reported the JSON tab of the Submission payload modal was leaking Mongo UUIDs for `claim.id`, `patient.id`, `payer.id`, `policy.id`, `billing_provider_id`, `rendering_provider_id`, `facility_id`. A biller looking at this payload should see *business* identifiers — NPIs, payer codes, MRNs, member IDs — not internal DB hashes.
+
+**Fix:** `build_json_payload` refactored to emit human/external identifiers, and updated both callers (runtime submission + demo seed) to pass the already-loaded `billing_provider / rendering_provider / service_facility` objects through.
+
+**Before → After (Claire Morgan paid claim):**
+```
+claim.id                 = "2a978818-f8b6-41ff-..."   →  claim.control_number = "RB-PAID_OLD"
+billing_provider_id (UUID)                            →  billing_provider_npi = "1194567893"
+rendering_provider_id (UUID)                          →  rendering_provider_npi = "1841792253"
+facility_id (UUID)                                    →  facility_npi = "1356789012"
+patient.id (UUID)                                     →  patient.mrn = "RB-8C07EC6B"
+payer.id (UUID)                                       →  payer.payer_code = "PAC-COMM"
+                                                           + electronic_payer_id = "PAC1234"
+policy.id (UUID)                                      →  (omitted — member_id + group_number suffice)
+```
+
+**Files changed**
+- `/app/backend/services/billing/submission.py::build_json_payload` — signature now accepts optional `billing_provider` / `rendering_provider` / `service_facility`; emits NPIs + payer_code + MRN; drops internal UUIDs.
+- `/app/backend/services/billing/router.py` — `_submit_claim_core` passes the provider/facility objects through.
+- `/app/backend/services/demo/billing_seed.py` — seed passes them through too.
+- `/app/backend/tests/test_billing_phase4.py` — updated assertion (`payer.electronic_payer_id` replaces legacy `payer.payer_id_external`).
+
+**Regression:** pytest 22/22 on test_billing_phase4, 26/26 on test_riverbend_demo_sanitation.
+
+
 ## 4j. Paid-claim 837P payload preview (2026-04-22)
 
 **Request:** "For a paid claim I should be able to see the payload data too."

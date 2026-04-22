@@ -676,16 +676,9 @@ async def _seed_one_claim(
                     {"_id": 0},
                 ).sort("sequence", 1)]
                 # Build the JSON payload from the canonical objects.
-                payload_json = build_json_payload(
-                    claim=claim_doc,
-                    diagnoses=diag_rows,
-                    lines=line_rows,
-                    patient=patient,
-                    payer=payer,
-                    policy=policy,
-                )
-                # Resolve provider/facility NPIs (x12 builder requires
-                # 10-digit NPI, not UUIDs).
+                # Pass provider/facility objects so the output uses
+                # real NPIs + external payer code (not UUIDs).
+                # ↓ Fetched in the same block below and re-used here.
                 bill_prov = await db.providers.find_one(
                     {"tenant_id": tenant_id,
                      "id": claim_doc["billing_provider_id"]},
@@ -703,6 +696,17 @@ async def _seed_one_claim(
                          "id": claim_doc["facility_id"]},
                         {"_id": 0},
                     )
+                payload_json = build_json_payload(
+                    claim=claim_doc,
+                    diagnoses=diag_rows,
+                    lines=line_rows,
+                    patient=patient,
+                    payer=payer,
+                    policy=policy,
+                    billing_provider=bill_prov,
+                    rendering_provider=rend_prov,
+                    service_facility=fac,
+                )
                 line_mods = [r async for r in db.claim_line_modifiers.find(
                     {"tenant_id": tenant_id,
                      "claim_line_id": {"$in": [ln["id"] for ln in line_rows]}},

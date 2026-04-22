@@ -192,7 +192,7 @@ class TestPayloadBuilders:
         assert p["diagnoses"][0]["code"] == "M54.16"
         assert p["lines"][0]["code"] == "98940"
         assert p["patient"]["first_name"] == "Jane"
-        assert p["payer"]["payer_id_external"] == "AH-001"
+        assert p["payer"]["electronic_payer_id"] == "AH-001"
         assert p["policy"]["member_id"] == "M123"
 
     def test_x12_preview_has_envelope_and_lines(self):
