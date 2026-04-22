@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Literal, get_args
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response
@@ -46,6 +46,11 @@ from services.billing.statement_delivery import (
     render_statement_pdf,
     send_statement_email,
 )
+from services.billing.clearinghouse import (
+    config_summaries,
+    get_adapter_for_payer,
+)
+from services.billing.events import emit_claim_event
 from services.billing.submission import (
     DEFAULT_FOLLOWUP_DAYS,
     build_json_payload,
@@ -53,11 +58,6 @@ from services.billing.submission import (
     followup_claim_ids,
     followup_threshold_iso,
 )
-from services.billing.clearinghouse import (
-    config_summaries,
-    get_adapter_for_payer,
-)
-from services.billing.events import emit_claim_event
 from services.billing.models import (
     AdjustmentCreate,
     AdjustmentPublic,
@@ -3244,6 +3244,270 @@ async def update_claim_assignment(
         {"id": claim_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
     )
     return _public(fresh)
+
+
+# ---------------------------------------------------------------------------
+# Phase-UI — Paginated, enriched claim queue endpoint.
+#
+# Companion to the legacy `/claims/queues/{queue_name}` endpoint (kept
+# unchanged for backward compat). This new endpoint returns a rich
+# shape optimised for the Claims Queue page:
+#   * server-side pagination + sorting
+#   * human-friendly row enrichment (patient_name / payer_name /
+#     assignee_name) done in a single batched lookup
+#   * summary cards (shown / ready / needs_fixes / billed_total)
+#   * tab counts across every tab in one call so the UI doesn't flicker
+#     when the user switches tabs
+#   * filter options (payers in tenant, assignees seen on current
+#     queue rows)
+# ---------------------------------------------------------------------------
+_TAB_KEYS = ("all", "pending-submission", "needs-fixes", "rejected",
+             "follow-up")
+_SORTABLE = {
+    "updated_at", "created_at", "service_date_from", "service_date_to",
+    "billed_cents", "status", "last_submission_at",
+}
+
+
+async def _tab_base_query(tab: str, db, tenant_id: str) -> dict | None:
+    """Return the Mongo query for a given tab, or None if unknown.
+
+    Returning `{"__noop__": True}` short-circuits to an empty result —
+    used by `follow-up` when there are no stale claim IDs.
+    """
+    q: dict = {"tenant_id": tenant_id}
+    t = (tab or "all").replace("_", "-").lower()
+    if t == "all":
+        return q
+    if t == "pending-submission":
+        q["status"] = {"$in": ["ready", "validation_failed"]}
+        return q
+    if t == "needs-fixes":
+        q["status"] = "validation_failed"
+        return q
+    if t == "rejected":
+        q["status"] = {"$in": ["rejected", "denied"]}
+        return q
+    if t == "follow-up":
+        ids = await followup_claim_ids(db, tenant_id)
+        if not ids:
+            return {"__noop__": True}
+        q["id"] = {"$in": ids}
+        return q
+    return None
+
+
+@router.get("/claims/queue")
+async def read_claims_queue(
+    tab: str = Query(default="all"),
+    page: int = Query(default=1, ge=1, le=10_000),
+    page_size: int = Query(default=25, ge=1, le=200),
+    sort: str = Query(default="updated_at:desc",
+                      description="field:asc|desc"),
+    status_in: str | None = Query(default=None),
+    payer_id: str | None = None,
+    assigned_to: str | None = None,
+    age_days: int | None = Query(default=None, ge=0, le=365),
+    include_tab_counts: bool = Query(default=True),
+    include_filter_options: bool = Query(default=True),
+    user: dict = Depends(require_permission("claim", "read")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+
+    # Base query for the selected tab.
+    q = await _tab_base_query(tab, db, ctx.tenant_id)
+    if q is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown tab '{tab}'")
+    noop = bool(q.get("__noop__"))
+
+    # Overlay filters on top of the tab's own status scope.
+    def _apply_filters(qbase: dict) -> dict:
+        if qbase.get("__noop__"):
+            return qbase
+        qf = dict(qbase)
+        if payer_id:
+            qf["payer_id"] = payer_id
+        if assigned_to:
+            qf["assigned_to"] = assigned_to
+        if age_days is not None:
+            qf["created_at"] = {"$lt": followup_threshold_iso(age_days)}
+        if status_in:
+            wanted = [s.strip() for s in status_in.split(",") if s.strip()]
+            if wanted:
+                base = qf.get("status")
+                if isinstance(base, dict) and "$in" in base:
+                    allowed = [s for s in wanted if s in base["$in"]]
+                elif isinstance(base, str):
+                    allowed = [s for s in wanted if s == base]
+                else:
+                    allowed = wanted
+                qf["status"] = {"$in": allowed} if allowed else {"$in": ["__none__"]}
+        return qf
+
+    filtered_q = _apply_filters(q)
+
+    # Pagination + sort.
+    sort_field, _, sort_dir = (sort or "").partition(":")
+    if sort_field not in _SORTABLE:
+        sort_field = "updated_at"
+    direction = -1 if (sort_dir or "desc").lower() != "asc" else 1
+
+    total = 0
+    rows: list[dict] = []
+    if not noop:
+        total = await db.claims.count_documents(filtered_q)
+        cursor = db.claims.find(filtered_q, {"_id": 0}).sort(
+            [(sort_field, direction), ("id", 1)],
+        ).skip((page - 1) * page_size).limit(page_size)
+        rows = [c async for c in cursor]
+
+    # Per-query enrichment — one batched lookup each for patient /
+    # payer / user / latest event.
+    if rows:
+        pt_ids = sorted({r["patient_id"] for r in rows if r.get("patient_id")})
+        py_ids = sorted({r["payer_id"] for r in rows if r.get("payer_id")})
+        as_ids = sorted({r["assigned_to"] for r in rows if r.get("assigned_to")})
+        pt_map: dict[str, dict] = {}
+        py_map: dict[str, dict] = {}
+        as_map: dict[str, dict] = {}
+        if pt_ids:
+            async for p in db.patients.find(
+                {"tenant_id": ctx.tenant_id, "id": {"$in": pt_ids}},
+                {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+                 "mrn": 1},
+            ):
+                pt_map[p["id"]] = p
+        if py_ids:
+            async for p in db.billing_payers.find(
+                {"tenant_id": ctx.tenant_id, "id": {"$in": py_ids}},
+                {"_id": 0, "id": 1, "name": 1, "payer_type": 1},
+            ):
+                py_map[p["id"]] = p
+        if as_ids:
+            async for u in db.users.find(
+                {"tenant_id": ctx.tenant_id, "id": {"$in": as_ids}},
+                {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+                 "email": 1},
+            ):
+                as_map[u["id"]] = u
+        # Newest event per claim on this page.
+        latest: dict[str, dict] = {}
+        claim_ids = [r["id"] for r in rows]
+        async for ev in db.claim_events.find(
+            {"tenant_id": ctx.tenant_id, "claim_id": {"$in": claim_ids}},
+            {"_id": 0, "claim_id": 1, "event_type": 1, "occurred_at": 1},
+        ).sort([("occurred_at", -1)]):
+            cid = ev["claim_id"]
+            if cid not in latest:
+                latest[cid] = ev
+
+        for r in rows:
+            p = pt_map.get(r.get("patient_id") or "")
+            if p:
+                first = p.get("first_name") or ""
+                last = p.get("last_name") or ""
+                r["patient_name"] = (f"{first} {last}").strip() or None
+                r["patient_mrn"] = p.get("mrn")
+            py = py_map.get(r.get("payer_id") or "")
+            if py:
+                r["payer_name"] = py.get("name")
+                r["payer_type"] = py.get("payer_type")
+            u = as_map.get(r.get("assigned_to") or "")
+            if u:
+                first = u.get("first_name") or ""
+                last = u.get("last_name") or ""
+                name = (f"{first} {last}").strip()
+                r["assignee_name"] = name or u.get("email")
+            ev = latest.get(r["id"])
+            r["last_event"] = ev.get("event_type") if ev else None
+            r["last_event_at"] = ev.get("occurred_at") if ev else None
+
+    # Summary cards — aggregate over the current filtered query (NOT
+    # limited by page). `shown` reflects the current page.
+    summary = {
+        "shown": len(rows),
+        "total": total,
+        "ready": 0,
+        "needs_fixes": 0,
+        "billed_total_cents": 0,
+    }
+    if not noop:
+        async for row in db.claims.aggregate([
+            {"$match": filtered_q},
+            {"$group": {
+                "_id": None,
+                "billed_total": {"$sum": "$billed_cents"},
+                "ready": {"$sum": {"$cond": [
+                    {"$eq": ["$status", "ready"]}, 1, 0,
+                ]}},
+                "needs_fixes": {"$sum": {"$cond": [
+                    {"$or": [
+                        {"$eq": ["$status", "validation_failed"]},
+                        {"$gt": [
+                            {"$ifNull": ["$validation_error_count", 0]}, 0,
+                        ]},
+                    ]}, 1, 0,
+                ]}},
+            }},
+        ]):
+            summary["billed_total_cents"] = int(row.get("billed_total") or 0)
+            summary["ready"] = int(row.get("ready") or 0)
+            summary["needs_fixes"] = int(row.get("needs_fixes") or 0)
+            break
+
+    # Tab counts — per-tab count respecting non-tab filters.
+    tab_counts: dict[str, int] = {}
+    if include_tab_counts:
+        for t in _TAB_KEYS:
+            tb = await _tab_base_query(t, db, ctx.tenant_id)
+            if tb is None or tb.get("__noop__"):
+                tab_counts[t] = 0
+                continue
+            tab_counts[t] = await db.claims.count_documents(_apply_filters(tb))
+
+    # Filter options — payers in tenant + assignees ever seen.
+    filter_options: dict = {}
+    if include_filter_options:
+        payers: list[dict] = []
+        async for p in db.billing_payers.find(
+            {"tenant_id": ctx.tenant_id, "status": {"$ne": "inactive"}},
+            {"_id": 0, "id": 1, "name": 1},
+        ).sort([("name", 1)]):
+            payers.append(p)
+        assignees: list[dict] = []
+        assignee_ids = await db.claims.distinct(
+            "assigned_to",
+            {"tenant_id": ctx.tenant_id,
+             "assigned_to": {"$nin": [None, ""]}},
+        )
+        if assignee_ids:
+            async for u in db.users.find(
+                {"tenant_id": ctx.tenant_id, "id": {"$in": assignee_ids}},
+                {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+                 "email": 1},
+            ):
+                name = f"{u.get('first_name','')} {u.get('last_name','')}".strip()
+                assignees.append({"id": u["id"],
+                                  "name": name or u.get("email") or u["id"]})
+        filter_options = {
+            "payers": payers,
+            "assignees": assignees,
+            "statuses": list(get_args(ClaimStatus)),
+        }
+
+    return {
+        "tab": tab,
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "sort": f"{sort_field}:{'asc' if direction == 1 else 'desc'}",
+        "rows": rows,
+        "summary": summary,
+        "tab_counts": tab_counts,
+        "filter_options": filter_options,
+    }
+
 
 
 @router.get("/claims/queues/{queue_name}", response_model=list[ClaimPublic])

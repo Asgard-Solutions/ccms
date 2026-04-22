@@ -117,7 +117,6 @@ export const OUTCOME_LABELS = {
 
 export const QUEUE_KEYS = [
   { key: "pending-submission", label: "Pending submission" },
-  { key: "needs-fixes", label: "Needs fixes" },
   { key: "rejected", label: "Rejected / denied" },
   { key: "follow-up", label: "Follow-up needed" },
 ];
@@ -226,4 +225,47 @@ export async function fetchClaimEvents(claimId, { eventType, limit } = {}) {
     `/billing/claims/${claimId}/events`, { params },
   );
   return data || [];
+}
+
+// -----------------------------------------------------------------------
+// Phase-UI — server-paginated / sorted / enriched queue hook
+// -----------------------------------------------------------------------
+// Backed by `GET /api/billing/claims/queue`. Returns the full envelope
+// (rows + summary + tab_counts + filter_options + total) so the page
+// doesn't need to fetch anything else. Filters, page, and sort are
+// all driven server-side so the UI never builds summary stats from a
+// truncated page.
+export function useClaimsQueueV2({ tab, page, pageSize, sort, filters = {} }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const statusInKey = filters.status_in?.join(",") || "";
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const params = {
+        tab,
+        page,
+        page_size: pageSize,
+        sort,
+      };
+      if (filters.payer_id)    params.payer_id = filters.payer_id;
+      if (filters.assigned_to) params.assigned_to = filters.assigned_to;
+      if (filters.age_days)    params.age_days = filters.age_days;
+      if (statusInKey)         params.status_in = statusInKey;
+      const { data: resp } = await api.get("/billing/claims/queue", { params });
+      setData(resp);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, page, pageSize, sort, filters.payer_id,
+      filters.assigned_to, filters.age_days, statusInKey]);
+
+  useEffect(() => { load(); }, [load]);
+  return { data, loading, error, refresh: load };
 }
