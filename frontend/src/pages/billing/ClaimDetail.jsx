@@ -166,6 +166,7 @@ export default function ClaimDetail() {
       <ValidationPanel
         errors={errors}
         warnings={warnings}
+        byCategory={latest_validation?.by_category}
         lastRunAt={latest_validation?.run_at}
       />
 
@@ -324,8 +325,22 @@ function Field({ label, value }) {
   );
 }
 
-function ValidationPanel({ errors, warnings, lastRunAt }) {
+function ValidationPanel({ errors, warnings, byCategory, lastRunAt }) {
   const hasAny = errors.length + warnings.length > 0;
+  // Category labels drive the summary row + the per-finding pill.
+  const CATEGORY_LABELS = {
+    identity:     "Identity",
+    provider:     "Provider",
+    codes:        "Codes",
+    dates:        "Dates",
+    totals:       "Totals",
+    routing:      "Routing",
+    chiropractic: "Chiropractic",
+    other:        "Other",
+  };
+  const summaryEntries = Object.entries(byCategory || {})
+    .filter(([, v]) => (v?.errors || 0) + (v?.warnings || 0) > 0)
+    .sort();
   return (
     <section
       data-testid="validation-panel"
@@ -342,6 +357,31 @@ function ValidationPanel({ errors, warnings, lastRunAt }) {
           {lastRunAt ? `Last run ${lastRunAt}` : "Not yet validated"}
         </div>
       </header>
+
+      {summaryEntries.length > 0 && (
+        <div
+          data-testid="validation-category-summary"
+          className="mb-3 flex flex-wrap gap-2"
+        >
+          {summaryEntries.map(([cat, v]) => (
+            <span
+              key={cat}
+              data-testid={`validation-cat-${cat}`}
+              className={`inline-flex items-center gap-1 rounded-sm border px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide ${
+                v.errors > 0
+                  ? "border-destructive/40 bg-destructive/10 text-destructive"
+                  : "border-warning/40 bg-warning-soft text-warning"
+              }`}
+            >
+              {CATEGORY_LABELS[cat] || cat}
+              <span className="tabular-nums">
+                {v.errors > 0 && `· ${v.errors}e`}
+                {v.warnings > 0 && ` ${v.warnings}w`}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {!hasAny && lastRunAt && (
         <div
@@ -370,14 +410,20 @@ function ValidationPanel({ errors, warnings, lastRunAt }) {
               className="flex items-start gap-2 text-sm text-destructive"
             >
               <AlertCircle className="mt-0.5 h-4 w-4 flex-none" />
-              <div>
-                <span className="font-semibold">{f.code}</span>
-                <span className="mx-1">·</span>
-                <span>{f.message}</span>
+              <div className="flex-1">
+                <div className="flex flex-wrap items-center gap-x-2">
+                  {f.category && (
+                    <span className="rounded-sm border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
+                      {CATEGORY_LABELS[f.category] || f.category}
+                    </span>
+                  )}
+                  <span className="font-semibold">{f.code}</span>
+                  <span>{f.message}</span>
+                </div>
                 {f.entity_path && (
-                  <span className="ml-2 text-xs font-mono text-muted-foreground">
+                  <div className="mt-1 font-mono text-[11px] text-muted-foreground">
                     {f.entity_path}
-                  </span>
+                  </div>
                 )}
               </div>
             </li>
@@ -391,12 +437,27 @@ function ValidationPanel({ errors, warnings, lastRunAt }) {
           className="mt-3 space-y-2 rounded-sm border border-warning/30 bg-warning-soft p-3"
         >
           {warnings.map((f, i) => (
-            <li key={i} className="flex items-start gap-2 text-sm text-warning">
+            <li
+              key={i}
+              data-testid={`validation-warning-${f.code}`}
+              className="flex items-start gap-2 text-sm text-warning"
+            >
               <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
-              <div>
-                <span className="font-semibold">{f.code}</span>
-                <span className="mx-1">·</span>
-                <span>{f.message}</span>
+              <div className="flex-1">
+                <div className="flex flex-wrap items-center gap-x-2">
+                  {f.category && (
+                    <span className="rounded-sm border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning">
+                      {CATEGORY_LABELS[f.category] || f.category}
+                    </span>
+                  )}
+                  <span className="font-semibold">{f.code}</span>
+                  <span>{f.message}</span>
+                </div>
+                {f.entity_path && (
+                  <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    {f.entity_path}
+                  </div>
+                )}
               </div>
             </li>
           ))}

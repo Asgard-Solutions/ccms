@@ -2215,8 +2215,23 @@ async def _load_claim_context(db, ctx: TenantContext, claim: dict) -> ScrubberCo
 
     patient = await db.patients.find_one(
         {"tenant_id": ctx.tenant_id, "id": claim.get("patient_id")},
-        {"_id": 0, "id": 1, "first_name": 1, "last_name": 1, "dob": 1},
+        # Phase 4 — project DOB + gender for the validator. Keep this
+        # projection tight so no other PHI leaves the DB.
+        {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+         "dob": 1, "date_of_birth": 1, "gender": 1, "sex": 1,
+         "demographics": 1},
     )
+    if patient:
+        # Normalise DOB + gender so the scrubber can read them without
+        # caring which legacy/grouped field they live on.
+        if not patient.get("date_of_birth"):
+            demo = patient.get("demographics") or {}
+            patient["date_of_birth"] = (
+                patient.get("dob") or demo.get("date_of_birth") or ""
+            )
+        if not patient.get("gender"):
+            demo = patient.get("demographics") or {}
+            patient["gender"] = demo.get("gender") or patient.get("sex") or ""
     payer = await db.billing_payers.find_one(
         {"tenant_id": ctx.tenant_id, "id": claim.get("payer_id")},
         {"_id": 0},
@@ -2434,6 +2449,7 @@ async def validate_claim(
         "run_by": user["id"],
         "errors": result["errors"],
         "warnings": result["warnings"],
+        "by_category": result.get("by_category", {}),
         "passed": result["passed"],
         "from_status": claim["status"],
         "to_status": new_status,
@@ -2470,6 +2486,7 @@ async def validate_claim(
         "errors": result["errors"],
         "warnings": result["warnings"],
         "passed": result["passed"],
+        "by_category": result.get("by_category", {}),
         "run_at": now,
     }
 
