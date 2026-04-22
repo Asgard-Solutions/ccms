@@ -1,6 +1,6 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-04-22 (Appointment Workflow Backbone — Phase 1 of operational flow)
+**Last updated:** 2026-04-22 (Patient Portal go-live + Month-end bulk statement dispatch)
 
 ## 0. Design system (binding)
 The Chiro Software design system is authoritative for every UI surface.

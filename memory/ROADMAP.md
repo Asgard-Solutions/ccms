@@ -14,6 +14,12 @@ Prioritized backlog for remaining P0/P1/P2 work. Most-recent updates on top.
 | 5 — Migration + Access History + Security Policies | ✅ Done | legacy backfill, `/admin/access-history`, Security Policies panel |
 
 ### Recently completed P2 items
+- ✅ Patient portal shell at `/portal` with role gating (patients
+  redirected in; non-patients locked out) — 2026-04-22.
+- ✅ Month-end bulk "Send outstanding statements" workflow —
+  `POST /api/billing/statements/send-outstanding` + Billing Dashboard
+  button with dry-run preview dialog; idempotent on unchanged
+  balances — 2026-04-22.
 - ✅ Global retry-after-reauth Axios interceptor (already shipped in an earlier session; confirmed wired).
 - ✅ Drag-and-drop reorder for Appointment Types — backend `POST /api/appointment-types/reorder` + native HTML5 DnD UI, zero deps.
 - ✅ Resend + Twilio integration layer — `services/notifications/{email,sms,verify}.py` with log-only fallback; password-reset + workforce-invitation callers wired; `.env.example` documents all required env vars.

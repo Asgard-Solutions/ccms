@@ -4,6 +4,54 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-04-22 — Patient Portal go-live + Month-end bulk statement dispatch
+
+**Scope:** (1) Finalize the patient-facing portal shell so patients log in
+and land on `/portal` (not the clinic AppShell), and (2) add a bulk
+"Send all outstanding statements" workflow so billing staff can dispatch
+every eligible statement with one click.
+
+**Patient Portal**
+- `ProtectedRoute.jsx` enforces a bidirectional role gate: `portal=true`
+  routes reject non-patients (→ `/`), and every non-portal route
+  redirects patients to `/portal`. Login lands patients directly on
+  `/portal` by reusing the same gate.
+- `PortalShell.jsx` renders a minimal top-bar + vertical nav (Overview,
+  Statements) + signout; `PortalOverview.jsx` + `PortalStatements.jsx`
+  consume `GET /api/billing/me/statements` and `GET /api/billing/me/statements/{id}.pdf`.
+- Empty-state, invoice-breakdown toggle, and PDF download link all
+  verified by the testing agent (iteration_61 — 0 defects).
+
+**Bulk "Send outstanding statements"**
+- New `POST /api/billing/statements/send-outstanding` (admin + staff).
+  Iterates every patient with `balance_cents > 0`, compares current
+  outstanding to the last statement's `total_balance_cents`, and
+  regenerates + dispatches only if the balance has moved. Channels:
+  email when the patient has an email on file, otherwise queued for
+  mail. Returns `{generated, sent_email, queued_mail, skipped_unchanged,
+  skipped_no_contact, errors, dry_run, details}`. Supports
+  `{"dry_run": true}` preview without side-effects.
+- `_build_statement_for_patient()` helper extracted from
+  `create_statement` and shared by both the legacy per-patient endpoint
+  and the new bulk endpoint so the generated document shape, audit
+  rows, and invoice-breakdown snapshot stay identical.
+- Frontend: new `billing-send-outstanding-btn` on the Billing Dashboard.
+  Click fires a dry-run, opens `bulk-send-outstanding-dialog` with the
+  preview copy ("N statement(s) will be generated — X email · Y mail ·
+  Z skipped"), then dispatches on confirm.
+- Idempotency: re-running against an unchanged dataset returns all
+  zeros + `skipped_unchanged` == total outstanding patients.
+
+**Tests**
+- `/app/backend/tests/test_statements_bulk_send.py` — 3/3 PASS (dry-run
+  shape; idempotency; doctor 403).
+- `/app/backend/tests/test_statements_enriched.py` — 6/6 PASS
+  (regression on the refactored `create_statement`).
+- Frontend E2E + backend integration validated via testing agent
+  iteration_61 — 0 defects, no retest required.
+
+
+
 ## 2026-02-15 — Notifications abstraction: Resend + Twilio (log-only fallback)
 
 **Scope:** Provider-agnostic email / SMS / MFA-OTP plumbing. Real
