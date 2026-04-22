@@ -456,6 +456,18 @@ class PaymentPublic(BaseModel):
     created_at: str
     updated_at: str
 
+    # Legacy-data tolerance: older rows (pre-2026-Q1) used
+    # `status="completed"` before the gateway-aware status machine
+    # was introduced. Normalise them to `captured` on read so the
+    # list endpoint doesn't 500 on historical data. Writes still go
+    # through the modern Literal above.
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_legacy_status(cls, value):
+        if value == "completed":
+            return "captured"
+        return value
+
 
 # ---------------------------------------------------------------------------
 # Refunds & adjustments
