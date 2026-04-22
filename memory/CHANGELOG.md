@@ -4,6 +4,62 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-04-22 — Phase 12: Claims pipeline handoff — filter-aware billed totals + UI wiring for follow-up / assignment
+
+**Scope:** Final integration pass for the 12-phase professional medical
+claims pipeline. Wire filter-aware per-tab billed totals into the queue
+API, add front-end chips that surface those totals alongside counts,
+expose the Phase 11 `unassigned` filter in the UI, and surface
+follow-up / aging indicators on queue rows.
+
+**Backend**
+- `GET /api/billing/claims/queue` now returns a top-level
+  `billed_totals` dict keyed by tab (`all`, `pending-submission`,
+  `needs-fixes`, `rejected`, `follow-up`). Each entry is the sum of
+  `billed_cents` across the tab's filter-aware query (payer, assignee,
+  unassigned, age, raw status, canonical status all respected).
+- Tab counts + billed totals are computed in a single `$group`
+  aggregate per tab (replaces the prior `count_documents` call) so
+  there is no extra round-trip even though we now return an additional
+  financial dimension.
+- New regression test
+  `test_queue_v2_billed_totals_are_real_and_filter_aware` asserts: same
+  keys as `tab_counts`, non-negative ints, `all >= each named tab`,
+  zeroes under a bogus payer filter, and positive under a real payer
+  filter that just received a seeded claim.
+
+**Frontend — Claims queue (`/billing/claims`)**
+- Each tab trigger stacks `CountChip` + new `BilledChip` (data-testid
+  `tab-billed-total`) so operators see both load and financial stake
+  per tab without switching views.
+- Assignee filter gained `Unassigned only` option (data-testid
+  `claims-assignee-filter-unassigned`). Selecting it forwards
+  `unassigned=true` via `useClaimsQueueV2` and scopes both rows and
+  `billed_totals` to unassigned claims.
+- Claim rows now render an italic `Unassigned` label when
+  `assigned_to` is null, a warning-tone follow-up badge (data-testid
+  `claim-row-followup-<id>`) when `followup_flag=true`, and a subtle
+  `<n>d old` hint (data-testid `claim-row-aging-<id>`) when
+  `aging_days >= 30` and there is no explicit follow-up flag.
+
+**Verification**
+- Backend: 8/8 `test_claims_queue_v2.py`, 14/14
+  `test_assignment_rbac_phase11.py`, 6/6 `test_claims_queue_phase2b.py`,
+  8/8 `test_billing_phase9*`, 94/94 across Phase 6-11 suites. 3
+  pre-existing flaky tests (`test_run_rules_clean_claim`,
+  `test_statement_body_deterministic`,
+  `test_email_mock_path_when_no_key`) remain flagged for separate
+  cleanup — they are not Phase 12 regressions.
+- Frontend: Testing agent confirmed tabs render paired
+  count/billed-total per tab (e.g. `All 1687 $87,700`, `Pending
+  submission 410 $21,282`, `Rejected / denied 286 $14,040`,
+  `Follow-up needed 112 $5,815`). Selecting `Unassigned only` scopes
+  rows + summary + tab totals consistently.
+
+---
+
+
+
 ## 2026-04-22 — Patient Portal go-live + Month-end bulk statement dispatch
 
 **Scope:** (1) Finalize the patient-facing portal shell so patients log in

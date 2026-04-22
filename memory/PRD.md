@@ -1032,6 +1032,17 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Dependency SCA + SAST in CI — ISO A.8.8 / A.8.28
 
 ### P1 (next features)
+- **Claims Phase 13+ — Live clearinghouse transmission**: wire real
+  HTTPS transmission to Change/Optum sandbox once user credentials are
+  available (currently stubbed via `CLEARINGHOUSE_CHC_MODE=sandbox`).
+- **Claims Phase 13+ — Eligibility 270/271**: fully build out the
+  eligibility request/response loop on top of the base clearinghouse
+  adapter (currently stubbed).
+- **Claims UX — Assignee picker**: replace the raw user-id text input
+  on the `ClaimWorkflow` AssignmentRow with a tenant-scoped assignee
+  dropdown (already server-side via `filter_options.assignees`).
+- Claims flaky tests: fix `test_run_rules_clean_claim` (needs Patient
+  DOB in fixture) and `test_statement_body_deterministic` (spacing).
 - Global retry-after-reauth Axios interceptor that silently replays the
   last privileged action after reauth confirmation (UX polish)
 - Real Twilio SMS + Resend email (require BAAs)
