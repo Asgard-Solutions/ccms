@@ -2,6 +2,81 @@
 
 **Last updated:** 2026-04-22 (Demo sanitation pass — clinic profile, appointment types, rooms, profile scrub)
 
+## 4d. Clinical chart completeness seed (2026-04-22)
+Addressed the fourth prompt — every Riverbend persona now has a
+fully-populated Intake + Clinical chart that matches their visit
+history.
+
+**Problem**: all 10 clinical collections (`clinical_episode_cases`,
+`clinical_diagnoses`, `clinical_treatment_plans`, `clinical_history`,
+`clinical_outcome_entries`, `patient_intake_forms`, etc.) were 0-row
+for the Riverbend tenant despite 12 seeded appointments and 8 personas
+with rich visit histories. The Clinical tab showed "No episodes yet",
+the Intake tab showed "No intake forms captured yet", and the chart
+felt disconnected from the schedule.
+
+**Blueprint approach** — `/app/backend/services/demo/clinical_seed.py`
+declares a `CHART_BLUEPRINT` keyed on persona `(first, last)` with an
+episode, diagnoses (real ICD-10 codes), treatment plan (goals,
+baselines, interventions, home-care + work-modification guidance),
+intake history snapshot (chief complaint, HPI narrative, aggravating/
+relieving factors, red-flag screening, occupation, case-specific
+details — accident report for MVA, WC claim info for workers' comp),
+outcome-measure entries (NDI / Oswestry / QuickDASH baselines + 3-week
+progress), and grouped `clinical_intake` + `case_details` sections
+stored on the patient doc (field-encrypted).
+
+**Persona coverage**
+| Persona | Case type | Episode | Primary ICD-10 |
+|---|---|---|---|
+| Hannah Whitaker | Injury | Acute lumbar strain (lifting) | M54.50 |
+| Marcus Reid | New pt eval | Cervicogenic HA (trucker) | M54.2, G44.86 |
+| Isabella Cho | Auto/PIP | Post-MVA C/T sprain | S13.4XXA, S23.3XXA |
+| Derrick Stone | Workers' comp | Warehouse lumbar sprain | S33.5XXA |
+| Aria Johnson | Injury | R shoulder RC tendinopathy | M75.101 |
+| Claire Morgan | Insurance (closed) | Lumbar strain — discharged | M54.50 (resolved) |
+| Jaxon Morgan | Pediatric | Postural neck stiffness | M54.2 |
+| Ethan Parker | Self-pay | Maintenance wellness | M54.6 |
+
+Each persona gets a matching accident-report/work-comp block with
+fictitious but believable carrier names, claim numbers, adjuster
+contacts, and dates-of-injury aligned to the seeded billing payer.
+
+**Files changed**
+- `/app/backend/services/demo/clinical_seed.py` — NEW (~700 lines).
+  `CHART_BLUEPRINT` + 7 idempotent seeders. Uses
+  `encrypt_patient_doc` for the grouped PHI sections so masking still
+  works; stores `field_meta.{key}.source = "intake"` on history rows
+  so the `ClinicalHistoryPublic` model validation passes.
+- `/app/backend/services/demo/seed.py` — `seed_demo_clinic()` now
+  calls `seed_demo_clinical_charts()` after personas + providers are
+  in place.
+- `/app/backend/tests/test_riverbend_demo_sanitation.py` —
+  `TestClinicalChartCompleteness` (5 tests):
+  `test_every_persona_has_episode`,
+  `test_every_persona_has_treatment_plan`,
+  `test_every_persona_has_diagnoses`,
+  `test_every_persona_has_history_snapshot`,
+  `test_every_persona_has_intake_form`.
+
+**Verification**
+- 20/20 tests passing.
+- Visual: Isabella Cho's Clinical tab now renders the
+  "MVA 3 weeks ago — cervical/thoracic sprain" episode with 3 active
+  diagnoses, an 8-week treatment plan, a complete Intake & History
+  card (HPI narrative, severity 6/10, software-engineer occupation,
+  pain locations, aggravating/relieving factors, prior treatment,
+  medications, allergies, red-flag screening). Intake tab shows a
+  completed intake form keyed to the same case.
+
+**Coverage rules enforced by the test suite**
+- Every persona with a seeded appointment has an episode.
+- Every episode has at least one ICD-10 diagnosis marked primary.
+- Every active episode has a treatment plan with goals + baselines.
+- Every persona has a `clinical_history` snapshot w/ chief complaint.
+- Every persona has a completed intake form on file.
+
+
 ## 4c. Claims: internal-ID leakage audit (2026-04-22)
 User reported raw UUIDs / hashes showing up on claim workflow / detail
 screens and (dangerously) potentially leaking into 837P wire payloads.

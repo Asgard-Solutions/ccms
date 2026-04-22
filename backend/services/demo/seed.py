@@ -1800,6 +1800,11 @@ async def seed_demo_clinic() -> None:
     # the `providers` + `service_facilities` collections directly so
     # no inter-seeder state plumbing is needed.
     await _upsert_providers(tenant_id, staff_by_email=staff_by_email)
+    # Rich chart seed — episodes, diagnoses, treatment plans, intake
+    # history, outcome entries, plus the `clinical_intake` +
+    # `case_details` grouped sections on patient docs.
+    from services.demo.clinical_seed import seed_demo_clinical_charts
+    await seed_demo_clinical_charts(tenant_id, location_id, lead_doc_id)
     # Notification log + follow-up rebooking queue — populates the
     # Communication panel and Checkout page's suggestions card.
     await _seed_notifications(tenant_id, location_id)

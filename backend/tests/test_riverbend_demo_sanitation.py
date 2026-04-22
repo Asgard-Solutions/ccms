@@ -440,7 +440,6 @@ class TestClaimDisplayVsStorage:
         from services.billing.clearinghouse.x12_837p import build_x12_837p_wire
 
         claim = {"id": "c1", "billing_provider_id": "29da6566-a752-4c36-b524-3291dd698cb9"}
-
         # No billing_provider provided — must refuse rather than silently
         # using the UUID.
         with pytest.raises(ValueError, match="billing_provider is required"):
@@ -448,7 +447,6 @@ class TestClaimDisplayVsStorage:
                 claim=claim, diagnoses=[], lines=[],
                 patient=None, payer=None, policy=None,
             )
-
         # Billing provider provided but NPI is a UUID — must refuse.
         bad_bp = {"name": "X", "npi": "29da6566-a752-4c36-b524-3291dd698cb9"}
         with pytest.raises(ValueError, match="10-digit NPI"):
@@ -457,3 +455,112 @@ class TestClaimDisplayVsStorage:
                 patient=None, payer=None, policy=None,
                 billing_provider=bad_bp,
             )
+
+
+# --------- Charts: every persona with visits has intake + clinical ---
+CHART_BEARING_PERSONAS = [
+    ("Hannah", "Whitaker"), ("Marcus", "Reid"), ("Isabella", "Cho"),
+    ("Derrick", "Stone"),   ("Aria",   "Johnson"), ("Claire", "Morgan"),
+    ("Jaxon",  "Morgan"),   ("Ethan",  "Parker"),
+]
+
+
+class TestClinicalChartCompleteness:
+    """Every Riverbend persona that has an appointment on the schedule
+    must have a fully populated chart (episode + diagnoses + treatment
+    plan + clinical_history + at least one intake form). Otherwise the
+    Clinical + Intake tabs render empty states that contradict the
+    visit history and break the demo narrative."""
+
+    def _patient_ids(self, patients_list):
+        ids: dict[tuple[str, str], str] = {}
+        for p in patients_list:
+            key = (p.get("first_name"), p.get("last_name"))
+            if key in set(CHART_BEARING_PERSONAS):
+                ids[key] = p["id"]
+        return ids
+
+    def test_every_persona_has_episode(self, admin_session_reauth, patients_list):
+        pid_by_name = self._patient_ids(patients_list)
+        missing = []
+        for name_key, pid in pid_by_name.items():
+            r = admin_session_reauth.get(
+                f"{BASE_URL}/api/patients/{pid}/clinical/episodes",
+                timeout=20,
+            )
+            assert r.status_code == 200, r.text
+            if not r.json():
+                missing.append(f"{name_key[0]} {name_key[1]}")
+        assert not missing, (
+            f"These personas have no clinical episode — Clinical tab "
+            f"will show empty state: {missing}"
+        )
+
+    def test_every_persona_has_treatment_plan(self, admin_session_reauth, patients_list):
+        pid_by_name = self._patient_ids(patients_list)
+        missing = []
+        for name_key, pid in pid_by_name.items():
+            r = admin_session_reauth.get(
+                f"{BASE_URL}/api/patients/{pid}/clinical/treatment-plans",
+                timeout=20,
+            )
+            assert r.status_code == 200, r.text
+            if not r.json():
+                missing.append(f"{name_key[0]} {name_key[1]}")
+        assert not missing, (
+            f"Expected a treatment plan for each chart-bearing persona; "
+            f"missing: {missing}"
+        )
+
+    def test_every_persona_has_diagnoses(self, admin_session_reauth, patients_list):
+        pid_by_name = self._patient_ids(patients_list)
+        missing = []
+        for name_key, pid in pid_by_name.items():
+            r = admin_session_reauth.get(
+                f"{BASE_URL}/api/patients/{pid}/clinical/diagnoses",
+                timeout=20,
+            )
+            assert r.status_code == 200, r.text
+            if not r.json():
+                missing.append(f"{name_key[0]} {name_key[1]}")
+        assert not missing, (
+            f"Every persona should have ICD-10 diagnosis rows; missing: "
+            f"{missing}"
+        )
+
+    def test_every_persona_has_history_snapshot(self, admin_session_reauth, patients_list):
+        pid_by_name = self._patient_ids(patients_list)
+        missing = []
+        for name_key, pid in pid_by_name.items():
+            r = admin_session_reauth.get(
+                f"{BASE_URL}/api/patients/{pid}/clinical/history",
+                timeout=20,
+            )
+            # 404 or empty body = no history snapshot yet.
+            if r.status_code == 404:
+                missing.append(f"{name_key[0]} {name_key[1]}")
+                continue
+            assert r.status_code == 200, r.text
+            body = r.json()
+            if not body or not body.get("chief_complaint"):
+                missing.append(f"{name_key[0]} {name_key[1]}")
+        assert not missing, (
+            f"Every persona should have a clinical_history snapshot "
+            f"(with chief_complaint populated) — missing: {missing}"
+        )
+
+    def test_every_persona_has_intake_form(self, admin_session_reauth, patients_list):
+        pid_by_name = self._patient_ids(patients_list)
+        missing = []
+        for name_key, pid in pid_by_name.items():
+            r = admin_session_reauth.get(
+                f"{BASE_URL}/api/patients/{pid}/intake-forms",
+                timeout=20,
+            )
+            assert r.status_code == 200, r.text
+            if not r.json():
+                missing.append(f"{name_key[0]} {name_key[1]}")
+        assert not missing, (
+            f"Every persona should have a completed intake form; "
+            f"missing: {missing}"
+        )
