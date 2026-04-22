@@ -1,6 +1,56 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-04-22 (Patient Portal go-live + Month-end bulk statement dispatch)
+**Last updated:** 2026-04-22 (Demo sanitation pass — clinic profile, appointment types, rooms, profile scrub)
+
+## 4a. Demo sanitation pass (2026-04-22)
+Addressed the user's "full demo-environment sanitation" request on top of
+the Riverbend seed already landed by the previous agent. Deliverables:
+- **ClinicProfile** — `services/demo/seed.py::_upsert_clinic_profile`
+  seeds exactly one profile per boot for the Riverbend Downtown location
+  (1840 NW Riverside Dr · Portland OR 97209, +1-503-555-0100, timezone
+  `America/Los_Angeles`, Mon–Fri 08:00–12:00 + 13:00–18:00, Sat 09:00–13:00,
+  Sun closed). Hours model round-trips through `ClinicProfileUpdate`.
+- **Appointment types** — exactly 9 realistic visit types seeded
+  (Chiropractic Adjustment, Follow-up Visit, New Patient Exam, Re-Exam,
+  Therapy / Modality, Auto Injury / PIP Evaluation, Workers' Comp
+  Evaluation, Maintenance / Wellness Visit, Pediatric Visit), ordered via
+  `sort_order`, with realistic durations and follow-up-day defaults.
+- **Rooms** — exactly 7 rooms seeded for the default location (Exam 1/2,
+  Adjustment 1/2, Consult Room, X-Ray Suite, Therapy Bay) covering
+  `exam | consult | xray | therapy` types.
+- **Duplicate location cleanup** — `services/authz/seed.py` now prefers
+  the Riverbend tenant's location (queried by `tenant_id`) instead of
+  creating a separate "Main Clinic / HQ" row that `seed_tenancy` would
+  later rename and backfill. `reseed_demo_clinic.py` purges any
+  non-canonical locations on the default tenant and re-migrates their
+  ULAs to the canonical Riverbend row.
+- **Demo-user profile scrub** — `services/identity/seed.py` now forces
+  the self-service profile fields (`first_name`, `last_name`,
+  `credentials_suffix`, `preferred_signature_name`, `job_title`,
+  `time_zone`, `mobile_phone`, `work_phone`) back to canonical values on
+  every boot, so pytest runs that PATCH `admin@ccms.app` into "Ada
+  Lovelace, DC DACBR" no longer leak into the demo. Admin header now
+  reads "Welcome back, Ava Bennett".
+- **Patient seed idempotency** — `_upsert_personas` lookup key changed
+  from `(first_name, last_name, date_of_birth)` to
+  `(first_name, last_name, email)` so an intervening PATCH that encrypts
+  `date_of_birth` (PHI encryption at rest) doesn't fool the reseed into
+  inserting a second row. Sibling lookups in `_upsert_policies`,
+  `_seed_clinical_notes`, and `_seed_appointments` use the same safer
+  key (appointments drop `date_of_birth` entirely).
+- **Tests**: `/app/backend/tests/test_riverbend_demo_sanitation.py` —
+  10/10 passing: single clinic profile with correct hours, 9 appointment
+  types in exact order with no `Dup-*` / `DefaultOnly-*` / `Filterable-*`
+  junk, 7 rooms, single "Riverbend — Downtown" location,
+  `admin@ccms.app` profile = Ava Bennett (Pacific time, empty credentials
+  suffix), `doctor@ccms.app` profile = Dr. Noah Carter DC CCSP, all 8
+  personas present with populated `sex_at_birth`, PATCH round-trip on
+  Hannah Whitaker + Marcus Reid succeeds without validation errors and
+  stays idempotent on subsequent reseeds.
+- **Ops note**: after any pytest run that touches the default tenant,
+  re-run `python /app/backend/scripts/reseed_demo_clinic.py` followed by
+  `sudo supervisorctl restart backend`. Reseed now completes the wipe
+  + re-seed cycle in < 10 s and is safe to chain in CI.
 
 ## 0. Design system (binding)
 The Chiro Software design system is authoritative for every UI surface.

@@ -771,13 +771,15 @@ async def _upsert_personas(
     now = _now()
     id_by_email: dict[str, str] = {}
     for spec in _PERSONAS:
-        # Minor dependents share the guardian's email/phone — key on
-        # first+last+dob so we never collapse them into one record.
+        # Key on (first_name, last_name, email) — stable across reseeds
+        # and immune to PHI-encryption of scalar fields like DOB. Minor
+        # dependents who share their guardian's email (Jaxon Morgan vs
+        # Claire Morgan) stay distinct because their first_name differs.
         key = {
             "tenant_id": tenant_id,
             "first_name": spec["first_name"],
             "last_name": spec["last_name"],
-            "date_of_birth": spec["date_of_birth"],
+            "email": spec["email"],
         }
         existing = await db.patients.find_one(key, {"_id": 0, "id": 1})
         patient_id = existing["id"] if existing else str(uuid.uuid4())
@@ -985,7 +987,7 @@ async def _upsert_policies(
             {"tenant_id": tenant_id,
              "first_name": spec["first_name"],
              "last_name": spec["last_name"],
-             "date_of_birth": spec["date_of_birth"]},
+             "email": spec["email"]},
             {"_id": 0, "id": 1},
         )
         if not patient:
@@ -1045,7 +1047,7 @@ async def _seed_clinical_notes(
             {"tenant_id": tenant_id,
              "first_name": spec["first_name"],
              "last_name": spec["last_name"],
-             "date_of_birth": spec["date_of_birth"]},
+             "email": spec["email"]},
             {"_id": 0, "id": 1},
         )
         if not patient:
@@ -1140,9 +1142,10 @@ async def _seed_appointments(
     ]
 
     for first, last, dob, d_offset, hour, dur, reason, sts, who in schedule:
+        # Lookup by name only — DOB can be encrypted after a PATCH
+        # round-trip which breaks exact-string matching.
         pt = await db.patients.find_one(
-            {"tenant_id": tenant_id, "first_name": first, "last_name": last,
-             "date_of_birth": dob},
+            {"tenant_id": tenant_id, "first_name": first, "last_name": last},
             {"_id": 0, "id": 1},
         )
         if not pt:
