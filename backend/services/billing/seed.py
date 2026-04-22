@@ -115,6 +115,11 @@ async def seed_billing() -> None:
         ("enrollment_required", False),
         ("routing_metadata", None),
         ("routing_last_resolved_at", None),
+        # Phase 9 — chiropractic enforcement opt-in flags. All False
+        # by default so existing payers keep their current behaviour.
+        ("requires_at_modifier", False),
+        ("requires_subluxation_primary", False),
+        ("requires_initial_treatment_date", False),
     ):
         res = await db.billing_payers.update_many(
             {field_name: {"$exists": False}},
@@ -154,4 +159,15 @@ async def seed_billing() -> None:
         logger.info(
             "billing.seed backfilled patient_control_number on %d claim rows",
             backfilled,
+        )
+
+    # Phase 9 — claim.initial_treatment_date default (null for legacy rows).
+    res = await db.claims.update_many(
+        {"initial_treatment_date": {"$exists": False}},
+        {"$set": {"initial_treatment_date": None, "updated_at": now}},
+    )
+    if res.modified_count:
+        logger.info(
+            "billing.seed backfilled initial_treatment_date on %d claim rows",
+            res.modified_count,
         )

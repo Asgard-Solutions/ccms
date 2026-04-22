@@ -368,27 +368,11 @@ def rule_billed_total_matches_header(ctx: ScrubberContext) -> list[ScrubberFindi
 
 
 # ---------------------------------------------------------------------------
-# Phase 4 — additional rules covering provider, dates, routing, and
-# chiropractic-specialty specifics.
+# Phase 4 — additional rules covering provider, dates, routing.
+# Chiropractic-specialty rules moved to `services.billing.specialty.chiropractic`
+# (Phase 9) so specialty logic stays isolated.
 # ---------------------------------------------------------------------------
-_CHIROPRACTIC_CMT_CODES: frozenset[str] = frozenset({
-    "98940", "98941", "98942", "98943",
-})
-# Typical outpatient / chiropractic POS codes. Still allow others
-# (home, assisted living etc.) but warn so the operator confirms.
-_TYPICAL_CHIRO_POS: frozenset[str] = frozenset({
-    "11",  # Office
-    "12",  # Home
-    "22",  # On-campus outpatient hospital
-    "49",  # Independent clinic
-    "99",  # Other place of service
-})
 _VALID_FREQUENCY_CODES: frozenset[str] = frozenset({"1", "7", "8"})
-# Any of these modifiers on a CMT line signals chiropractic intent.
-# -AT: active treatment; -GA/GY/GZ: notice of exclusion variants.
-_CHIRO_CMT_MODIFIERS: frozenset[str] = frozenset({
-    "AT", "GA", "GY", "GZ",
-})
 
 
 def rule_patient_dob_required(ctx: ScrubberContext) -> list[ScrubberFinding]:
@@ -501,49 +485,21 @@ def rule_provider_npi_format(ctx: ScrubberContext) -> list[ScrubberFinding]:
     return findings
 
 
-def rule_chiropractic_cmt_modifier(ctx: ScrubberContext) -> list[ScrubberFinding]:
-    """Chiropractic manipulative treatment codes (98940-98943) without
-    an AT/GA/GY/GZ modifier are typically denied by Medicare and many
-    commercial payers."""
-    findings: list[ScrubberFinding] = []
-    for i, ln in enumerate(ctx.lines):
-        code = (ln.get("code") or "").strip()
-        if code not in _CHIROPRACTIC_CMT_CODES:
-            continue
-        mods = ctx.line_modifiers_by_line.get(ln["id"], [])
-        mod_codes = {(m.get("modifier_code") or "").upper() for m in mods}
-        if not mod_codes & _CHIRO_CMT_MODIFIERS:
-            findings.append(ScrubberFinding(
-                code="CMT_MODIFIER_MISSING", severity="warning",
-                message=(
-                    f"Line {ln.get('sequence')} ({code}) is a CMT code "
-                    "but carries none of AT/GA/GY/GZ. Payers frequently "
-                    "deny unmodified CMT as maintenance care."
-                ),
-                entity_path=f"lines[{i}].modifiers",
-                category="chiropractic",
-            ))
-    return findings
+def rule_chiropractic_cmt_modifier(ctx: ScrubberContext) -> list[ScrubberFinding]:   # noqa: E501
+    """Back-compat shim — real implementation lives in
+    `services.billing.specialty.chiropractic`. Retained so any existing
+    import continues to work."""
+    from services.billing.specialty.chiropractic import (
+        rule_chiropractic_cmt_modifier as _impl,
+    )
+    return _impl(ctx)
 
 
 def rule_chiropractic_pos_typical(ctx: ScrubberContext) -> list[ScrubberFinding]:
-    """Warn when place-of-service is outside the common chiropractic
-    set so the operator can double-check before the clearinghouse
-    pushes back."""
-    pos = (ctx.claim.get("place_of_service") or "").strip()
-    if not pos or not (pos.isdigit() and len(pos) == 2):
-        return []  # format issues are caught elsewhere
-    if pos not in _TYPICAL_CHIRO_POS:
-        return [ScrubberFinding(
-            code="CHIRO_POS_ATYPICAL", severity="warning",
-            message=(
-                f"Place of service {pos} is unusual for chiropractic — "
-                "verify the encounter location."
-            ),
-            entity_path="place_of_service",
-            category="chiropractic",
-        )]
-    return []
+    from services.billing.specialty.chiropractic import (
+        rule_chiropractic_pos_typical as _impl,
+    )
+    return _impl(ctx)
 
 
 def rule_payer_routing_ready(ctx: ScrubberContext) -> list[ScrubberFinding]:
@@ -582,35 +538,25 @@ def rule_payer_routing_ready(ctx: ScrubberContext) -> list[ScrubberFinding]:
 def rule_chiropractic_subluxation_suggested(
     ctx: ScrubberContext,
 ) -> list[ScrubberFinding]:
-    """Medicare requires a subluxation diagnosis (ICD-10 M99.0x) on
-    every CMT claim. Commercial payers commonly expect it too. Soft
-    warn so operators know before the EOB arrives."""
-    has_cmt = any(
-        (ln.get("code") or "").strip() in _CHIROPRACTIC_CMT_CODES
-        for ln in ctx.lines
+    """Back-compat alias — superseded by
+    `specialty.chiropractic.rule_chiropractic_subluxation_present`."""
+    from services.billing.specialty.chiropractic import (
+        rule_chiropractic_subluxation_present as _impl,
     )
-    if not has_cmt:
-        return []
-    has_subluxation = any(
-        (d.get("code") or "").upper().startswith("M99.")
-        for d in ctx.diagnoses
-    )
-    if not has_subluxation:
-        return [ScrubberFinding(
-            code="CMT_SUBLUXATION_DX_MISSING", severity="warning",
-            message=(
-                "Chiropractic manipulative treatment is billed but no "
-                "subluxation diagnosis (ICD-10 M99.0x) is present. "
-                "Medicare and many commercial payers require it."
-            ),
-            entity_path="diagnoses",
-            category="chiropractic",
-        )]
-    return []
+    return _impl(ctx)
+
+
+# Phase 9 — chiropractic specialty rule set, owned by
+# `services.billing.specialty.chiropractic`. Imported at module load
+# so `DEFAULT_RULES` is deterministic; each rule self-gates on
+# `is_chiropractic_claim(ctx)` so the order below is harmless for
+# non-chiro claims.
+from services.billing.specialty import CHIROPRACTIC_RULES   # noqa: E402
 
 
 # Order matters: header-level rules run before lines so the UI shows
-# "fix your header first" before drilling into line detail.
+# "fix your header first" before drilling into line detail. Specialty
+# rules run last so the header/line fundamentals settle first.
 DEFAULT_RULES: list[Rule] = [
     rule_has_patient,
     rule_has_payer,
@@ -629,9 +575,7 @@ DEFAULT_RULES: list[Rule] = [
     rule_line_diagnosis_pointers,
     rule_line_units_and_billed,
     rule_modifier_format,
-    rule_chiropractic_cmt_modifier,
-    rule_chiropractic_subluxation_suggested,
-    rule_chiropractic_pos_typical,
+    *CHIROPRACTIC_RULES,
     rule_billed_total_matches_header,
 ]
 

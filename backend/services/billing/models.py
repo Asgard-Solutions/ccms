@@ -274,6 +274,13 @@ class PayerCreate(BaseModel):
     realtime_payer_id: str | None = Field(default=None, max_length=40)
     enrollment_required: bool = False
     routing_metadata: dict | None = None
+    # Phase 9 — payer-level opt-in for stricter chiropractic rules.
+    # Medicare always gets these rules as errors; other payers only
+    # when the operator explicitly opts in. Keeps chiropractic
+    # enforcement *payer-rule driven* instead of hardcoded by name.
+    requires_at_modifier: bool = False
+    requires_subluxation_primary: bool = False
+    requires_initial_treatment_date: bool = False
 
     @field_validator("name")
     @classmethod
@@ -303,6 +310,10 @@ class PayerUpdate(BaseModel):
     realtime_payer_id: str | None = Field(default=None, max_length=40)
     enrollment_required: bool | None = None
     routing_metadata: dict | None = None
+    # Phase 9 — chiropractic enforcement opt-ins.
+    requires_at_modifier: bool | None = None
+    requires_subluxation_primary: bool | None = None
+    requires_initial_treatment_date: bool | None = None
 
 
 class PayerPublic(BaseModel):
@@ -327,6 +338,11 @@ class PayerPublic(BaseModel):
     enrollment_required: bool = False
     routing_metadata: dict | None = None
     routing_last_resolved_at: str | None = None
+    # Phase 9 — chiropractic enforcement opt-ins (default False so
+    # legacy rows continue to behave exactly like pre-Phase 9).
+    requires_at_modifier: bool = False
+    requires_subluxation_primary: bool = False
+    requires_initial_treatment_date: bool = False
     created_at: str
     updated_at: str
 
@@ -747,6 +763,12 @@ class ClaimCreate(BaseModel):
     onset_date: str | None = Field(
         default=None, pattern=r"^\d{4}-\d{2}-\d{2}$",
     )
+    # Phase 9 — initial treatment date of the current condition.
+    # Distinct from `onset_date` (the first symptom date). Required on
+    # Medicare chiropractic claims; emitted as X12 DTP*454 when set.
+    initial_treatment_date: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )
     service_date_from: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     service_date_to: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     diagnoses: list[ClaimDiagnosisInput] = Field(min_length=1, max_length=12)
@@ -778,6 +800,7 @@ class ClaimPublic(BaseModel):
     payer_claim_control_number: str | None = None
     accident_date: str | None = None
     onset_date: str | None = None
+    initial_treatment_date: str | None = None
     status: ClaimStatus
     service_date_from: str
     service_date_to: str

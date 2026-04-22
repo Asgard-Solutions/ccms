@@ -1071,6 +1071,7 @@ async def create_claim(
         "payer_claim_control_number": None,
         "accident_date": payload.accident_date,
         "onset_date": payload.onset_date,
+        "initial_treatment_date": payload.initial_treatment_date,
         "status": "draft",
         "service_date_from": payload.service_date_from,
         "service_date_to": payload.service_date_to,
