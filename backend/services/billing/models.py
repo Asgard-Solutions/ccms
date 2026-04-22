@@ -312,6 +312,110 @@ class PayerPublic(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Phase 5 — Providers + Service Facilities
+# ---------------------------------------------------------------------------
+# A clinic-side directory of the real NPI / Tax-ID / address records
+# needed to populate 837P loops 2010AA (Billing provider), 2310B
+# (Rendering), and 2310C (Service facility). Existing claims still
+# carry free-text `billing_provider_id` / `rendering_provider_id` /
+# `facility_id` FKs — when a matching row exists in these collections
+# the clearinghouse payload builder resolves it to full wire shape;
+# otherwise the ID is passed through as-is for backward compat.
+ProviderKind = Literal[
+    "billing",      # loop 2010AA (group / type-2 NPI)
+    "rendering",    # loop 2310B (individual / type-1 NPI)
+    "referring",    # loop 2310A
+    "supervising",  # loop 2310D
+]
+
+
+class ProviderCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: ProviderKind
+    name: str = Field(min_length=1, max_length=200)
+    # NPI type-1 (individual, 10 digits) or type-2 (organisation).
+    npi: str = Field(min_length=10, max_length=10, pattern=r"^\d{10}$")
+    # EIN or SSN; 9 digits with optional dash. Required for billing
+    # providers (2010AA), optional elsewhere.
+    tax_id: str | None = Field(default=None, max_length=15)
+    taxonomy_code: str | None = Field(default=None, max_length=20)
+    phone: str | None = Field(default=None, max_length=30)
+    address: dict | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ProviderUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: ProviderKind | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    npi: str | None = Field(
+        default=None, min_length=10, max_length=10, pattern=r"^\d{10}$",
+    )
+    tax_id: str | None = Field(default=None, max_length=15)
+    taxonomy_code: str | None = Field(default=None, max_length=20)
+    phone: str | None = Field(default=None, max_length=30)
+    address: dict | None = None
+    status: Literal["active", "inactive"] | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ProviderPublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    tenant_id: str
+    kind: ProviderKind
+    name: str
+    npi: str
+    tax_id: str | None = None
+    taxonomy_code: str | None = None
+    phone: str | None = None
+    address: dict | None = None
+    status: Literal["active", "inactive"] = "active"
+    notes: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class ServiceFacilityCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=200)
+    # Type-2 NPI for the facility location (2310C). Optional — when
+    # absent the billing provider's address is used on the wire.
+    npi: str | None = Field(
+        default=None, min_length=10, max_length=10, pattern=r"^\d{10}$",
+    )
+    address: dict | None = None
+    phone: str | None = Field(default=None, max_length=30)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ServiceFacilityUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    npi: str | None = Field(
+        default=None, min_length=10, max_length=10, pattern=r"^\d{10}$",
+    )
+    address: dict | None = None
+    phone: str | None = Field(default=None, max_length=30)
+    status: Literal["active", "inactive"] | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ServiceFacilityPublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    tenant_id: str
+    name: str
+    npi: str | None = None
+    address: dict | None = None
+    phone: str | None = None
+    status: Literal["active", "inactive"] = "active"
+    notes: str | None = None
+    created_at: str
+    updated_at: str
+
+
+# ---------------------------------------------------------------------------
 # Patient insurance policies
 # ---------------------------------------------------------------------------
 PolicyRank = Literal["primary", "secondary", "tertiary"]
@@ -333,6 +437,17 @@ class PatientInsurancePolicyCreate(BaseModel):
     termination_date: str | None = Field(
         default=None, pattern=r"^\d{4}-\d{2}-\d{2}$",
     )
+    # Phase 5 — structured subscriber fields required on 837P when
+    # the subscriber is not the patient (SBR loop 2000B). These are
+    # optional on create to preserve the legacy flat intake shape;
+    # the scrubber enforces presence when `relationship != self`.
+    subscriber_dob: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )
+    subscriber_gender: Literal["M", "F", "U"] | None = None
+    # Loose dict to keep address parsing out of this schema. Expected
+    # keys: street1 / street2 / city / state / postal_code / country.
+    subscriber_address: dict | None = None
     notes: str | None = Field(default=None, max_length=2000)
 
 
@@ -350,6 +465,10 @@ class PatientInsurancePolicyPublic(BaseModel):
     effective_date: str | None = None
     termination_date: str | None = None
     status: Literal["active", "inactive"] = "active"
+    # Phase 5 — structured subscriber fields (see note above).
+    subscriber_dob: str | None = None
+    subscriber_gender: Literal["M", "F", "U"] | None = None
+    subscriber_address: dict | None = None
     notes: str | None = None
     created_at: str
     updated_at: str
@@ -596,6 +715,18 @@ class ClaimCreate(BaseModel):
     facility_id: str | None = None
     authorization_number: str | None = Field(default=None, max_length=60)
     referral_number: str | None = Field(default=None, max_length=60)
+    # Phase 5 — 837P foundational fields.
+    # PCN: provider-assigned unique claim id sent in CLM01. Must be
+    # unique per tenant. When absent, the router auto-assigns
+    # `CCMS-<8char>` derived from the claim's uuid so existing clients
+    # keep working.
+    patient_control_number: str | None = Field(default=None, max_length=38)
+    accident_date: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )
+    onset_date: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )
     service_date_from: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     service_date_to: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     diagnoses: list[ClaimDiagnosisInput] = Field(min_length=1, max_length=12)
@@ -620,6 +751,13 @@ class ClaimPublic(BaseModel):
     facility_id: str | None = None
     authorization_number: str | None = None
     referral_number: str | None = None
+    # Phase 5 — 837P foundational fields
+    patient_control_number: str | None = None
+    # Populated from remittance / 277CA events — the payer's claim
+    # control number (ICN / DCN). Empty until the payer responds.
+    payer_claim_control_number: str | None = None
+    accident_date: str | None = None
+    onset_date: str | None = None
     status: ClaimStatus
     service_date_from: str
     service_date_to: str

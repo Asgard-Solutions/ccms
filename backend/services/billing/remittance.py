@@ -435,6 +435,13 @@ async def post_remittance(
                 set_fields["paid_cents"] = int(item.paid_cents)
             if step == "denied" and item.denial_code:
                 set_fields["last_denial_code"] = item.denial_code
+            # Phase 5 — mirror the payer's claim control number
+            # (ICN / DCN) onto the canonical claim. First seen wins
+            # so a later partial remit doesn't clobber the original.
+            if item.payer_control_number and not claim.get(
+                "payer_claim_control_number"
+            ):
+                set_fields["payer_claim_control_number"] = item.payer_control_number
             await db.claims.update_one(
                 {"id": claim["id"], "tenant_id": ctx.tenant_id},
                 {"$set": set_fields,

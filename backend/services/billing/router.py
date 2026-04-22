@@ -95,12 +95,18 @@ from services.billing.models import (
     PaymentCreate,
     PaymentPublic,
     PaymentStatus,
+    ProviderCreate,
+    ProviderPublic,
+    ProviderUpdate,
     RefundCreate,
     RefundPublic,
     RemittanceClaimPublic,
     RemittanceLinePublic,
     RemittancePostRequest,
     RemittancePublic,
+    ServiceFacilityCreate,
+    ServiceFacilityPublic,
+    ServiceFacilityUpdate,
     StatementPublic,
 )
 from services.clinical.billing_readiness_router import evaluate_billing_readiness
@@ -422,6 +428,10 @@ async def create_insurance_policy(
         "effective_date": payload.effective_date,
         "termination_date": payload.termination_date,
         "status": "active",
+        # Phase 5 — structured subscriber identity.
+        "subscriber_dob": payload.subscriber_dob,
+        "subscriber_gender": payload.subscriber_gender,
+        "subscriber_address": payload.subscriber_address,
         "notes": payload.notes,
         "created_at": now,
         "updated_at": now,
@@ -1028,6 +1038,9 @@ async def create_claim(
 
     now = _now()
     claim_id = str(uuid.uuid4())
+    # Phase 5 — PCN: caller-supplied value, else auto-derive from the
+    # new uuid so every claim leaves here with a valid CLM01 identifier.
+    pcn = (payload.patient_control_number or f"CCMS-{claim_id[:8].upper()}").strip()
 
     billed_cents = sum(ln.billed_cents * ln.units for ln in payload.lines)
     claim_doc = stamp_for_write({
@@ -1045,6 +1058,11 @@ async def create_claim(
         "facility_id": payload.facility_id,
         "authorization_number": payload.authorization_number,
         "referral_number": payload.referral_number,
+        # Phase 5 — 837P foundational identifiers
+        "patient_control_number": pcn,
+        "payer_claim_control_number": None,
+        "accident_date": payload.accident_date,
+        "onset_date": payload.onset_date,
         "status": "draft",
         "service_date_from": payload.service_date_from,
         "service_date_to": payload.service_date_to,
@@ -4975,6 +4993,190 @@ async def update_clearinghouse_enrollment(
         entity_type="clearinghouse_enrollment", entity_id=enrollment_id,
         metadata={"fields": sorted(list(updates.keys())),
                   "payer_id": existing["payer_id"]},
+    )
+    return _public(fresh)
+
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Provider directory (billing / rendering / referring)
+# ---------------------------------------------------------------------------
+# These rows hold the real NPI, Tax-ID, and address data required for
+# 837P submission. Claims still keep free-text provider IDs; when a
+# matching row exists here the payload builder will resolve it. Admin-
+# gated via the existing `clinic_settings.update` permission — no new
+# permission introduced.
+@router.get("/providers", response_model=list[ProviderPublic])
+async def list_providers(
+    kind: str | None = Query(default=None),
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    q = scoped_filter({}, ctx, location_scoped=False)
+    if q.get("__deny__"):
+        return []
+    if kind:
+        q["kind"] = kind
+    cursor = db.providers.find(q, {"_id": 0}).sort([("name", 1)])
+    return [d async for d in cursor]
+
+
+@router.post("/providers", response_model=ProviderPublic, status_code=201)
+async def create_provider(
+    payload: ProviderCreate,
+    request: Request,
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    # Uniqueness on (tenant, kind, npi) — clinic-wide NPI catalog.
+    dup = await db.providers.find_one(
+        {"tenant_id": ctx.tenant_id, "kind": payload.kind, "npi": payload.npi},
+        {"_id": 0, "id": 1},
+    )
+    if dup:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Provider already exists for kind={payload.kind} / npi={payload.npi}",
+        )
+    now = _now()
+    pid = str(uuid.uuid4())
+    doc = stamp_for_write({
+        "id": pid,
+        "kind": payload.kind,
+        "name": payload.name,
+        "npi": payload.npi,
+        "tax_id": payload.tax_id,
+        "taxonomy_code": payload.taxonomy_code,
+        "phone": payload.phone,
+        "address": payload.address,
+        "status": "active",
+        "notes": payload.notes,
+        "created_at": now, "updated_at": now,
+        "created_by": user["id"], "updated_by": user["id"],
+    }, ctx, location_id=None)
+    await db.providers.insert_one(doc)
+    await audit_success(
+        user, "billing.provider.created", request,
+        entity_type="provider", entity_id=pid,
+        metadata={"kind": payload.kind, "npi": payload.npi},
+    )
+    return _public(doc)
+
+
+@router.patch("/providers/{provider_id}", response_model=ProviderPublic)
+async def update_provider(
+    provider_id: str,
+    payload: ProviderUpdate,
+    request: Request,
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    existing = await _scoped_one(db.providers, {"id": provider_id}, ctx)
+    if not existing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Provider not found")
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return _public(existing)
+    updates["updated_at"] = _now()
+    updates["updated_by"] = user["id"]
+    await db.providers.update_one(
+        {"id": provider_id, "tenant_id": ctx.tenant_id},
+        {"$set": updates},
+    )
+    fresh = await db.providers.find_one(
+        {"id": provider_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    await audit_success(
+        user, "billing.provider.updated", request,
+        entity_type="provider", entity_id=provider_id,
+        metadata={"fields": sorted(updates.keys())},
+    )
+    return _public(fresh)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Service Facility directory (837P loop 2310C)
+# ---------------------------------------------------------------------------
+@router.get("/service-facilities", response_model=list[ServiceFacilityPublic])
+async def list_service_facilities(
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    q = scoped_filter({}, ctx, location_scoped=False)
+    if q.get("__deny__"):
+        return []
+    cursor = db.service_facilities.find(q, {"_id": 0}).sort([("name", 1)])
+    return [d async for d in cursor]
+
+
+@router.post(
+    "/service-facilities",
+    response_model=ServiceFacilityPublic, status_code=201,
+)
+async def create_service_facility(
+    payload: ServiceFacilityCreate,
+    request: Request,
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    now = _now()
+    fid = str(uuid.uuid4())
+    doc = stamp_for_write({
+        "id": fid,
+        "name": payload.name,
+        "npi": payload.npi,
+        "address": payload.address,
+        "phone": payload.phone,
+        "status": "active",
+        "notes": payload.notes,
+        "created_at": now, "updated_at": now,
+        "created_by": user["id"], "updated_by": user["id"],
+    }, ctx, location_id=None)
+    await db.service_facilities.insert_one(doc)
+    await audit_success(
+        user, "billing.service_facility.created", request,
+        entity_type="service_facility", entity_id=fid,
+        metadata={"name": payload.name, "npi": payload.npi},
+    )
+    return _public(doc)
+
+
+@router.patch(
+    "/service-facilities/{facility_id}",
+    response_model=ServiceFacilityPublic,
+)
+async def update_service_facility(
+    facility_id: str,
+    payload: ServiceFacilityUpdate,
+    request: Request,
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    existing = await _scoped_one(db.service_facilities, {"id": facility_id}, ctx)
+    if not existing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Service facility not found")
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return _public(existing)
+    updates["updated_at"] = _now()
+    updates["updated_by"] = user["id"]
+    await db.service_facilities.update_one(
+        {"id": facility_id, "tenant_id": ctx.tenant_id},
+        {"$set": updates},
+    )
+    fresh = await db.service_facilities.find_one(
+        {"id": facility_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    await audit_success(
+        user, "billing.service_facility.updated", request,
+        entity_type="service_facility", entity_id=facility_id,
+        metadata={"fields": sorted(updates.keys())},
     )
     return _public(fresh)
 

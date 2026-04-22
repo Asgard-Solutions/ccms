@@ -117,3 +117,33 @@ async def seed_billing() -> None:
                 "billing.seed backfilled %s on %d payer rows",
                 field_name, res.modified_count,
             )
+
+    # Phase 5 — patient_control_number backfill.
+    #
+    # Every claim row needs a non-null PCN so the clearinghouse
+    # payload builder can always populate CLM01. For rows that predate
+    # Phase 5 we derive `CCMS-<first 8 chars of uuid, upper>` from
+    # the claim's existing id — deterministic and unique per tenant.
+    legacy_claims = db.claims.find(
+        {"$or": [
+            {"patient_control_number": {"$exists": False}},
+            {"patient_control_number": None},
+            {"patient_control_number": ""},
+        ]},
+        {"_id": 0, "id": 1},
+    )
+    backfilled = 0
+    async for c in legacy_claims:
+        await db.claims.update_one(
+            {"id": c["id"]},
+            {"$set": {
+                "patient_control_number": f"CCMS-{c['id'][:8].upper()}",
+                "updated_at": now,
+            }},
+        )
+        backfilled += 1
+    if backfilled:
+        logger.info(
+            "billing.seed backfilled patient_control_number on %d claim rows",
+            backfilled,
+        )
