@@ -117,9 +117,37 @@ export const OUTCOME_LABELS = {
 
 export const QUEUE_KEYS = [
   { key: "pending-submission", label: "Pending submission" },
+  { key: "needs-fixes", label: "Needs fixes" },
   { key: "rejected", label: "Rejected / denied" },
   { key: "follow-up", label: "Follow-up needed" },
 ];
+
+// Phase 2b — canonical event-type labels for the queue "last activity"
+// column. Keep this map narrow on purpose; unknown event types fall
+// through to a humanised variant of the raw string.
+export const CLAIM_EVENT_LABELS = {
+  created: "Created",
+  validated: "Validated",
+  submitted: "Submitted",
+  resubmitted: "Resubmitted",
+  ack_999_accepted: "999 accepted",
+  ack_999_rejected: "999 rejected",
+  ack_277ca_accepted: "277CA accepted",
+  ack_277ca_rejected: "277CA rejected",
+  outcome_recorded: "Outcome recorded",
+  era_posted: "ERA posted",
+  denied: "Denied",
+  appeal_filed: "Appeal filed",
+  assigned: "Assigned",
+  voided: "Voided",
+  closed: "Closed",
+};
+
+export function claimEventLabel(type) {
+  if (!type) return null;
+  return CLAIM_EVENT_LABELS[type]
+    || type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
 
 export async function createClaimSubmission(claimId, body) {
   const { data } = await api.post(
@@ -184,4 +212,18 @@ export function useClaimQueue({ queue, filters = {} } = {}) {
 
   useEffect(() => { load(); }, [load]);
   return { rows, loading, refresh: load };
+}
+
+// Phase 2b — read the canonical `claim_events` stream for a single
+// claim. Used by the ClaimDetail timeline for clearinghouse-aware
+// activity (999 / 277CA / era_posted) that doesn't live on the main
+// status enum.
+export async function fetchClaimEvents(claimId, { eventType, limit } = {}) {
+  const params = {};
+  if (eventType) params.event_type = eventType;
+  if (limit) params.limit = limit;
+  const { data } = await api.get(
+    `/billing/claims/${claimId}/events`, { params },
+  );
+  return data || [];
 }

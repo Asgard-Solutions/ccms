@@ -19,6 +19,7 @@ import { usePayers } from "./useBillingAdmin";
 import {
   CLAIM_STATUS_LABELS,
   QUEUE_KEYS,
+  claimEventLabel,
   claimStatusTone,
   useClaimQueue,
   useClaims,
@@ -64,7 +65,8 @@ export default function ClaimsQueue() {
     billed: rows.reduce((a, c) => a + (c.billed_cents || 0), 0),
     ready: rows.filter((c) => c.status === "ready").length,
     needsFixes: rows.filter((c) =>
-      ["validation_failed", "rejected", "denied"].includes(c.status)).length,
+      c.status === "validation_failed"
+      || (c.validation_error_count || 0) > 0).length,
   }), [rows]);
 
   return (
@@ -199,7 +201,10 @@ export default function ClaimsQueue() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((c) => (
+              {rows.map((c) => {
+                const lastEventLabel = claimEventLabel(c.last_event);
+                const lastAt = c.last_event_at || c.updated_at;
+                return (
                 <tr
                   key={c.id}
                   data-testid={`claim-row-${c.id}`}
@@ -209,6 +214,7 @@ export default function ClaimsQueue() {
                     <Link
                       to={`/billing/claims/${c.id}`}
                       className="hover:underline"
+                      data-testid={`claim-row-link-${c.id}`}
                     >
                       {c.id.slice(0, 8)}
                     </Link>
@@ -227,12 +233,24 @@ export default function ClaimsQueue() {
                   <td className="px-4 py-3">
                     <span
                       className={`inline-flex items-center rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${claimStatusTone(c.status)}`}
+                      data-testid={`claim-row-status-${c.id}`}
                     >
                       {CLAIM_STATUS_LABELS[c.status] || c.status}
                     </span>
                     {c.validation_error_count > 0 && (
-                      <span className="ml-2 text-[11px] font-semibold text-destructive">
+                      <span
+                        data-testid={`claim-row-errors-${c.id}`}
+                        className="ml-2 text-[11px] font-semibold text-destructive"
+                      >
                         {c.validation_error_count} error{c.validation_error_count === 1 ? "" : "s"}
+                      </span>
+                    )}
+                    {c.validation_warning_count > 0 && (
+                      <span
+                        data-testid={`claim-row-warnings-${c.id}`}
+                        className="ml-2 text-[11px] font-semibold text-warning"
+                      >
+                        {c.validation_warning_count} warn
                       </span>
                     )}
                   </td>
@@ -240,10 +258,21 @@ export default function ClaimsQueue() {
                     {c.assigned_to ? c.assigned_to.slice(0, 8) : "—"}
                   </td>
                   <td className="px-4 py-3 text-xs text-muted-foreground">
-                    {c.updated_at ? formatDateTime(c.updated_at) : "—"}
+                    {lastEventLabel ? (
+                      <span
+                        data-testid={`claim-row-last-event-${c.id}`}
+                        className="inline-flex flex-col"
+                      >
+                        <span className="font-medium text-foreground">{lastEventLabel}</span>
+                        <span>{lastAt ? formatDateTime(lastAt) : "—"}</span>
+                      </span>
+                    ) : (
+                      lastAt ? formatDateTime(lastAt) : "—"
+                    )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}

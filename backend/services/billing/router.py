@@ -3252,9 +3252,17 @@ async def read_claim_queue(
 ):
     """Named work queues:
       * `pending-submission` — statuses ready, validation_failed
+      * `needs-fixes`        — status validation_failed (canonical
+                               scrubber-blocked claims). Narrower
+                               companion to `pending-submission`.
       * `rejected` — statuses rejected, denied
       * `follow-up` — stale submitted/rejected/denied claims per the
         follow-up rule in submission.py
+
+    Each returned row is enriched with `last_event` / `last_event_at`
+    sourced from the `claim_events` stream so the UI can surface
+    recent activity (validated / submitted / era_posted / ...) without
+    a second round-trip.
     """
     db = tenant_db(ctx.tenant_id)
     q: dict = {"tenant_id": ctx.tenant_id}
@@ -3262,6 +3270,11 @@ async def read_claim_queue(
     qname = queue_name.replace("_", "-").lower()
     if qname == "pending-submission":
         q["status"] = {"$in": ["ready", "validation_failed"]}
+    elif qname == "needs-fixes":
+        # Canonical definition: the scrubber found blocking errors and
+        # the claim has not yet been corrected. `validation_failed`
+        # is the only status that unambiguously represents that.
+        q["status"] = "validation_failed"
     elif qname == "rejected":
         q["status"] = {"$in": ["rejected", "denied"]}
     elif qname == "follow-up":
@@ -3282,6 +3295,8 @@ async def read_claim_queue(
         if wanted:
             # Intersect with any queue-provided status filter.
             base = q.get("status", {}).get("$in") if isinstance(q.get("status"), dict) else None
+            if isinstance(q.get("status"), str):
+                base = [q["status"]]
             q["status"] = {"$in": [s for s in wanted if (base is None or s in base)]}
     if age_days is not None:
         q["created_at"] = {"$lt": followup_threshold_iso(age_days)}
@@ -3289,7 +3304,27 @@ async def read_claim_queue(
     cursor = db.claims.find(q, {"_id": 0}).sort(
         [("updated_at", -1)]
     ).limit(limit)
-    return [c async for c in cursor]
+    rows = [c async for c in cursor]
+
+    # Phase 2b — enrich each row with the latest claim_events entry.
+    # Single round-trip: pull newest events for the returned claim
+    # ids, keep the first one per claim (cursor sorted DESC).
+    if rows:
+        claim_ids = [r["id"] for r in rows]
+        latest: dict[str, dict] = {}
+        async for ev in db.claim_events.find(
+            {"tenant_id": ctx.tenant_id, "claim_id": {"$in": claim_ids}},
+            {"_id": 0, "claim_id": 1, "event_type": 1, "occurred_at": 1},
+        ).sort([("occurred_at", -1)]):
+            cid = ev["claim_id"]
+            if cid not in latest:
+                latest[cid] = ev
+        for r in rows:
+            ev = latest.get(r["id"])
+            r["last_event"] = ev.get("event_type") if ev else None
+            r["last_event_at"] = ev.get("occurred_at") if ev else None
+
+    return rows
 
 
 

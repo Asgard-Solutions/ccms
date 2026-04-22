@@ -637,6 +637,12 @@ class ClaimPublic(BaseModel):
     assigned_to: str | None = None
     last_submission_at: str | None = None
     submission_count: int = 0
+    # Phase 2b — queue enrichment. Populated by the named-queue
+    # endpoint from the `claim_events` stream so operators see "last
+    # activity" without drilling into the timeline. Always `None` on
+    # create / detail / patch responses.
+    last_event: str | None = None
+    last_event_at: str | None = None
     created_at: str
     updated_at: str
 
