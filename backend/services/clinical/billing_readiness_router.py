@@ -166,9 +166,15 @@ def _parse_iso(value: str | None) -> datetime | None:
         return None
     try:
         # Best-effort: our stored ISO strings include "Z"
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
+    # Date-only strings (e.g. plan.re_exam_date = "2026-05-13") parse as
+    # naive — normalise to UTC so comparisons with tz-aware datetimes
+    # don't raise TypeError.
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 async def _hydrate_user_name(db, tenant_id: str, user_id: str | None) -> str | None:
