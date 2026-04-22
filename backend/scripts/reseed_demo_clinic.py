@@ -84,12 +84,14 @@ async def main() -> None:
 
     client.close()
 
-    # Re-run the realistic seed.
+    # Re-run the realistic seed (persona catalog + curated billing).
     print("\nRe-seeding realistic demo data...")
     # Delayed import so the delete happens first and the seed runs
     # against the freshly wiped tenant.
     from services.demo.seed import seed_demo_clinic  # noqa: E402
+    from services.demo.billing_seed import seed_demo_billing  # noqa: E402
     await seed_demo_clinic()
+    await seed_demo_billing()
     print("Done. Restart the backend or just call GET /api/health to confirm.")
 
 

@@ -62,6 +62,7 @@ from services.scheduling.checkout_hooks import register_hooks as _register_check
 from services.tenancy.router import router as tenancy_router  # noqa: E402
 from services.tenancy.seed import seed_tenancy  # noqa: E402
 from services.demo.seed import seed_demo_clinic  # noqa: E402
+from services.demo.billing_seed import seed_demo_billing  # noqa: E402
 from services.workforce.router import router as workforce_router  # noqa: E402
 
 
@@ -208,6 +209,7 @@ async def on_startup():
     # tenant / user / payer rows created above. Fully idempotent.
     try:
         await seed_demo_clinic()
+        await seed_demo_billing()
     except Exception as exc:  # noqa: BLE001
         logger.warning("demo.seed failed (non-fatal): %s", exc)
     # Purge expired export artifacts (best-effort — errors are logged).

@@ -4,6 +4,67 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-04-22 — Curated billing demo data for Riverbend
+
+Extends the realistic demo clinic seed with a curated billing story
+so every billing-related screen is populated on first login. All
+upserts tagged with `demo_seed_key`; fully idempotent and wiped by
+`scripts/reseed_demo_clinic.py`.
+
+**New file:** `services/demo/billing_seed.py` — 14 curated claims
+covering every `ClaimStatus`, 12 submissions (EDI + portal), 5
+ERA-backed remittances, 4 invoices, 2 patient statements, 1 cash
+payment. Every row ties back to a seeded persona + payer + policy +
+doctor from `services/demo/seed.py`.
+
+**Coverage matrix**
+
+| Canonical status   | Count | Personas                                  |
+|--------------------|-------|-------------------------------------------|
+| draft              | 1     | Hannah Whitaker                           |
+| ready              | 1     | Hannah Whitaker                           |
+| validation_failed  | 1     | Hannah Whitaker (missing modifier)        |
+| submitted          | 2     | Isabella Cho (PIP portal), Derrick Stone (WC portal) |
+| accepted           | 1     | Marcus Reid (Medicare, awaiting ERA)      |
+| paid               | 4     | Marcus x2 Medicare, Aria PacificCare, Claire PacificCare (95d) |
+| partially_paid     | 1     | Isabella Cho PIP ($80 of $145, flagged)   |
+| denied             | 2     | Aria (CO-11 coding), Derrick (CO-16 WC case) |
+| rejected           | 1     | Jaxon Morgan (CO-31 subscriber mismatch)  |
+
+**Queue tab lights up.** All 5 tabs are non-empty on first login
+(pending-submission: 2, needs-fixes: 1, rejected: 3, follow-up: 6,
+all: 14).
+
+**A/R aging lights up.** 0-30d, 30-60d, 60-90d, and 90+ buckets all
+have at least one curated claim.
+
+**Patient responsibility story.** Ethan paid cash ($0 balance),
+Hannah $30 copay open, Aria $125 deductible (statement-ready),
+Jaxon $60 after rejection (statement-ready, guarantor Claire).
+
+**Denial / follow-up work-tray.** 4 actionable items — each with a
+realistic denial/adjustment code and a one-line operator hint
+attached to the claim's `followup_reason`.
+
+**Wiring.**
+- `services/demo/__init__.py` exports both seeders.
+- `server.py` runs `seed_demo_clinic()` then `seed_demo_billing()` on
+  every startup.
+- `scripts/reseed_demo_clinic.py` wipes + re-runs both.
+
+**Regression status.** 128/128 Phase 6-12 + queue v2 + canonical
+status + claims queue phase 2b tests PASS. Idempotency verified on
+restart (stable 14/19/12/5/4/2/1 counts).
+
+**Documentation.** `DEMO_SEED.md` gets a new §7 "Billing demo story"
+with the full persona/status/payer matrix, tab coverage, A/R aging
+coverage, patient-balance story, denial work-tray, and a "what each
+billing screen shows on first login" summary.
+
+---
+
+
+
 ## 2026-04-22 — Billing / Claims / Change-Optum accepted status (sign-off)
 
 Following the Phase 1–12 verification audit, the feature set is

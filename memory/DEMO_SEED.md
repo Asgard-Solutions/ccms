@@ -23,7 +23,8 @@ user logs in.
 | `services/compliance_ops/seed.py` | Policy / control / audit record seeds. Not clinic-specific. |
 | `services/billing/seed.py` | CPT / modifier catalog defaults. Not clinic-specific. |
 | **`services/demo/seed.py`** | **NEW** — realistic Riverbend clinic dataset: staff roster, payers, patient personas, insurance policies, clinical notes, a one-week appointment board. |
-| `scripts/reseed_demo_clinic.py` | Destructive reset for the Riverbend tenant. Wipes test-run pollution then re-runs `seed_demo_clinic()`. Never touches Sunrise or the platform admin. |
+| **`services/demo/billing_seed.py`** | **NEW** — curated billing artifacts: 14 claims across every `ClaimStatus`, 12 submissions, 5 ERA-backed remittances, 4 invoices, 2 patient statements, 1 cash payment. Tied 1:1 to personas above. |
+| `scripts/reseed_demo_clinic.py` | Destructive reset for the Riverbend tenant. Wipes test-run pollution then re-runs `seed_demo_clinic()` **and** `seed_demo_billing()`. Never touches Sunrise or the platform admin. |
 
 All seeders are **idempotent** — safe to re-run on every backend boot.
 They upsert on stable business keys (email, payer_code, patient
@@ -137,7 +138,84 @@ to re-run.
 
 ---
 
-## 7. How to reseed / reset
+## 7. Billing demo story (curated claims + invoices + remittance)
+
+Seeded by `services/demo/billing_seed.py`. **14 claims / 12 submissions
+/ 5 ERA-backed remittances / 4 invoices / 2 statements / 1 cash
+payment** — idempotent on stable `demo_seed_key` markers.
+
+### Coverage against every claim status
+
+| Canonical status | Persona | Payer | Billed | Paid | Notes |
+|------------------|---------|-------|--------|------|-------|
+| `draft`            | Hannah Whitaker | Cascade Blue Shield | $225 | – | New-patient eval + CMT, no scrubber run yet |
+| `ready`            | Hannah Whitaker | Cascade Blue Shield | $75  | – | Scrubbed clean, queued for next 837P batch |
+| `validation_failed`| Hannah Whitaker | Cascade Blue Shield | $75  | – | Missing modifier — scrubber error count 1 |
+| `submitted`        | Isabella Cho    | Northwest Auto PIP  | $145 | – | Portal submission, paper EOB pending |
+| `submitted`        | Derrick Stone   | Oregon SAIF WC      | $90  | – | Portal submission, adjuster notified |
+| `accepted`         | Marcus Reid     | Medicare — Oregon   | $65  | – | 999/277CA ack received, awaiting ERA |
+| `paid`             | Marcus Reid     | Medicare — Oregon   | $65  | $29.25 | Medicare allowed 45% of billed, AT modifier |
+| `paid`             | Marcus Reid     | Medicare — Oregon   | $65  | $29.13 | Older claim (72d ago) — feeds A/R aging 60+ bucket |
+| `paid`             | Aria Johnson    | PacificCare         | $145 | $95 | $25 copay + $25 contractual adjustment |
+| `paid`             | Claire Morgan   | PacificCare         | $150 | $100| 95d ago — feeds A/R aging 90+ bucket |
+| `partially_paid`   | Isabella Cho    | Northwest Auto PIP  | $145 | $80 | PIP partial, $65 still on wire, flagged |
+| `denied`           | Aria Johnson    | PacificCare         | $75  | – | CO-11 coding/documentation mismatch |
+| `denied`           | Derrick Stone   | Oregon SAIF WC      | $90  | – | CO-16 missing case / claim number |
+| `rejected`         | Jaxon Morgan    | PacificCare         | $60  | – | CO-31 subscriber mismatch (dependent DOB) |
+
+### Queue tab coverage
+
+Every tab has at least one curated row:
+
+| Tab | Curated count | Example |
+|-----|---------------|---------|
+| All | 14 | full persona catalog |
+| Pending submission | 2 | Hannah `ready` + Hannah `validation_failed` |
+| Needs Fixes | 1 | Hannah `validation_failed` (missing modifier) |
+| Rejected / denied | 3 | Jaxon rejected + 2 denied |
+| Follow-up needed | 6 | 3 manually flagged + partial-paid Isabella + stale submitted Derrick/Isabella |
+
+### A/R aging coverage
+
+- **0–30d**: Marcus paid #2, Aria paid+denied, Derrick denied/submitted, Isabella partial, Hannah draft/ready/validation_failed, Jaxon rejected, Isabella submitted
+- **30–60d**: Jaxon rejected (45d), Isabella partial (18d → creeping)
+- **60–90d**: Marcus paid #1 (72d)
+- **90+d**: Claire Morgan paid (95d)
+
+### Patient-responsibility (invoices, statements, payments)
+
+| Patient | State | Total | Balance | Notes |
+|---------|-------|-------|---------|-------|
+| **Ethan Parker**   | invoice `paid`, 1 cash payment | $70 | $0 | Self-pay maintenance adjustment, cash at front desk |
+| **Hannah Whitaker**| invoice `issued` | $30 | $30 | $30 copay open, expected at check-in |
+| **Aria Johnson**   | invoice `issued` + statement ready | $125 | $125 | Deductible after PacificCare ERA; statement queued |
+| **Jaxon Morgan**   | invoice `issued` + statement ready (guarantor Claire) | $60 | $60 | After rejected claim; billed to guarantor |
+| Marcus / Isabella / Derrick / Claire | – | – | $0 | No patient responsibility (Medicare pays 100%, PIP/WC never patient-resp, Claire paid copay at visit) |
+
+### Denial / follow-up work-tray
+
+| Persona | Denial code | Operator hint |
+|---------|-------------|---------------|
+| Jaxon Morgan    | CO-31 | "Verify dependent DOB with PacificCare" |
+| Aria Johnson    | CO-11 | "Rebill with secondary M99.03 as primary" |
+| Derrick Stone   | CO-16 | "WC: add claim number, rebill" |
+| Isabella Cho    | –     | "PIP partial payment — follow up on remaining $65" |
+
+### What each billing screen looks like on first login
+
+| Screen | What the operator sees on day one |
+|--------|-----------------------------------|
+| **Billing Dashboard** | Non-zero Billed Total ($1,470), non-zero Outstanding / Aging buckets, active denials count. |
+| **Claims Queue** | 14 curated rows across all 5 tabs; filter-aware billed totals per tab; follow-up chips + aging chips on multiple rows. |
+| **A/R Aging** | Buckets populated at 0–30, 30–60, 60–90, and 90+ days. |
+| **Denials / work-tray** | 4 actionable items (2 denials + 1 rejection + 1 partial-paid follow-up) each with a human-readable reason. |
+| **Remittance Posting** | 5 ERA-posted remittances (Medicare x2, PacificCare x2, plus one open outstanding referenced from partial-paid PIP). |
+| **Patient Statements** | 2 statements in `ready` status (Aria $125, Jaxon $60). |
+| **Patient balances** | Ethan $0 (paid), Hannah $30, Aria $125, Jaxon $60, others $0. |
+
+---
+
+## 8. How to reseed / reset
 
 * **Automatic**: `server.py` runs `seed_demo_clinic()` on every
   backend boot. If the Riverbend tenant already has the personas,
@@ -158,12 +236,11 @@ to re-run.
 
 ---
 
-## 8. Known limitations / future enhancements
+## 9. Known limitations / future enhancements
 
-* Claims + statements + remittance rows are NOT seeded as part of the
-  demo catalog. Build them by walking the normal billing UI once
-  logged in as Dr. Noah Carter or Ava Bennett. This keeps the demo
-  data small and the financial state deterministic.
+* Claims + statements + remittance rows are now seeded as part of the
+  billing demo catalog (see §7). The expanded "gold" scenarios that
+  remain open are listed in §10 below.
 * No X-rays / document uploads in the seed (would require synthetic
   images + S3 storage). Add on demand if visual attachments become a
   demo story.
@@ -179,19 +256,19 @@ to re-run.
 
 ---
 
-## 9. Roadmap toward a “gold demo clinic”
+## 10. Roadmap toward a "gold demo clinic"
 
 Candidate extensions, in priority order:
 
-1. **Seed a curated set of submitted + paid claims** covering each
-   payer rail (commercial / Medicare AT-modifier / WC / PIP) so the
-   billing dashboards come alive on day-one demos.
-2. **Seed realistic remittance postings** (ERA 835 samples) so the
-   AR aging report renders real numbers.
-3. **Seed one re-exam clinical note per active-treatment persona**
-   so the timeline view shows progress over multiple visits.
-4. **Seed a handful of communication rows** (appointment reminders,
-   review requests) so the notifications panel is non-empty.
-5. **Add a second Riverbend location** (e.g. “Riverbend — Eastside”)
+1. **Seed a second re-exam clinical note per active-treatment
+   persona** so the timeline view shows multi-visit progress.
+2. **Seed appointment reminders + review-request notifications** so
+   the notifications panel is non-empty on first login.
+3. **Add a second Riverbend location** (e.g. "Riverbend — Eastside")
    and spread appointments across both to demonstrate multi-location
    scheduling.
+4. **Seed a handful of appeal / resubmit events** on the denied
+   claims so the timeline view shows the full denial-management loop.
+5. **Seed a secondary-payer workflow** on one commercial paid claim
+   (primary adjudicates → secondary claim auto-generated) to
+   demonstrate coordination of benefits.
