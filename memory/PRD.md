@@ -1,6 +1,90 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-04-22 (Demo sanitation pass — clinic profile, appointment types, rooms, profile scrub)
+**Last updated:** 2026-04-22 (Clinical workflow chain refactor — Appointment → Encounter → Initial Exam → Diagnoses → Treatment Plan → Follow-up Note → Re-Exam; floating-plan guard)
+
+## 4f. Clinical workflow chain seed (2026-04-22)
+Closes the last P0 from the clinical-demo refactor: every
+artifact now sits on the actual workflow ladder instead of
+floating in isolation.
+
+**Problem**: after §4d/§4e, every persona had an episode, plan,
+diagnoses, intake and chart history — but the **launched
+encounters**, **initial exams**, **follow-up notes**, and
+**re-exams** panels were empty. Nothing linked the chart back
+to past appointments, and treatment plans were visibly
+"floating" without any upstream encounter.
+
+**Shipped**
+- `/app/backend/services/demo/clinical_workflow_seed.py` now
+  drives the full chain per persona via `PAST_VISITS`:
+  - backfills past completed appointments (idempotent on
+    patient+start_time) including the pre-existing
+    `_seed_appointments` completed slots for Marcus and Ethan,
+  - upserts one `clinical_encounter` per past appointment
+    (idempotent on tenant+appointment_id) with the full
+    appointment_snapshot block,
+  - upserts a `clinical_initial_exam` (first visit per persona)
+    that mirrors the §4d `clinical_history` + `treatment_plan`
+    narrative,
+  - upserts `clinical_follow_up_notes` for every subsequent
+    treatment visit with a linear pain de-escalation signal
+    (baseline → 2/10 across 4 visits) and plan-derived
+    treatment_rendered entries,
+  - new: upserts a **signed** `clinical_reexam` for Claire
+    Morgan's discharge re-evaluation (`recommendation="discharge"`,
+    all goals marked `met`).
+- Wired into `seed_demo_clinic()` after `seed_demo_clinical_charts`
+  so episode/plan/dx ids are resolvable.
+- Fixed a seed-validation regression: past appointments now
+  carry `created_by` so the `/api/appointments` response model
+  doesn't 500.
+
+**Integrity verifier extensions** (`verify_demo_integrity.py`)
+- Clinical-chain FK checks: `clinical_encounters`,
+  `clinical_initial_exams`, `clinical_follow_up_notes`,
+  `clinical_reexams` against patient/appointment/encounter/episode.
+- "**No floating treatment plans**" guard: every patient with
+  a `clinical_treatment_plan` must have ≥ 1 `clinical_encounter`.
+- Report now includes counts: `encounters`, `initial_exams`,
+  `follow_up_notes`, `reexams`.
+
+**Tests** — `test_riverbend_demo_sanitation.py`
+- New class `TestRiverbendClinicalWorkflowChain` (4 tests):
+  - `test_every_persona_with_plan_has_encounter` — no floating plans
+  - `test_encounters_anchor_to_appointments` — no orphan encounters
+  - `test_initial_exam_precedes_follow_ups` — chronological sanity
+  - `test_riverbend_workflow_chain_counts` — shape lock
+- All 26 Riverbend tests passing.
+
+**Post-seed canonical counts**
+```
+patients=8, encounters=26, initial_exams=7, follow_up_notes=18,
+reexams=1, appointments=37, episodes=8, claims=14
+Integrity violations: 0
+```
+
+**Runtime fix** — `billing_readiness_router._parse_iso`
+- Normalise naive ISO dates (`plan.re_exam_date` is YYYY-MM-DD)
+  to UTC so they compare cleanly against tz-aware
+  encounter.date_of_service. Prevented a 500 on the Clinical tab
+  for all active-episode personas.
+
+**UI verification (iter 66)**
+All 5 sampled personas (Hannah, Isabella, Derrick, Claire, Ethan)
+open the Clinical tab with zero error toasts; every required
+section renders (Episodes, Initial Exam, Treatment Plan,
+Follow-ups, Diagnoses, Re-Exam where applicable). Scheduling
+calendar shows past completed + future scheduled appointments
+across all personas.
+
+**Files added/changed in this pass**
+- `/app/backend/services/demo/clinical_workflow_seed.py` — chain seeder (added `_upsert_reexam`, fixed `created_by`)
+- `/app/backend/services/demo/seed.py` — wires `seed_demo_clinical_workflow`
+- `/app/backend/scripts/verify_demo_integrity.py` — clinical chain checks + floating-plan guard + workflow counts
+- `/app/backend/services/clinical/billing_readiness_router.py` — `_parse_iso` UTC normalisation
+- `/app/backend/tests/test_riverbend_demo_sanitation.py` — `TestRiverbendClinicalWorkflowChain`
+- `/app/memory/PRD.md` — §4f added
+
 
 ## 4e. Cross-domain referential-integrity verifier (2026-04-22)
 Hardened the demo-seed architecture against disjoint-data regressions.
