@@ -225,6 +225,21 @@ export async function updateClaimAssignment(claimId, assignedTo) {
   return data;
 }
 
+export async function flagClaimForFollowup(claimId, { reason, next_action_at } = {}) {
+  const { data } = await api.post(
+    `/billing/claims/${claimId}/flag-followup`,
+    { reason: reason || null, next_action_at: next_action_at || null },
+  );
+  return data;
+}
+
+export async function clearClaimFollowupFlag(claimId) {
+  const { data } = await api.delete(
+    `/billing/claims/${claimId}/flag-followup`,
+  );
+  return data;
+}
+
 export function useClaimQueue({ queue, filters = {} } = {}) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
