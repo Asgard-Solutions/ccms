@@ -1,10 +1,13 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, CreditCard, FileStack, FileText, Wallet } from "lucide-react";
+import { toast } from "sonner";
+import { ArrowRight, CreditCard, FileStack, FileText, Send, Wallet } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
+import ConfirmDialog from "../../components/ConfirmDialog";
 import { formatCents } from "../../utils/money";
 import { formatDateTime } from "../../utils/time";
+import { sendOutstandingStatements } from "./useRemittance";
 import {
   INVOICE_STATUS_LABELS,
   invoiceStatusTone,
@@ -30,6 +33,9 @@ export default function BillingDashboard() {
   const { rows: invoices, loading: invoicesLoading } = useInvoices();
   const { rows: payments, loading: paymentsLoading } = usePayments();
   const { outstanding, openCount, totalBilled } = useOutstandingSummary(invoices);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkPreview, setBulkPreview] = useState(null);
+  const [previewing, setPreviewing] = useState(false);
 
   const recentInvoices = useMemo(
     () => [...invoices]
@@ -56,6 +62,27 @@ export default function BillingDashboard() {
           </h1>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            className="rounded-sm"
+            data-testid="billing-send-outstanding-btn"
+            disabled={previewing}
+            onClick={async () => {
+              setPreviewing(true);
+              try {
+                const dry = await sendOutstandingStatements({ dryRun: true });
+                setBulkPreview(dry);
+                setBulkOpen(true);
+              } catch (e) {
+                toast.error(e?.response?.data?.detail || "Could not preview outstanding statements");
+              } finally {
+                setPreviewing(false);
+              }
+            }}
+          >
+            <Send className="mr-1 h-4 w-4" />
+            {previewing ? "Checking…" : "Send outstanding statements"}
+          </Button>
           <Button asChild variant="outline" className="rounded-sm" data-testid="billing-view-claims">
             <Link to="/billing/claims">
               <FileStack className="mr-1 h-4 w-4" /> Claims queue
@@ -170,6 +197,41 @@ export default function BillingDashboard() {
           )}
         </section>
       </div>
+
+      <ConfirmDialog
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        testId="bulk-send-outstanding-dialog"
+        title="Send all outstanding statements?"
+        description={
+          bulkPreview
+            ? `${bulkPreview.generated} statement(s) will be generated and dispatched — ` +
+              `${bulkPreview.details.filter((d) => d.channel === "email").length} via email, ` +
+              `${bulkPreview.details.filter((d) => d.channel === "mail").length} queued for mail. ` +
+              `${bulkPreview.skipped_unchanged} patient(s) skipped (unchanged balance).`
+            : undefined
+        }
+        confirmLabel={
+          bulkPreview && bulkPreview.generated === 0
+            ? "Nothing to send"
+            : "Send all"
+        }
+        onConfirm={async () => {
+          if (bulkPreview && bulkPreview.generated === 0) return;
+          try {
+            const res = await sendOutstandingStatements({ dryRun: false });
+            toast.success(
+              `${res.generated} statement(s) dispatched — ${res.sent_email} email · ${res.queued_mail} mail`,
+            );
+            if ((res.errors || []).length) {
+              toast.warning(`${res.errors.length} delivery error(s)`);
+            }
+          } catch (e) {
+            toast.error(e?.response?.data?.detail || "Bulk send failed");
+            throw e;
+          }
+        }}
+      />
     </div>
   );
 }

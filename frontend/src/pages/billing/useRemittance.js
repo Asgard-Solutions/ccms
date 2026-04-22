@@ -193,6 +193,17 @@ export async function uploadRemittanceImport(file) {
   return data;
 }
 
+/**
+ * Month-end bulk action: regenerate + dispatch statements for every
+ * patient whose outstanding balance has moved since their last statement.
+ */
+export async function sendOutstandingStatements({ dryRun = false } = {}) {
+  const { data } = await api.post("/billing/statements/send-outstanding", {
+    dry_run: dryRun,
+  });
+  return data;
+}
+
 export async function commitRemittanceImport(stagedId) {
   const { data } = await api.post(
     `/billing/remittances/imports/${stagedId}/commit`,

@@ -3335,35 +3335,22 @@ async def read_ar_aging_by_payer(
 # ---------------------------------------------------------------------------
 # Statements — scaffolding (no PDF / no email yet)
 # ---------------------------------------------------------------------------
-@router.post(
-    "/patients/{patient_id}/statements",
-    response_model=StatementPublic, status_code=201,
-)
-async def create_statement(
-    patient_id: str,
-    request: Request,
-    user: dict = Depends(require_role("admin", "doctor", "staff")),
-    ctx: TenantContext = Depends(require_tenant),
-):
-    db = tenant_db(ctx.tenant_id)
-    patient = await db.patients.find_one(
-        {"id": patient_id, "tenant_id": ctx.tenant_id},
-        {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
-         "email": 1, "phone": 1},
-    )
-    if not patient:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+async def _build_statement_for_patient(
+    db, ctx: TenantContext, user: dict, patient: dict, request: Request,
+) -> dict:
+    """Generate, persist, and audit a statement for a single patient.
+
+    Creates a statement row even if the patient has no open invoices
+    (zero-balance statement), matching the legacy per-patient POST
+    behaviour.
+    """
+    patient_id = patient["id"]
     open_invoices = [i async for i in db.invoices.find(
         {"tenant_id": ctx.tenant_id, "patient_id": patient_id,
          "balance_cents": {"$gt": 0}},
         {"_id": 0},
     ).sort([("issued_at", 1)])]
 
-    # Enrich every invoice with insurance_paid / patient_paid /
-    # adjustments so the statement shows the full responsibility
-    # breakdown, not just the balance. The snapshot is stored on the
-    # statement so it stays stable even if the underlying invoice
-    # changes later.
     enriched_invoices: list[dict] = []
     for inv in open_invoices:
         ins_paid = 0
@@ -3413,8 +3400,6 @@ async def create_statement(
         "total_balance_cents": total,
         "invoice_count": len(enriched_invoices),
         "invoice_ids": [i["id"] for i in enriched_invoices],
-        # Snapshot the breakdown so the statement renders the same on
-        # any re-read, even if invoices move afterwards.
         "invoice_breakdown": [
             {
                 "invoice_id": i["id"],
@@ -3445,6 +3430,28 @@ async def create_statement(
     fresh = await db.statements.find_one(
         {"id": stmt_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
     )
+    return fresh
+
+
+@router.post(
+    "/patients/{patient_id}/statements",
+    response_model=StatementPublic, status_code=201,
+)
+async def create_statement(
+    patient_id: str,
+    request: Request,
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    patient = await db.patients.find_one(
+        {"id": patient_id, "tenant_id": ctx.tenant_id},
+        {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+         "email": 1, "phone": 1},
+    )
+    if not patient:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    fresh = await _build_statement_for_patient(db, ctx, user, patient, request)
     return _public(fresh)
 
 
@@ -3960,3 +3967,188 @@ async def list_statement_deliveries(
     ).sort([("sent_at", -1)])]
     return rows
 
+
+
+# ---------------------------------------------------------------------------
+# Bulk — regenerate and dispatch statements for every patient with an
+# outstanding balance whose balance has moved since their last statement.
+# Month-end workflow for billing staff.
+# ---------------------------------------------------------------------------
+class BulkSendOutstandingPayload(BaseModel):
+    # Reserved for future filters (location_id, min_balance_cents, …)
+    # so the request signature is stable.
+    dry_run: bool = False
+
+
+@router.post("/statements/send-outstanding")
+async def send_outstanding_statements(
+    request: Request,
+    payload: BulkSendOutstandingPayload | None = None,
+    user: dict = Depends(require_role("admin", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Regenerate and dispatch statements for every patient with a
+    non-zero outstanding balance whose balance has changed since their
+    most recent statement.
+
+    Dispatch channel:
+      - email  -> patient.email present
+      - mail   -> otherwise (queued for physical mail)
+
+    Returns a summary: generated, sent_email, queued_mail,
+    skipped_unchanged, skipped_no_contact.
+    """
+    dry_run = bool(payload and payload.dry_run)
+    db = tenant_db(ctx.tenant_id)
+
+    patient_ids = await db.invoices.distinct(
+        "patient_id",
+        {"tenant_id": ctx.tenant_id, "balance_cents": {"$gt": 0}},
+    )
+
+    generated = 0
+    sent_email = 0
+    queued_mail = 0
+    skipped_unchanged = 0
+    skipped_no_contact = 0
+    errors: list[dict] = []
+    details: list[dict] = []
+
+    for pid in patient_ids:
+        patient = await db.patients.find_one(
+            {"id": pid, "tenant_id": ctx.tenant_id},
+            {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+             "email": 1, "phone": 1, "deleted_at": 1},
+        )
+        if not patient or patient.get("deleted_at"):
+            continue
+
+        current_balance_cents = 0
+        async for inv in db.invoices.find(
+            {"tenant_id": ctx.tenant_id, "patient_id": pid,
+             "balance_cents": {"$gt": 0}},
+            {"_id": 0, "balance_cents": 1},
+        ):
+            current_balance_cents += int(inv.get("balance_cents") or 0)
+        if current_balance_cents <= 0:
+            continue
+
+        latest_stmt = await db.statements.find_one(
+            {"tenant_id": ctx.tenant_id, "patient_id": pid},
+            {"_id": 0, "total_balance_cents": 1, "id": 1},
+            sort=[("generated_at", -1)],
+        )
+        if latest_stmt and int(latest_stmt.get("total_balance_cents") or 0) == current_balance_cents:
+            skipped_unchanged += 1
+            continue
+
+        if dry_run:
+            generated += 1
+            details.append({
+                "patient_id": pid,
+                "balance_cents": current_balance_cents,
+                "channel": "email" if patient.get("email") else "mail",
+            })
+            continue
+
+        try:
+            fresh = await _build_statement_for_patient(
+                db, ctx, user, patient, request,
+            )
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"patient_id": pid, "error": str(exc)})
+            continue
+        generated += 1
+        stmt_id = fresh["id"]
+        now = _now()
+
+        # Dispatch
+        to = (patient or {}).get("email")
+        channel: str
+        sent_to_value: str | None
+        provider: str = ""
+        delivery_id: str | None = None
+
+        if to and "@" in str(to):
+            try:
+                pdf = render_statement_pdf(statement=fresh, patient=patient)
+                html = render_statement_email_html(
+                    patient=patient, statement=fresh,
+                )
+                sent = await send_statement_email(
+                    to=to, subject="Your patient statement",
+                    html_body=html, pdf_bytes=pdf,
+                    pdf_filename=f"statement-{stmt_id[:8]}.pdf",
+                )
+                provider = sent["provider"]
+                delivery = stamp_for_write({
+                    "id": str(uuid.uuid4()),
+                    "statement_id": stmt_id,
+                    "patient_id": pid,
+                    "to_email": to,
+                    "provider": provider,
+                    "message_id": sent.get("message_id"),
+                    "sent_by": user["id"],
+                    "sent_at": now,
+                    "created_at": now,
+                    "updated_at": now,
+                }, ctx, location_id=None)
+                await db.statement_deliveries.insert_one(delivery)
+                delivery_id = delivery["id"]
+                sent_email += 1
+                channel = "email"
+                sent_to_value = to
+            except Exception as exc:  # noqa: BLE001
+                errors.append({"patient_id": pid, "stmt_id": stmt_id,
+                               "error": f"email_failed: {exc}"})
+                channel = "mail"
+                provider = "queued-for-mail-fallback"
+                sent_to_value = "postal"
+                queued_mail += 1
+        else:
+            if not (patient.get("phone") or to):
+                skipped_no_contact += 1
+            channel = "mail"
+            provider = "queued-for-mail"
+            sent_to_value = "postal"
+            queued_mail += 1
+
+        await db.statements.update_one(
+            {"id": stmt_id, "tenant_id": ctx.tenant_id},
+            {"$set": {
+                "sent_at": now, "sent_via": channel,
+                "sent_to": sent_to_value, "updated_at": now,
+            }},
+        )
+        await audit_success(
+            user, "billing.statement.sent", request,
+            entity_type="statement", entity_id=stmt_id,
+            metadata={"channel": channel, "provider": provider,
+                      "patient_id": pid, "to": sent_to_value,
+                      "delivery_id": delivery_id, "bulk": True},
+        )
+
+    await audit_success(
+        user, "billing.statement.bulk_send_outstanding", request,
+        entity_type="statement", entity_id=None,
+        metadata={
+            "generated": generated,
+            "sent_email": sent_email,
+            "queued_mail": queued_mail,
+            "skipped_unchanged": skipped_unchanged,
+            "skipped_no_contact": skipped_no_contact,
+            "errors": len(errors),
+            "dry_run": dry_run,
+        },
+    )
+
+    return {
+        "generated": generated,
+        "sent_email": sent_email,
+        "queued_mail": queued_mail,
+        "skipped_unchanged": skipped_unchanged,
+        "skipped_no_contact": skipped_no_contact,
+        "errors": errors,
+        "dry_run": dry_run,
+        "details": details if dry_run else [],
+    }
