@@ -106,6 +106,11 @@ export async function fetchClaimDetail(claimId) {
   return data;
 }
 
+export async function fetchAssignableUsers() {
+  const { data } = await api.get(`/billing/claims/assignable-users`);
+  return data;
+}
+
 export async function validateClaim(claimId) {
   const { data } = await api.post(`/billing/claims/${claimId}/validate`);
   return data;

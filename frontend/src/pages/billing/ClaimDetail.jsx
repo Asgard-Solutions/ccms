@@ -107,9 +107,35 @@ export default function ClaimDetail() {
     );
   }
 
-  const { claim, diagnoses, lines, latest_validation } = detail;
+  const { claim, diagnoses, lines, latest_validation, refs = {} } = detail;
   const errors = latest_validation?.errors || [];
   const warnings = latest_validation?.warnings || [];
+
+  // Human-readable display values — never render raw UUIDs. Every `refs.*`
+  // is resolved server-side against the correct collection (patient,
+  // payer, providers, service_facilities, users, locations) so the UI
+  // stays a pure display layer. Fallbacks use readable placeholders
+  // instead of UUID slices.
+  const patientLabel = refs.patient?.name
+    || (refs.patient?.mrn ? `MRN ${refs.patient.mrn}` : "Unknown patient");
+  const billingProviderLabel = refs.billing_provider
+    ? [
+        refs.billing_provider.name,
+        refs.billing_provider.npi ? `NPI ${refs.billing_provider.npi}` : null,
+      ].filter(Boolean).join(" · ")
+    : "—";
+  const renderingProviderLabel = refs.rendering_provider
+    ? [
+        refs.rendering_provider.name,
+        refs.rendering_provider.npi ? `NPI ${refs.rendering_provider.npi}` : null,
+      ].filter(Boolean).join(" · ")
+    : "—";
+  const facilityLabel = refs.facility
+    ? [
+        refs.facility.name,
+        refs.facility.npi ? `NPI ${refs.facility.npi}` : null,
+      ].filter(Boolean).join(" · ")
+    : "—";
 
   return (
     <div data-testid="claim-detail" className="space-y-6">
@@ -133,8 +159,9 @@ export default function ClaimDetail() {
             <Link
               to={`/patients/${claim.patient_id}`}
               className="hover:underline"
+              data-testid="claim-detail-patient-link"
             >
-              Patient {claim.patient_id.slice(0, 8)}
+              {patientLabel}
             </Link>
             <span>Billed {formatCents(claim.billed_cents)}</span>
             <span>{claim.service_date_from} → {claim.service_date_to}</span>
@@ -171,7 +198,7 @@ export default function ClaimDetail() {
       />
 
       {/* Phase 4 workflow — submissions, outcomes, timeline, assignment */}
-      <ClaimWorkflow claim={claim} onChanged={refresh} />
+      <ClaimWorkflow claim={claim} refs={refs} onChanged={refresh} />
 
       {/* Header card */}
       <section
@@ -194,9 +221,9 @@ export default function ClaimDetail() {
           <Field label="Claim type" value={claim.claim_type || "—"} />
           <Field label="Place of service" value={claim.place_of_service || "—"} />
           <Field label="Frequency code" value={claim.frequency_code || "—"} />
-          <Field label="Billing provider" value={claim.billing_provider_id || "—"} />
-          <Field label="Rendering provider" value={claim.rendering_provider_id || "—"} />
-          <Field label="Facility" value={claim.facility_id || "—"} />
+          <Field label="Billing provider" value={billingProviderLabel} />
+          <Field label="Rendering provider" value={renderingProviderLabel} />
+          <Field label="Facility" value={facilityLabel} />
           <Field label="Authorization #" value={claim.authorization_number || "—"} />
           <Field label="Referral #" value={claim.referral_number || "—"} />
           <Field label="Source invoice" value={claim.source_invoice_id?.slice(0, 8) || "—"} />

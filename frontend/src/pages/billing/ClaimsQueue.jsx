@@ -334,10 +334,9 @@ function ClaimRow({ c }) {
   const lastEventLabel = claimEventLabel(c.last_event);
   const lastAt = c.last_event_at || c.updated_at;
   const patientDisplay = c.patient_name
-    || (c.patient_mrn ? `MRN ${c.patient_mrn}` : c.patient_id?.slice(0, 8))
-    || "—";
-  const assigneeDisplay = c.assignee_name
-    || (c.assigned_to ? c.assigned_to.slice(0, 8) : null);
+    || (c.patient_mrn ? `MRN ${c.patient_mrn}` : null)
+    || "Unknown patient";
+  const assigneeDisplay = c.assignee_name || null;
   return (
     <tr
       data-testid={`claim-row-${c.id}`}

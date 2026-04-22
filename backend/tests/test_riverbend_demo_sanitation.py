@@ -324,3 +324,136 @@ class TestPatientPatchRoundTrip:
                 assert back.get("first_name") == target.get("first_name") or back.get("name") == persona
             except ValueError:
                 pass
+
+
+# --------- Claims: display vs. storage separation ---------
+UUID_RE = __import__("re").compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+)
+
+
+def _first_claim_id(admin_session) -> str:
+    """Return the first Riverbend-demo claim id. Filter by
+    `patient_control_number` starting with 'RB-' so pytest-created
+    claims from other suites don't poison this test (they use random
+    or absent control numbers)."""
+    r = admin_session.get(
+        f"{BASE_URL}/api/billing/claims?limit=50", timeout=20,
+    )
+    assert r.status_code == 200, r.text
+    rows = r.json()
+    assert isinstance(rows, list) and rows, f"No claims seeded: {rows}"
+    demo_rows = [
+        c for c in rows
+        if (c.get("patient_control_number") or "").startswith("RB-")
+    ]
+    assert demo_rows, (
+        "No demo-seeded claims found — re-run "
+        "`python /app/backend/scripts/reseed_demo_clinic.py`"
+    )
+    return demo_rows[0]["id"]
+
+
+class TestClaimDisplayVsStorage:
+    """Regression guards against UUIDs / internal IDs leaking onto
+    user-facing claim screens and outbound 837P payloads. """
+
+    def test_detail_refs_resolve_all_foreign_keys(self, admin_session):
+        claim_id = _first_claim_id(admin_session)
+        r = admin_session.get(
+            f"{BASE_URL}/api/billing/claims/{claim_id}/detail", timeout=20,
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert "refs" in body, "detail endpoint must include `refs` block"
+        refs = body["refs"]
+        # Every claim row points at a seeded patient + payer + providers.
+        for key in ("patient", "payer", "billing_provider",
+                    "rendering_provider", "facility", "location"):
+            assert refs.get(key), f"refs.{key} must resolve: {refs.get(key)}"
+            # Every resolved entity has a human-readable `name`.
+            assert refs[key].get("name"), (
+                f"refs.{key}.name must be a readable string, "
+                f"got {refs[key]}"
+            )
+            # And the `name` must NOT itself be a UUID (the #1 foot-gun —
+            # a fallback accidentally placing the id into the name slot).
+            assert not UUID_RE.match(refs[key]["name"]), (
+                f"refs.{key}.name must not be a UUID: {refs[key]}"
+            )
+
+    def test_billing_provider_has_real_npi(self, admin_session):
+        claim_id = _first_claim_id(admin_session)
+        r = admin_session.get(
+            f"{BASE_URL}/api/billing/claims/{claim_id}/detail", timeout=20,
+        )
+        assert r.status_code == 200, r.text
+        bp = r.json()["refs"]["billing_provider"]
+        rp = r.json()["refs"]["rendering_provider"]
+        # NPI is a 10-digit number — never a UUID slice, never empty.
+        assert bp["npi"] and bp["npi"].isdigit() and len(bp["npi"]) == 10, bp
+        assert rp["npi"] and rp["npi"].isdigit() and len(rp["npi"]) == 10, rp
+
+    def test_claims_queue_rows_use_readable_names(self, admin_session):
+        r = admin_session.get(
+            f"{BASE_URL}/api/billing/claims/queue?tab=all&page=1&page_size=20",
+            timeout=20,
+        )
+        assert r.status_code == 200, r.text
+        rows = r.json().get("rows", [])
+        assert rows, "queue should have seeded rows"
+        for row in rows:
+            # Every row must expose a readable patient_name + payer_name.
+            assert row.get("patient_name"), (
+                f"queue row missing patient_name: {row}"
+            )
+            assert not UUID_RE.match(row["patient_name"]), row
+            if row.get("payer_name"):
+                assert not UUID_RE.match(row["payer_name"]), row
+            # When assigned, the enriched assignee_name must be readable.
+            if row.get("assigned_to"):
+                assert row.get("assignee_name"), (
+                    f"assigned claim without assignee_name: {row}"
+                )
+                assert not UUID_RE.match(row["assignee_name"]), row
+
+    def test_assignable_users_endpoint(self, admin_session):
+        r = admin_session.get(
+            f"{BASE_URL}/api/billing/claims/assignable-users", timeout=20,
+        )
+        assert r.status_code == 200, r.text
+        rows = r.json()
+        assert isinstance(rows, list) and rows, rows
+        for u in rows:
+            assert u.get("id"), u
+            assert u.get("name") and not UUID_RE.match(u["name"]), u
+            assert u.get("role") in (
+                "admin", "doctor", "staff", "billing_specialist",
+            ), u
+
+    def test_x12_builder_refuses_uuid_as_npi(self):
+        """The x12 wire builder must refuse to emit a UUID as the
+        billing-provider NPI. This is the last-line-of-defence against
+        a raw `claim.billing_provider_id` leaking onto the wire."""
+        import sys
+        sys.path.insert(0, "/app/backend")
+        from services.billing.clearinghouse.x12_837p import build_x12_837p_wire
+
+        claim = {"id": "c1", "billing_provider_id": "29da6566-a752-4c36-b524-3291dd698cb9"}
+
+        # No billing_provider provided — must refuse rather than silently
+        # using the UUID.
+        with pytest.raises(ValueError, match="billing_provider is required"):
+            build_x12_837p_wire(
+                claim=claim, diagnoses=[], lines=[],
+                patient=None, payer=None, policy=None,
+            )
+
+        # Billing provider provided but NPI is a UUID — must refuse.
+        bad_bp = {"name": "X", "npi": "29da6566-a752-4c36-b524-3291dd698cb9"}
+        with pytest.raises(ValueError, match="10-digit NPI"):
+            build_x12_837p_wire(
+                claim=claim, diagnoses=[], lines=[],
+                patient=None, payer=None, policy=None,
+                billing_provider=bad_bp,
+            )

@@ -373,6 +373,41 @@ async def _lookup_refs(tenant_id: str) -> dict:
         billing["id"] if billing else refs["doctor_id"]
     )
 
+    # ---- Provider directory — canonical IDs used on claims ------------
+    # Without these, the wire builder falls back to using the claim's
+    # `billing_provider_id` directly as the NPI — which would leak the
+    # raw user-UUID into outbound 837 payloads. Pre-seed by
+    # `services/demo/seed.py::_upsert_providers`; look them up here.
+    billing_provider = await db.providers.find_one(
+        {"tenant_id": tenant_id, "kind": "billing"},
+        {"_id": 0, "id": 1, "npi": 1, "name": 1},
+    )
+    rendering_lead = await db.providers.find_one(
+        {"tenant_id": tenant_id, "kind": "rendering",
+         "name": "Dr. Noah Carter, DC"},
+        {"_id": 0, "id": 1, "npi": 1},
+    )
+    rendering_associate = await db.providers.find_one(
+        {"tenant_id": tenant_id, "kind": "rendering",
+         "name": "Dr. Samuel Ito, DC"},
+        {"_id": 0, "id": 1, "npi": 1},
+    )
+    facility = await db.service_facilities.find_one(
+        {"tenant_id": tenant_id},
+        {"_id": 0, "id": 1},
+    )
+    refs["billing_provider_id"] = (
+        billing_provider["id"] if billing_provider else None
+    )
+    refs["rendering_provider_lead_id"] = (
+        rendering_lead["id"] if rendering_lead else None
+    )
+    refs["rendering_provider_associate_id"] = (
+        rendering_associate["id"] if rendering_associate else
+        refs["rendering_provider_lead_id"]
+    )
+    refs["facility_id"] = facility["id"] if facility else None
+
     async for p in db.patients.find({"tenant_id": tenant_id}, {"_id": 0}):
         refs["patient_by_persona"][
             (p["first_name"], p["last_name"], p["date_of_birth"])
@@ -441,9 +476,11 @@ async def _seed_one_claim(
         "claim_type": "professional",
         "place_of_service": "11",
         "frequency_code": "1",
-        "billing_provider_id": refs["doctor_id"],
-        "rendering_provider_id": refs["doctor_id"],
-        "facility_id": None,
+        "billing_provider_id": refs.get("billing_provider_id")
+                               or refs["doctor_id"],
+        "rendering_provider_id": refs.get("rendering_provider_lead_id")
+                                 or refs["doctor_id"],
+        "facility_id": refs.get("facility_id"),
         "patient_control_number": f"RB-{scenario['key'][-8:].upper()}",
         "payer_claim_control_number": None,
         "accident_date": (
@@ -606,7 +643,7 @@ async def _seed_one_claim(
             "demo_seed_key": scenario["key"],
             "tenant_id": tenant_id,
             "claim_id": claim_id,
-            "method": "portal" if is_portal else "edi_837p",
+            "method": "manual_portal" if is_portal else "batch_file",
             "external_reference": f"DEMO-{scenario['key'][-6:].upper()}",
             "submitted_at": _iso_ts_ago(scenario["days_ago"]),
             "submitted_by": refs["doctor_id"],

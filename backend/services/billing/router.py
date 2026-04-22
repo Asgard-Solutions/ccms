@@ -2562,7 +2562,10 @@ async def claim_detail(
     ctx: TenantContext = Depends(require_tenant),
 ):
     """Everything the UI needs on one page — header + diagnoses + lines
-    + modifiers + the most recent scrubber findings."""
+    + modifiers + the most recent scrubber findings + resolved names
+    for every foreign-key field so the UI never has to render a raw
+    UUID.
+    """
     db = tenant_db(ctx.tenant_id)
     claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
     if not claim:
@@ -2572,6 +2575,108 @@ async def claim_detail(
         {"tenant_id": ctx.tenant_id, "claim_id": claim_id},
         {"_id": 0}, sort=[("run_at", -1)],
     )
+
+    # --- Resolve foreign-key references to human-readable strings.
+    # Internal IDs stay in storage / transmission; only the display
+    # layer gets readable values. Fetch each ref at most once.
+    async def _resolve_patient(pid: str | None):
+        if not pid:
+            return None
+        p = await db.patients.find_one(
+            {"tenant_id": ctx.tenant_id, "id": pid},
+            {"_id": 0, "id": 1, "first_name": 1, "last_name": 1, "mrn": 1},
+        )
+        if not p:
+            return None
+        return {
+            "id": p["id"],
+            "name": (f"{p.get('first_name','')} {p.get('last_name','')}").strip()
+                    or None,
+            "mrn": p.get("mrn"),
+        }
+
+    async def _resolve_payer(pid: str | None):
+        if not pid:
+            return None
+        p = await db.billing_payers.find_one(
+            {"tenant_id": ctx.tenant_id, "id": pid},
+            {"_id": 0, "id": 1, "name": 1, "payer_type": 1,
+             "external_id": 1},
+        )
+        return p
+
+    async def _resolve_user(uid: str | None):
+        if not uid:
+            return None
+        u = await db.users.find_one(
+            {"id": uid},
+            {"_id": 0, "id": 1, "name": 1, "display_name": 1,
+             "first_name": 1, "last_name": 1, "email": 1, "role": 1},
+        )
+        if not u:
+            return None
+        name = (
+            u.get("display_name")
+            or f"{u.get('first_name','')} {u.get('last_name','')}".strip()
+            or u.get("name")
+            or u.get("email")
+        )
+        return {"id": u["id"], "name": name, "role": u.get("role"),
+                "email": u.get("email")}
+
+    async def _resolve_provider_row(pid: str | None, kind: str):
+        if not pid:
+            return None
+        hit = await db.providers.find_one(
+            {"tenant_id": ctx.tenant_id, "id": pid},
+            {"_id": 0, "id": 1, "name": 1, "npi": 1,
+             "taxonomy_code": 1, "kind": 1},
+        )
+        if hit:
+            return hit
+        # Legacy claims may reference a user id (the old doctor_id
+        # shortcut) — surface the user's display name so the UI still
+        # shows something meaningful instead of a raw UUID.
+        u = await _resolve_user(pid)
+        if u:
+            return {"id": pid, "name": u["name"], "npi": None,
+                    "kind": kind, "source": "user"}
+        return None
+
+    async def _resolve_facility(fid: str | None):
+        if not fid:
+            return None
+        f = await db.service_facilities.find_one(
+            {"tenant_id": ctx.tenant_id, "id": fid},
+            {"_id": 0, "id": 1, "name": 1, "npi": 1},
+        )
+        return f
+
+    async def _resolve_location(lid: str | None):
+        if not lid:
+            return None
+        loc = await db.locations.find_one(
+            {"id": lid},
+            {"_id": 0, "id": 1, "name": 1, "code": 1},
+        )
+        return loc
+
+    refs = {
+        "patient": await _resolve_patient(claim.get("patient_id")),
+        "payer": await _resolve_payer(claim.get("payer_id")),
+        "billing_provider": await _resolve_provider_row(
+            claim.get("billing_provider_id"), "billing",
+        ),
+        "rendering_provider": await _resolve_provider_row(
+            claim.get("rendering_provider_id"), "rendering",
+        ),
+        "facility": await _resolve_facility(claim.get("facility_id")),
+        "location": await _resolve_location(claim.get("location_id")),
+        "assignee": await _resolve_user(claim.get("assigned_to")),
+        "created_by": await _resolve_user(claim.get("created_by")),
+        "updated_by": await _resolve_user(claim.get("updated_by")),
+    }
+
     return {
         "claim": _public(claim),
         "diagnoses": scrub_ctx.diagnoses,
@@ -2581,6 +2686,7 @@ async def claim_detail(
             for ln in scrub_ctx.lines
         ],
         "latest_validation": latest,
+        "refs": refs,
     }
 
 
@@ -3581,6 +3687,21 @@ async def _do_submit_claim(
         "name": envelope.get("receiver_name")
                  or (payer or {}).get("name") or "PAYER",
     }
+    # If no billing_provider row is configured for this tenant, we
+    # synthesize a placeholder — but NEVER use the raw claim field as
+    # NPI. A zero-NPI placeholder is unambiguously a "not configured"
+    # value on the wire; a leaked UUID would be a silent correctness
+    # bug. Real EDI submissions (batch_file) to a clearinghouse still
+    # require the caller to configure a providers directory; the
+    # adapter will reject a zero-NPI payload.
+    if billing_provider is None:
+        billing_provider = {
+            "name": "PROVIDER NOT CONFIGURED",
+            "npi": "0000000000",
+            "entity_type": "organization",
+            "address": None,
+            "tax_id": None,
+        }
     payload_x12 = build_x12_837p_wire(
         claim=claim, diagnoses=diagnoses, lines=lines,
         patient=patient, payer=payer, policy=policy,
@@ -4175,6 +4296,41 @@ async def _tab_base_query(tab: str, db, tenant_id: str) -> dict | None:
         q["$or"] = branches
         return q
     return None
+
+
+@router.get("/claims/assignable-users")
+async def list_assignable_users(
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Tenant-scoped list of billable users (admin / doctor / staff) for
+    the ClaimWorkflow AssignmentRow dropdown. Returns readable display
+    names, never raw IDs. Disabled users are filtered out."""
+    db = tenant_db(ctx.tenant_id)
+    q: dict = {
+        "role": {"$in": ["admin", "doctor", "staff", "billing_specialist"]},
+        "status": {"$ne": "disabled"},
+        "tenant_id": ctx.tenant_id,
+    }
+    out = []
+    async for u in db.users.find(
+        q, {"_id": 0, "id": 1, "email": 1, "role": 1,
+            "name": 1, "display_name": 1,
+            "first_name": 1, "last_name": 1},
+    ).sort([("first_name", 1), ("last_name", 1)]):
+        full = (
+            u.get("display_name")
+            or f"{u.get('first_name','')} {u.get('last_name','')}".strip()
+            or u.get("name")
+            or u.get("email")
+        )
+        out.append({
+            "id": u["id"],
+            "name": full,
+            "role": u.get("role"),
+            "email": u.get("email"),
+        })
+    return out
 
 
 @router.get("/claims/queue")

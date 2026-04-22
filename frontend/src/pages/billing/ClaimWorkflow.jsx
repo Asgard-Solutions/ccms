@@ -38,6 +38,7 @@ import {
   SUBMISSION_METHOD_LABELS,
   clearClaimFollowupFlag,
   createClaimSubmission,
+  fetchAssignableUsers,
   fetchClaimTimeline,
   fetchSubmissionPayload,
   flagClaimForFollowup,
@@ -60,7 +61,7 @@ const TIMELINE_KIND_META = {
 /** Phase 4 workflow panel — renders submissions, outcomes, timeline,
  *  and assignment for a single claim. Parent supplies `claim` and
  *  a `onChanged` callback to trigger an outer refresh. */
-export default function ClaimWorkflow({ claim, onChanged }) {
+export default function ClaimWorkflow({ claim, refs = {}, onChanged }) {
   const [submissions, setSubmissions] = useState([]);
   const [timeline, setTimeline] = useState({ entries: [] });
   const [loading, setLoading] = useState(true);
@@ -123,7 +124,7 @@ export default function ClaimWorkflow({ claim, onChanged }) {
           </div>
         </header>
 
-        <AssignmentRow claim={claim} onSaved={onChanged} />
+        <AssignmentRow claim={claim} assignee={refs.assignee} onSaved={onChanged} />
         <FollowupRow claim={claim} onSaved={onChanged} />
 
         <SubmissionsTable
@@ -165,15 +166,38 @@ export default function ClaimWorkflow({ claim, onChanged }) {
 }
 
 // ---------------------------------------------------------------------------
-function AssignmentRow({ claim, onSaved }) {
+// Assignee picker — renders a tenant-scoped dropdown of billable staff
+// so users never see a raw user-id. The pre-selected option and the
+// read-only summary both use the server-resolved display name.
+const UNASSIGNED = "__unassigned__";
+
+function AssignmentRow({ claim, assignee, onSaved }) {
   const { user } = useAuth();
   const [value, setValue] = useState(claim.assigned_to || "");
+  const [users, setUsers] = useState([]);
+  const [loadingUsers, setLoadingUsers] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => { setValue(claim.assigned_to || ""); }, [claim.assigned_to]);
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const rows = await fetchAssignableUsers();
+        if (alive) setUsers(rows);
+      } catch (e) {
+        if (alive) toast.error(
+          e?.response?.data?.detail || "Could not load assignable users",
+        );
+      } finally {
+        if (alive) setLoadingUsers(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
 
   async function save(explicit) {
-    const next = explicit === undefined ? (value.trim() || null) : explicit;
+    const next = explicit === undefined ? (value || null) : explicit;
     setSaving(true);
     try {
       await updateClaimAssignment(claim.id, next);
@@ -185,6 +209,16 @@ function AssignmentRow({ claim, onSaved }) {
   }
 
   const isMine = user?.id && claim.assigned_to === user.id;
+  // Current assignee label — prefer the server-resolved `assignee.name`
+  // (coming from the detail endpoint); fall back to a lookup against
+  // the fetched directory. Never show a UUID.
+  const currentLabel = useMemo(() => {
+    if (!claim.assigned_to) return "Unassigned";
+    if (assignee?.name) return assignee.name;
+    const hit = users.find((u) => u.id === claim.assigned_to);
+    if (hit?.name) return hit.name;
+    return "Unknown user";
+  }, [claim.assigned_to, assignee, users]);
 
   return (
     <div
@@ -197,14 +231,34 @@ function AssignmentRow({ claim, onSaved }) {
           Assignee
         </Label>
       </div>
-      <Input
-        id="cw-assignee"
-        data-testid="claim-assignee-input"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        placeholder="user id (leave blank for unassigned)"
-        className="min-w-[18rem] flex-1"
-      />
+      <div className="flex-1 min-w-[18rem]">
+        <Select
+          value={value || UNASSIGNED}
+          onValueChange={(v) => setValue(v === UNASSIGNED ? "" : v)}
+          disabled={loadingUsers || saving}
+        >
+          <SelectTrigger data-testid="claim-assignee-select" className="h-9">
+            <SelectValue placeholder={loadingUsers ? "Loading users…" : "Select assignee"}>
+              {currentLabel}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={UNASSIGNED}>
+              <span className="text-muted-foreground">Unassigned</span>
+            </SelectItem>
+            {users.map((u) => (
+              <SelectItem key={u.id} value={u.id} data-testid={`claim-assignee-option-${u.id}`}>
+                <span className="flex flex-col">
+                  <span>{u.name}</span>
+                  <span className="text-[11px] text-muted-foreground capitalize">
+                    {u.role?.replace(/_/g, " ")} · {u.email}
+                  </span>
+                </span>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       <Button
         size="sm"
         onClick={() => save()}

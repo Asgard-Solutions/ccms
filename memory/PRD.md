@@ -2,6 +2,113 @@
 
 **Last updated:** 2026-04-22 (Demo sanitation pass — clinic profile, appointment types, rooms, profile scrub)
 
+## 4c. Claims: internal-ID leakage audit (2026-04-22)
+User reported raw UUIDs / hashes showing up on claim workflow / detail
+screens and (dangerously) potentially leaking into 837P wire payloads.
+Full audit + fix across five layers.
+
+**Root causes found**
+1. Claim detail endpoint returned `_public(claim)` with raw foreign keys
+   (`patient_id`, `billing_provider_id`, `rendering_provider_id`,
+   `facility_id`, `assigned_to`) — no name resolution at all.
+2. `ClaimDetail.jsx` header rendered those raw UUIDs directly into
+   "Billing provider", "Rendering provider", "Facility", "Patient"
+   fields.
+3. `ClaimWorkflow.jsx` AssignmentRow was a free-text input wired
+   straight to `claim.assigned_to`, which meant users saw and could
+   only type in UUIDs.
+4. `ClaimsQueue.jsx` fell back to `patient_id.slice(0,8)` /
+   `assigned_to.slice(0,8)` when the row enrichment was missing — still
+   UUID-like junk on the screen.
+5. **Most dangerous**: `build_x12_837p_wire()` fell back to
+   `claim.billing_provider_id` as the NPI when no resolved
+   `billing_provider` was supplied. Since Riverbend's seed referenced
+   a user UUID for `billing_provider_id` (the `providers` directory
+   was never seeded), the 837P builder would emit the UUID as the
+   billing-provider NPI onto the outbound wire. `submission.py`
+   preview builder had the same leak.
+
+**Files changed**
+- `/app/backend/services/demo/seed.py` — +_PROVIDER_DIRECTORY (4 rows:
+  billing group + 3 rendering providers with real 10-digit NPIs),
+  +_SERVICE_FACILITY, +_upsert_providers function, hooked into
+  `seed_demo_clinic()`
+- `/app/backend/services/demo/billing_seed.py` — billing/rendering
+  provider IDs on every seeded claim now reference the `providers`
+  directory UUID (not a user UUID); facility_id set to the
+  `service_facilities` row; submission.method corrected
+  `edi_837p → batch_file`
+- `/app/backend/services/billing/clearinghouse/x12_837p.py` — wire
+  builder now **refuses** to emit a payload when `billing_provider` is
+  missing or `billing_provider.npi` isn't a 10-digit number. Eliminates
+  silent UUID-as-NPI leak.
+- `/app/backend/services/billing/submission.py` — preview builder
+  accepts resolved `billing_provider`, validates NPI is 10-digit, emits
+  empty instead of UUID on fallback
+- `/app/backend/services/billing/router.py` —
+  - `GET /api/billing/claims/{id}/detail` now returns a `refs` block
+    with resolved `patient`, `payer`, `billing_provider`,
+    `rendering_provider`, `facility`, `location`, `assignee`,
+    `created_by`, `updated_by` (all with `name` + context fields,
+    never a raw id in the display slot)
+  - new `GET /api/billing/claims/assignable-users` — tenant-scoped,
+    returns readable name/role/email for the AssignmentRow picker
+  - submission pipeline: if no `billing_provider` row exists, synthesise
+    a placeholder (`PROVIDER NOT CONFIGURED` / NPI `0000000000`) rather
+    than leak `claim.billing_provider_id` — clearinghouses will reject
+    zero-NPI outright, failing loudly instead of silently wrong
+- `/app/frontend/src/pages/billing/ClaimDetail.jsx` — patient link,
+  header fields ("Billing provider", "Rendering provider", "Facility")
+  now render server-resolved `refs.*` strings with NPI tail; passes
+  `refs` down to ClaimWorkflow
+- `/app/frontend/src/pages/billing/ClaimWorkflow.jsx` — AssignmentRow
+  refactored: free-text Input → Select dropdown populated via
+  `fetchAssignableUsers()`, trigger shows readable current-assignee
+  name (from `refs.assignee` or directory fallback), never a UUID
+- `/app/frontend/src/pages/billing/ClaimsQueue.jsx` — removed
+  `patient_id.slice(0,8)` / `assigned_to.slice(0,8)` UUID fallbacks
+  — unresolved rows now read "Unknown patient" / "Unassigned"
+- `/app/frontend/src/pages/billing/useClaims.js` — +fetchAssignableUsers
+- `/app/backend/tests/test_riverbend_demo_sanitation.py` — +5 tests
+  (TestClaimDisplayVsStorage):
+  - `test_detail_refs_resolve_all_foreign_keys` — every fk has a
+    readable `name`, none of which matches the UUID regex
+  - `test_billing_provider_has_real_npi` — enforces 10-digit NPI on
+    both billing + rendering
+  - `test_claims_queue_rows_use_readable_names` — every queue row has
+    patient_name; when assigned, assignee_name (no UUID strings)
+  - `test_assignable_users_endpoint` — readable name + role for each
+  - `test_x12_builder_refuses_uuid_as_npi` — wire builder raises when
+    `billing_provider` is None OR its NPI isn't a 10-digit number
+
+**Verification**
+- 15/15 test_riverbend_demo_sanitation.py green (10 previous + 5 new).
+- 22/22 test_billing_phase4.py (submission lifecycle/outcomes/timeline)
+  green — the placeholder-NPI fallback keeps existing manual-portal
+  submission tests working while the strict wire builder prevents
+  UUID leakage.
+- Visual verification screenshots:
+  - Claim detail header: "Billing provider: Riverbend Chiropractic &
+    Wellness, LLC · NPI 1194567893", "Rendering provider: Dr. Noah
+    Carter, DC · NPI 1841792253", "Facility: Riverbend Chiropractic &
+    Wellness — Downtown · NPI 1356789012", patient link "Jaxon Morgan"
+  - Claim queue: patient names + payer names + "Unassigned"
+    (no UUID slices)
+  - AssignmentRow: dropdown with 8 staff users, each showing full
+    display name + role + email (Olivia Hart · Admin, Dr. Samuel Ito
+    DC · Doctor, Mia Ramirez · Staff, …)
+
+**Guardrails maintained**
+- No encryption-at-rest weakened.
+- PHI masking on patient data unchanged (refs block only exposes name
+  which was already public via the queue enrichment path).
+- All display resolution happens server-side in the authorized
+  endpoint; the UI is pure render, never fabricates strings.
+- Internal IDs stay in storage (`claim.billing_provider_id` etc.)
+  and still flow through the submission pipeline — they just never
+  reach the UI display layer or outbound NPI fields.
+
+
 ## 4b. Notifications + follow-up rebooking seed (2026-04-22)
 Addressed the second prompt after the sanitation pass — populate the
 notification/reminder panels so the communication surface feels live.

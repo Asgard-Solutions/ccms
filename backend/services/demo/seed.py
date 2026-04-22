@@ -412,6 +412,65 @@ _ROOMS = [
     {"name": "Therapy Bay", "type": "therapy", "sort_order": 70,
      "notes": "Modalities, rehab exercise, and soft-tissue work."},
 ]
+
+
+# ---------------------------------------------------------------------------
+# Provider directory — the `providers` collection feeds 837P Loop 2010AA
+# (billing, type-2 NPI) and 2310B (rendering, type-1 NPI). Without these
+# rows the x12 wire builder falls back to whatever string is stored in
+# `claim.billing_provider_id` — which is a Mongo UUID in our case and
+# would leak into the outbound claim payload as the NPI. Seed real,
+# canonical values so the claim pipeline + UI both show correct data.
+#
+# NPIs below are fictional but follow the valid Luhn pattern / format
+# required by x12 validation (10 digits, leading digit != 0).
+# ---------------------------------------------------------------------------
+_PROVIDER_DIRECTORY = [
+    {"key": "billing_group", "kind": "billing",
+     "name": "Riverbend Chiropractic & Wellness, LLC",
+     "npi": "1194567893", "tax_id": "84-3210987",
+     "taxonomy_code": "193200000X",  # Multi-Specialty Group
+     "phone": "5035550100",
+     "address": {"line1": "1840 NW Riverside Dr", "line2": "Suite 210",
+                 "city": "Portland", "state": "OR",
+                 "postal_code": "97209", "country": "US"}},
+    {"key": "rendering_lead", "kind": "rendering",
+     "name": "Dr. Noah Carter, DC",
+     "user_email": "doctor@ccms.app",
+     "npi": "1841792253", "tax_id": None,
+     "taxonomy_code": "111N00000X",  # Chiropractor
+     "phone": "5035550142",
+     "address": {"line1": "1840 NW Riverside Dr", "line2": "Suite 210",
+                 "city": "Portland", "state": "OR",
+                 "postal_code": "97209", "country": "US"}},
+    {"key": "rendering_associate", "kind": "rendering",
+     "name": "Dr. Samuel Ito, DC",
+     "user_email": "dr.samuel.ito@riverbend-chiro.app",
+     "npi": "1558762341", "tax_id": None,
+     "taxonomy_code": "111N00000X",
+     "phone": "5035550143",
+     "address": {"line1": "1840 NW Riverside Dr", "line2": "Suite 210",
+                 "city": "Portland", "state": "OR",
+                 "postal_code": "97209", "country": "US"}},
+    {"key": "rendering_pediatric", "kind": "rendering",
+     "name": "Dr. Maya Patel, DC",
+     "user_email": "dr.maya.patel@riverbend-chiro.app",
+     "npi": "1729384501", "tax_id": None,
+     "taxonomy_code": "111NP0017X",  # Pediatric Chiropractor
+     "phone": "5035550144",
+     "address": {"line1": "1840 NW Riverside Dr", "line2": "Suite 210",
+                 "city": "Portland", "state": "OR",
+                 "postal_code": "97209", "country": "US"}},
+]
+
+_SERVICE_FACILITY = {
+    "name": "Riverbend Chiropractic & Wellness — Downtown",
+    "npi": "1356789012",
+    "phone": "5035550100",
+    "address": {"line1": "1840 NW Riverside Dr", "line2": "Suite 210",
+                "city": "Portland", "state": "OR",
+                "postal_code": "97209", "country": "US"},
+}
 _PERSONAS = [
     {
         "first_name": "Hannah", "middle_name": "Rose", "last_name": "Whitaker",
@@ -1184,6 +1243,77 @@ async def _seed_appointments(
             )
 
 
+async def _upsert_providers(
+    tenant_id: str, *,
+    staff_by_email: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Seed the `providers` directory (billing + rendering rows) and
+    the `service_facilities` row for Riverbend. Returns a mapping of
+    persona key → provider.id so the billing seed can link claims to
+    the canonical provider UUID (not a user UUID).
+
+    Idempotent: keyed on (tenant_id, kind, npi) so reseeding swaps
+    in-place without creating duplicates.
+    """
+    db = get_db_write()
+    now = _now()
+    result: dict[str, str] = {}
+    staff_by_email = staff_by_email or {}
+
+    for spec in _PROVIDER_DIRECTORY:
+        key = {
+            "tenant_id": tenant_id,
+            "kind": spec["kind"],
+            "npi": spec["npi"],
+        }
+        existing = await db.providers.find_one(key, {"_id": 0, "id": 1})
+        pid = existing["id"] if existing else str(uuid.uuid4())
+        user_id = staff_by_email.get(spec.get("user_email") or "")
+        doc = {
+            **key,
+            "id": pid,
+            "name": spec["name"],
+            "tax_id": spec.get("tax_id"),
+            "taxonomy_code": spec.get("taxonomy_code"),
+            "phone": spec.get("phone"),
+            "address": spec.get("address"),
+            "status": "active",
+            "notes": None,
+            "user_id": user_id,  # link back to the login account when
+                                 # the rendering provider is also a user
+            "updated_at": now,
+        }
+        if existing:
+            await db.providers.update_one({"id": pid}, {"$set": doc})
+        else:
+            doc["created_at"] = now
+            await db.providers.insert_one(doc)
+        result[spec["key"]] = pid
+
+    # Service facility — 2310C.
+    fkey = {"tenant_id": tenant_id, "npi": _SERVICE_FACILITY["npi"]}
+    f_existing = await db.service_facilities.find_one(fkey, {"_id": 0, "id": 1})
+    fid = f_existing["id"] if f_existing else str(uuid.uuid4())
+    fdoc = {
+        **fkey,
+        "id": fid,
+        "name": _SERVICE_FACILITY["name"],
+        "phone": _SERVICE_FACILITY["phone"],
+        "address": _SERVICE_FACILITY["address"],
+        "status": "active",
+        "notes": None,
+        "updated_at": now,
+    }
+    if f_existing:
+        await db.service_facilities.update_one({"id": fid}, {"$set": fdoc})
+    else:
+        fdoc["created_at"] = now
+        await db.service_facilities.insert_one(fdoc)
+    result["service_facility"] = fid
+
+    return result
+
+
 async def _upsert_clinic_profile(
     tenant_id: str, location_id: str | None,
     created_by: str | None,
@@ -1664,13 +1794,20 @@ async def seed_demo_clinic() -> None:
     await _upsert_clinic_profile(tenant_id, location_id, owner_id)
     await _upsert_appointment_types(tenant_id, owner_id)
     await _upsert_rooms(tenant_id, location_id)
+    # Provider directory — 837P Loop 2010AA / 2310B / 2310C. Claims
+    # reference these rows by `provider.id`; the wire builder resolves
+    # the actual NPI at submission time. `seed_demo_billing` queries
+    # the `providers` + `service_facilities` collections directly so
+    # no inter-seeder state plumbing is needed.
+    await _upsert_providers(tenant_id, staff_by_email=staff_by_email)
     # Notification log + follow-up rebooking queue — populates the
     # Communication panel and Checkout page's suggestions card.
     await _seed_notifications(tenant_id, location_id)
     await _seed_follow_up_suggestions(tenant_id, location_id)
     logger.info(
         "demo.seed complete: staff=%d personas=%d payers=%d "
-        "appt_types=%d rooms=%d clinic_profile=1",
+        "appt_types=%d rooms=%d clinic_profile=1 providers=%d",
         len(_STAFF), len(_PERSONAS), len(_PAYERS),
         len(_APPOINTMENT_TYPES), len(_ROOMS),
+        len(_PROVIDER_DIRECTORY),
     )

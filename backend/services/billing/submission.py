@@ -101,6 +101,7 @@ def build_x12_837p_preview(
     patient: dict | None,
     payer: dict | None,
     policy: dict | None,
+    billing_provider: dict | None = None,
 ) -> str:
     """Lightweight ANSI X12 837P **preview** — enough to show the shape
     and validate segment counts; intentionally NOT transmission-ready.
@@ -129,9 +130,14 @@ def build_x12_837p_preview(
     s("ST", "837", "0001", "005010X222A1")
     s("BHT", "0019", "00", claim.get("id", "")[:30], today, "1200", "CH")
 
-    # Billing provider (placeholder)
-    s("NM1", "85", "2", "CCMS BILLING", "", "", "", "",
-      "XX", claim.get("billing_provider_id") or "")
+    # Billing provider — prefer the resolved provider-directory row;
+    # never fall back to `claim.billing_provider_id` (a UUID) because
+    # that value would show up on the preview as the NPI field.
+    bp_npi = (billing_provider or {}).get("npi") or ""
+    if not (len(bp_npi) == 10 and bp_npi.isdigit()):
+        bp_npi = ""  # empty is safer than leaking a UUID
+    bp_name = (billing_provider or {}).get("name") or "CCMS BILLING"
+    s("NM1", "85", "2", bp_name, "", "", "", "", "XX", bp_npi)
 
     # Subscriber / patient
     if patient:

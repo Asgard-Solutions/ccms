@@ -745,13 +745,29 @@ def build_x12_837p_wire(
         "id": "PAYER",
         "name": (payer or {}).get("name") or "PAYER",
     }
-    billing_provider = billing_provider or {
-        "npi": (claim or {}).get("billing_provider_id") or "0000000000",
-        "name": "CCMS BILLING",
-        "entity_type": "organization",
-        "address": None,
-        "tax_id": None,
-    }
+    # If the caller didn't hand us a resolved billing_provider, we must
+    # NEVER silently fall back to `claim.billing_provider_id` — that
+    # field stores a provider-directory UUID (or a user UUID in legacy
+    # data), not an NPI. Emitting it as the NPI would leak internal
+    # identifiers onto the outbound 837 wire. Fail loud instead — the
+    # caller (submission flow in `billing/router.py`) is responsible
+    # for calling `_resolve_provider` before invoking this builder.
+    if billing_provider is None:
+        raise ValueError(
+            "build_x12_837p_wire: billing_provider is required. The "
+            "caller must resolve claim.billing_provider_id against "
+            "the `providers` directory and pass the resolved row "
+            "(with a 10-digit NPI). Refusing to emit the raw claim "
+            "field as NPI — that would leak an internal UUID onto the "
+            "outbound 837P wire."
+        )
+    npi = (billing_provider or {}).get("npi") or ""
+    if not (len(npi) == 10 and npi.isdigit()):
+        raise ValueError(
+            f"build_x12_837p_wire: billing_provider.npi must be a "
+            f"10-digit NPI, got {npi!r}. Fix the provider-directory "
+            f"row before submitting."
+        )
     ctx = build_claim_context(
         claim=claim or {},
         patient=patient,
