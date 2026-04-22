@@ -1,6 +1,36 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-04-22 (Clinical workflow chain refactor — Appointment → Encounter → Initial Exam → Diagnoses → Treatment Plan → Follow-up Note → Re-Exam; floating-plan guard)
+**Last updated:** 2026-04-22 (Regression fixes — AppointmentWorkflowPanel `useEffect` import + billing/payments currency)
+
+## 4g. P0 Regression fixes (2026-04-22)
+
+### Bug 1 — Scheduling/AppointmentWorkflowPanel `useEffect is not defined`
+**Root cause:** `AppointmentWorkflowPanel.jsx` uses `useEffect` (to load rooms when location changes) but the import line only pulled `{ useMemo, useState }` from React. Missing-import code regression introduced during an earlier refactor.
+
+**Fix:** `/app/frontend/src/pages/scheduling/AppointmentWorkflowPanel.jsx` line 1 — `import { useEffect, useMemo, useState } from "react";`
+
+**Verification:** Opened Scheduling → clicked an appointment → the workflow panel (Check in / No-show / Launch encounter / Reschedule) now opens cleanly without a runtime crash; room selector hydrates.
+
+### Bug 2 — `/api/billing/payments` 500 Internal Server Error
+**Root cause:** Two-layer issue (seed-shape + serializer strictness):
+1. `services/demo/billing_seed.py` seeded the Ethan Parker self-pay payment row WITHOUT a `currency` field.
+2. `PaymentPublic` response model declared `currency: str` with no default, so Pydantic raised `ResponseValidationError: Field required` when serialising the row → 500.
+
+**Fix (two-pronged, per guardrails):**
+1. **Data fix** — `billing_seed.py` now seeds `"currency": "USD"` + `"allocated_cents"` on the payment insert so the data is correct going forward.
+2. **Defensive serializer fix** — `PaymentPublic.currency` now has `= "USD"` default + a `@field_validator("currency", mode="before")` that coerces None/empty → "USD". Same pattern as the existing legacy `status="completed" → "captured"` coercion. This prevents a repeat regression on historical rows.
+
+**Verification:**
+- `GET /api/billing/payments` → 200
+- Billing landing page renders: Outstanding Balance ($215), Lifetime Billed ($285), Payments Recorded (1), Recent Invoices (4 rows), Recent Payments ($70 · cash · settled).
+- Reseed + verifier clean: 0 integrity violations, 26/26 Riverbend pytest passing.
+
+**Files added/changed in this pass**
+- `/app/frontend/src/pages/scheduling/AppointmentWorkflowPanel.jsx` — added `useEffect` to React import
+- `/app/backend/services/demo/billing_seed.py` — seeded `currency: "USD"` + `allocated_cents`
+- `/app/backend/services/billing/models.py` — `PaymentPublic.currency` default + legacy-tolerance validator
+- `/app/memory/PRD.md` — §4g added
+
 
 ## 4f. Clinical workflow chain seed (2026-04-22)
 Closes the last P0 from the clinical-demo refactor: every

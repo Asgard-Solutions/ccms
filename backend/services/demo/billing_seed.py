@@ -811,6 +811,8 @@ async def _seed_invoices_and_statements(
             "method": "cash",
             "status": "settled",
             "amount_cents": 7000,
+            "allocated_cents": 7000,
+            "currency": "USD",
             "received_at": _iso_ts_ago(2),
             "posted_by": refs["billing_user_id"],
             "notes": "Cash at front desk",

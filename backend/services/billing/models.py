@@ -642,7 +642,7 @@ class PaymentPublic(BaseModel):
     status: PaymentStatus
     amount_cents: int
     allocated_cents: int = 0
-    currency: str
+    currency: str = "USD"
     received_at: str | None = None
     reference: str | None = None
     external_txn_id: str | None = None
@@ -660,6 +660,15 @@ class PaymentPublic(BaseModel):
         if value == "completed":
             return "captured"
         return value
+
+    # Same tolerance for currency: historical demo-seed rows landed
+    # without a currency field before the field was added to the seed.
+    # Default to USD on read so the list endpoint never 500s on
+    # pre-existing rows.
+    @field_validator("currency", mode="before")
+    @classmethod
+    def _default_currency(cls, value):
+        return value or "USD"
 
 
 # ---------------------------------------------------------------------------
