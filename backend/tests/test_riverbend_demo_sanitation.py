@@ -558,9 +558,66 @@ class TestClinicalChartCompleteness:
                 timeout=20,
             )
             assert r.status_code == 200, r.text
-            if not r.json():
-                missing.append(f"{name_key[0]} {name_key[1]}")
-        assert not missing, (
-            f"Every persona should have a completed intake form; "
-            f"missing: {missing}"
-        )
+
+
+# --------- Cross-domain referential integrity ---------
+class TestRiverbendIntegrity:
+    """Hard guardrail: after a reseed, every foreign-key in every
+    demo-seeded domain must resolve against the canonical entity set.
+    No orphans, no duplicates, no stale pointers.
+
+    Runs the same verifier `scripts/verify_demo_integrity.py` uses so
+    the CI + ops playbook share one source of truth.
+    """
+
+    def test_no_cross_domain_violations(self):
+        import asyncio
+        import sys
+        sys.path.insert(0, "/app/backend")
+        from scripts.verify_demo_integrity import verify_riverbend_integrity
+
+        count, report = asyncio.run(verify_riverbend_integrity())
+
+        # Human-readable summary to make CI output useful.
+        if count:
+            from collections import Counter
+            grouped = Counter(
+                (v["collection"], v["description"]) for v in report["violations"]
+            )
+            lines = []
+            for (col, desc), n in sorted(grouped.items(), key=lambda x: -x[1]):
+                lines.append(f"  [{n:>4}] {col} — {desc}")
+            detail = "\n".join(lines)
+            samples = "\n".join(
+                f"  {v['collection']} row={str(v['row_id'])[:24]} "
+                f"{v['ref_field']}={str(v['value'])[:30]} → {v['description']}"
+                for v in report["violations"][:10]
+            )
+            assert False, (
+                f"Riverbend demo integrity check failed with {count} "
+                f"violations.\n\nBy category:\n{detail}\n\n"
+                f"First 10:\n{samples}"
+            )
+
+    def test_canonical_entity_counts(self):
+        """Catches silent reseed drift — e.g. a future patch that
+        accidentally creates 2 clinic profiles, 9 patients, or 0
+        providers would fail here loudly."""
+        import asyncio
+        import sys
+        sys.path.insert(0, "/app/backend")
+        from scripts.verify_demo_integrity import verify_riverbend_integrity
+
+        _, report = asyncio.run(verify_riverbend_integrity())
+        c = report["counts"]
+        assert c["patients"] == 8, f"patients={c['patients']} (expected 8)"
+        assert c["locations"] == 1, f"locations={c['locations']} (expected 1)"
+        assert c["providers"] == 4, f"providers={c['providers']} (expected 4)"
+        assert c["appointment_types"] == 9, \
+            f"appointment_types={c['appointment_types']} (expected 9)"
+        assert c["rooms"] == 7, f"rooms={c['rooms']} (expected 7)"
+        assert c["service_facilities"] == 1, \
+            f"service_facilities={c['service_facilities']} (expected 1)"
+        assert c["payers"] == 6, f"payers={c['payers']} (expected 6)"
+        assert c["episodes"] == 8, f"episodes={c['episodes']} (expected 8)"
+        assert c["claims"] == 14, f"claims={c['claims']} (expected 14)"

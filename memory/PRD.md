@@ -2,6 +2,62 @@
 
 **Last updated:** 2026-04-22 (Demo sanitation pass — clinic profile, appointment types, rooms, profile scrub)
 
+## 4e. Cross-domain referential-integrity verifier (2026-04-22)
+Hardened the demo-seed architecture against disjoint-data regressions.
+
+**Shipped**
+- `/app/backend/scripts/verify_demo_integrity.py` — canonical-entity
+  verifier that walks every foreign-key in every seeded domain
+  (appointments, claims, claim_lines, claim_diagnoses, remittances,
+  billing_invoices, patient_insurance_policies, clinical_episode_cases,
+  clinical_diagnoses, clinical_treatment_plans, clinical_history,
+  clinical_outcome_entries, patient_intake_forms, notifications,
+  follow_up_suggestions) against the canonical Riverbend entity set
+  (tenant, locations, users, providers, appointment_types, rooms,
+  service_facilities, payers, patients). Also detects duplicate
+  personas via (first_name, last_name, email) key.
+- `reseed_demo_clinic.py` now calls the verifier post-seed and prints
+  the canonical counts + any violations found.
+- 2 new tests in `TestRiverbendIntegrity`:
+  - `test_no_cross_domain_violations` — asserts 0 violations across
+    all 15+ audited foreign-key paths
+  - `test_canonical_entity_counts` — locks the demo shape
+    (8 patients, 1 location, 4 providers, 9 appointment_types,
+    7 rooms, 1 service_facility, 6 payers, 8 episodes, 14 claims)
+    so silent drift fails the test.
+
+**Audit result on Riverbend**
+Integrity violations: **0 across 13 audited domains**. Canonical counts
+match the documented demo spec. No orphan claims, no stale provider
+references, no duplicate personas, no broken episode/plan links.
+
+**Guardrails preventing future disjoint-data regressions**
+1. Every seeder now resolves references from the canonical Mongo
+   lookup (not name-based constants) via:
+   - `patients` lookup keyed on `(first_name, last_name, email)` —
+     idempotent against encrypted DOB (fixed in §4a)
+   - `providers` directory seeded once in `_upsert_providers` —
+     billing claims join against this not against user UUIDs (§4c)
+   - `service_facilities` seeded alongside; claim.facility_id binds
+     to canonical row (§4c)
+   - notifications + follow-ups tagged `source: "demo_seed"` and key
+     on `patient_id`/`appointment_id` resolved from canonical lookup
+     (§4b)
+   - clinical chart seed loads patient ids once at entry and every
+     downstream seeder walks that map (§4d)
+2. Reseed script wipes all dependent collections before re-inserting,
+   then runs the integrity verifier as a built-in post-check.
+3. CI test `TestRiverbendIntegrity` blocks any commit that regresses
+   the canonical shape.
+
+**Files added/changed in this pass**
+- `/app/backend/scripts/verify_demo_integrity.py` — NEW
+- `/app/backend/scripts/reseed_demo_clinic.py` — post-seed verifier hook
+- `/app/backend/tests/test_riverbend_demo_sanitation.py` —
+  `TestRiverbendIntegrity` (2 tests)
+- `/app/memory/PRD.md` — §4e added
+
+
 ## 4d. Clinical chart completeness seed (2026-04-22)
 Addressed the fourth prompt — every Riverbend persona now has a
 fully-populated Intake + Clinical chart that matches their visit

@@ -163,6 +163,17 @@ async def main() -> None:
     await seed_demo_billing()
     print("Done. Restart the backend or just call GET /api/health to confirm.")
 
+    # Post-seed integrity check — fail loudly if any cross-domain
+    # reference is broken. Forces the reseed script to catch problems
+    # the same way the test suite does.
+    from scripts.verify_demo_integrity import verify_riverbend_integrity
+    count, report = await verify_riverbend_integrity()
+    if count:
+        print(f"\n⚠️  Integrity check found {count} violations. "
+              "Run `python scripts/verify_demo_integrity.py` for details.")
+    else:
+        print(f"Integrity OK: {report['counts']}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())
