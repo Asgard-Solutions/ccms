@@ -55,6 +55,7 @@ from datetime import datetime, timedelta, timezone
 from core.crypto import encrypt_text
 from core.db import get_db_write
 from core.security import hash_password
+from services.patient._shared import encrypt_patient_value
 
 logger = logging.getLogger("ccms.demo.seed")
 
@@ -187,10 +188,104 @@ _PAYERS = [
 
 
 # ---------------------------------------------------------------------------
-# Patient personas — each drives downstream demographics, insurance, and
-# clinical notes. Keeping them declarative so extending the catalog is
-# just adding an entry to this list.
+# Structured address + emergency-contact data — the Edit patient wizard
+# reads from `address_details.{line1,city,state,postal_code}` and
+# `emergency_contact_details.{name,relationship,phone}`, so we must
+# persist both the structured form (for the Edit form) *and* the legacy
+# flat string (for backward-compatibility with older callers).
+#
+# Keyed on (first_name, last_name) — unique across the demo personas.
 # ---------------------------------------------------------------------------
+_ADDRESS_BY_NAME: dict[tuple[str, str], dict] = {
+    ("Hannah", "Whitaker"): {
+        "line1": "1124 SE Ankeny St", "line2": None,
+        "city": "Portland", "state": "OR",
+        "postal_code": "97214", "country": "USA",
+    },
+    ("Marcus", "Reid"): {
+        "line1": "2208 NE Alberta St", "line2": None,
+        "city": "Portland", "state": "OR",
+        "postal_code": "97211", "country": "USA",
+    },
+    ("Isabella", "Cho"): {
+        "line1": "3418 SE Division St", "line2": "Unit 2",
+        "city": "Portland", "state": "OR",
+        "postal_code": "97202", "country": "USA",
+    },
+    ("Derrick", "Stone"): {
+        "line1": "507 NE Killingsworth St", "line2": None,
+        "city": "Portland", "state": "OR",
+        "postal_code": "97211", "country": "USA",
+    },
+    ("Aria", "Johnson"): {
+        "line1": "9912 SW Capitol Hwy", "line2": "Apt 3C",
+        "city": "Portland", "state": "OR",
+        "postal_code": "97219", "country": "USA",
+    },
+    ("Claire", "Morgan"): {
+        "line1": "1711 SW Park Ave", "line2": None,
+        "city": "Portland", "state": "OR",
+        "postal_code": "97201", "country": "USA",
+    },
+    ("Jaxon", "Morgan"): {
+        "line1": "1711 SW Park Ave", "line2": None,
+        "city": "Portland", "state": "OR",
+        "postal_code": "97201", "country": "USA",
+    },
+}
+
+_EMERGENCY_BY_NAME: dict[tuple[str, str], dict] = {
+    ("Hannah", "Whitaker"): {
+        "name": "Nora Whitaker", "relationship": "Mother",
+        "phone": "+1-503-555-0219", "phone_alt": None,
+        "email": "nora.whitaker@example.com",
+    },
+    ("Marcus", "Reid"): {
+        "name": "Donna Reid", "relationship": "Spouse",
+        "phone": "+1-503-555-0177", "phone_alt": None,
+        "email": "donna.reid@example.com",
+    },
+    ("Isabella", "Cho"): {
+        "name": "Daniel Cho", "relationship": "Spouse",
+        "phone": "+1-503-555-0227", "phone_alt": None,
+        "email": "daniel.cho@example.com",
+    },
+    ("Derrick", "Stone"): {
+        "name": "Rachel Stone", "relationship": "Daughter",
+        "phone": "+1-503-555-0252", "phone_alt": None,
+        "email": "rachel.stone@example.com",
+    },
+    ("Aria", "Johnson"): {
+        "name": "Kim Johnson", "relationship": "Mother",
+        "phone": "+1-503-555-0263", "phone_alt": None,
+        "email": "kim.johnson@example.com",
+    },
+    ("Claire", "Morgan"): {
+        "name": "Aaron Morgan", "relationship": "Spouse",
+        "phone": "+1-503-555-0282", "phone_alt": None,
+        "email": "aaron.morgan@example.com",
+    },
+    ("Jaxon", "Morgan"): {
+        # Minor dependent — primary emergency contact is the guardian.
+        "name": "Claire Morgan", "relationship": "Mother",
+        "phone": "+1-503-555-0280", "phone_alt": "+1-503-555-0282",
+        "email": "claire.morgan@example.com",
+    },
+    # Ethan Parker lives on the identity/seed.py path but we keep his
+    # structured address + emergency contact here so both seeders share
+    # one source of truth. identity/seed.py imports this dict.
+    ("Ethan", "Parker"): {
+        "name": "Sarah Parker", "relationship": "Spouse",
+        "phone": "+1-503-555-0191", "phone_alt": None,
+        "email": "sarah.parker@example.com",
+    },
+}
+
+_ADDRESS_BY_NAME[("Ethan", "Parker")] = {
+    "line1": "842 NW Lovejoy St", "line2": "Apt 4B",
+    "city": "Portland", "state": "OR",
+    "postal_code": "97209", "country": "USA",
+}
 _PERSONAS = [
     {
         "first_name": "Hannah", "middle_name": "Rose", "last_name": "Whitaker",
@@ -564,11 +659,130 @@ async def _upsert_personas(
         }
         existing = await db.patients.find_one(key, {"_id": 0, "id": 1})
         patient_id = existing["id"] if existing else str(uuid.uuid4())
+
+        address = _ADDRESS_BY_NAME.get(
+            (spec["first_name"], spec["last_name"]),
+        ) or {}
+        emergency = _EMERGENCY_BY_NAME.get(
+            (spec["first_name"], spec["last_name"]),
+        ) or {}
+
+        # Grouped sections required by the Edit Patient wizard
+        # (services/pages/patientWizardLogic.js :: payloadToForm reads
+        # from address_details / emergency_contact_details / contact /
+        # demographics / admin / guarantor / insurance).
+        demographics_group = {
+            "first_name": spec["first_name"],
+            "middle_name": spec.get("middle_name"),
+            "last_name": spec["last_name"],
+            "preferred_name": spec.get("preferred_name"),
+            "date_of_birth": spec["date_of_birth"],
+            "gender": spec["gender"],
+            "sex_at_birth": spec["gender"],
+            "pronouns": spec.get("pronouns"),
+            "marital_status": spec.get("marital_status"),
+            "language": spec.get("language"),
+            "occupation": spec.get("occupation"),
+            "employer": spec.get("employer"),
+            "employer_phone": spec.get("employer_phone"),
+        }
+        contact_group = {
+            "phone": spec["phone"],
+            "phone_alt": spec.get("phone_alt"),
+            "phone_work": spec.get("phone_work"),
+            "email": spec["email"],
+            "preferred_contact_method": "email",
+            "sms_consent": True,
+            "email_consent": True,
+            "voicemail_consent": True,
+        }
+        admin_group = {
+            "primary_provider_id": doctor_id,
+            "referral_source": spec.get("referral_source"),
+            "mrn": None,
+            "tags": [spec["persona"]],
+        }
+
+        # Guarantor — responsible-party=self for every persona except
+        # Jaxon (minor dependent), whose guardian is Claire Morgan.
+        if spec.get("persona") == "minor_dependent":
+            guarantor_group = {
+                "same_as_patient": False,
+                "first_name": "Claire",
+                "last_name": "Morgan",
+                "relationship": "Parent",
+                "date_of_birth": "1986-09-09",
+                "phone": "+1-503-555-0280",
+                "email": "claire.morgan@example.com",
+                "employer": "Riverpoint Biotech",
+                "employer_phone": "+1-503-555-0281",
+                "address": (
+                    "1711 SW Park Ave, Portland, OR 97201"
+                ),
+            }
+        else:
+            guarantor_group = {"same_as_patient": True}
+
+        # Insurance — mirror the policy row so the Edit wizard
+        # renders the primary block on load.
+        p = spec.get("policy") or {}
+        insurance_group: dict | None = None
+        if p:
+            payer_name = {
+                "CBS-COMM": "Cascade Blue Shield",
+                "MCR-OR": "Medicare — Oregon",
+                "SAIF-WC": "Oregon SAIF Workers' Comp",
+                "NWA-PIP": "Northwest Auto PIP",
+                "PAC-COMM": "PacificCare Commercial",
+            }.get(spec["payer_code"], spec["payer_code"])
+            relationship = p.get("relationship_to_subscriber") or (
+                "Child" if spec.get("persona") == "minor_dependent"
+                else "Self"
+            )
+            subscriber_name = (
+                "Claire Morgan"
+                if spec.get("persona") == "minor_dependent"
+                else f"{spec['first_name']} {spec['last_name']}"
+            )
+            insurance_group = {
+                "primary": {
+                    "carrier": payer_name,
+                    "plan_name": p.get("group") or payer_name,
+                    "plan_type": {
+                        "MCR-OR": "Medicare",
+                        "SAIF-WC": "Workers Comp",
+                        "NWA-PIP": "Auto / PIP",
+                    }.get(spec["payer_code"], "PPO"),
+                    "member_id": p["member_id"],
+                    "group_number": p.get("group"),
+                    "policy_holder_name": subscriber_name,
+                    "policy_holder_relationship": relationship,
+                    "policy_holder_dob": (
+                        "1986-09-09"
+                        if spec.get("persona") == "minor_dependent"
+                        else spec["date_of_birth"]
+                    ),
+                    "effective_date": "2026-01-01",
+                    "copay": (
+                        f"{p['copay_cents'] / 100:.2f}"
+                        if p.get("copay_cents") else ""
+                    ),
+                    "deductible": (
+                        f"{p['deductible_cents'] / 100:.2f}"
+                        if p.get("deductible_cents") else ""
+                    ),
+                },
+                "secondary": {},
+            }
+
         doc = {
             "id": patient_id,
             "tenant_id": tenant_id,
             "location_id": location_id,
             "user_id": None,
+            # Legacy flat scalars (kept so any caller still reading
+            # the flat shape keeps working — e.g. pytest fixtures,
+            # simple list renderers).
             "first_name": spec["first_name"],
             "middle_name": spec.get("middle_name"),
             "last_name": spec["last_name"],
@@ -588,12 +802,39 @@ async def _upsert_personas(
             "employer_phone": spec.get("employer_phone"),
             "referral_source": spec.get("referral_source"),
             "primary_provider_id": doctor_id,
-            # PHI fields — encrypted at rest.
-            "address": encrypt_text(spec["address"]),
-            "emergency_contact": encrypt_text(spec["emergency_contact"]),
+            # PHI scalars — encrypted at rest.
+            "address": encrypt_text(
+                ", ".join(
+                    x for x in (
+                        address.get("line1"), address.get("line2"),
+                        address.get("city"), address.get("state"),
+                        address.get("postal_code"),
+                    ) if x
+                )
+            ),
+            "emergency_contact": encrypt_text(
+                f"{emergency.get('name', '')} "
+                f"({emergency.get('relationship', '')}) — "
+                f"{emergency.get('phone', '')}"
+            ),
             "notes": encrypt_text(
                 f"Demo persona: {spec['persona']}. See "
                 f"/app/memory/DEMO_SEED.md for full scenario."
+            ),
+            # Structured grouped sections — read back by the Edit
+            # Patient wizard. Encrypted at rest as JSON blobs (per
+            # services/patient/_shared.py::PATIENT_SECTION_ENCRYPTED)
+            # so the same decrypt pipeline that handles
+            # user-edited rows also handles our seeded rows.
+            "demographics": encrypt_patient_value(demographics_group),
+            "contact": encrypt_patient_value(contact_group),
+            "address_details": encrypt_patient_value(address),
+            "emergency_contact_details": encrypt_patient_value(emergency),
+            "admin": encrypt_patient_value(admin_group),
+            "guarantor": encrypt_patient_value(guarantor_group),
+            "insurance": (
+                encrypt_patient_value(insurance_group)
+                if insurance_group is not None else None
             ),
             "status": "active",
             "updated_at": now,

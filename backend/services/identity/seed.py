@@ -133,6 +133,7 @@ async def _upsert_user(
 
 async def seed() -> None:
     from core.crypto import encrypt_text  # avoid import cycle at module load
+    from services.patient._shared import encrypt_patient_value  # noqa: WPS433
 
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@ccms.app")
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@ComplianceClinic1")
@@ -151,6 +152,10 @@ async def seed() -> None:
     db = get_db()
     patient_email = "patient@ccms.app"
     patient_user = await db.users.find_one({"email": patient_email}, {"_id": 0})
+    doctor_user = await db.users.find_one(
+        {"email": "doctor@ccms.app"}, {"_id": 0, "id": 1},
+    )
+    doctor_id = doctor_user["id"] if doctor_user else None
     if patient_user:
         await db.patients.update_many(
             {"email": {"$in": ["patient@ccms.local", patient_email]}},
@@ -184,18 +189,70 @@ async def seed() -> None:
             "preferred_contact_method": "email",
             "occupation": "Software Engineer",
             "employer": "Cascade Analytics",
+            "primary_provider_id": doctor_id,
             # PHI free-text fields — encrypted at rest.
             "address": encrypt_text(
                 "842 NW Lovejoy St, Apt 4B, Portland, OR 97209"
             ),
             "emergency_contact": encrypt_text(
-                "Sarah Parker (spouse) — +1-503-555-0191"
+                "Sarah Parker (Spouse) — +1-503-555-0191"
             ),
             "notes": encrypt_text(
                 "Active-adult wellness patient. Returns every 4–6 weeks "
                 "for maintenance adjustments after resolving a 2024 "
                 "lumbar strain episode. No current acute complaint."
             ),
+            # Grouped sections — the Edit Patient wizard reads from
+            # these and shows inline validation errors when missing.
+            # Encrypted at rest as JSON blobs (see
+            # services/patient/_shared.py :: PATIENT_SECTION_ENCRYPTED).
+            "demographics": encrypt_patient_value({
+                "first_name": "Ethan",
+                "middle_name": "James",
+                "last_name": "Parker",
+                "preferred_name": "Ethan",
+                "date_of_birth": "1991-08-17",
+                "gender": "male",
+                "sex_at_birth": "male",
+                "pronouns": "he/him",
+                "marital_status": "married",
+                "language": "English",
+                "occupation": "Software Engineer",
+                "employer": "Cascade Analytics",
+                "employer_phone": "+1-503-555-0233",
+            }),
+            "contact": encrypt_patient_value({
+                "phone": patient_user.get("phone") or "+1-503-555-0190",
+                "phone_alt": None,
+                "phone_work": "+1-503-555-0233",
+                "email": patient_user["email"],
+                "preferred_contact_method": "email",
+                "sms_consent": True,
+                "email_consent": True,
+                "voicemail_consent": True,
+            }),
+            "address_details": encrypt_patient_value({
+                "line1": "842 NW Lovejoy St",
+                "line2": "Apt 4B",
+                "city": "Portland",
+                "state": "OR",
+                "postal_code": "97209",
+                "country": "USA",
+            }),
+            "emergency_contact_details": encrypt_patient_value({
+                "name": "Sarah Parker",
+                "relationship": "Spouse",
+                "phone": "+1-503-555-0191",
+                "phone_alt": None,
+                "email": "sarah.parker@example.com",
+            }),
+            "admin": encrypt_patient_value({
+                "primary_provider_id": doctor_id,
+                "referral_source": "Employee demo account",
+                "tags": ["self_pay_wellness"],
+            }),
+            "guarantor": encrypt_patient_value({"same_as_patient": True}),
+            "insurance": None,
             "status": "active",
             "updated_at": now,
         }

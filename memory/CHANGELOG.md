@@ -4,6 +4,73 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-04-22 — Patient records: Edit-mode required-field fix
+
+Seeded Riverbend patients now **open cleanly in the Edit Patient
+wizard** with zero validation errors on load.
+
+**Root cause.** The seed was writing only the legacy flat shape
+(`address`, `emergency_contact` as encrypted free-form strings) plus
+top-level scalars like `primary_provider_id`. The Edit wizard
+(`pages/patientWizardLogic.js :: payloadToForm`) exclusively reads
+from grouped, structured sections — `address_details.{line1, city,
+state, postal_code}`, `emergency_contact_details.{name, relationship,
+phone}`, `demographics.*`, `contact.*`, `admin.primary_provider_id`,
+`guarantor.*`, `insurance.*`. Because those groups were absent from
+the seeded docs, the form opened with empty fields and fired
+"address line 1 is required" / "emergency contact relationship is
+required" / "assigned provider is required" on every persona.
+
+**Fix (seed only; no UI/backend changes).**
+- `services/demo/seed.py` adds two static lookup tables
+  (`_ADDRESS_BY_NAME`, `_EMERGENCY_BY_NAME`) with fully structured
+  address + emergency-contact data per persona. `_upsert_personas`
+  now composes and persists all seven grouped sections —
+  `demographics`, `contact`, `address_details`,
+  `emergency_contact_details`, `admin`, `guarantor`, `insurance` —
+  on every patient row. Jaxon Morgan gets a proper minor-dependent
+  `guarantor` block naming Claire Morgan as the responsible party.
+- `services/identity/seed.py` gets the same treatment for Ethan
+  Parker (previously seeded only with flat legacy fields). Ethan now
+  has a complete structured address, emergency contact, demographics,
+  contact, admin (with Dr. Noah Carter as primary provider), and a
+  `same_as_patient=True` guarantor.
+- All seven grouped sections are **encrypted at rest** via
+  `encrypt_patient_value()` so the seeded rows flow through the same
+  PHI encrypt/decrypt pipeline as user-edited rows.
+
+**Verification**
+- Programmatic check replicating `validateStep(1)` +
+  `validateStep(2)` against the unmasked API response for all 8
+  Riverbend personas: **0 missing required fields**. Rechecked after
+  a backend restart — still 0 (idempotent).
+- Save round-trip test against `PATCH /api/patients/{id}` with a
+  structured `address` payload — persists correctly; immediate
+  response + subsequent GET both show the new value.
+- UI smoke: Marcus Reid + Isabella Cho each open the Edit wizard
+  with every required field pre-populated (Name, DOB, pronouns,
+  marital status, language, mobile, street, city, state, zip,
+  emergency contact). No inline `.text-destructive` error text
+  renders on initial form load.
+- Backend regression: 136/137 pass across Phase 6-12 + claims_queue
+  + canonical_status + patient_intake_phase1 suites. The 1 failure
+  (`test_grouped_update_preserves_other_sections`) is a pre-existing
+  flake documented in the Phase 12 sign-off — not caused by this
+  change.
+
+**Files changed**
+- `services/demo/seed.py`
+- `services/identity/seed.py`
+
+**Personas corrected.** All 8 seeded Riverbend personas now have the
+complete Edit-form-required shape: Ethan Parker, Hannah Whitaker,
+Marcus Reid, Isabella Cho, Derrick Stone, Aria Johnson, Claire
+Morgan, Jaxon Morgan.
+
+---
+
+
+
 ## 2026-04-22 — Curated billing demo data for Riverbend
 
 Extends the realistic demo clinic seed with a curated billing story

@@ -94,6 +94,11 @@ Every persona has:
 * a clinical note structured as Chief Complaint / Subjective /
   Objective / Assessment / Plan
 * one or more appointments in the rolling one-week calendar
+* **full Edit-Patient-wizard shape**: all seven grouped sections
+  (`demographics`, `contact`, `address_details`,
+  `emergency_contact_details`, `admin`, `guarantor`, `insurance`)
+  populated and encrypted at rest, so every persona opens in Edit
+  mode with zero required-field validation errors
 
 ---
 
