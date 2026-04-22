@@ -101,8 +101,10 @@ def test_get_adapter_for_payer_defaults_to_none():
     # Unknown/missing route falls back to "none".
     assert get_adapter_for_payer(None).route_id == "none"
     assert get_adapter_for_payer({}).route_id == "none"
+    # Phase 2c registered `change_healthcare`; an unknown route name
+    # still falls back to `none`.
     assert get_adapter_for_payer(
-        {"clearinghouse_route": "change_healthcare"},   # not yet registered
+        {"clearinghouse_route": "future_unknown_clearinghouse"},
     ).route_id == "none"
     assert get_adapter_for_payer(
         {"clearinghouse_route": "none"},

@@ -901,3 +901,64 @@ class ClaimEventPublic(BaseModel):
     occurred_at: str
     recorded_by: str | None = None
     created_at: str
+
+
+# ---------------------------------------------------------------------------
+# Phase 2c — Clearinghouse enrollments
+# ---------------------------------------------------------------------------
+# Per-tenant, per-payer record of enrollment progress with a specific
+# clearinghouse. Gates real submissions: an adapter may refuse to
+# transmit claims for a payer whose enrollment is not `enrolled`.
+#
+# Storage collection: `clearinghouse_enrollments`.
+# Uniqueness:         (tenant_id, payer_id, clearinghouse)
+EnrollmentState = Literal[
+    "not_started", "in_progress", "enrolled", "suspended",
+]
+
+
+class ClearinghouseEnrollmentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    payer_id: str = Field(min_length=1)
+    clearinghouse: ClearinghouseRoute
+    status: EnrollmentState = "not_started"
+    submitter_id: str | None = Field(default=None, max_length=60)
+    trading_partner_id: str | None = Field(default=None, max_length=60)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ClearinghouseEnrollmentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: EnrollmentState | None = None
+    submitter_id: str | None = Field(default=None, max_length=60)
+    trading_partner_id: str | None = Field(default=None, max_length=60)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ClearinghouseEnrollmentPublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    tenant_id: str
+    payer_id: str
+    clearinghouse: ClearinghouseRoute
+    status: EnrollmentState
+    submitter_id: str | None = None
+    trading_partner_id: str | None = None
+    notes: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class ClearinghouseConfigSummary(BaseModel):
+    """Env-sourced, secret-free summary of one registered adapter."""
+    model_config = ConfigDict(extra="ignore")
+    route_id: str
+    mode: str                        # "disabled" | "sandbox" | "production"
+    base_url: str | None = None
+    has_client_id: bool = False
+    has_client_secret: bool = False
+    client_id_hint: str | None = None
+    env_prefix: str | None = None
+    supports_edi: bool = False
+    supports_era: bool = False
+    supports_eligibility: bool = False

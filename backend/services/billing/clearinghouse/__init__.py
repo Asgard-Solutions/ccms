@@ -41,8 +41,17 @@ from services.billing.clearinghouse.routing import (
 
 __all__ = [
     "Ack",
+    "ChangeHealthcareAdapter",
     "ClearinghouseAdapter",
+    "OptumAdapter",
     "SubmissionResult",
+    "config_summaries",
     "get_adapter_for_payer",
     "register_adapter",
 ]
+
+from services.billing.clearinghouse.change_healthcare import (
+    ChangeHealthcareAdapter,
+    OptumAdapter,
+)
+from services.billing.clearinghouse.routing import config_summaries  # noqa: E402

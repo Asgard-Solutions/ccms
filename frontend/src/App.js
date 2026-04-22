@@ -38,6 +38,7 @@ import ThemePreview from "./pages/ThemePreview";
 import ClinicSettings from "./pages/ClinicSettings";
 import AppointmentTypesPage from "./pages/AppointmentTypesPage";
 import RoomsManagerPage from "./pages/settings/RoomsManagerPage";
+import ClearinghouseSettingsPage from "./pages/settings/ClearinghouseSettingsPage";
 import PayersPage from "./pages/PayersPage";
 import FeeSchedulesPage from "./pages/FeeSchedulesPage";
 import BillingDashboard from "./pages/billing/BillingDashboard";
@@ -105,6 +106,7 @@ export default function App() {
               <Route path="/settings/rooms" element={<Shell roles={["admin"]}><RoomsManagerPage /></Shell>} />
               <Route path="/settings/payers" element={<Shell roles={["admin"]}><PayersPage /></Shell>} />
               <Route path="/settings/fee-schedules" element={<Shell roles={["admin"]}><FeeSchedulesPage /></Shell>} />
+              <Route path="/settings/clearinghouse" element={<Shell roles={["admin"]}><ClearinghouseSettingsPage /></Shell>} />
               <Route path="/billing" element={<Shell roles={["admin", "doctor", "staff"]}><BillingDashboard /></Shell>} />
               <Route path="/billing/invoices" element={<Shell roles={["admin", "doctor", "staff"]}><InvoicesList /></Shell>} />
               <Route path="/billing/invoices/:id" element={<Shell roles={["admin", "doctor", "staff"]}><InvoiceDetail /></Shell>} />

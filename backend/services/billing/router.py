@@ -53,7 +53,10 @@ from services.billing.submission import (
     followup_claim_ids,
     followup_threshold_iso,
 )
-from services.billing.clearinghouse import get_adapter_for_payer
+from services.billing.clearinghouse import (
+    config_summaries,
+    get_adapter_for_payer,
+)
 from services.billing.events import emit_claim_event
 from services.billing.models import (
     AdjustmentCreate,
@@ -67,6 +70,10 @@ from services.billing.models import (
     ClaimSubmissionCreate,
     ClaimSubmissionOutcome,
     ClaimSubmissionPublic,
+    ClearinghouseConfigSummary,
+    ClearinghouseEnrollmentCreate,
+    ClearinghouseEnrollmentPublic,
+    ClearinghouseEnrollmentUpdate,
     DenialWorkItemPublic,
     DenialWorkItemUpdate,
     DEFAULT_CURRENCY,
@@ -4384,3 +4391,238 @@ async def send_outstanding_statements(
         "dry_run": dry_run,
         "details": details if dry_run else [],
     }
+
+
+# ---------------------------------------------------------------------------
+# Phase 2c — Clearinghouse configuration + enrollments
+# ---------------------------------------------------------------------------
+# All routes below are admin-gated via `clinic_settings.update` — the
+# same permission already protecting the Payers settings page. No new
+# permission introduced in this phase.
+@router.get(
+    "/clearinghouse/config",
+    response_model=list[ClearinghouseConfigSummary],
+)
+async def read_clearinghouse_config(
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Return a secret-free summary of every registered clearinghouse
+    adapter's env-sourced configuration.
+
+    Never returns secrets. `has_client_id` / `has_client_secret` + a
+    redacted `client_id_hint` are the only knobs the UI exposes —
+    operators configure actual credentials via env vars managed by
+    operations, not the UI.
+    """
+    return config_summaries()
+
+
+@router.get(
+    "/clearinghouse/enrollments",
+    response_model=list[ClearinghouseEnrollmentPublic],
+)
+async def list_clearinghouse_enrollments(
+    clearinghouse: str | None = Query(default=None),
+    payer_id: str | None = Query(default=None),
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    q = scoped_filter({}, ctx, location_scoped=False)
+    if q.get("__deny__"):
+        return []
+    if clearinghouse:
+        q["clearinghouse"] = clearinghouse
+    if payer_id:
+        q["payer_id"] = payer_id
+    cursor = db.clearinghouse_enrollments.find(q, {"_id": 0}).sort(
+        [("updated_at", -1)],
+    )
+    return [d async for d in cursor]
+
+
+@router.post(
+    "/clearinghouse/enrollments",
+    response_model=ClearinghouseEnrollmentPublic, status_code=201,
+)
+async def upsert_clearinghouse_enrollment(
+    payload: ClearinghouseEnrollmentCreate,
+    request: Request,
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Create an enrollment row, or update the existing one if the
+    (tenant, payer, clearinghouse) triple already exists.
+
+    Idempotent upsert: operators can POST the same payload safely
+    during onboarding / import runs without race conditions.
+    """
+    if not ctx.tenant_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Tenant context required")
+    db = tenant_db(ctx.tenant_id)
+
+    payer = await _scoped_one(db.billing_payers, {"id": payload.payer_id}, ctx)
+    if not payer:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Payer not found")
+
+    now = _now()
+    existing = await db.clearinghouse_enrollments.find_one(
+        {"tenant_id": ctx.tenant_id,
+         "payer_id": payload.payer_id,
+         "clearinghouse": payload.clearinghouse},
+        {"_id": 0},
+    )
+    if existing:
+        updates = {
+            "status": payload.status,
+            "submitter_id": payload.submitter_id,
+            "trading_partner_id": payload.trading_partner_id,
+            "notes": payload.notes,
+            "updated_at": now,
+            "updated_by": user["id"],
+        }
+        await db.clearinghouse_enrollments.update_one(
+            {"id": existing["id"], "tenant_id": ctx.tenant_id},
+            {"$set": updates},
+        )
+        # Mirror to the payer row (same progression rule as insert).
+        _STATE_RANK_U = {"not_started": 0, "in_progress": 1,
+                         "enrolled": 2, "suspended": 1}
+        cur = _STATE_RANK_U.get(
+            payer.get("enrollment_status") or "not_started", 0,
+        )
+        new = _STATE_RANK_U.get(payload.status, 0)
+        if new >= cur:
+            payer_set = {
+                "enrollment_status": payload.status,
+                "clearinghouse_route": payload.clearinghouse,
+                "updated_at": now,
+                "updated_by": user["id"],
+            }
+            if payload.trading_partner_id is not None:
+                payer_set["trading_partner_id"] = payload.trading_partner_id
+            await db.billing_payers.update_one(
+                {"id": payload.payer_id, "tenant_id": ctx.tenant_id},
+                {"$set": payer_set},
+            )
+        fresh = await db.clearinghouse_enrollments.find_one(
+            {"id": existing["id"], "tenant_id": ctx.tenant_id}, {"_id": 0},
+        )
+        await audit_success(
+            user, "billing.clearinghouse.enrollment_updated", request,
+            entity_type="clearinghouse_enrollment", entity_id=existing["id"],
+            metadata={"payer_id": payload.payer_id,
+                      "clearinghouse": payload.clearinghouse,
+                      "status": payload.status},
+        )
+        return _public(fresh)
+
+    eid = str(uuid.uuid4())
+    doc = stamp_for_write({
+        "id": eid,
+        "payer_id": payload.payer_id,
+        "clearinghouse": payload.clearinghouse,
+        "status": payload.status,
+        "submitter_id": payload.submitter_id,
+        "trading_partner_id": payload.trading_partner_id,
+        "notes": payload.notes,
+        "created_at": now,
+        "updated_at": now,
+        "created_by": user["id"],
+        "updated_by": user["id"],
+    }, ctx, location_id=None)
+    await db.clearinghouse_enrollments.insert_one(doc)
+    # Mirror back to the payer row so the claims submission path can
+    # gate on a single field without joining against enrollments. Only
+    # updates the payer if the incoming state is an improvement
+    # (e.g. `enrolled` beats `in_progress`) OR if the payer's current
+    # enrollment state is `not_started` (the default).
+    _STATE_RANK = {"not_started": 0, "in_progress": 1, "enrolled": 2, "suspended": 1}
+    cur = _STATE_RANK.get(payer.get("enrollment_status") or "not_started", 0)
+    new = _STATE_RANK.get(payload.status, 0)
+    if new >= cur:
+        await db.billing_payers.update_one(
+            {"id": payload.payer_id, "tenant_id": ctx.tenant_id},
+            {"$set": {
+                "clearinghouse_route": payload.clearinghouse,
+                "enrollment_status": payload.status,
+                "trading_partner_id": payload.trading_partner_id
+                    or payer.get("trading_partner_id"),
+                "updated_at": now,
+                "updated_by": user["id"],
+            }},
+        )
+    await audit_success(
+        user, "billing.clearinghouse.enrollment_created", request,
+        entity_type="clearinghouse_enrollment", entity_id=eid,
+        metadata={"payer_id": payload.payer_id,
+                  "clearinghouse": payload.clearinghouse,
+                  "status": payload.status},
+    )
+    return _public(doc)
+
+
+@router.patch(
+    "/clearinghouse/enrollments/{enrollment_id}",
+    response_model=ClearinghouseEnrollmentPublic,
+)
+async def update_clearinghouse_enrollment(
+    enrollment_id: str,
+    payload: ClearinghouseEnrollmentUpdate,
+    request: Request,
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    existing = await _scoped_one(
+        db.clearinghouse_enrollments, {"id": enrollment_id}, ctx,
+    )
+    if not existing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Enrollment not found")
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return _public(existing)
+    updates["updated_at"] = _now()
+    updates["updated_by"] = user["id"]
+    await db.clearinghouse_enrollments.update_one(
+        {"id": enrollment_id, "tenant_id": ctx.tenant_id},
+        {"$set": updates},
+    )
+    fresh = await db.clearinghouse_enrollments.find_one(
+        {"id": enrollment_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    # If status moved, mirror to the payer row (same rule as upsert).
+    if "status" in updates:
+        _STATE_RANK = {"not_started": 0, "in_progress": 1,
+                       "enrolled": 2, "suspended": 1}
+        payer = await db.billing_payers.find_one(
+            {"id": existing["payer_id"], "tenant_id": ctx.tenant_id},
+            {"_id": 0},
+        )
+        if payer:
+            cur = _STATE_RANK.get(
+                payer.get("enrollment_status") or "not_started", 0,
+            )
+            new = _STATE_RANK.get(updates["status"], 0)
+            if new >= cur:
+                payer_set = {
+                    "enrollment_status": updates["status"],
+                    "clearinghouse_route": existing["clearinghouse"],
+                    "updated_at": updates["updated_at"],
+                    "updated_by": user["id"],
+                }
+                if "trading_partner_id" in updates:
+                    payer_set["trading_partner_id"] = updates["trading_partner_id"]
+                await db.billing_payers.update_one(
+                    {"id": existing["payer_id"], "tenant_id": ctx.tenant_id},
+                    {"$set": payer_set},
+                )
+    await audit_success(
+        user, "billing.clearinghouse.enrollment_updated", request,
+        entity_type="clearinghouse_enrollment", entity_id=enrollment_id,
+        metadata={"fields": sorted(list(updates.keys())),
+                  "payer_id": existing["payer_id"]},
+    )
+    return _public(fresh)
+

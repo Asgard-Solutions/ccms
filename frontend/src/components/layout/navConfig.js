@@ -2,6 +2,7 @@ import {
   BellRing,
   BookOpen,
   Building2,
+  Cable,
   CalendarDays,
   ClipboardCheck,
   ClipboardList,
@@ -198,6 +199,13 @@ export const NAV_GROUPS = [
         label: "Fee Schedules",
         testId: "nav-fee-schedules",
         icon: Coins,
+        roles: ["admin"],
+      },
+      {
+        to: "/settings/clearinghouse",
+        label: "Clearinghouse",
+        testId: "nav-clearinghouse",
+        icon: Cable,
         roles: ["admin"],
       },
       {

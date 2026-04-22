@@ -12,6 +12,10 @@ import logging
 from typing import Callable
 
 from services.billing.clearinghouse.base import ClearinghouseAdapter
+from services.billing.clearinghouse.change_healthcare import (
+    ChangeHealthcareAdapter,
+    OptumAdapter,
+)
 from services.billing.clearinghouse.none import NoneAdapter
 
 log = logging.getLogger("ccms.billing.clearinghouse")
@@ -21,6 +25,8 @@ log = logging.getLogger("ccms.billing.clearinghouse")
 # connection state (Phase 2c) don't rebuild on every claim.
 _FACTORIES: dict[str, Callable[[], ClearinghouseAdapter]] = {
     "none": NoneAdapter,
+    "change_healthcare": ChangeHealthcareAdapter,
+    "optum": OptumAdapter,
 }
 _CACHE: dict[str, ClearinghouseAdapter] = {}
 
@@ -75,3 +81,34 @@ def get_adapter_for_payer(payer: dict | None) -> ClearinghouseAdapter:
     """
     route = (payer or {}).get("clearinghouse_route") or _FALLBACK_ROUTE
     return _load(route)
+
+
+def config_summaries() -> list[dict]:
+    """Introspection for the admin settings page — lists each
+    registered route + its env-sourced mode / capability summary.
+
+    NoneAdapter is filtered out because it has no config. Adapters
+    that don't implement `config_summary()` get a minimal shape so
+    the UI can still render a row.
+    """
+    out: list[dict] = []
+    for route_id in sorted(_FACTORIES.keys()):
+        if route_id == "none":
+            continue
+        adapter = _load(route_id)
+        summary_fn = getattr(adapter, "config_summary", None)
+        if callable(summary_fn):
+            out.append(summary_fn())
+        else:
+            out.append({
+                "route_id": route_id,
+                "mode": "unknown",
+                "supports_edi": getattr(adapter, "supports_edi", False),
+                "supports_era": getattr(adapter, "supports_era", False),
+                "supports_eligibility": getattr(
+                    adapter, "supports_eligibility", False,
+                ),
+                "has_client_id": False,
+                "has_client_secret": False,
+            })
+    return out
