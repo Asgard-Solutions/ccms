@@ -50,6 +50,12 @@ from services.billing.clearinghouse import (
     config_summaries,
     get_adapter_for_payer,
 )
+from services.billing.canonical_status import (
+    CANONICAL_LABELS,
+    CANONICAL_STATUSES,
+    canonical_status,
+    raw_statuses_for_canonical,
+)
 from services.billing.events import emit_claim_event
 from services.billing.submission import (
     DEFAULT_FOLLOWUP_DAYS,
@@ -3289,10 +3295,18 @@ async def _tab_base_query(tab: str, db, tenant_id: str) -> dict | None:
         q["status"] = {"$in": ["rejected", "denied"]}
         return q
     if t == "follow-up":
-        ids = await followup_claim_ids(db, tenant_id)
-        if not ids:
-            return {"__noop__": True}
-        q["id"] = {"$in": ids}
+        # Canonical `follow_up` has three raw sources:
+        #   1. Partial payment still needs balance / secondary billing
+        #   2. Appeal filed, waiting on payer response
+        #   3. Stale submitted / rejected / denied (aging out the
+        #      follow-up threshold via `followup_claim_ids`)
+        stale_ids = await followup_claim_ids(db, tenant_id)
+        branches: list[dict] = [
+            {"status": {"$in": ["partially_paid", "appealed"]}},
+        ]
+        if stale_ids:
+            branches.append({"id": {"$in": stale_ids}})
+        q["$or"] = branches
         return q
     return None
 
@@ -3305,6 +3319,12 @@ async def read_claims_queue(
     sort: str = Query(default="updated_at:desc",
                       description="field:asc|desc"),
     status_in: str | None = Query(default=None),
+    canonical_status_in: str | None = Query(
+        default=None,
+        description="comma-separated canonical buckets "
+                    "(draft/ready/submitted/accepted/needs_fixes/"
+                    "denied/paid/follow_up)",
+    ),
     payer_id: str | None = None,
     assigned_to: str | None = None,
     age_days: int | None = Query(default=None, ge=0, le=365),
@@ -3315,11 +3335,22 @@ async def read_claims_queue(
 ):
     db = tenant_db(ctx.tenant_id)
 
+    # Resolve the stale-claim id set once — used both by the
+    # follow-up tab query AND by row-level canonical_status tagging.
+    stale_ids: list[str] = await followup_claim_ids(db, ctx.tenant_id)
+    stale_set = set(stale_ids)
+
     # Base query for the selected tab.
     q = await _tab_base_query(tab, db, ctx.tenant_id)
     if q is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown tab '{tab}'")
     noop = bool(q.get("__noop__"))
+
+    # Canonical → raw expansion. When the caller asks for canonical
+    # `follow_up` specifically we also need the stale-id branch.
+    canonical_filter = [
+        s.strip() for s in (canonical_status_in or "").split(",") if s.strip()
+    ]
 
     # Overlay filters on top of the tab's own status scope.
     def _apply_filters(qbase: dict) -> dict:
@@ -3343,6 +3374,30 @@ async def read_claims_queue(
                 else:
                     allowed = wanted
                 qf["status"] = {"$in": allowed} if allowed else {"$in": ["__none__"]}
+        # Phase 3 — canonical status filter. Expand to raw statuses
+        # and, when `follow_up` is in the set, also include the stale
+        # claim ids so aging claims surface even when their raw
+        # status is still `submitted`.
+        if canonical_filter:
+            raw = raw_statuses_for_canonical(canonical_filter)
+            branches: list[dict] = []
+            if raw:
+                branches.append({"status": {"$in": raw}})
+            if "follow_up" in canonical_filter and stale_ids:
+                branches.append({"id": {"$in": stale_ids}})
+            if branches:
+                # AND the canonical scope with the tab / filter scope
+                # so tab-level restrictions still apply.
+                existing_or = qf.pop("$or", None)
+                clause = {"$or": branches} if len(branches) > 1 else branches[0]
+                and_parts: list[dict] = []
+                if existing_or is not None:
+                    and_parts.append({"$or": existing_or})
+                and_parts.append(clause)
+                if and_parts:
+                    qf["$and"] = and_parts
+            else:
+                qf["status"] = {"$in": ["__none__"]}
         return qf
 
     filtered_q = _apply_filters(q)
@@ -3422,6 +3477,13 @@ async def read_claims_queue(
             ev = latest.get(r["id"])
             r["last_event"] = ev.get("event_type") if ev else None
             r["last_event_at"] = ev.get("occurred_at") if ev else None
+            # Phase 3 — canonical lifecycle tag.
+            r["canonical_status"] = canonical_status(
+                r, is_stale=r["id"] in stale_set,
+            )
+            r["canonical_status_label"] = CANONICAL_LABELS.get(
+                r["canonical_status"], r["canonical_status"],
+            )
 
     # Summary cards — aggregate over the current filtered query (NOT
     # limited by page). `shown` reflects the current page.
@@ -3494,6 +3556,11 @@ async def read_claims_queue(
             "payers": payers,
             "assignees": assignees,
             "statuses": list(get_args(ClaimStatus)),
+            # Phase 3 — canonical buckets with display labels for UI.
+            "canonical_statuses": [
+                {"value": c, "label": CANONICAL_LABELS[c]}
+                for c in CANONICAL_STATUSES
+            ],
         }
 
     return {
@@ -3549,10 +3616,14 @@ async def read_claim_queue(
     elif qname == "rejected":
         q["status"] = {"$in": ["rejected", "denied"]}
     elif qname == "follow-up":
+        # Phase 3 canonical: follow_up = stale ∪ partially_paid ∪ appealed.
         ids = await followup_claim_ids(db, ctx.tenant_id)
-        if not ids:
-            return []
-        q["id"] = {"$in": ids}
+        branches: list[dict] = [
+            {"status": {"$in": ["partially_paid", "appealed"]}},
+        ]
+        if ids:
+            branches.append({"id": {"$in": ids}})
+        q["$or"] = branches
     else:
         raise HTTPException(status.HTTP_404_NOT_FOUND,
                             f"Unknown queue '{queue_name}'")

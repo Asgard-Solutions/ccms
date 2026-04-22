@@ -27,7 +27,11 @@ import { formatCents } from "../../utils/money";
 import { formatDateTime } from "../../utils/time";
 import {
   CLAIM_STATUS_LABELS,
+  CANONICAL_STATUS_LABELS,
+  CANONICAL_STATUS_ORDER,
   QUEUE_KEYS,
+  canonicalStatusLabel,
+  canonicalStatusTone,
   claimEventLabel,
   claimStatusTone,
   useClaimsQueueV2,
@@ -63,16 +67,18 @@ export default function ClaimsQueue() {
 
   // Filters
   const [status, setStatus] = useState("all");
+  const [canonicalStatus, setCanonicalStatus] = useState("all");
   const [payerId, setPayerId] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
   const [ageDays, setAgeDays] = useState("");
 
   const filters = useMemo(() => ({
     status_in: status !== "all" ? [status] : null,
+    canonical_status_in: canonicalStatus !== "all" ? [canonicalStatus] : null,
     payer_id: payerId || null,
     assigned_to: assignedTo || null,
     age_days: ageDays ? Number(ageDays) : null,
-  }), [status, payerId, assignedTo, ageDays]);
+  }), [status, canonicalStatus, payerId, assignedTo, ageDays]);
 
   const { data, loading } = useClaimsQueueV2({
     tab, page, pageSize, sort, filters,
@@ -87,7 +93,8 @@ export default function ClaimsQueue() {
   const filterOptions = data?.filter_options || { payers: [], assignees: [] };
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const hasActiveFilters = status !== "all" || payerId || assignedTo || ageDays;
+  const hasActiveFilters =
+    status !== "all" || canonicalStatus !== "all" || payerId || assignedTo || ageDays;
   const isEmptyView = !loading && rows.length === 0;
 
   function onSortClick(sortKey) {
@@ -108,6 +115,7 @@ export default function ClaimsQueue() {
 
   function resetFilters() {
     setStatus("all");
+    setCanonicalStatus("all");
     setPayerId("");
     setAssignedTo("");
     setAgeDays("");
@@ -183,11 +191,13 @@ export default function ClaimsQueue() {
 
       <FilterBar
         status={status} setStatus={setStatus}
+        canonicalStatus={canonicalStatus} setCanonicalStatus={setCanonicalStatus}
         payerId={payerId} setPayerId={setPayerId}
         assignedTo={assignedTo} setAssignedTo={setAssignedTo}
         ageDays={ageDays} setAgeDays={setAgeDays}
         payers={filterOptions.payers}
         assignees={filterOptions.assignees}
+        canonicalStatuses={filterOptions.canonical_statuses}
         hasActiveFilters={!!hasActiveFilters}
         onReset={resetFilters}
       />
@@ -333,11 +343,22 @@ function ClaimRow({ c }) {
       </td>
       <td className="px-4 py-3">
         <span
-          className={`inline-flex items-center rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${claimStatusTone(c.status)}`}
-          data-testid={`claim-row-status-${c.id}`}
+          className={`inline-flex items-center rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${canonicalStatusTone(c.canonical_status)}`}
+          data-testid={`claim-row-canonical-${c.id}`}
+          title={c.status ? `Raw: ${CLAIM_STATUS_LABELS[c.status] || c.status}` : undefined}
         >
-          {CLAIM_STATUS_LABELS[c.status] || c.status}
+          {canonicalStatusLabel(c.canonical_status)}
         </span>
+        {/* Raw status is kept as a subtle secondary chip for operators
+            who need the fine-grained state. */}
+        {c.status && c.canonical_status !== c.status && (
+          <span
+            className={`ml-1.5 inline-flex items-center rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${claimStatusTone(c.status)}`}
+            data-testid={`claim-row-status-${c.id}`}
+          >
+            {CLAIM_STATUS_LABELS[c.status] || c.status}
+          </span>
+        )}
         {c.validation_error_count > 0 && (
           <span
             data-testid={`claim-row-errors-${c.id}`}
@@ -376,9 +397,19 @@ function ClaimRow({ c }) {
 }
 
 function FilterBar({
-  status, setStatus, payerId, setPayerId, assignedTo, setAssignedTo,
-  ageDays, setAgeDays, payers, assignees, hasActiveFilters, onReset,
+  status, setStatus,
+  canonicalStatus, setCanonicalStatus,
+  payerId, setPayerId, assignedTo, setAssignedTo,
+  ageDays, setAgeDays, payers, assignees,
+  canonicalStatuses, hasActiveFilters, onReset,
 }) {
+  // Fall back to CANONICAL_STATUS_ORDER when the server hasn't
+  // populated filter_options yet (first render).
+  const canonicalOptions = canonicalStatuses?.length
+    ? canonicalStatuses
+    : CANONICAL_STATUS_ORDER.map((v) => ({
+        value: v, label: CANONICAL_STATUS_LABELS[v],
+      }));
   return (
     <section
       data-testid="claims-filter-bar"
@@ -386,7 +417,24 @@ function FilterBar({
     >
       <div className="flex min-w-[10rem] flex-col gap-1">
         <Label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
-          <Filter className="mr-1 inline h-3 w-3" /> Status
+          <Filter className="mr-1 inline h-3 w-3" /> Lifecycle
+        </Label>
+        <Select value={canonicalStatus} onValueChange={setCanonicalStatus}>
+          <SelectTrigger data-testid="claims-canonical-filter" className="w-52">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All lifecycle states</SelectItem>
+            {canonicalOptions.map((o) => (
+              <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="flex min-w-[10rem] flex-col gap-1">
+        <Label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
+          Raw status
         </Label>
         <Select value={status} onValueChange={setStatus}>
           <SelectTrigger data-testid="claims-status-filter" className="w-48">

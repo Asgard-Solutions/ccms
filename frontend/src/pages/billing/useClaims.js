@@ -39,6 +39,44 @@ export function claimStatusTone(status) {
   }
 }
 
+// Phase 3 — canonical lifecycle (single source of truth for row
+// badges, filter options, and dashboards). Mirrors
+// backend/services/billing/canonical_status.py.
+export const CANONICAL_STATUS_LABELS = {
+  draft:       "Draft",
+  ready:       "Ready",
+  submitted:   "Submitted",
+  accepted:    "Accepted",
+  needs_fixes: "Needs fixes",
+  denied:      "Denied",
+  paid:        "Paid",
+  follow_up:   "Follow-up needed",
+};
+
+export const CANONICAL_STATUS_ORDER = [
+  "draft", "ready", "submitted", "accepted",
+  "needs_fixes", "denied", "paid", "follow_up",
+];
+
+export function canonicalStatusTone(canonical) {
+  switch (canonical) {
+    case "draft":       return "bg-muted text-muted-foreground";
+    case "ready":       return "bg-primary/10 text-primary";
+    case "submitted":   return "bg-primary/10 text-primary";
+    case "accepted":    return "bg-success-soft text-success";
+    case "needs_fixes": return "bg-destructive/10 text-destructive";
+    case "denied":      return "bg-destructive/10 text-destructive";
+    case "paid":        return "bg-success-soft text-success";
+    case "follow_up":   return "bg-warning-soft text-warning";
+    default:            return "bg-muted text-muted-foreground";
+  }
+}
+
+export function canonicalStatusLabel(canonical) {
+  return CANONICAL_STATUS_LABELS[canonical] || canonical || "—";
+}
+
+
 export function useClaims({ status = null, patientId = null } = {}) {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -240,6 +278,7 @@ export function useClaimsQueueV2({ tab, page, pageSize, sort, filters = {} }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const statusInKey = filters.status_in?.join(",") || "";
+  const canonicalInKey = filters.canonical_status_in?.join(",") || "";
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -255,6 +294,7 @@ export function useClaimsQueueV2({ tab, page, pageSize, sort, filters = {} }) {
       if (filters.assigned_to) params.assigned_to = filters.assigned_to;
       if (filters.age_days)    params.age_days = filters.age_days;
       if (statusInKey)         params.status_in = statusInKey;
+      if (canonicalInKey)      params.canonical_status_in = canonicalInKey;
       const { data: resp } = await api.get("/billing/claims/queue", { params });
       setData(resp);
     } catch (err) {
@@ -264,7 +304,7 @@ export function useClaimsQueueV2({ tab, page, pageSize, sort, filters = {} }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, page, pageSize, sort, filters.payer_id,
-      filters.assigned_to, filters.age_days, statusInKey]);
+      filters.assigned_to, filters.age_days, statusInKey, canonicalInKey]);
 
   useEffect(() => { load(); }, [load]);
   return { data, loading, error, refresh: load };
