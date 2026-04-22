@@ -4,6 +4,93 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-04-22 — Realistic demo clinic: Riverbend Chiropractic & Wellness
+
+**Replaces** the generic "Default Practice" / "System Admin" / "Morgan
+Lee" placeholder seed with a believable fictional chiropractic clinic
+so the product looks lived-in on first login.
+
+**Seed architecture**
+- New `services/demo/seed.py` is the single source of truth for the
+  realistic Riverbend dataset (staff roster, payer catalog, patient
+  personas, insurance policies, clinical notes, appointment board).
+  All upserts are keyed on stable business identifiers so re-running
+  on every boot is safe.
+- `services/tenancy/seed.py` renames the default tenant to
+  **Riverbend Chiropractic & Wellness** and the default location to
+  **Riverbend — Downtown** (America/Los_Angeles). In-place updates so
+  existing installs auto-upgrade.
+- `services/identity/seed.py` now seeds realistic display names,
+  job titles, NPI (for doctors), and phones onto the login-helper
+  demo accounts. Emails + passwords unchanged for test stability.
+- New `scripts/reseed_demo_clinic.py` — destructive reset that wipes
+  test-run pollution off the Riverbend tenant only, then re-seeds.
+  Sunrise + platform admin are never touched.
+
+**Demo identities (login page + docs)**
+- Administrator → **Ava Bennett** (`admin@ccms.app`)
+- Chiropractor → **Dr. Noah Carter, DC** (`doctor@ccms.app`,
+  NPI 1841792253)
+- Front desk → **Mia Ramirez** (`staff@ccms.app`)
+- Patient portal → **Ethan Parker** (`patient@ccms.app` — active-adult
+  wellness / maintenance persona, full demographic intake)
+- Platform admin → **Owen Sinclair** (`platform-admin@ccms.app`)
+
+**Riverbend staff roster (beyond login helpers, shared pw
+`Riverbend@ComplianceClinic1`)**
+- Olivia Hart — Clinic Owner
+- Dr. Samuel Ito, DC — Associate Chiropractor (NPI 1730598210)
+- Lena Brooks — Office Manager
+- Tomás Rivera — Billing Specialist
+- Priya Shah — Chiropractic Assistant
+
+**Patient personas (7 new + upgraded Ethan Parker)**
+- Hannah Whitaker — acute neck pain (Cascade Blue Shield)
+- Marcus Reid — chronic LBP / Medicare active-treatment
+- Isabella Cho — auto accident / PIP (Northwest Auto PIP)
+- Derrick Stone — workers' comp (Oregon SAIF)
+- Aria Johnson — marathon runner / IT band (PacificCare)
+- Claire Morgan — family head / guarantor (PacificCare)
+- Jaxon Morgan — pediatric dependent on Claire's policy
+
+**Clinical / scheduling / billing coverage**
+- 7 realistic Chief-Complaint / Subjective / Objective / Assessment /
+  Plan chart notes — one per persona, PHI encrypted at rest.
+- 13-appointment rolling week: cancellation, completed visits,
+  new-patient eval, adjustments, re-exam, PIP follow-ups, workers'
+  comp visits, pediatric check, maintenance adjustment.
+- 6 fictional payers covering every rail the app supports
+  (commercial x2, Medicare w/ AT+sublux+ITD flags, workers' comp,
+  auto PIP, self-pay).
+- 7 insurance policies keyed to the right payer + dependent
+  relationship example.
+
+**Login UX**
+- New "Demo clinic sign-in" panel on the login page replaces the
+  terse `Admin / Doctor / Staff / Patient` table. Each row is a
+  clickable auto-fill that shows the role label, the real person's
+  name, and the email. Data-testids: `login-demo-administrator`,
+  `-chiropractor`, `-front-desk`, `-patient-portal`.
+
+**Documentation**
+- New `/app/memory/DEMO_SEED.md` — end-to-end persona catalog, staff
+  roster, payer list, appointment board, reseed instructions, and a
+  "gold demo clinic" roadmap.
+- `test_credentials.md` regenerator (inside `identity/seed.py`) now
+  surfaces realistic people alongside the emails and links back to
+  DEMO_SEED.md.
+
+**Regression status**
+- 128/128 Phase 1–12 tests PASS (Phase 6–12 suites + queue v2 +
+  canonical status + claims queue phase 2b). No new regressions.
+- 3 pre-existing failures on `test_iteration12_authz.py`,
+  `test_iteration14_tenancy.py`, `test_patient_intake_phase1.py` were
+  verified to fail on pristine main — not caused by this change.
+
+---
+
+
+
 ## 2026-04-22 — Phase 1–12 verification audit + follow-up / self-assign UI
 
 **Scope:** Full audit of the 12-phase professional medical claims

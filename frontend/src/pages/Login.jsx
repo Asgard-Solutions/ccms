@@ -175,15 +175,63 @@ function LoginForm() {
         </p>
       </form>
 
-      <div className="mt-10 rounded-sm border border-border bg-card p-4 text-xs text-muted-foreground">
-        <div className="mb-2 font-semibold uppercase tracking-[0.15em]">
-          Demo credentials
+      <div
+        data-testid="login-demo-credentials"
+        className="mt-10 rounded-sm border border-border bg-card p-4 text-xs text-muted-foreground"
+      >
+        <div className="mb-1 font-semibold uppercase tracking-[0.15em] text-foreground">
+          Demo clinic sign-in
         </div>
-        <div className="grid grid-cols-[6rem_1fr] gap-x-4 gap-y-1 font-mono">
-          <span className="font-sans">Admin</span><span>admin@ccms.app / Admin@ComplianceClinic1</span>
-          <span className="font-sans">Doctor</span><span>doctor@ccms.app / Doctor@ComplianceClinic1</span>
-          <span className="font-sans">Staff</span><span>staff@ccms.app / Staff@ComplianceClinic1</span>
-          <span className="font-sans">Patient</span><span>patient@ccms.app / Patient@ComplianceClinic1</span>
+        <p className="mb-3 text-[11px] leading-relaxed">
+          Accounts are fictional staff + patients at{" "}
+          <span className="font-medium text-foreground">
+            Riverbend Chiropractic &amp; Wellness
+          </span>
+          . Click a role to auto-fill credentials.
+        </p>
+        <div className="grid gap-1.5">
+          {[
+            {
+              role: "Administrator",
+              person: "Ava Bennett",
+              email: "admin@ccms.app",
+              password: "Admin@ComplianceClinic1",
+            },
+            {
+              role: "Chiropractor",
+              person: "Dr. Noah Carter, DC",
+              email: "doctor@ccms.app",
+              password: "Doctor@ComplianceClinic1",
+            },
+            {
+              role: "Front desk",
+              person: "Mia Ramirez",
+              email: "staff@ccms.app",
+              password: "Staff@ComplianceClinic1",
+            },
+            {
+              role: "Patient portal",
+              person: "Ethan Parker",
+              email: "patient@ccms.app",
+              password: "Patient@ComplianceClinic1",
+            },
+          ].map((d) => (
+            <button
+              key={d.email}
+              type="button"
+              data-testid={`login-demo-${d.role.toLowerCase().replace(/\s+/g, "-")}`}
+              onClick={() => { setEmail(d.email); setPassword(d.password); }}
+              className="grid grid-cols-[6.5rem_1fr] items-baseline gap-x-4 rounded-sm px-1 py-0.5 text-left transition-colors hover:bg-muted/60"
+            >
+              <span className="font-sans text-[11px] font-semibold uppercase tracking-[0.12em] text-foreground">
+                {d.role}
+              </span>
+              <span className="flex flex-col font-mono text-[11px] leading-tight">
+                <span className="font-sans text-foreground">{d.person}</span>
+                <span className="text-muted-foreground">{d.email}</span>
+              </span>
+            </button>
+          ))}
         </div>
       </div>
     </div>

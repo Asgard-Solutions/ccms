@@ -28,7 +28,10 @@ from core.security import hash_password
 logger = logging.getLogger("ccms.tenancy.seed")
 
 DEFAULT_TENANT_SLUG = "default"
-DEFAULT_TENANT_NAME = "Default Practice"
+DEFAULT_TENANT_NAME = "Riverbend Chiropractic & Wellness"
+DEFAULT_LOCATION_NAME = "Riverbend — Downtown"
+DEFAULT_LOCATION_CODE = "RB-DT"
+DEFAULT_LOCATION_TZ = "America/Los_Angeles"
 
 GROUP_TENANT_SLUG = "sunrise-chiro"
 GROUP_TENANT_NAME = "Sunrise Chiro Group"
@@ -109,6 +112,14 @@ async def _upsert_tenant(slug: str, name: str, type_: str) -> str:
     db = get_db_write()
     existing = await db.tenants.find_one({"slug": slug}, {"_id": 0})
     if existing:
+        # Re-seed idempotently refreshes the tenant's display name so
+        # demo installs that boot on an older "Default Practice" row
+        # upgrade to the realistic clinic branding.
+        if existing.get("name") != name:
+            await db.tenants.update_one(
+                {"id": existing["id"]},
+                {"$set": {"name": name, "updated_at": _now()}},
+            )
         return existing["id"]
     tenant_id = str(uuid.uuid4())
     now = _now()
@@ -260,9 +271,11 @@ async def _upsert_platform_admin() -> None:
     now = _now()
     base = {
         "email": PLATFORM_ADMIN_EMAIL,
-        "name": "Platform Operator",
+        "name": "Owen Sinclair",
+        "title": "Operations Lead",
+        "display_name": "Owen Sinclair",
         "role": "platform_admin",
-        "phone": "+1-555-0099",
+        "phone": "+1-503-555-0099",
         "status": "active",
         "tenant_id": None,              # global user, not tenant-bound
         "tenant_scope_all": True,
@@ -407,13 +420,23 @@ async def seed_tenancy() -> None:
     ) or await db.locations.find_one({"tenant_id": {"$exists": False}}, {"_id": 0})
     if legacy_loc:
         default_location_id = legacy_loc["id"]
+        # Rebrand legacy "Main Office" rows to the realistic clinic
+        # name so dashboards stop showing dev placeholders. We only
+        # touch the display name and timezone; the `code` is a unique
+        # business key and must not be mutated in place.
+        updates: dict = {"tenant_id": default_tenant_id}
+        if legacy_loc.get("name") in (None, "", "Main Office", "Main Clinic", "HQ"):
+            updates["name"] = DEFAULT_LOCATION_NAME
+        if not legacy_loc.get("timezone"):
+            updates["timezone"] = DEFAULT_LOCATION_TZ
         await db.locations.update_one(
             {"id": default_location_id},
-            {"$set": {"tenant_id": default_tenant_id}},
+            {"$set": updates},
         )
     else:
         default_location_id = await _ensure_location(
-            default_tenant_id, "Main Office", "HQ", "America/Los_Angeles",
+            default_tenant_id, DEFAULT_LOCATION_NAME,
+            DEFAULT_LOCATION_CODE, DEFAULT_LOCATION_TZ,
         )
 
     # 3. Backfill tenant_id across every legacy row.

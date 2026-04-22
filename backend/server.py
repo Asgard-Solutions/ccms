@@ -61,6 +61,7 @@ from services.scheduling.router import router as scheduling_router  # noqa: E402
 from services.scheduling.checkout_hooks import register_hooks as _register_checkout_hooks  # noqa: E402
 from services.tenancy.router import router as tenancy_router  # noqa: E402
 from services.tenancy.seed import seed_tenancy  # noqa: E402
+from services.demo.seed import seed_demo_clinic  # noqa: E402
 from services.workforce.router import router as workforce_router  # noqa: E402
 
 
@@ -202,6 +203,13 @@ async def on_startup():
     await seed_authz()
     await seed_compliance_ops()
     await seed_billing()
+    # Realistic Riverbend demo data (personas, payers, policies,
+    # appointments, clinical notes). Runs last so it can depend on
+    # tenant / user / payer rows created above. Fully idempotent.
+    try:
+        await seed_demo_clinic()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("demo.seed failed (non-fatal): %s", exc)
     # Purge expired export artifacts (best-effort — errors are logged).
     try:
         await cleanup_expired_exports()
