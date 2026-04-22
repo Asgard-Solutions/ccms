@@ -135,6 +135,22 @@ async def main() -> None:
     if la.deleted_count:
         print(f"  - cleared {la.deleted_count:>6} user_location_assignments (re-created by authz seed)")
 
+    # Purge polluted locations. The canonical Riverbend location is the
+    # one the realistic seed targets ("Riverbend — Downtown"); any other
+    # locations on this tenant are pytest fixtures / renamed legacy
+    # "Main Clinic" rows that slipped in via _backfill_default_tenant.
+    canonical_loc = await db.locations.find_one(
+        {"tenant_id": tid, "name": "Riverbend — Downtown"},
+        {"_id": 0, "id": 1},
+    )
+    if canonical_loc:
+        dl = await db.locations.delete_many({
+            "tenant_id": tid,
+            "id": {"$ne": canonical_loc["id"]},
+        })
+        if dl.deleted_count:
+            print(f"  - cleared {dl.deleted_count:>6} polluted locations (kept 'Riverbend — Downtown')")
+
     client.close()
 
     # Re-run the realistic seed (persona catalog + curated billing).

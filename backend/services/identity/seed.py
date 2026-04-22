@@ -27,6 +27,11 @@ DEMO_USERS = [
         "credentials": "DC, CCSP",
         "npi": "1841792253",
         "display_name": "Dr. Noah Carter, DC",
+        "first_name": "Noah",
+        "last_name": "Carter",
+        "credentials_suffix": "DC, CCSP",
+        "preferred_signature_name": "N. Carter, DC",
+        "job_title": "Lead Chiropractor",
     },
     {
         "email": "staff@ccms.app",
@@ -36,6 +41,11 @@ DEMO_USERS = [
         "phone": "+1-503-555-0158",
         "title": "Front Desk Coordinator",
         "display_name": "Mia Ramirez",
+        "first_name": "Mia",
+        "last_name": "Ramirez",
+        "credentials_suffix": "",
+        "preferred_signature_name": "M. Ramirez",
+        "job_title": "Front Desk Coordinator",
     },
     {
         "email": "patient@ccms.app",
@@ -44,6 +54,11 @@ DEMO_USERS = [
         "role": "patient",
         "phone": "+1-503-555-0190",
         "display_name": "Ethan Parker",
+        "first_name": "Ethan",
+        "last_name": "Parker",
+        "credentials_suffix": "",
+        "preferred_signature_name": "",
+        "job_title": "",
     },
 ]
 
@@ -52,6 +67,11 @@ ADMIN_PROFILE = {
     "title": "Clinic Administrator",
     "display_name": "Ava Bennett",
     "phone": "+1-503-555-0101",
+    "first_name": "Ava",
+    "last_name": "Bennett",
+    "credentials_suffix": "",
+    "preferred_signature_name": "A. Bennett",
+    "job_title": "Clinic Administrator",
 }
 
 
@@ -62,6 +82,11 @@ async def _upsert_user(
     credentials: str | None = None,
     npi: str | None = None,
     display_name: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    credentials_suffix: str | None = None,
+    preferred_signature_name: str | None = None,
+    job_title: str | None = None,
     **_ignored,
 ) -> None:
     db = get_db()
@@ -94,6 +119,25 @@ async def _upsert_user(
         base["npi"] = npi
     if display_name is not None:
         base["display_name"] = display_name
+    # Self-service profile fields — idempotently reset on every boot so
+    # pytest-polluted rows (e.g. "Ada Lovelace" written during an auth
+    # test) don't leak into the demo.
+    if first_name is not None:
+        base["first_name"] = first_name
+    if last_name is not None:
+        base["last_name"] = last_name
+    if credentials_suffix is not None:
+        base["credentials_suffix"] = credentials_suffix
+    if preferred_signature_name is not None:
+        base["preferred_signature_name"] = preferred_signature_name
+    if job_title is not None:
+        base["job_title"] = job_title
+    # Force demo accounts to sit in Pacific time (Portland clinic) and
+    # clear the legacy mobile/work_phone fields that pytest assertions
+    # populate. Phone-on-profile is re-exposed via `phone` above.
+    base["time_zone"] = "America/Los_Angeles"
+    base["mobile_phone"] = ""
+    base["work_phone"] = ""
     if existing is None:
         await db.users.insert_one(
             {
@@ -142,6 +186,11 @@ async def seed() -> None:
         ADMIN_PROFILE["name"], "admin", ADMIN_PROFILE["phone"],
         title=ADMIN_PROFILE["title"],
         display_name=ADMIN_PROFILE["display_name"],
+        first_name=ADMIN_PROFILE["first_name"],
+        last_name=ADMIN_PROFILE["last_name"],
+        credentials_suffix=ADMIN_PROFILE["credentials_suffix"],
+        preferred_signature_name=ADMIN_PROFILE["preferred_signature_name"],
+        job_title=ADMIN_PROFILE["job_title"],
     )
     for u in DEMO_USERS:
         await _upsert_user(**u)

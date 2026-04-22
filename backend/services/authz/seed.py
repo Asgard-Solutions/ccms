@@ -97,11 +97,28 @@ async def seed_authz() -> None:
             await db.role_permissions.insert_many(docs)
 
     # ---- default location ----
-    existing_loc = await db.locations.find_one({"code": DEFAULT_LOCATION_CODE}, {"_id": 0})
+    # Prefer the tenancy-seeded Riverbend location (seed_tenancy runs
+    # before seed_authz) so user_location_assignments point to the
+    # real demo clinic instead of a stale "Main Clinic / HQ" placeholder.
+    default_tenant = await db.tenants.find_one(
+        {"slug": "default"}, {"_id": 0, "id": 1},
+    )
+    default_tenant_id = default_tenant["id"] if default_tenant else None
+
+    existing_loc = None
+    if default_tenant_id:
+        existing_loc = await db.locations.find_one(
+            {"tenant_id": default_tenant_id}, {"_id": 0},
+        )
+    if not existing_loc:
+        existing_loc = await db.locations.find_one(
+            {"code": DEFAULT_LOCATION_CODE}, {"_id": 0},
+        )
     if not existing_loc:
         loc_id = str(uuid.uuid4())
         await db.locations.insert_one({
             "id": loc_id,
+            "tenant_id": default_tenant_id,
             "name": DEFAULT_LOCATION_NAME,
             "code": DEFAULT_LOCATION_CODE,
             "timezone": "America/Los_Angeles",

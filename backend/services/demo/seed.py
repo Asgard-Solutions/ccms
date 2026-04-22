@@ -286,6 +286,128 @@ _ADDRESS_BY_NAME[("Ethan", "Parker")] = {
     "city": "Portland", "state": "OR",
     "postal_code": "97209", "country": "USA",
 }
+
+
+# ---------------------------------------------------------------------------
+# Clinic profile — the "Settings > Clinic" page reads from
+# `clinic_profiles` keyed on (tenant_id, location_id). We populate one
+# realistic profile for the default location so the config screens feel
+# like a real clinic (not a blank "configure me" shell).
+# ---------------------------------------------------------------------------
+_CLINIC_PROFILE = {
+    "name": "Riverbend Chiropractic & Wellness",
+    "address_line1": "1840 NW Riverside Dr",
+    "address_line2": "Suite 210",
+    "city": "Portland",
+    "state": "OR",
+    "postal_code": "97209",
+    "country": "US",
+    "primary_phone": "+1-503-555-0100",
+    "secondary_phone": "+1-503-555-0101",
+    "email": "hello@riverbend-chiro.app",
+    "website": "https://riverbend-chiro.app",
+    "timezone": "America/Los_Angeles",
+    "notes": (
+        "Full-service chiropractic and wellness clinic specializing in "
+        "acute injury care, auto accident / PIP, workers' comp, and "
+        "maintenance wellness. In-house x-ray, massage therapy, and "
+        "rehab exercise space."
+    ),
+    # Mon–Fri 08:00–12:00, 13:00–18:00 (lunch break); Sat 09:00–13:00;
+    # Sun closed. Models.DayHours.day_of_week is 0=Mon..6=Sun.
+    "hours": [
+        {"day_of_week": 0, "is_closed": False, "intervals": [
+            {"open_time": "08:00", "close_time": "12:00"},
+            {"open_time": "13:00", "close_time": "18:00"},
+        ]},
+        {"day_of_week": 1, "is_closed": False, "intervals": [
+            {"open_time": "08:00", "close_time": "12:00"},
+            {"open_time": "13:00", "close_time": "18:00"},
+        ]},
+        {"day_of_week": 2, "is_closed": False, "intervals": [
+            {"open_time": "08:00", "close_time": "12:00"},
+            {"open_time": "13:00", "close_time": "18:00"},
+        ]},
+        {"day_of_week": 3, "is_closed": False, "intervals": [
+            {"open_time": "08:00", "close_time": "12:00"},
+            {"open_time": "13:00", "close_time": "18:00"},
+        ]},
+        {"day_of_week": 4, "is_closed": False, "intervals": [
+            {"open_time": "08:00", "close_time": "12:00"},
+            {"open_time": "13:00", "close_time": "17:00"},
+        ]},
+        {"day_of_week": 5, "is_closed": False, "intervals": [
+            {"open_time": "09:00", "close_time": "13:00"},
+        ]},
+        {"day_of_week": 6, "is_closed": True, "intervals": []},
+    ],
+}
+
+
+# ---------------------------------------------------------------------------
+# Appointment types — visit-type catalog the Book Appointment dialog
+# reads to prefill duration + reason strings. Ordered via sort_order so
+# the most common visit types (adjustment, follow-up) surface first.
+# ---------------------------------------------------------------------------
+_APPOINTMENT_TYPES = [
+    {"name": "Chiropractic Adjustment",
+     "default_duration_minutes": 15, "sort_order": 10,
+     "description": "Routine spinal adjustment for established patients.",
+     "default_follow_up_days": 7},
+    {"name": "Follow-up Visit",
+     "default_duration_minutes": 30, "sort_order": 20,
+     "description": "Progress check with treatment rendered.",
+     "default_follow_up_days": 7},
+    {"name": "New Patient Exam",
+     "default_duration_minutes": 60, "sort_order": 30,
+     "description": "Initial consultation + exam + first adjustment for new patients.",
+     "default_follow_up_days": 3},
+    {"name": "Re-Exam",
+     "default_duration_minutes": 30, "sort_order": 40,
+     "description": "Scheduled progress re-evaluation against the treatment plan.",
+     "default_follow_up_days": None},
+    {"name": "Therapy / Modality",
+     "default_duration_minutes": 20, "sort_order": 50,
+     "description": "Soft-tissue work, TENS, IASTM, or other supporting modality.",
+     "default_follow_up_days": 7},
+    {"name": "Auto Injury / PIP Evaluation",
+     "default_duration_minutes": 45, "sort_order": 60,
+     "description": "Initial evaluation for MVA / PIP cases; adjuster coordination.",
+     "default_follow_up_days": 3},
+    {"name": "Workers' Comp Evaluation",
+     "default_duration_minutes": 45, "sort_order": 70,
+     "description": "Initial evaluation for on-the-job injuries; WC reporting.",
+     "default_follow_up_days": 3},
+    {"name": "Maintenance / Wellness Visit",
+     "default_duration_minutes": 15, "sort_order": 80,
+     "description": "Self-pay maintenance adjustment for established patients.",
+     "default_follow_up_days": 30},
+    {"name": "Pediatric Visit",
+     "default_duration_minutes": 15, "sort_order": 90,
+     "description": "Gentle adjustment for pediatric patients; parent present.",
+     "default_follow_up_days": 14},
+]
+
+
+# ---------------------------------------------------------------------------
+# Rooms / exam spaces for the default location.
+# ---------------------------------------------------------------------------
+_ROOMS = [
+    {"name": "Exam 1", "type": "exam", "sort_order": 10,
+     "notes": "Primary exam room (front)."},
+    {"name": "Exam 2", "type": "exam", "sort_order": 20,
+     "notes": "Secondary exam room (hallway east)."},
+    {"name": "Adjustment 1", "type": "exam", "sort_order": 30,
+     "notes": "Open-bay adjustment table with drop piece."},
+    {"name": "Adjustment 2", "type": "exam", "sort_order": 40,
+     "notes": "Open-bay adjustment table — flexion/distraction."},
+    {"name": "Consult Room", "type": "consult", "sort_order": 50,
+     "notes": "Report-of-findings / consultation room."},
+    {"name": "X-Ray Suite", "type": "xray", "sort_order": 60,
+     "notes": "In-house digital x-ray (shielded)."},
+    {"name": "Therapy Bay", "type": "therapy", "sort_order": 70,
+     "notes": "Modalities, rehab exercise, and soft-tissue work."},
+]
 _PERSONAS = [
     {
         "first_name": "Hannah", "middle_name": "Rose", "last_name": "Whitaker",
@@ -1055,6 +1177,97 @@ async def _seed_appointments(
             )
 
 
+async def _upsert_clinic_profile(
+    tenant_id: str, location_id: str | None,
+    created_by: str | None,
+) -> None:
+    """Seed/refresh the Riverbend ClinicProfile row. Keyed on
+    (tenant_id, location_id). Idempotent: re-running refreshes the
+    stored fields without bumping `id` or `created_at`.
+    """
+    if not location_id:
+        logger.info("demo.seed: no default location — skipping clinic_profile")
+        return
+    db = get_db_write()
+    now = _now()
+    key = {"tenant_id": tenant_id, "location_id": location_id}
+    existing = await db.clinic_profiles.find_one(key, {"_id": 0, "id": 1, "created_at": 1})
+    doc = {
+        **key,
+        **_CLINIC_PROFILE,
+        "updated_at": now,
+        "updated_by": created_by,
+    }
+    if existing is None:
+        doc.update({
+            "id": str(uuid.uuid4()),
+            "created_at": now,
+            "created_by": created_by,
+        })
+        await db.clinic_profiles.insert_one(doc)
+    else:
+        await db.clinic_profiles.update_one({"id": existing["id"]}, {"$set": doc})
+
+
+async def _upsert_appointment_types(tenant_id: str, created_by: str | None) -> None:
+    """Seed realistic visit-type catalog. Keyed on (tenant_id, name)."""
+    db = get_db_write()
+    now = _now()
+    for spec in _APPOINTMENT_TYPES:
+        key = {"tenant_id": tenant_id, "name": spec["name"]}
+        existing = await db.appointment_types.find_one(key, {"_id": 0, "id": 1})
+        doc = {
+            **key,
+            "default_duration_minutes": spec["default_duration_minutes"],
+            "description": spec.get("description"),
+            "sort_order": spec["sort_order"],
+            "is_active": True,
+            "default_follow_up_days": spec.get("default_follow_up_days"),
+            "updated_at": now,
+            "updated_by": created_by,
+        }
+        if existing is None:
+            doc.update({
+                "id": str(uuid.uuid4()),
+                "created_at": now,
+                "created_by": created_by,
+            })
+            await db.appointment_types.insert_one(doc)
+        else:
+            await db.appointment_types.update_one(
+                {"id": existing["id"]}, {"$set": doc},
+            )
+
+
+async def _upsert_rooms(tenant_id: str, location_id: str | None) -> None:
+    """Seed clinic rooms. Keyed on (tenant_id, location_id, name)."""
+    if not location_id:
+        logger.info("demo.seed: no default location — skipping rooms")
+        return
+    db = get_db_write()
+    now = _now()
+    for spec in _ROOMS:
+        key = {
+            "tenant_id": tenant_id,
+            "location_id": location_id,
+            "name": spec["name"],
+        }
+        existing = await db.rooms.find_one(key, {"_id": 0, "id": 1})
+        doc = {
+            **key,
+            "type": spec["type"],
+            "is_active": True,
+            "sort_order": spec["sort_order"],
+            "notes": spec.get("notes"),
+            "updated_at": now,
+        }
+        if existing is None:
+            doc.update({"id": str(uuid.uuid4()), "created_at": now})
+            await db.rooms.insert_one(doc)
+        else:
+            await db.rooms.update_one({"id": existing["id"]}, {"$set": doc})
+
+
 # ---------------------------------------------------------------------------
 async def seed_demo_clinic() -> None:
     """Idempotent realistic seed for the Riverbend demo tenant. Safe
@@ -1085,7 +1298,16 @@ async def seed_demo_clinic() -> None:
     await _seed_appointments(
         tenant_id, location_id, lead_doc_id, associate_doc_id,
     )
+    # Clinic configuration — profile / hours, appointment types, rooms.
+    # Clinic Owner (Olivia Hart) is the `created_by` attributor so the
+    # audit/provenance fields look real.
+    owner_id = staff_by_email.get("olivia.hart@riverbend-chiro.app")
+    await _upsert_clinic_profile(tenant_id, location_id, owner_id)
+    await _upsert_appointment_types(tenant_id, owner_id)
+    await _upsert_rooms(tenant_id, location_id)
     logger.info(
-        "demo.seed complete: staff=%d personas=%d payers=%d",
+        "demo.seed complete: staff=%d personas=%d payers=%d "
+        "appt_types=%d rooms=%d clinic_profile=1",
         len(_STAFF), len(_PERSONAS), len(_PAYERS),
+        len(_APPOINTMENT_TYPES), len(_ROOMS),
     )
