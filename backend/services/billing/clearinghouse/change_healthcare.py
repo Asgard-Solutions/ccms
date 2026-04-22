@@ -219,6 +219,7 @@ class ChangeHealthcareAdapter:
                 adapter_route=self.route_id,
                 status="manual",
                 external_id=external_reference or None,
+                sandbox=True,
                 message=(
                     f"{self.route_id} adapter is disabled; no transmission "
                     "performed. Configure env vars "
@@ -240,6 +241,7 @@ class ChangeHealthcareAdapter:
                 adapter_route=self.route_id,
                 status="manual",
                 external_id=external_reference or None,
+                sandbox=False,
                 message=(
                     f"Payer is not yet enrolled with {self.route_id}; "
                     "falling back to manual submission."
@@ -259,18 +261,30 @@ class ChangeHealthcareAdapter:
         # sandbox (or production-stubbed) — synthesise a tracking id,
         # return queued, no I/O.
         synthetic_id = f"chc-sbx-{uuid.uuid4().hex[:12]}"
+        # Phase 8 — transport-level trace + correlation ids so the UI
+        # and audit log can pin every call. These are synthetic in
+        # sandbox; Phase 9's live HTTPS path will plumb the actual
+        # clearinghouse response headers through here.
+        trace_id = f"trace-{uuid.uuid4().hex[:16]}"
+        correlation_id = f"corr-{uuid.uuid4().hex[:12]}"
         log.info(
             "billing.clearinghouse.submit.sandbox",
-            extra={**base_log_extra, "external_id": synthetic_id},
+            extra={**base_log_extra, "external_id": synthetic_id,
+                   "trace_id": trace_id, "correlation_id": correlation_id},
         )
         return SubmissionResult(
             adapter_route=self.route_id,
             status="queued",
             external_id=synthetic_id,
+            trace_id=trace_id,
+            correlation_id=correlation_id,
+            sandbox=self._mode != "production" or True,  # always True pre-Phase 9
             raw={
                 "mode": self._mode,
                 "base_url": self._base_url,
                 "synthetic": True,
+                "trace_id": trace_id,
+                "correlation_id": correlation_id,
             },
             message=(
                 f"Submitted to {self.route_id} ({self._mode} mode). "

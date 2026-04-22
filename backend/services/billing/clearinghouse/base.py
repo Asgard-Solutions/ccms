@@ -42,6 +42,17 @@ class SubmissionResult:
     adapter_route: str               # matches the payer's clearinghouse_route
     status: str                      # one of SUBMISSION_STATUSES
     external_id: str | None = None   # clearinghouse tracking id (when available)
+    # Phase 8 — transport-level trace identifiers. `trace_id` is the
+    # per-request id an operator can paste into the clearinghouse
+    # console; `correlation_id` is the batch / session id the adapter
+    # uses to tie multiple calls together (e.g. a bulk submit). Both
+    # are optional because the NoneAdapter has no transport.
+    trace_id: str | None = None
+    correlation_id: str | None = None
+    # True when the adapter ran in a non-production mode (sandbox /
+    # disabled / dry-run). Callers flag audit events accordingly so
+    # the workflow UI never represents a sandbox submit as "live".
+    sandbox: bool = False
     raw: dict | None = None          # opaque adapter echo for audit/debug
     message: str | None = None       # human-readable note for the timeline
     # Optional `submitted_at` override. Most adapters let the caller

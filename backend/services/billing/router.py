@@ -20,7 +20,7 @@ from typing import Literal, get_args
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response
 
-from core.audit import audit_success
+from core.audit import audit_success, audit_failure
 from core.deps import get_current_user, require_role
 from core.tenancy import TenantContext, require_tenant, tenant_db
 from core.tenant_scope import scoped_filter, stamp_for_write
@@ -74,6 +74,7 @@ from services.billing.models import (
     ClaimEventPublic,
     ClaimPublic,
     ClaimStatus,
+    ClaimBulkSubmitRequest,
     ClaimSubmissionCreate,
     ClaimSubmissionOutcome,
     ClaimSubmissionPublic,
@@ -2852,17 +2853,19 @@ async def create_claim_submission(
     user: dict = Depends(require_permission("claim", "submit")),
     ctx: TenantContext = Depends(require_tenant),
 ):
-    """Record a manual submission attempt. Advances the claim
-    `ready → submitted` (or `rejected → submitted` for resubmissions).
-    Persists both JSON export and 837P preview on the submission row."""
+    """Validate + submit a single claim.
+
+    Phase 8 — the scrubber runs before every submission attempt. A
+    claim that fails validation is auto-routed to `validation_failed`
+    (canonical "needs_fixes") and the endpoint returns 422 with the
+    structured findings. Only claims in `ready` that pass the scrubber
+    reach the clearinghouse adapter.
+    """
     db = tenant_db(ctx.tenant_id)
     claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
     if not claim:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
 
-    # Only certain statuses may be submitted. Use the canonical state
-    # machine so resubmissions from rejected are blocked unless caller
-    # first moved the claim back to ready.
     current = claim["status"]
     if current not in ("ready",):
         raise HTTPException(
@@ -2870,6 +2873,322 @@ async def create_claim_submission(
             f"Claim in status '{current}' cannot be submitted; "
             "transition to 'ready' first.",
         )
+
+    # Pre-submit validation gate (Phase 8).
+    gate = await _run_validation_gate(db, ctx, user, claim, request)
+    if not gate["passed"]:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": "Claim failed validation and cannot be submitted.",
+                "claim_id": claim_id,
+                "validation_run_id": gate["validation_run_id"],
+                "errors": gate["errors"],
+                "warnings": gate["warnings"],
+            },
+        )
+
+    submission = await _do_submit_claim(
+        db, ctx, user, claim, body, request,
+    )
+    out = {k: v for k, v in submission.items()
+           if k not in ("payload_json", "payload_x12")}
+    return out
+
+
+@router.post("/claims/submit-batch")
+async def submit_claim_batch(
+    body: ClaimBulkSubmitRequest,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "submit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Phase 8 — bulk validate + submit.
+
+    Processes up to 50 claim_ids in one call. Each claim is validated
+    first; failures are isolated to that claim only. Returns a
+    per-claim summary so the UI can drive a "queued N, failed M,
+    skipped K" status line and let operators drill into any row.
+
+    No job queue is involved — submissions run synchronously in
+    claim-id order so the response already carries every result.
+    """
+    db = tenant_db(ctx.tenant_id)
+    started = _now()
+    correlation_id = f"batch-{uuid.uuid4().hex[:12]}"
+
+    submitted: list[dict] = []
+    failed_validation: list[dict] = []
+    skipped: list[dict] = []
+
+    await audit_success(
+        user, "billing.claim.bulk_submit_started", request,
+        entity_type="claim_batch", entity_id=correlation_id,
+        metadata={"claim_count": len(body.claim_ids),
+                  "method": body.method,
+                  "strict": body.strict,
+                  "correlation_id": correlation_id},
+    )
+
+    for claim_id in body.claim_ids:
+        claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+        if not claim:
+            skipped.append({
+                "claim_id": claim_id,
+                "reason": "not_found",
+                "message": "Claim not found in tenant.",
+            })
+            continue
+        if claim["status"] != "ready":
+            skipped.append({
+                "claim_id": claim_id,
+                "reason": "wrong_status",
+                "message": (
+                    f"Claim status is '{claim['status']}'; "
+                    "only 'ready' claims are eligible for batch submission."
+                ),
+                "status": claim["status"],
+            })
+            continue
+
+        gate = await _run_validation_gate(db, ctx, user, claim, request)
+        if not gate["passed"]:
+            failed_validation.append({
+                "claim_id": claim_id,
+                "validation_run_id": gate["validation_run_id"],
+                "error_count": len(gate["errors"]),
+                "warning_count": len(gate["warnings"]),
+                "top_error_codes": [e.get("code") for e in gate["errors"][:5]],
+            })
+            continue
+
+        single_body = ClaimSubmissionCreate(
+            method=body.method,
+            external_reference=body.external_reference,
+            notes=body.notes,
+        )
+        try:
+            sub_doc = await _do_submit_claim(
+                db, ctx, user, claim, single_body, request,
+                correlation_id=correlation_id,
+            )
+        except HTTPException as exc:
+            # Adapter-level transport failure: log & continue. Other
+            # claims in the batch still get their shot.
+            skipped.append({
+                "claim_id": claim_id,
+                "reason": "adapter_error",
+                "message": exc.detail if isinstance(exc.detail, str)
+                           else "Clearinghouse submission failed.",
+                "status_code": exc.status_code,
+            })
+            continue
+        submitted.append({
+            "claim_id": claim_id,
+            "submission_id": sub_doc["id"],
+            "adapter_route": sub_doc.get("adapter_route"),
+            "adapter_status": sub_doc.get("adapter_status"),
+            "adapter_external_id": sub_doc.get("adapter_external_id"),
+            "trace_id": sub_doc.get("trace_id"),
+            "correlation_id": sub_doc.get("correlation_id"),
+            "sandbox": sub_doc.get("sandbox", False),
+        })
+
+    if body.strict and failed_validation and not submitted and not skipped:
+        # Every single claim failed validation and caller asked for
+        # strict mode — surface it as a 422 so the UI can prompt a
+        # batch-wide fix workflow instead of a silent "0 submitted".
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "BATCH_VALIDATION_FAILED",
+                "message": "Every claim in the batch failed validation.",
+                "correlation_id": correlation_id,
+                "failed_validation": failed_validation,
+            },
+        )
+
+    result = {
+        "correlation_id": correlation_id,
+        "started_at": started,
+        "completed_at": _now(),
+        "requested": len(body.claim_ids),
+        "submitted": submitted,
+        "failed_validation": failed_validation,
+        "skipped": skipped,
+    }
+    await audit_success(
+        user, "billing.claim.bulk_submit_completed", request,
+        entity_type="claim_batch", entity_id=correlation_id,
+        metadata={"submitted": len(submitted),
+                  "failed_validation": len(failed_validation),
+                  "skipped": len(skipped),
+                  "correlation_id": correlation_id},
+    )
+    return result
+
+
+@router.get("/clearinghouse/transmissions")
+async def list_clearinghouse_transmissions(
+    claim_id: str | None = Query(default=None),
+    adapter_route: str | None = Query(default=None),
+    adapter_status: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Phase 8 — unified transmission log.
+
+    Returns the N most recent claim submissions across the tenant with
+    filters by claim / adapter route / adapter status. This is the
+    read-side of Phase 8's "persist request/response artifacts and
+    submission history" requirement — `claim_submissions` is already
+    our transmission log, this endpoint just exposes it with the
+    operator-relevant fields projected.
+    """
+    db = tenant_db(ctx.tenant_id)
+    q = scoped_filter({}, ctx, location_scoped=False)
+    if q.get("__deny__"):
+        return []
+    if claim_id:
+        q["claim_id"] = claim_id
+    if adapter_route:
+        q["adapter_route"] = adapter_route
+    if adapter_status:
+        q["adapter_status"] = adapter_status
+    rows = [r async for r in db.claim_submissions.find(
+        q, {"_id": 0, "payload_json": 0, "payload_x12": 0},
+    ).sort([("submitted_at", -1)]).limit(limit)]
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 — reusable validation + submission pipeline helpers
+# ---------------------------------------------------------------------------
+async def _run_validation_gate(
+    db, ctx: TenantContext, user: dict, claim: dict, request: Request,
+) -> dict:
+    """Run the scrubber as a pre-submit gate.
+
+    On failure the claim auto-transitions to `validation_failed`
+    (canonical "needs_fixes"), a `claim_validation_runs` row is
+    persisted, an audit event is written, and the `validated` claim
+    event is emitted. Returns a dict with
+    `{passed, errors, warnings, validation_run_id}` regardless of
+    outcome so callers can propagate findings to the UI.
+    """
+    claim_id = claim["id"]
+    scrub_ctx = await _load_claim_context(db, ctx, claim)
+    result = run_rules(scrub_ctx, DEFAULT_RULES)
+
+    now = _now()
+    from_status = claim["status"]
+    new_status = from_status
+    # The gate only flips to `validation_failed` — it never advances
+    # to `ready` because that transition is owned by `validate_claim`.
+    # This keeps the gate side-effect narrow: it only ever *blocks*.
+    if not result["passed"] and from_status == "ready":
+        try:
+            transitions.advance("claim", from_status, "validation_failed")
+            new_status = "validation_failed"
+        except transitions.TransitionError:
+            new_status = from_status
+
+    set_fields = {
+        "validation_error_count": len(result["errors"]),
+        "validation_warning_count": len(result["warnings"]),
+        "validation_last_run_at": now,
+        "updated_at": now,
+        "updated_by": user["id"],
+    }
+    if new_status != from_status:
+        set_fields["status"] = new_status
+
+    await db.claims.update_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id},
+        {"$set": set_fields,
+         "$push": {"history": _history_entry(
+             user, "validated",
+             gate="submission",
+             error_count=len(result["errors"]),
+             warning_count=len(result["warnings"]),
+             from_status=from_status, to_status=new_status,
+         )}},
+    )
+
+    run_doc = stamp_for_write({
+        "id": str(uuid.uuid4()),
+        "claim_id": claim_id,
+        "run_at": now,
+        "run_by": user["id"],
+        "errors": result["errors"],
+        "warnings": result["warnings"],
+        "by_category": result.get("by_category", {}),
+        "passed": result["passed"],
+        "from_status": from_status,
+        "to_status": new_status,
+        "gate": "submission",
+        "created_at": now,
+    }, ctx, location_id=None)
+    await db.claim_validation_runs.insert_one(run_doc)
+
+    await audit_success(
+        user, "billing.claim.pre_submit_validated", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={"errors": len(result["errors"]),
+                  "warnings": len(result["warnings"]),
+                  "passed": result["passed"],
+                  "from_status": from_status,
+                  "to_status": new_status},
+    )
+    await emit_claim_event(
+        db, ctx,
+        claim_id=claim_id,
+        event_type="validated",
+        actor_id=user["id"],
+        payload={"gate": "submission",
+                 "error_count": len(result["errors"]),
+                 "warning_count": len(result["warnings"]),
+                 "passed": result["passed"],
+                 "top_error_codes": [
+                     e.get("code") for e in result["errors"][:5]
+                 ]},
+        from_status=from_status,
+        to_status=new_status,
+        location_id=claim.get("location_id"),
+    )
+
+    # If status moved, mutate the in-memory dict so downstream callers
+    # (e.g. the bulk loop) see the fresh status without a re-read.
+    if new_status != from_status:
+        claim["status"] = new_status
+    return {
+        "passed": result["passed"],
+        "errors": result["errors"],
+        "warnings": result["warnings"],
+        "validation_run_id": run_doc["id"],
+        "from_status": from_status,
+        "to_status": new_status,
+    }
+
+
+async def _do_submit_claim(
+    db, ctx: TenantContext, user: dict, claim: dict,
+    body: ClaimSubmissionCreate, request: Request,
+    *, correlation_id: str | None = None,
+) -> dict:
+    """Core single-claim submission pipeline.
+
+    Assumes the caller has already gated the claim through validation
+    and confirmed `claim.status == "ready"`. Builds payloads, hands to
+    the adapter, persists the submission row, transitions the claim,
+    audits, and emits a `submitted` / `resubmitted` event. Returns the
+    persisted submission dict (payload fields included — the outer
+    HTTP handler is responsible for stripping them from the response).
+    """
+    claim_id = claim["id"]
+    current = claim["status"]
     new_status = transitions.http_advance("claim", current, "submitted")
 
     patient, payer, policy, diagnoses, lines, \
@@ -2881,11 +3200,6 @@ async def create_claim_submission(
         patient=patient, payer=payer, policy=policy,
     )
 
-    # Phase 7 — wire-ready 837P. The adapter owns envelope identity
-    # (submitter / receiver / biller) via `submission_identity()`. When
-    # an adapter doesn't expose one (e.g. `NoneAdapter`), the wire
-    # builder falls back to safe defaults so manual submissions still
-    # persist a valid 837P for audit/debugging.
     adapter = get_adapter_for_payer(payer)
     identity_fn = getattr(adapter, "submission_identity", None)
     envelope = identity_fn() if callable(identity_fn) else {}
@@ -2896,7 +3210,8 @@ async def create_claim_submission(
     }
     receiver = {
         "id": envelope.get("receiver_id") or "PAYER",
-        "name": envelope.get("receiver_name") or (payer or {}).get("name") or "PAYER",
+        "name": envelope.get("receiver_name")
+                 or (payer or {}).get("name") or "PAYER",
     }
     payload_x12 = build_x12_837p_wire(
         claim=claim, diagnoses=diagnoses, lines=lines,
@@ -2907,14 +3222,12 @@ async def create_claim_submission(
         submitter=submitter,
         receiver=receiver,
         control_numbers={
-            "usage_indicator": "P" if getattr(adapter, "_mode", "") == "production" else "T",
+            "usage_indicator": (
+                "P" if getattr(adapter, "_mode", "") == "production" else "T"
+            ),
         },
     )
 
-    # Phase 2a — every submission goes through the clearinghouse
-    # adapter abstraction. Payers with `clearinghouse_route="none"`
-    # (the default) resolve to `NoneAdapter`, which performs no
-    # transmission — preserving the existing manual workflow exactly.
     try:
         adapter_result = await adapter.submit(
             claim_id=claim_id,
@@ -2931,6 +3244,14 @@ async def create_claim_submission(
             extra={"claim_id": claim_id,
                    "route": (payer or {}).get("clearinghouse_route")},
         )
+        await audit_failure(
+            action="billing.claim.submission_failed",
+            request=request,
+            actor_email=user.get("email"),
+            reason="adapter_exception",
+            metadata={"claim_id": claim_id,
+                      "route": (payer or {}).get("clearinghouse_route")},
+        )
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
             "Clearinghouse submission failed; please retry.",
@@ -2938,17 +3259,8 @@ async def create_claim_submission(
 
     now = _now()
     sub_id = str(uuid.uuid4())
-    # Phase 6 — envelope identity snapshot. Captured at submission
-    # time so changes to adapter config don't alter historical rows.
-    identity = {}
-    snapshot_fn = getattr(adapter, "submission_identity", None)
-    if callable(snapshot_fn):
-        identity = snapshot_fn() or {}
-    # ST02 transaction set control number — monotonically unique per
-    # submission. Format: last 9 digits of a UUIDv4 integer, which
-    # keeps it within the 4..9 numeric range the ST02 spec allows.
+    identity = envelope or {}
     st02_control = f"{uuid.uuid4().int % 10**9:09d}"
-    # SHA-256 of the raw 837P for idempotency / dedup / audit.
     raw_hash = hashlib.sha256((payload_x12 or "").encode("utf-8")).hexdigest()
     sub_doc = stamp_for_write({
         "id": sub_id,
@@ -2961,13 +3273,18 @@ async def create_claim_submission(
         "payload_json": payload_json,
         "payload_x12": payload_x12,
         "payload_size_bytes": len(payload_x12),
-        # Phase 2a — adapter handoff metadata. Kept alongside the
-        # canonical submission record so the timeline can reference
-        # both "what we sent" and "how we sent it" without joining.
+        # Phase 2a — adapter handoff metadata.
         "adapter_route": adapter_result.adapter_route,
         "adapter_status": adapter_result.status,
         "adapter_external_id": adapter_result.external_id,
         "adapter_message": adapter_result.message,
+        # Phase 8 — transport trace identifiers.
+        "trace_id": getattr(adapter_result, "trace_id", None),
+        "correlation_id": (
+            correlation_id or getattr(adapter_result, "correlation_id", None)
+        ),
+        "sandbox": bool(getattr(adapter_result, "sandbox", False)),
+        "adapter_raw": adapter_result.raw,
         # Phase 6 — envelope identity snapshot + ST02 + raw 837 hash.
         "receiver_id": identity.get("receiver_id"),
         "receiver_name": identity.get("receiver_name"),
@@ -3003,6 +3320,12 @@ async def create_claim_submission(
              user, "submitted",
              method=body.method,
              submission_id=sub_id,
+             adapter_route=adapter_result.adapter_route,
+             adapter_status=adapter_result.status,
+             adapter_external_id=adapter_result.external_id,
+             trace_id=getattr(adapter_result, "trace_id", None),
+             correlation_id=sub_doc["correlation_id"],
+             sandbox=sub_doc["sandbox"],
              external_reference=body.external_reference,
              from_status=current, to_status=new_status,
          )}},
@@ -3014,15 +3337,15 @@ async def create_claim_submission(
                   "external_reference": body.external_reference,
                   "from": current, "to": new_status,
                   "adapter_route": adapter_result.adapter_route,
-                  "adapter_status": adapter_result.status},
+                  "adapter_status": adapter_result.status,
+                  "adapter_external_id": adapter_result.external_id,
+                  "trace_id": sub_doc["trace_id"],
+                  "correlation_id": sub_doc["correlation_id"],
+                  "sandbox": sub_doc["sandbox"]},
     )
     await emit_claim_event(
         db, ctx,
         claim_id=claim_id,
-        # A claim landing back on `ready` from `rejected` and then
-        # moving to `submitted` is a resubmission; the initial flow
-        # (draft→ready→submitted) is `submitted`. We detect via the
-        # existing submission_count counter incremented just above.
         event_type=(
             "resubmitted"
             if (claim.get("submission_count") or 0) >= 1 else "submitted"
@@ -3034,6 +3357,9 @@ async def create_claim_submission(
                  "external_reference": body.external_reference,
                  "adapter_status": adapter_result.status,
                  "adapter_external_id": adapter_result.external_id,
+                 "trace_id": sub_doc["trace_id"],
+                 "correlation_id": sub_doc["correlation_id"],
+                 "sandbox": sub_doc["sandbox"],
                  "payload_size_bytes": len(payload_x12)},
         from_status=current,
         to_status=new_status,
@@ -3043,11 +3369,7 @@ async def create_claim_submission(
     fresh = await db.claim_submissions.find_one(
         {"id": sub_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
     )
-    # Response: exclude heavy payload fields (accessible via dedicated
-    # `/payload` endpoint if needed later).
-    out = {k: v for k, v in fresh.items()
-           if k not in ("payload_json", "payload_x12")}
-    return out
+    return fresh
 
 
 @router.get(

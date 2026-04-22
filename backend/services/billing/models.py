@@ -842,6 +842,15 @@ class ClaimSubmissionPublic(BaseModel):
     submitted_by: str
     payload_format: str          # "json" | "x12-837p-preview"
     payload_size_bytes: int
+    # Phase 2a — adapter handoff metadata
+    adapter_route: str | None = None
+    adapter_status: str | None = None
+    adapter_external_id: str | None = None
+    adapter_message: str | None = None
+    # Phase 8 — transport trace identifiers (operator debugging / support)
+    trace_id: str | None = None
+    correlation_id: str | None = None
+    sandbox: bool = False
     # Outcome fields (populated once recorded)
     outcome: SubmissionOutcomeKind | None = None
     outcome_at: str | None = None
@@ -850,6 +859,26 @@ class ClaimSubmissionPublic(BaseModel):
     denial_code: str | None = None
     paid_cents: int | None = None
     notes: str | None = None
+
+
+class ClaimBulkSubmitRequest(BaseModel):
+    """Phase 8 — batch submission request.
+
+    The bulk endpoint runs the scrubber for every claim and submits the
+    ones that pass through the adapter resolved for each claim's
+    payer. There's no server-side queue — submissions are processed
+    synchronously in claim-id order so operator feedback is immediate.
+    """
+    model_config = ConfigDict(extra="forbid")
+    claim_ids: list[str] = Field(min_length=1, max_length=50)
+    method: SubmissionMethod = "batch_file"
+    external_reference: str | None = Field(default=None, max_length=60)
+    notes: str | None = Field(default=None, max_length=2000)
+    # When True the endpoint refuses to submit any claim that fails
+    # validation. When False the endpoint still skips failing claims
+    # but returns them in `failed_validation` so the operator can
+    # triage. Defaults to True — safer posture for real billing.
+    strict: bool = True
 
 
 class ClaimAssignmentUpdate(BaseModel):
