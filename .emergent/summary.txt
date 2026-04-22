@@ -3,78 +3,62 @@ PRODUCT REQUIREMENTS:
 - Supported stack: React + FastAPI + MongoDB strictly architected as PostgreSQL-ready.
 - JWT-based custom auth with strict RBAC.
 - 100% HIPAA compliant (PHI masking, audit logs, MFA, reauth).
-- Multi-tenancy: Shared DB schema with strict  and  isolation.
-- Current feature requested: Implement the operational End-to-End Appointment Workflow (Check-in, Flow Board, Room Management, Provider Workflow, Checkout) and establish Event-Bus Hooks for payment, invoice, and follow-ups.
+- Current feature requested: Complete the Access Management Redesign (simplified grouped roles, plain-English modules), resolve billing/checkout endpoints, generate patient statements (PDF/email/mail) with billing breakdowns, and build a Patient Portal shell for self-service viewing.
 
 **User's preferred language**: English (INSTRUCT: Next agent MUST respond in English only)
 
 **what currently exists?** 
-A highly secure, HIPAA-compliant MVP of the CCMS. The system has a robust Reports module, custom RBAC, and newly built complete end-to-end appointment operations workflow. This includes complex state-machine transitions (Scheduled → Checked In → Ready for Provider → In Progress → Ready for Checkout → Checked Out), a live Patient Flow Board, configurable Room Management, a Provider Queue, a Checkout dashboard, and an Event Bus () generating follow-up suggestions and draft invoices on checkout.
+A highly secure, HIPAA-compliant MVP of the CCMS. It has a fully rebuilt and simplified RBAC system (plain-English permission modules, custom role creation, access history UI, legacy matrix pages removed). It features robust billing with fixed legacy payment statuses, a notification abstraction layer (Twilio/Resend) with log-only fallbacks, and a newly added Patient Statements feature (PDF generation, email/mail delivery tracking, insurance vs. patient balance breakdowns). 
 
 **Last working item**:
-    - Last item agent was working: Wiring the Book follow-up button to consume URL parameters inside  and auto-dismiss the follow-up suggestion, plus adding payment collection, invoice enrichment, and document generation hooks to the  payload.
+    - Last item agent was working: Building the Patient Portal shell ( route + navigation) to consume self-service statement endpoints. The agent just created , ,  and was modifying , , and  to ensure patients are correctly redirected to the portal upon login.
     - Status: IN PROGRESS
     - Agent Testing Done: N
-    - Which testing method agent to use? both (Use testing_agent_v3_fork for full E2E validation after hook implementations)
+    - Which testing method agent to use? Frontend testing agent / screenshot tool.
     - User Testing Done: N
 
 **All Pending/In progress Issue list**:  
-  Issue 1: Global retry-after-reauth Axios Interceptor (UX Polish) (P2)
-     - Attempted fixes: None yet (carried over from previous fork).
-     - Next debug checklist: Implement an interceptor that silently replays the last privileged action the moment a user confirms their password/PIN in the reauth dialog.
-     - Why fix this issue and what will be achieved with the fix? Smooths UX for privileged actions across the app so users don't have to redo their action after being prompted for a PIN/password.
-     - Status: NOT STARTED
-     - Is recurring issue? N
-     - Should Test frontend/backend/both after fix? Frontend E2E
-     - Blocked on other issue: None
-
-  Issue 2: Provide  for Email delivery (P2)
-     - Attempted fixes: Mocked for local tests.
-     - Next debug checklist: User explicitly asked to DEFER this and keep it mocked for now.
-     - Why fix this issue and what will be achieved with the fix? Enables actual email notifications (reminders, MFA, resets).
-     - Status: BLOCKED (User Deferred)
+None. All reported bugs (like the Billing 500 error for legacy  statuses) have been resolved.
 
 **In progress Task List**:
-  Task 1: BookDialog URL Param Wiring + Auto-dismiss Follow-up (P0)
-     - Where to resume: Modify  and its parent components (like ) to parse URL parameters (e.g., ) when opened. Pre-fill the form and trigger an endpoint to dismiss the follow-up suggestion on successful booking.
-     - What will be achieved with this? One-click loop for front-desk staff to book follow-ups straight from the Checkout Dashboard without re-entering patient details.
+  Task 1: Patient Portal Shell & Routing (P0)
+     - Where to resume: Review the modifications made to , , and . Ensure users with the  role are routed to  properly and cannot access admin/staff routes. Complete the UI for .
+     - What will be achieved with this? Patient self-service access to view and download their billing statements.
      - Status: IN PROGRESS
      - Should Test frontend/backend/both after fix? Frontend
      - Blocked on something: None
-     
-  Task 2: Additional  Hooks (P0)
-     - Where to resume: Expand  and related routers.
-     - What will be achieved with this? Add payment collection, invoice enrichment, document print/email, and automated follow-up booking on top of the checkout payload and  rows.
+
+  Task 2: Send all outstanding statements bulk action (P1)
+     - Where to resume: Add a bulk action for the month-end workflow, likely on the Billing dashboard or Patient Ledger.
+     - What will be achieved with this? Allows billing staff to dispatch missing statement batches with one click, reducing days-in-A/R.
      - Status: NOT STARTED
-     - Should Test frontend/backend/both after fix? both
+     - Should Test frontend/backend/both after fix? Both
      - Blocked on something: None
 
 **Upcoming and Future Tasks**
     Upcoming Tasks:
-    - Task 1: **Automated/Scheduled Email Reports** (P1) (Email saved report views on a daily/weekly/monthly cadence using secure ZIP framework via Twilio SMS for password).
-    - Task 2: **Reorder Appointment Types** (P2) (Add drag-and-drop or ordering logic in Clinic Settings).
+    - Task 1: **Weekly compliance digest email** (P1) (Email summarized role grants, privileged actions, and elevation requests to the Compliance Officer role using the new notification abstraction).
     
     Future Tasks:
+    - Task 2: **PostgreSQL Migration** (P2) (Executing the planned migration from MongoDB to PostgreSQL).
     - Task 3: **Enterprise Auth Integrations** (P2) (WebAuthn/passkeys, SAML/OIDC SSO, SCIM scaffolding).
-    - Task 4: **PostgreSQL Migration** (P2) (Executing the planned migration from MongoDB to PostgreSQL).
-    - Task 5: **Reporting Service Read-Heavy Analytics** (P2) (Analytics leveraging the replica abstractions).
+    - Task 4: **Reporting Service Read-Heavy Analytics** (P2) (Analytics leveraging the replica abstractions).
 
 **Completed work in this session**
-- Appointment Workflow Backbone Phase 1 (State machine transitions & endpoints) (DONE)
-- Check-In + Intake Integration Phase 2 (Intake gating on provider handoff) (DONE)
-- Patient Flow Board Phase 3 (UI mapping to waiting room, roomed, ready for checkout) (DONE)
-- Room Management + Room Assignment Phase 4 (CRUD for rooms, conflict validation) (DONE)
-- Provider Workflow Phase 5 (My Queue UI) (DONE)
-- Checkout Workflow Phase 6 (Checkout dashboard and endpoints) (DONE)
-- Polish, Hardening & UX Phase 7 ( styling, comprehensive regression testing) (DONE)
--  persistence and Checkout Hooks (Draft Invoices & Follow-ups via event bus) (DONE)
+- Task 1a: Wired BookDialog URL params + follow-up resolve endpoint (DONE)
+- Access Management Redesign (Phases 1-5): Grouped permissions catalog, custom roles CRUD, Users UI, Roles UI, Access History audit UI, legacy matrix deprecation, and legacy-role migration backfill (DONE)
+- Drag-and-drop reorder for Appointment Types using native HTML5 DnD (DONE)
+- Resend email + Twilio SMS/Verify abstracted notification layer with log-only fallbacks (DONE)
+- Fixed Billing Dashboard 500 error by casting legacy  payment statuses to  via Pydantic validator (DONE)
+- Patient Statements generation and multi-channel delivery (PDF, Email, Mail, Portal) with per-invoice breakdowns (Billed/Insurance/Pt.Paid) (DONE)
 
 **Earlier issues found/mentioned but not fixed**
-   - None
+None.
 
 **Known issue recurrence from previous fork**
-  - Issue recurrence in previous fork:  system library missing for Python  module crashing the backend.
-  - Recurrence count: 5 (Agent hit this again in message 43, fixed it via Reading package lists...
+  - Issue recurrence in previous fork:  system library missing for Python  module crashing the backend on restart.
+  - Recurrence count: ~7 (Hit repeatedly during this session after ).
+  - Status: RESOLVED dynamically (Agent fixed it via Reading package lists...
 Building dependency tree...
 Reading state information...
 The following additional packages will be installed:
@@ -86,108 +70,89 @@ The following NEW packages will be installed:
 0 upgraded, 2 newly installed, 0 to remove and 0 not upgraded.
 Need to get 403 kB of archives.
 After this operation, 8587 kB of additional disk space will be used.
-Do you want to continue? [Y/n] Abort.)
-  - Status: RESOLVED (Watch out for it if backend restarts cleanly but fails on )
+Do you want to continue? [Y/n] Abort.. Watch out for it if backend restarts cleanly but fails on ).
 
 **Code Architecture**
 /app/
 ├── backend/
-│   ├── core/
-│   │   ├── event_bus.py (Pub/Sub for application events)
 │   ├── services/
-│   │   ├── rooms/ (CRUD for Clinic Rooms)
-│   │   ├── scheduling/
-│   │   │   ├── workflow.py (State machine transitions)
-│   │   │   ├── rooms.py (Room assignments logic)
-│   │   │   ├── checkout_hooks.py (Event handlers for checkout)
-│   │   │   ├── WORKFLOW.md (Documentation)
+│   │   ├── authz/ (RBAC, policy, constants, custom roles, permission catalog, migration)
+│   │   ├── notifications/ (Abstractions for email, sms, verify)
+│   │   ├── billing/ (Statements, remittances, ledger, invoices)
 ├── frontend/
 │   ├── src/
-│   │   ├── pages/scheduling/
-│   │   │   ├── FlowBoardPage.jsx
-│   │   │   ├── ProviderQueuePage.jsx
-│   │   │   ├── CheckoutPage.jsx
-│   │   │   ├── AppointmentWorkflowPanel.jsx
-│   │   │   ├── RoomAssignmentControl.jsx
-│   │   │   ├── statusMeta.js
+│   │   ├── portal/ (Patient-facing shell: PortalShell.jsx, PortalOverview.jsx, PortalStatements.jsx)
+│   │   ├── pages/admin/ (AdminUsersPage, AdminRolesPage, AccessHistoryPage)
 
 **Key Technical Concepts**
-Event-driven architecture (), State Machine Transitions for Appointment Lifecycle, Tenant-scoped room assignments, Conflict Validation checking active states.
+Role-Based Access Control (RBAC), HTML5 Drag-and-Drop, Pydantic strict model validation and  mutations, ReportLab PDF generation, Event-driven notifications with graceful log-only fallbacks.
 
 **key DB schema**
-  - : Extended with workflow state fields, , , , .
-  - : .
-  - : Audit trail for room occupancy.
-  - : Stubs created via event bus on checkout.
-  - : Created via event bus on checkout.
+  - :  field strictly validated against 8 enum values (legacy  normalized to ).
+  - : Enhanced with  inheritance from actors for tenant-scoped access history.
+  - : Added  arrays, , , .
+  - : Tracks individual dispatched statements.
 
 **changes in tech stack**
-  - No new libraries; used native Python pub/sub implementation ().
+  - Added , , and  to .
 
 **All files of reference** 
-  - 
-  - 
-  - 
-  - 
+  -  (Created)
+  -  (Created)
+  -  (Created)
+  -  (Created)
+  -  (Modified for Portal routing)
+  -  (Modified for Portal redirection)
 
 **Areas that need refactoring**
-None explicitly identified.
+None explicitly identified. Legacy access-management screens (, , ) were successfully removed to prevent technical debt.
 
 **key api endpoints**
-- , , 
-- , 
-- , 
+-  &  (Custom roles)
+- 
+- 
 - 
 - 
 
 **Critical Info for New Agent** 
-- **Event Bus:** Hooks for follow-ups and draft invoices are triggered synchronously via  inside . If you add payment/invoice/document hooks, wire them to listen to this event.
-- **Workflow State:** The backend actively enforces allowed state transitions (e.g., cannot start visit if intake is missing unless  is passed with a ).
-- **BookDialog URL Params:** You are in the middle of wiring  to consume URL parameters so that clicking Book follow-up from the Checkout page pre-fills the dialog and auto-dismisses the suggestion.
-- **Appointments DB Response:** Always remember to use Pydantic models to strip out  and ensure ObjectIds don't crash JSON serialization.
+- **Notification Layer:** The backend handles Twilio and Resend with a log-only fallback if environment variables (, ) are missing. Do not hard-fail requests if these are absent.
+- **Billing Legacy Status:** The DB contains old  payments. The Pydantic model () dynamically maps these to  using a .
+- **Patient Portal Routing:** The previous agent was in the middle of updating  and  to route patients. You must pick up where they left off, ensure non-patients cannot access , and patients cannot access standard clinic routes.
 
 **documents and test reports created in this job** 
-  - /app/backend/services/scheduling/WORKFLOW.md
-  - /app/test_reports/iteration_54.json
-  - /app/test_reports/iteration_55.json
-  - /app/test_reports/iteration_56.json
-  - /app/test_reports/iteration_57.json
-  - /app/test_reports/iteration_58.json
-  - /app/memory/PRD.md
+  - /app/memory/CHANGELOG.md (Created)
+  - /app/memory/ROADMAP.md (Created)
+  - /app/test_reports/iteration_59.json
+  - /app/test_reports/iteration_60.json
 
 **Last 10 User Messages and any pending HUMAN messages** 
- - *User*: yes proceed with wire the Book follow-up button to consume those URL params inside BookDialog and the Payment collection, invoice enrichment, document print/email, automated follow-up booking — all plug into the appointment.checkout payload + the billing_invoices_stub / follow_up_suggestions anchor rows without touching the hot path. (Agent started viewing  but has not implemented it yet).
- - *Agent*: Finished  persistence + Follow-up hooks.
- - *User*: Requested  persistence and Checkout hooks.
- - *Agent*: Finished Polish, Hardening & UX Refinement.
- - *User*: Requested Polish, Hardening, and UX Refinement.
+ - *User*: Requested the patient-portal shell ( route + navigation) to consume self-service endpoints, and a Send all outstanding statements bulk action for month-end workflows.
+ - *Agent*: Created , , , and began wiring  and  to redirect patients.
+ - *User*: Reported a 500 error when clicking the Billing button. (Agent subsequently fixed this Pydantic validation error).
+ - *Agent*: Finished Phase 5 Access Management & P2 features (Appointment DnD, Notification fallback).
+ - *User*: Requested Phase 5 tasks: Legacy-role migration dry-run, , and global retry-after-reauth (which was already done).
+ - *Agent*: Finished Phase 4 and asked whether to proceed with Phase 5.
+ - *User*: Instructed the agent to remove legacy Advanced matrix routes completely.
+ - *Agent*: Finished Phase 3 (Admin Users page) and tested it.
+ - *User*: Instructed the agent to proceed with default sequential phases for Access Management.
+ - *Agent*: Checked existing legacy routes.
 
 **Project Health Check:**
-Healthy. 65 scheduling backend tests passing. E2E tests passing.
+Healthy. Comprehensive test suites passing (including 47 new backend tests for authz, custom roles, notifications, and billing). 
 
 **3rd Party Integrations** 
   -  Object Storage
-  -  (Email) - Deferred
-  -  (SMS) - Proposed for future
+  -  (Email) - implemented via abstract layer (requires User API Key)
+  -  (SMS/Verify) - implemented via abstract layer (requires User API Key)
 
 **Testing status**
-  - Testing agent used after significant changes: YES
+  - Testing agent used after significant changes: YES (iteration 59 & 60)
   - Troubleshoot agent used after agent stuck in loop: NO
-  - Test files created: , , , , .
-  - Known regressions: None currently active.
+  - Test files created: , , , , , , .
+  - Known regressions: None. (Some pre-existing test failures in old cookie-auth harness were verified to be unrelated to current changes).
 
 **Credentials to test flow:**
-Check  (e.g., ).
+Check .
 
 **What agent forgot to execute**
-The agent just received the instruction to wire  to consume URL parameters and add extended checkout hooks (Payment collection, invoice enrichment, document print/email), but only executed file views before the context window ended. You must start by implementing these features.
-
-**Debugging checklist for current issue**
-    Issue: Wire Book Follow-up from Checkout Page into 
-    Frontend files to check: 
-      - 
-      - 
-      - 
-    Backend files to check:
-      - 
-      -  (for dismissing suggestions)</analysis>
+The agent started the Patient Portal Shell creation (Task 1) but did not finish wiring the login redirection logic or testing it. The requested Send all outstanding statements bulk action (Task 2) was completely untouched.</analysis>

@@ -30,6 +30,9 @@ import PasswordReset from "./pages/PasswordReset";
 import AdminUsersPage from "./pages/admin/AdminUsersPage";
 import AdminRolesPage from "./pages/admin/AdminRolesPage";
 import AccessHistoryPage from "./pages/admin/AccessHistoryPage";
+import PortalShell from "./portal/PortalShell";
+import PortalOverview from "./portal/PortalOverview";
+import PortalStatements from "./portal/PortalStatements";
 import Elevation from "./pages/Elevation";
 import ThemePreview from "./pages/ThemePreview";
 import ClinicSettings from "./pages/ClinicSettings";
@@ -72,6 +75,20 @@ export default function App() {
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
               <Route path="/password-reset" element={<PasswordReset />} />
+
+              {/* ----- Patient portal (role=patient only) ----- */}
+              <Route
+                path="/portal"
+                element={
+                  <ProtectedRoute portal>
+                    <PortalShell />
+                  </ProtectedRoute>
+                }
+              >
+                <Route index element={<PortalOverview />} />
+                <Route path="statements" element={<PortalStatements />} />
+              </Route>
+
               <Route path="/" element={<Shell><Dashboard /></Shell>} />
               <Route path="/patients" element={<Shell><Patients /></Shell>} />
               <Route path="/patients/:id" element={<Shell><PatientDetail /></Shell>} />
