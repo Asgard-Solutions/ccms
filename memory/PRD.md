@@ -1021,6 +1021,22 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Encryption at rest confirmed via direct mongoDB inspection
 
 ## 6. Backlog
+
+### Billing / Claims / Change-Optum pipeline — accepted status (2026-04-22)
+**PARTIAL — sandbox-ready, not production-complete; blocked only on
+live Change/Optum production transport and related business
+prerequisites.**
+
+- Phases 1–5, 7–12: **accepted**.
+- Phase 6 (Change/Optum submission pipeline): **accepted as PARTIAL /
+  sandbox-ready only**. 837P generator + scrubber gate + bulk submit
+  + trace/correlation persistence are green in sandbox; live HTTPS
+  transmission to Change/Optum production degrades to log-only until
+  trading-partner credentials + enrollment are provisioned.
+- Next milestone: complete live Change/Optum production transport
+  once credentials, enrollment, and related business prerequisites
+  are available. No additional code deliverables are blocking.
+
 ### P0 (production go-live blockers — operational, not code)
 - HIPAA-eligible DB (MongoDB Atlas + BAA, or Postgres in HIPAA-compliant cloud)
 - BAAs with all PHI processors
@@ -1032,9 +1048,15 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Dependency SCA + SAST in CI — ISO A.8.8 / A.8.28
 
 ### P1 (next features)
-- **Claims Phase 13+ — Live clearinghouse transmission**: wire real
-  HTTPS transmission to Change/Optum sandbox once user credentials are
-  available (currently stubbed via `CLEARINGHOUSE_CHC_MODE=sandbox`).
+- **Phase 6 production transport — the only milestone blocker.** Wire
+  live HTTPS submission to Change/Optum production inside
+  `ChangeHealthcareAdapter.submit()`. Today the adapter logs the
+  payload and returns a synthetic `Ack` when
+  `CLEARINGHOUSE_CHC_MODE=production` is set without credentials.
+  Gated on business prerequisites (trading-partner credentials,
+  payer enrollment, SFTP/HTTPS endpoint URLs, BAAs) — not a code
+  gap. Once credentials land, the work is ~50 LoC inside the
+  existing adapter.
 - **Claims Phase 13+ — Eligibility 270/271**: fully build out the
   eligibility request/response loop on top of the base clearinghouse
   adapter (currently stubbed).

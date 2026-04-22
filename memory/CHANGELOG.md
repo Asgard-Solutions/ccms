@@ -4,6 +4,50 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-04-22 — Billing / Claims / Change-Optum accepted status (sign-off)
+
+Following the Phase 1–12 verification audit, the feature set is
+formally accepted at the following status:
+
+> **PARTIAL — sandbox-ready, not production-complete; blocked only on
+> live Change/Optum production transport and related business
+> prerequisites.**
+
+**Phase status at sign-off**
+
+| Phase                                              | Status  |
+|----------------------------------------------------|---------|
+| 1 — Claims Queue UI / worklist                     | PASS    |
+| 2 — Canonical claim lifecycle                      | PASS    |
+| 3 — Real claim data model                          | PASS    |
+| 4 — Claim validation / Needs Fixes workflow        | PASS    |
+| 5 — Change/Optum foundation                        | PASS    |
+| **6 — Change/Optum submission pipeline**           | **PARTIAL** |
+| 7 — Chiropractic rules layer                       | PASS    |
+| 8 — Rejected / denied / follow-up workflow         | PASS    |
+| 9 — Assignment / governance / audit                | PASS    |
+| 10 — API / frontend deliverables                   | PASS    |
+| 11 — Hardening / permissions / operational         | PASS    |
+| 12 — Final integration verification / handoff      | PASS    |
+
+**Phase 6 rationale.** 837P 005010X222A1 generator, scrubber pre-submit
+gate, bulk submit, and trace/correlation persistence are all green in
+sandbox. Live HTTPS transmission to the Change/Optum **production**
+endpoint is NOT active — the adapter logs the payload and returns a
+synthetic `Ack` when `CLEARINGHOUSE_CHC_MODE=production` is set
+without credentials. Activating production is a business deliverable
+(trading-partner credentials, payer enrollment, endpoint URLs, BAAs),
+not a code gap. Estimated code work once prerequisites land: ~50 LoC
+inside `clearinghouse/change_healthcare.py::submit()`.
+
+**Next milestone.** Complete live Change/Optum production transport
+once credentials, enrollment, and related business prerequisites are
+available.
+
+---
+
+
+
 ## 2026-04-22 — Realistic demo clinic: Riverbend Chiropractic & Wellness
 
 **Replaces** the generic "Default Practice" / "System Admin" / "Morgan

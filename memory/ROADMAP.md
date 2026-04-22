@@ -2,6 +2,24 @@
 
 Prioritized backlog for remaining P0/P1/P2 work. Most-recent updates on top.
 
+
+## 2026-04-22 — Billing / Claims / Change-Optum accepted status
+
+**Status: PARTIAL — sandbox-ready, not production-complete; blocked
+only on live Change/Optum production transport and related business
+prerequisites.**
+
+- Phases 1–5, 7–12: accepted (PASS).
+- Phase 6 (Change/Optum submission pipeline): accepted as PARTIAL /
+  sandbox-ready only. 837P generator, scrubber pre-submit gate, bulk
+  submit, and trace/correlation persistence are green in sandbox.
+  Live HTTPS transmission to production is not active.
+- Next milestone (single remaining blocker): complete live
+  Change/Optum production transport once credentials, enrollment,
+  and related business prerequisites are available. Estimated ~50
+  LoC inside `clearinghouse/change_healthcare.py::submit()`.
+
+
 ## 2026-02-15
 
 ### Access Management redesign (5-phase plan)
