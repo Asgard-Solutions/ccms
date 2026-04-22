@@ -288,6 +288,11 @@ _EXPLICIT: dict[str, tuple[str, str, str]] = {
     "claim.create":              ("claims", "Create claims", ""),
     "claim.submit":              ("claims", "Submit claims", ""),
     "claim.correct_resubmit":    ("claims", "Correct & resubmit claims", ""),
+    "claim.assign":              ("claims",
+                                  "Assign or reassign claims",
+                                  "Controls the Claims Queue assignee dropdown "
+                                  "and the /assignment endpoint. Granted to "
+                                  "managers and billing specialists."),
     "remit.read":                ("claims", "View remittance (835s)", ""),
     "remit.post":                ("claims", "Post remittance", ""),
     "denial.work":               ("claims", "Work denials", ""),

@@ -3207,8 +3207,10 @@ async def ingest_clearinghouse_report(
 
     await audit_success(
         user, "billing.clearinghouse.report_ingested", request,
-        entity_type="clearinghouse_report", entity_id=report_id,
-        metadata={"report_type": body.report_type,
+        entity_type="claim" if (claim or {}).get("id") else "clearinghouse_report",
+        entity_id=(claim or {}).get("id") or report_id,
+        metadata={"report_id": report_id,
+                  "report_type": body.report_type,
                   "status": body.status,
                   "clearinghouse": body.clearinghouse,
                   "claim_id": (claim or {}).get("id"),
@@ -4030,13 +4032,20 @@ async def update_claim_assignment(
     claim_id: str,
     body: ClaimAssignmentUpdate,
     request: Request,
-    user: dict = Depends(require_permission("claim", "correct_resubmit")),
+    user: dict = Depends(require_permission("claim", "assign")),
     ctx: TenantContext = Depends(require_tenant),
 ):
+    """Phase 11 — assign or reassign a claim. No-op + 200 when the
+    target assignee is already set (retry-safe). Permission enforced
+    via `claim.assign` (managers + billing specialists)."""
     db = tenant_db(ctx.tenant_id)
     claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
     if not claim:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+
+    # Idempotent: same assignee → audit as "unchanged" and return.
+    if (claim.get("assigned_to") or None) == (body.assigned_to or None):
+        return _public(claim)
 
     # Verify the assignee exists on this tenant (optional hygiene).
     if body.assigned_to:
@@ -4065,12 +4074,46 @@ async def update_claim_assignment(
         user, "billing.claim.assignment_changed", request,
         entity_type="claim", entity_id=claim_id,
         metadata={"from": claim.get("assigned_to"),
-                  "to": body.assigned_to},
+                  "to": body.assigned_to,
+                  "action": "unassigned" if body.assigned_to is None
+                            else "assigned"},
     )
     fresh = await db.claims.find_one(
         {"id": claim_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
     )
     return _public(fresh)
+
+
+@router.post("/claims/{claim_id}/assign", response_model=ClaimPublic)
+async def assign_claim_convenience(
+    claim_id: str,
+    body: ClaimAssignmentUpdate,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "assign")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Phase 11 — POST alias for the PATCH assignment endpoint. Keeps
+    clients that prefer strictly-verb-based APIs happy and gives us a
+    natural entry point for a future "self-assign" button that hits
+    `POST /claims/{id}/assign` with `{assigned_to: current_user_id}`."""
+    return await update_claim_assignment(claim_id, body, request, user, ctx)
+
+
+@router.post("/claims/{claim_id}/unassign", response_model=ClaimPublic)
+async def unassign_claim_convenience(
+    claim_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "assign")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Phase 11 — drop the assignee from a claim. Uses the same audit
+    event as `update_claim_assignment` so the timeline shows a clean
+    "unassigned" action without a fake intermediate state."""
+    return await update_claim_assignment(
+        claim_id,
+        ClaimAssignmentUpdate(assigned_to=None),
+        request, user, ctx,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -4150,6 +4193,11 @@ async def read_claims_queue(
     ),
     payer_id: str | None = None,
     assigned_to: str | None = None,
+    unassigned: bool = Query(
+        default=False,
+        description="Phase 11 — when true, filter rows to those with "
+                    "no assignee (overrides assigned_to).",
+    ),
     age_days: int | None = Query(default=None, ge=0, le=365),
     include_tab_counts: bool = Query(default=True),
     include_filter_options: bool = Query(default=True),
@@ -4182,7 +4230,14 @@ async def read_claims_queue(
         qf = dict(qbase)
         if payer_id:
             qf["payer_id"] = payer_id
-        if assigned_to:
+        if unassigned:
+            # Phase 11 — match rows where `assigned_to` is absent OR null.
+            # Legacy rows may not carry the field at all, hence $exists.
+            qf["$and"] = qf.get("$and", []) + [
+                {"$or": [{"assigned_to": None},
+                         {"assigned_to": {"$exists": False}}]},
+            ]
+        elif assigned_to:
             qf["assigned_to"] = assigned_to
         if age_days is not None:
             qf["created_at"] = {"$lt": followup_threshold_iso(age_days)}
@@ -4324,6 +4379,11 @@ async def read_claims_queue(
             r["aging_basis"] = basis_field
             r["aging_basis_at"] = basis_ts
             r["aging_days"] = _days_since_iso(basis_ts) if basis_ts else None
+            # Phase 11 — defensive null handling: legacy rows may be
+            # missing the assignment / follow-up fields entirely. We
+            # set safe defaults on every row so the UI never has to
+            # branch on `undefined`.
+            r["assigned_to"] = r.get("assigned_to") or None
             r["followup_flag"] = bool(r.get("followup_flag") or False)
             r["followup_reason"] = r.get("followup_reason")
             r["next_action_at"] = r.get("next_action_at")
