@@ -41,13 +41,43 @@ DEFAULT_TENANT_SLUG = "default"
 # so FK-ish dependencies are cleared first.
 _TENANT_COLLECTIONS = [
     # clinical / scheduling layer
-    "appointments", "medical_records", "patient_insurance_policies",
+    "appointment_room_history", "appointments", "appointment_types",
+    "rooms",
+    "medical_records",
+    "clinical_addenda", "clinical_audit_events",
+    "clinical_diagnoses", "clinical_encounters",
+    "clinical_episode_cases", "clinical_follow_up_notes",
+    "clinical_history", "clinical_initial_exams", "clinical_media",
+    "clinical_outcome_entries", "clinical_reexams",
+    "clinical_treatment_plans",
+    "communication_preferences", "consent_records",
+    "patient_assignments", "patient_documents",
+    "patient_insurance_policies", "patient_intake_forms",
+    "patient_proxies",
     "patients",
     # billing layer
-    "claim_events", "claim_submissions", "claims", "statements",
-    "remittances", "invoices", "charge_captures",
-    "billing_providers", "billing_facilities", "billing_payers",
-    "clearinghouse_enrollments",
+    "billing_adjustments", "billing_invoices_stub",
+    "billing_payers", "claim_diagnoses", "claim_events",
+    "claim_line_modifiers", "claim_lines", "claim_submissions",
+    "claim_validation_runs", "claims",
+    "clearinghouse_reports", "clearinghouse_enrollments",
+    "denial_work_items",
+    "fee_schedule_lines", "fee_schedules",
+    "follow_up_suggestions",
+    "invoice_lines", "invoices",
+    "payment_allocations", "payments",
+    "refunds",
+    "remittance_claims", "remittance_imports", "remittances",
+    "statement_deliveries", "statements",
+    "billing_providers", "billing_facilities", "service_facilities",
+    "providers", "professional_licenses",
+    # governance / ops scope that test runs pollute
+    "break_glass_events", "elevation_requests",
+    "exports", "jobs",
+    "privacy_requests", "report_saved_views",
+    "workforce_invitations",
+    # clinic profile (forces a clean re-seed)
+    "clinic_profiles",
     # notifications / communication
     "notifications", "communications",
 ]
@@ -73,14 +103,37 @@ async def main() -> None:
             total += res.deleted_count
     print(f"  Deleted {total:,} rows across {len(_TENANT_COLLECTIONS)} collections.")
 
-    # Also clear the demo staff users we seed, so seed_demo_clinic()
-    # rebuilds them cleanly (login-helper admin/doctor/staff/patient
-    # stay untouched — they're seeded by identity/seed.py).
-    res = await db.users.delete_many({
-        "email": {"$regex": r"@riverbend-chiro\.app$"},
-    })
-    if res.deleted_count:
-        print(f"  - cleared {res.deleted_count} Riverbend staff users")
+    # Also purge polluted users + their role/location bindings. We
+    # keep exactly the login-helper demo accounts + the 5 Riverbend
+    # staff created by services/demo/seed.py. Anything else on this
+    # tenant is test-run pollution from pytest fixtures and must go.
+    _KEEP_EMAILS = {
+        "admin@ccms.app", "doctor@ccms.app",
+        "staff@ccms.app", "patient@ccms.app",
+        "olivia.hart@riverbend-chiro.app",
+        "dr.samuel.ito@riverbend-chiro.app",
+        "lena.brooks@riverbend-chiro.app",
+        "tomas.rivera@riverbend-chiro.app",
+        "priya.shah@riverbend-chiro.app",
+    }
+    kept_ids: set[str] = set()
+    async for u in db.users.find(
+        {"tenant_id": tid, "email": {"$in": list(_KEEP_EMAILS)}},
+        {"_id": 0, "id": 1},
+    ):
+        kept_ids.add(u["id"])
+    pollution_filter = {"tenant_id": tid, "id": {"$nin": list(kept_ids)}}
+    pu = await db.users.delete_many(pollution_filter)
+    if pu.deleted_count:
+        print(f"  - cleared {pu.deleted_count:>6} polluted users")
+    # Wipe role + location bindings for the deleted users — plus any
+    # stale ones for the demo tenant that pytest fixtures created.
+    rr = await db.user_roles.delete_many({"tenant_id": tid})
+    if rr.deleted_count:
+        print(f"  - cleared {rr.deleted_count:>6} user_role bindings (will re-bind on next boot)")
+    la = await db.user_location_assignments.delete_many({"tenant_id": tid})
+    if la.deleted_count:
+        print(f"  - cleared {la.deleted_count:>6} user_location_assignments (re-created by authz seed)")
 
     client.close()
 
