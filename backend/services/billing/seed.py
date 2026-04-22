@@ -107,6 +107,14 @@ async def seed_billing() -> None:
         ("claim_submission_mode", "portal"),
         ("enrollment_status", "not_started"),
         ("trading_partner_id", None),
+        # Phase 6 — clearinghouse-side routing ids + enrollment flag.
+        # Safe defaults so PayerPublic validation continues to work
+        # for rows created before Phase 6.
+        ("claims_cpid", None),
+        ("realtime_payer_id", None),
+        ("enrollment_required", False),
+        ("routing_metadata", None),
+        ("routing_last_resolved_at", None),
     ):
         res = await db.billing_payers.update_many(
             {field_name: {"$exists": False}},

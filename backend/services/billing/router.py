@@ -12,6 +12,7 @@ submission workers) consume the canonical model through these routes.
 """
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from typing import Literal, get_args
