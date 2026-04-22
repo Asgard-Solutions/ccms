@@ -72,13 +72,18 @@ export default function ClaimsQueue() {
   const [assignedTo, setAssignedTo] = useState("");
   const [ageDays, setAgeDays] = useState("");
 
+  // "unassigned" is modelled as a sentinel value of `assignedTo`
+  // ("__unassigned__") so a single Select drives both states.
+  const unassigned = assignedTo === "__unassigned__";
+
   const filters = useMemo(() => ({
     status_in: status !== "all" ? [status] : null,
     canonical_status_in: canonicalStatus !== "all" ? [canonicalStatus] : null,
     payer_id: payerId || null,
-    assigned_to: assignedTo || null,
+    assigned_to: unassigned ? null : (assignedTo || null),
+    unassigned: unassigned || null,
     age_days: ageDays ? Number(ageDays) : null,
-  }), [status, canonicalStatus, payerId, assignedTo, ageDays]);
+  }), [status, canonicalStatus, payerId, assignedTo, unassigned, ageDays]);
 
   const { data, loading } = useClaimsQueueV2({
     tab, page, pageSize, sort, filters,
@@ -90,6 +95,7 @@ export default function ClaimsQueue() {
     shown: 0, ready: 0, needs_fixes: 0, billed_total_cents: 0,
   };
   const tabCounts = data?.tab_counts || {};
+  const billedTotals = data?.billed_totals || {};
   const filterOptions = data?.filter_options || { payers: [], assignees: [] };
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -147,8 +153,13 @@ export default function ClaimsQueue() {
       <Tabs value={tab} onValueChange={setTabAndReset}>
         <TabsList data-testid="claims-queue-tabs" className="rounded-sm">
           <TabsTrigger value={ALL_KEY} data-testid="tab-all">
-            All
-            <CountChip n={tabCounts.all} />
+            <span className="flex flex-col items-start leading-tight">
+              <span className="flex items-center">
+                All
+                <CountChip n={tabCounts.all} />
+              </span>
+              <BilledChip cents={billedTotals.all} />
+            </span>
           </TabsTrigger>
           {QUEUE_KEYS.map((q) => (
             <TabsTrigger
@@ -156,8 +167,13 @@ export default function ClaimsQueue() {
               value={q.key}
               data-testid={`tab-${q.key}`}
             >
-              {q.label}
-              <CountChip n={tabCounts[q.key]} />
+              <span className="flex flex-col items-start leading-tight">
+                <span className="flex items-center">
+                  {q.label}
+                  <CountChip n={tabCounts[q.key]} />
+                </span>
+                <BilledChip cents={billedTotals[q.key]} />
+              </span>
             </TabsTrigger>
           ))}
         </TabsList>
@@ -253,6 +269,18 @@ function CountChip({ n }) {
   return (
     <span className="ml-2 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
       {n}
+    </span>
+  );
+}
+
+function BilledChip({ cents }) {
+  if (cents === undefined || cents === null) return null;
+  return (
+    <span
+      data-testid="tab-billed-total"
+      className="mt-0.5 text-[10px] tabular-nums text-muted-foreground/80"
+    >
+      {formatCents(cents)}
     </span>
   );
 }
@@ -377,7 +405,26 @@ function ClaimRow({ c }) {
         )}
       </td>
       <td className="px-4 py-3 text-xs text-muted-foreground">
-        {assigneeDisplay || "—"}
+        <div className="flex flex-col gap-1">
+          <span>{assigneeDisplay || <span className="italic">Unassigned</span>}</span>
+          {c.followup_flag && (
+            <span
+              data-testid={`claim-row-followup-${c.id}`}
+              title={c.followup_reason || "Follow-up required"}
+              className="inline-flex w-fit items-center rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning"
+            >
+              Follow-up{c.followup_reason ? `: ${c.followup_reason}` : ""}
+            </span>
+          )}
+          {c.aging_days != null && c.aging_days >= 30 && !c.followup_flag && (
+            <span
+              data-testid={`claim-row-aging-${c.id}`}
+              className="text-[10px] text-muted-foreground"
+            >
+              {c.aging_days}d old
+            </span>
+          )}
+        </div>
       </td>
       <td className="px-4 py-3 text-xs text-muted-foreground">
         {lastEventLabel ? (
@@ -494,19 +541,35 @@ function FilterBar({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="any">Any</SelectItem>
+              <SelectItem
+                value="__unassigned__"
+                data-testid="claims-assignee-filter-unassigned"
+              >
+                Unassigned only
+              </SelectItem>
               {assignees.map((u) => (
                 <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
               ))}
             </SelectContent>
           </Select>
         ) : (
-          <Input
-            data-testid="claims-assignee-filter"
-            placeholder="user id"
-            value={assignedTo}
-            onChange={(e) => setAssignedTo(e.target.value)}
-            className="w-48"
-          />
+          <Select
+            value={assignedTo || "any"}
+            onValueChange={(v) => setAssignedTo(v === "any" ? "" : v)}
+          >
+            <SelectTrigger data-testid="claims-assignee-filter" className="w-56">
+              <SelectValue placeholder="Any" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="any">Any</SelectItem>
+              <SelectItem
+                value="__unassigned__"
+                data-testid="claims-assignee-filter-unassigned"
+              >
+                Unassigned only
+              </SelectItem>
+            </SelectContent>
+          </Select>
         )}
       </div>
 

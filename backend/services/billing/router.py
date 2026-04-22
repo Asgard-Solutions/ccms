@@ -4426,15 +4426,33 @@ async def read_claims_queue(
             summary["needs_fixes"] = int(row.get("needs_fixes") or 0)
             break
 
-    # Tab counts — per-tab count respecting non-tab filters.
+    # Tab counts + per-tab billed totals — aggregated in one pass per
+    # tab so the UI can show filter-aware financials next to each tab
+    # label (Phase 12 handoff requirement: "counts and billed totals
+    # are real and filter-aware").
     tab_counts: dict[str, int] = {}
+    billed_totals: dict[str, int] = {}
     if include_tab_counts:
         for t in _TAB_KEYS:
             tb = await _tab_base_query(t, db, ctx.tenant_id)
             if tb is None or tb.get("__noop__"):
                 tab_counts[t] = 0
+                billed_totals[t] = 0
                 continue
-            tab_counts[t] = await db.claims.count_documents(_apply_filters(tb))
+            tab_q = _apply_filters(tb)
+            tab_counts[t] = 0
+            billed_totals[t] = 0
+            async for row in db.claims.aggregate([
+                {"$match": tab_q},
+                {"$group": {
+                    "_id": None,
+                    "count": {"$sum": 1},
+                    "billed": {"$sum": "$billed_cents"},
+                }},
+            ]):
+                tab_counts[t] = int(row.get("count") or 0)
+                billed_totals[t] = int(row.get("billed") or 0)
+                break
 
     # Filter options — payers in tenant + assignees ever seen.
     filter_options: dict = {}
@@ -4480,6 +4498,7 @@ async def read_claims_queue(
         "rows": rows,
         "summary": summary,
         "tab_counts": tab_counts,
+        "billed_totals": billed_totals,
         "filter_options": filter_options,
     }
 

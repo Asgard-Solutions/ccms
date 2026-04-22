@@ -90,7 +90,8 @@ def test_queue_v2_envelope_shape():
     data = r.json()
     assert set(data.keys()) >= {
         "tab", "page", "page_size", "total", "sort",
-        "rows", "summary", "tab_counts", "filter_options",
+        "rows", "summary", "tab_counts", "billed_totals",
+        "filter_options",
     }
     assert data["tab"] == "all"
     assert data["page"] == 1
@@ -162,6 +163,40 @@ def test_queue_v2_tab_counts_sum_logic():
     assert tc["all"] >= tc["rejected"]
     assert tc["all"] >= tc["follow-up"]
     assert tc["needs-fixes"] >= 1
+
+
+def test_queue_v2_billed_totals_are_real_and_filter_aware():
+    """Phase 12 — per-tab `billed_totals` mirror `tab_counts` and sum
+    `billed_cents` over the filter-aware tab query."""
+    s = _login(*ADMIN)
+    claim, _, payer = _seed_claim(s, status_target="draft")
+    r = s.get(f"{API}/billing/claims/queue?tab=all", timeout=15).json()
+    bt = r["billed_totals"]
+    tc = r["tab_counts"]
+    # Same keys as tab_counts.
+    assert set(bt.keys()) == set(tc.keys())
+    # Each entry is a non-negative int.
+    for k, v in bt.items():
+        assert isinstance(v, int) and v >= 0, (k, v)
+    # `all` total >= named tabs.
+    for named in ("pending-submission", "rejected", "follow-up"):
+        assert bt["all"] >= bt[named]
+    # Filter-aware: scoping by a bogus payer zeroes the current summary
+    # + all tab counters.
+    r2 = s.get(
+        f"{API}/billing/claims/queue?tab=all&payer_id={uuid.uuid4()}",
+        timeout=15,
+    ).json()
+    assert all(v == 0 for v in r2["billed_totals"].values())
+    assert r2["summary"]["billed_total_cents"] == 0
+    # Filter-aware positive path: scoping by the real payer surfaces
+    # at least the just-seeded claim's billed_cents.
+    r3 = s.get(
+        f"{API}/billing/claims/queue?tab=all&payer_id={payer['id']}",
+        timeout=15,
+    ).json()
+    assert r3["billed_totals"]["all"] >= claim["billed_cents"] > 0
+
 
 
 def test_queue_v2_no_results_vs_empty():

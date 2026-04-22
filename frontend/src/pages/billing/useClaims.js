@@ -291,7 +291,8 @@ export function useClaimsQueueV2({ tab, page, pageSize, sort, filters = {} }) {
         sort,
       };
       if (filters.payer_id)    params.payer_id = filters.payer_id;
-      if (filters.assigned_to) params.assigned_to = filters.assigned_to;
+      if (filters.unassigned)  params.unassigned = true;
+      else if (filters.assigned_to) params.assigned_to = filters.assigned_to;
       if (filters.age_days)    params.age_days = filters.age_days;
       if (statusInKey)         params.status_in = statusInKey;
       if (canonicalInKey)      params.canonical_status_in = canonicalInKey;
@@ -304,7 +305,8 @@ export function useClaimsQueueV2({ tab, page, pageSize, sort, filters = {} }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, page, pageSize, sort, filters.payer_id,
-      filters.assigned_to, filters.age_days, statusInKey, canonicalInKey]);
+      filters.assigned_to, filters.unassigned, filters.age_days,
+      statusInKey, canonicalInKey]);
 
   useEffect(() => { load(); }, [load]);
   return { data, loading, error, refresh: load };
