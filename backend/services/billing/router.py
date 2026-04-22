@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response
 
 from core.audit import audit_success
-from core.deps import require_role
+from core.deps import get_current_user, require_role
 from core.tenancy import TenantContext, require_tenant, tenant_db
 from core.tenant_scope import scoped_filter, stamp_for_write
 from services.authz.policy import require_permission
@@ -3358,11 +3359,49 @@ async def create_statement(
         {"_id": 0},
     ).sort([("issued_at", 1)])]
 
+    # Enrich every invoice with insurance_paid / patient_paid /
+    # adjustments so the statement shows the full responsibility
+    # breakdown, not just the balance. The snapshot is stored on the
+    # statement so it stays stable even if the underlying invoice
+    # changes later.
+    enriched_invoices: list[dict] = []
+    for inv in open_invoices:
+        ins_paid = 0
+        pt_paid = 0
+        async for alloc in db.payment_allocations.find(
+            {"tenant_id": ctx.tenant_id, "invoice_id": inv["id"]},
+            {"_id": 0, "payment_id": 1, "amount_cents": 1},
+        ):
+            pmt = await db.payments.find_one(
+                {"id": alloc["payment_id"], "tenant_id": ctx.tenant_id},
+                {"_id": 0, "status": 1, "payer_id": 1},
+            )
+            if not pmt or pmt.get("status") in ("void", "failed"):
+                continue
+            amt = int(alloc.get("amount_cents") or 0)
+            if pmt.get("payer_id"):
+                ins_paid += amt
+            else:
+                pt_paid += amt
+        adjustments = 0
+        async for adj in db.adjustments.find(
+            {"tenant_id": ctx.tenant_id, "invoice_id": inv["id"]},
+            {"_id": 0, "amount_cents": 1},
+        ):
+            adjustments += int(adj.get("amount_cents") or 0)
+        enriched_invoices.append({
+            **inv,
+            "billed_cents": int(inv.get("total_cents") or 0),
+            "insurance_paid_cents": ins_paid,
+            "patient_paid_cents": pt_paid,
+            "adjustments_cents": adjustments,
+        })
+
     now = _now()
     body_text = render_statement_body(
-        patient=patient, invoices=open_invoices, as_of_iso=now,
+        patient=patient, invoices=enriched_invoices, as_of_iso=now,
     )
-    total = sum(int(i.get("balance_cents") or 0) for i in open_invoices)
+    total = sum(int(i.get("balance_cents") or 0) for i in enriched_invoices)
 
     stmt_id = str(uuid.uuid4())
     doc = stamp_for_write({
@@ -3372,9 +3411,26 @@ async def create_statement(
         "generated_by": user["id"],
         "as_of_date": now[:10],
         "total_balance_cents": total,
-        "invoice_count": len(open_invoices),
-        "invoice_ids": [i["id"] for i in open_invoices],
+        "invoice_count": len(enriched_invoices),
+        "invoice_ids": [i["id"] for i in enriched_invoices],
+        # Snapshot the breakdown so the statement renders the same on
+        # any re-read, even if invoices move afterwards.
+        "invoice_breakdown": [
+            {
+                "invoice_id": i["id"],
+                "issued_at": i.get("issued_at"),
+                "billed_cents": i["billed_cents"],
+                "insurance_paid_cents": i["insurance_paid_cents"],
+                "patient_paid_cents": i["patient_paid_cents"],
+                "adjustments_cents": i["adjustments_cents"],
+                "balance_cents": int(i.get("balance_cents") or 0),
+            }
+            for i in enriched_invoices
+        ],
         "body": body_text,
+        "sent_at": None,
+        "sent_via": None,
+        "sent_to": None,
         "created_at": now,
         "updated_at": now,
     }, ctx, location_id=None)
@@ -3426,6 +3482,82 @@ async def read_statement(
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Statement not found")
     return _public(row)
+
+
+async def _load_statement_and_patient(db, ctx, patient_id, stmt_id):
+    row = await db.statements.find_one(
+        {"id": stmt_id, "patient_id": patient_id,
+         "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Statement not found")
+    patient = await db.patients.find_one(
+        {"id": patient_id, "tenant_id": ctx.tenant_id},
+        {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+         "email": 1, "phone": 1},
+    )
+    if not patient:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    return row, patient
+
+
+# ---------------------------------------------------------------------------
+# Patient self-service — /api/billing/me/statements
+# Accessible to any authenticated user; rows are filtered to the caller's
+# own patient record.
+# ---------------------------------------------------------------------------
+
+async def _resolve_my_patient(user: dict, db_patients) -> dict | None:
+    """Find the patient record owned by the calling user.
+
+    Matches on:
+      1. `patients.user_id == user.id`  (preferred link)
+      2. `patients.email == user.email` (fallback for legacy data)
+    """
+    q: dict = {"tenant_id": user.get("tenant_id"),
+               "$or": [{"user_id": user["id"]}]}
+    if user.get("email"):
+        q["$or"].append({"email": user["email"]})
+    return await db_patients.find_one(q, {"_id": 0})
+
+
+@router.get("/me/statements", response_model=list[StatementPublic])
+async def my_statements(
+    user: dict = Depends(get_current_user),
+):
+    db = tenant_db(user.get("tenant_id"))
+    me = await _resolve_my_patient(user, db.patients)
+    if not me:
+        return []
+    rows = [_public(s) async for s in db.statements.find(
+        {"tenant_id": user.get("tenant_id"), "patient_id": me["id"]},
+        {"_id": 0},
+    ).sort([("generated_at", -1)])]
+    return rows
+
+
+@router.get("/me/statements/{stmt_id}.pdf", response_class=Response)
+async def my_statement_pdf(
+    stmt_id: str,
+    user: dict = Depends(get_current_user),
+):
+    db = tenant_db(user.get("tenant_id"))
+    me = await _resolve_my_patient(user, db.patients)
+    if not me:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Statement not found")
+    stmt = await db.statements.find_one(
+        {"id": stmt_id, "patient_id": me["id"],
+         "tenant_id": user.get("tenant_id")}, {"_id": 0},
+    )
+    if not stmt:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Statement not found")
+    pdf = render_statement_pdf(patient=me, statement=stmt)
+    filename = f"statement-{stmt_id[:8]}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=\"{filename}\""},
+    )
 
 
 
@@ -3718,59 +3850,99 @@ async def download_statement_pdf(
                     headers=headers)
 
 
+class SendStatementPayload(BaseModel):
+    channel: Literal["email", "mail", "portal"] = "email"
+    to: str | None = None  # override recipient email
+
+
 @router.post(
     "/patients/{patient_id}/statements/{stmt_id}/send",
 )
 async def email_statement(
     patient_id: str, stmt_id: str, request: Request,
+    payload: SendStatementPayload | None = None,
     user: dict = Depends(require_role("admin", "staff")),
     ctx: TenantContext = Depends(require_tenant),
 ):
+    """Deliver a statement via one of three channels:
+
+      - email:  sends via Resend (or log-only fallback). Attaches PDF.
+                Inserts a row into `statement_deliveries`.
+      - mail:   stamps the statement as "queued for physical mail" so
+                the staff UI can surface a Ready-to-Mail state. The
+                actual print/mail workflow is operational.
+      - portal: marks the statement as visible on the patient portal.
+                It already is, so this is a bookkeeping signal for
+                staff.
+    """
+    channel = (payload and payload.channel) or "email"
     db = tenant_db(ctx.tenant_id)
     stmt, patient = await _load_statement_with_patient(
         db, ctx, patient_id, stmt_id,
     )
-    to = (patient or {}).get("email")
-    if not to:
-        raise HTTPException(422, "Patient has no email on file")
-
-    pdf = render_statement_pdf(statement=stmt, patient=patient)
-    html = render_statement_email_html(patient=patient, statement=stmt)
-    try:
-        sent = await send_statement_email(
-            to=to, subject="Your patient statement",
-            html_body=html, pdf_bytes=pdf,
-            pdf_filename=f"statement-{stmt_id[:8]}.pdf",
-        )
-    except Exception as exc:
-        raise HTTPException(502, f"Email send failed: {exc}")
-
     now = _now()
-    delivery = stamp_for_write({
-        "id": str(uuid.uuid4()),
-        "statement_id": stmt_id,
-        "patient_id": patient_id,
-        "to_email": to,
-        "provider": sent["provider"],
-        "message_id": sent.get("message_id"),
-        "sent_by": user["id"],
-        "sent_at": now,
-        "created_at": now,
-        "updated_at": now,
-    }, ctx, location_id=None)
-    await db.statement_deliveries.insert_one(delivery)
-    await audit_success(
-        user, "billing.statement.emailed", request,
-        entity_type="statement", entity_id=stmt_id,
-        metadata={"to_email": to, "provider": sent["provider"],
-                  "message_id": sent.get("message_id"),
-                  "patient_id": patient_id},
-    )
-    return {"sent": True,
-            "provider": sent["provider"],
+    sent_to: str | None = None
+    provider: str = ""
+    delivery_id: str | None = None
+
+    if channel == "email":
+        to = (payload and payload.to) or (patient or {}).get("email")
+        if not to or "@" not in str(to):
+            raise HTTPException(422, "Patient has no email on file")
+        pdf = render_statement_pdf(statement=stmt, patient=patient)
+        html = render_statement_email_html(patient=patient, statement=stmt)
+        try:
+            sent = await send_statement_email(
+                to=to, subject="Your patient statement",
+                html_body=html, pdf_bytes=pdf,
+                pdf_filename=f"statement-{stmt_id[:8]}.pdf",
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(502, f"Email send failed: {exc}") from exc
+        provider = sent["provider"]
+        sent_to = to
+
+        delivery = stamp_for_write({
+            "id": str(uuid.uuid4()),
+            "statement_id": stmt_id,
+            "patient_id": patient_id,
+            "to_email": to,
+            "provider": provider,
             "message_id": sent.get("message_id"),
-            "to": to,
-            "delivery_id": delivery["id"]}
+            "sent_by": user["id"],
+            "sent_at": now,
+            "created_at": now,
+            "updated_at": now,
+        }, ctx, location_id=None)
+        await db.statement_deliveries.insert_one(delivery)
+        delivery_id = delivery["id"]
+    elif channel == "mail":
+        provider = "queued-for-mail"
+        sent_to = "postal"
+    else:  # portal
+        provider = "patient-portal"
+        sent_to = patient.get("id") if patient else None
+
+    # Stamp the statement so the UI shows sent_at / sent_via.
+    await db.statements.update_one(
+        {"id": stmt_id, "tenant_id": ctx.tenant_id},
+        {"$set": {
+            "sent_at": now, "sent_via": channel,
+            "sent_to": sent_to, "updated_at": now,
+        }},
+    )
+
+    await audit_success(
+        user, "billing.statement.sent", request,
+        entity_type="statement", entity_id=stmt_id,
+        metadata={"channel": channel, "provider": provider,
+                  "patient_id": patient_id, "to": sent_to,
+                  "delivery_id": delivery_id},
+    )
+    return {
+        "sent": True, "channel": channel, "provider": provider,
+        "to": sent_to, "delivery_id": delivery_id,
+    }
 
 
 @router.get(

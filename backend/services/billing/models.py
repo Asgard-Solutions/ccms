@@ -786,6 +786,10 @@ class StatementPublic(BaseModel):
     total_balance_cents: int
     invoice_count: int
     body: str           # rendered plain-text statement
+    invoice_breakdown: list[dict] = Field(default_factory=list)
+    sent_at: str | None = None
+    sent_via: str | None = None   # "email" | "mail" | "portal"
+    sent_to: str | None = None    # redacted recipient for audit
     created_at: str
 
 
