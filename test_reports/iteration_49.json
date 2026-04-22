@@ -23,6 +23,6 @@
   "seed_data_creation": "Ephemeral: each scenario class provisions its own throw-away staff user / patient record via admin. Patient MRNs prefixed 'TEST_' per the cleanup convention.",
   "retest_needed": false,
   "main_agent_can_self_test": true,
-  "context_for_next_testing_agent": "Phone canonicalisation is stable end-to-end. Backend identity/clinic/workforce paths are strict-422 on malformed; patient demographics are soft-normalise (preserve legacy values). Frontend uses <PhoneInput/> everywhere except patient wizard which uses its own PhoneField wrapper. Search normalisation happens client-side in Patients.jsx before the `/patients/search?phone=` call. To rerun: `cd /app/backend && REACT_APP_BACKEND_URL=https://clinic-portal-dev-1.preview.emergentagent.com pytest tests/test_phone_utils.py tests/test_phone_scenarios.py -v`.",
+  "context_for_next_testing_agent": "Phone canonicalisation is stable end-to-end. Backend identity/clinic/workforce paths are strict-422 on malformed; patient demographics are soft-normalise (preserve legacy values). Frontend uses <PhoneInput/> everywhere except patient wizard which uses its own PhoneField wrapper. Search normalisation happens client-side in Patients.jsx before the `/patients/search?phone=` call. To rerun: `cd /app/backend && REACT_APP_BACKEND_URL=https://clinic-access-hub.preview.emergentagent.com pytest tests/test_phone_utils.py tests/test_phone_scenarios.py -v`.",
   "rca of the issue": "N/A — feature implementation verified working as designed."
 }
