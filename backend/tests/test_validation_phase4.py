@@ -3,6 +3,9 @@ Phase 4 — claim validation engine + Needs Fixes workflow.
 
 Covers the 9 new rules added this phase + the category grouping and
 persistence path.
+
+Note: fixture-row cleanup (stray "Validator Payer" + "Val Test*"
+patients) is handled by the session-scope sweeper in conftest.py.
 """
 from __future__ import annotations
 
@@ -18,6 +21,9 @@ BASE = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 API = f"{BASE}/api" if BASE else "http://localhost:8001/api"
 
 ADMIN = ("admin@ccms.app", "Admin@ComplianceClinic1")
+
+# Prefix used on every test-created payer (see conftest.py sweeper).
+TEST_PAYER_PREFIX = "Validator Payer "
 
 
 def _login(email, password):
@@ -51,7 +57,7 @@ def _seed_patient(s, *, dob="1990-01-01", gender="female"):
 def _seed_claim(s, *, patient=None, payer_overrides=None, claim_overrides=None,
                 line_code="98940", modifiers=None):
     payer_payload = {
-        "name": f"Validator Payer {uuid.uuid4().hex[:6]}",
+        "name": f"{TEST_PAYER_PREFIX}{uuid.uuid4().hex[:6]}",
         "payer_type": "commercial",
         "remit_method": "era",
     }

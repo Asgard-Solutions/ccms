@@ -17,7 +17,7 @@ import copy
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://demo-data-integrity-1.preview.emergentagent.com").rstrip("/")
+BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://claim-refactor.preview.emergentagent.com").rstrip("/")
 
 ADMIN = ("admin@ccms.app", "Admin@ComplianceClinic1")
 DOCTOR = ("doctor@ccms.app", "Doctor@ComplianceClinic1")
@@ -562,6 +562,35 @@ class TestClinicalChartCompleteness:
 
 # --------- Cross-domain referential integrity ---------
 class TestRiverbendIntegrity:
+    """End-to-end referential integrity check. Every row in every
+    collection under a single tenant must resolve to a live peer —
+    the CI + ops playbook share one source of truth.
+
+    Auto-runs a fresh reseed at module entry so residue from
+    test_billing_phase4 / test_validation_phase4 / test_x12_837p_phase7
+    doesn't skew the entity counts. The conftest.py per-test sweep
+    also catches most of it, but the reseed here is belt-and-braces
+    and ensures the integrity tests are independent of test ordering.
+    """
+
+    @pytest.fixture(autouse=True, scope="class")
+    def _reset_riverbend_before_integrity_tests(self):
+        """Wipe + reseed Riverbend right before the class tests run."""
+        import asyncio
+        import sys
+        sys.path.insert(0, "/app/backend")
+        from scripts.reseed_demo_clinic import main as reseed_main
+        # Silence the reseed's print output so pytest output stays
+        # clean — only the final "Integrity OK" line matters.
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            try:
+                asyncio.run(reseed_main())
+            except Exception:  # noqa: BLE001
+                # If reseed fails (e.g. backend down), fall through
+                # and let the integrity tests surface the real issue.
+                pass
+        yield
     """Hard guardrail: after a reseed, every foreign-key in every
     demo-seeded domain must resolve against the canonical entity set.
     No orphans, no duplicates, no stale pointers.

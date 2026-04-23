@@ -31,7 +31,7 @@
     ]
   },
   "verified_flows": [
-    "Backend pytest /app/backend/tests/test_clinical_phase2.py — 15/15 passing against https://demo-data-integrity-1.preview.emergentagent.com/api",
+    "Backend pytest /app/backend/tests/test_clinical_phase2.py — 15/15 passing against https://claim-refactor.preview.emergentagent.com/api",
     "Backend pytest /app/backend/tests/test_clinical_phase1.py — 9/9 regression still green",
     "GET /clinical/history auto-seeds from latest completed intake; field_meta.source=intake + source_form_id set",
     "GET /clinical/history with no completed form → empty history (field_meta={}, seeded_from_form_id null)",

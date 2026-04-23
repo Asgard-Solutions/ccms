@@ -85,7 +85,7 @@ export default function ClaimsQueue() {
     age_days: ageDays ? Number(ageDays) : null,
   }), [status, canonicalStatus, payerId, assignedTo, unassigned, ageDays]);
 
-  const { data, loading } = useClaimsQueueV2({
+  const { data, loading, error } = useClaimsQueueV2({
     tab, page, pageSize, sort, filters,
   });
 
@@ -102,6 +102,24 @@ export default function ClaimsQueue() {
   const hasActiveFilters =
     status !== "all" || canonicalStatus !== "all" || payerId || assignedTo || ageDays;
   const isEmptyView = !loading && rows.length === 0;
+
+  // If the queue fetch failed (auth, permission, network), surface it
+  // with the correlation id so the user doesn't see a misleading
+  // "No claims yet" empty state. The payload from the API interceptor
+  // looks like `{detail, correlation_id}`.
+  const queueError = error
+    ? {
+        status: error?.response?.status ?? 0,
+        detail:
+          error?.response?.data?.detail
+          || error?.message
+          || "Unable to load the claims queue.",
+        correlationId:
+          error?.response?.data?.correlation_id
+          || error?.response?.headers?.["x-correlation-id"]
+          || null,
+      }
+    : null;
 
   function onSortClick(sortKey) {
     if (!sortKey) return;
@@ -221,6 +239,8 @@ export default function ClaimsQueue() {
       <section className="overflow-hidden rounded-sm border border-border bg-card">
         {loading ? (
           <TableSkeleton />
+        ) : queueError ? (
+          <QueueErrorState error={queueError} onRetry={() => window.location.reload()} />
         ) : isEmptyView && hasActiveFilters ? (
           <NoResultsState onReset={resetFilters} />
         ) : isEmptyView ? (
@@ -690,6 +710,71 @@ function NoResultsState({ onReset }) {
       >
         Clear filters
       </Button>
+    </div>
+  );
+}
+
+/** Failed-to-load panel. Replaces the misleading "No claims yet"
+ *  empty state when the queue API returned an error (401/403/5xx/
+ *  network). Surfaces the real status, detail, and correlation id
+ *  so the user can copy-paste into a support ticket instead of
+ *  assuming there just aren't any claims. */
+function QueueErrorState({ error, onRetry }) {
+  const isAuth = error.status === 401;
+  const isPerm = error.status === 403;
+  const headline = isAuth
+    ? "Re-authentication required to load claims."
+    : isPerm
+      ? "You don't have permission to view the claims queue."
+      : "Couldn't load the claims queue.";
+  return (
+    <div
+      data-testid="claims-queue-error"
+      className="flex flex-col items-center gap-3 py-16 text-muted-foreground"
+    >
+      <div className="rounded-full border border-destructive/30 bg-destructive/5 p-3 text-destructive">
+        <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <path d="M12 8v5m0 3.01.01-.011" />
+          <circle cx="12" cy="12" r="9" />
+        </svg>
+      </div>
+      <p className="text-sm font-medium text-foreground" data-testid="claims-queue-error-headline">
+        {headline}
+      </p>
+      <p className="max-w-sm text-center text-xs">
+        {error.detail}
+        {error.status ? (
+          <span className="ml-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+            HTTP {error.status}
+          </span>
+        ) : null}
+      </p>
+      {error.correlationId ? (
+        <p
+          className="text-[10px] text-muted-foreground"
+          data-testid="claims-queue-error-correlation"
+        >
+          Correlation id:{" "}
+          <code className="rounded bg-muted px-1 py-0.5">{error.correlationId}</code>
+        </p>
+      ) : null}
+      <div className="mt-1 flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onRetry}
+          data-testid="claims-queue-error-retry"
+        >
+          Try again
+        </Button>
+        {isAuth ? (
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/login" data-testid="claims-queue-error-login">
+              Sign in again
+            </Link>
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }

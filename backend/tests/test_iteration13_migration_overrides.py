@@ -21,7 +21,7 @@ import uuid
 
 import requests
 
-API = os.environ.get("CCMS_BASE_URL", "https://demo-data-integrity-1.preview.emergentagent.com/api")
+API = os.environ.get("CCMS_BASE_URL", "https://claim-refactor.preview.emergentagent.com/api")
 
 ADMIN = ("admin@ccms.app", "Admin@ComplianceClinic1")
 DOCTOR = ("doctor@ccms.app", "Doctor@ComplianceClinic1")

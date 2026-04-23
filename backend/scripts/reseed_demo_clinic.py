@@ -157,8 +157,16 @@ async def main() -> None:
     print("\nRe-seeding realistic demo data...")
     # Delayed import so the delete happens first and the seed runs
     # against the freshly wiped tenant.
+    from services.identity.seed import seed as seed_identity  # noqa: E402
     from services.demo.seed import seed_demo_clinic  # noqa: E402
     from services.demo.billing_seed import seed_demo_billing  # noqa: E402
+    # Identity seed FIRST — the wipe removed the demo login users
+    # (admin/doctor/staff/patient) and the Ethan Parker patient who's
+    # created by the identity seed (not the clinic seed). Re-creating
+    # them here keeps the tenant coherent between the reseed and the
+    # next backend boot so pytest doesn't flake on a transient 7-vs-8
+    # patient count.
+    await seed_identity()
     await seed_demo_clinic()
     await seed_demo_billing()
     print("Done. Restart the backend or just call GET /api/health to confirm.")
