@@ -1,6 +1,30 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-04-22 (Regression fixes — AppointmentWorkflowPanel `useEffect` import + billing/payments currency)
+**Last updated:** 2026-04-23 (ClaimWorkflow.jsx refactor — split into claim-workflow/ folder)
+
+## 4n. ClaimWorkflow.jsx refactor — split into sub-components (2026-04-23)
+
+**User request:** Refactor `ClaimWorkflow.jsx` into smaller, focused files for maintainability.
+
+**Shipped:** `/app/frontend/src/pages/billing/ClaimWorkflow.jsx` is now a thin 125-line composition file that imports its sub-components from `/app/frontend/src/pages/billing/claim-workflow/`:
+- `AssignmentRow.jsx` (146 lines) — tenant-scoped assignee Select dropdown.
+- `FollowupRow.jsx` (115 lines) — follow-up flag/clear UI.
+- `SubmissionsTable.jsx` (87 lines) — read-only submissions table.
+- `TimelineSection.jsx` (94 lines) — collapsible status timeline.
+- `dialogs.jsx` (328 lines) — `SubmissionDialog`, `OutcomeDialog`, `PayloadDialog` colocated (shared payer/outcome/money helpers).
+
+**Before → After:** `ClaimWorkflow.jsx` went from 848 lines of mixed concerns to 125 lines of pure composition. Total code is slightly larger (from the file-split overhead) but each module is independently reviewable.
+
+**Verification:**
+- UI smoke test on claim `1a84464d-f559-45fd-acb2-f6fe6d0252da` — Workflow card, AssignmentRow dropdown, Follow-up flagged banner, submissions row with Payload button, and status timeline all render identically to pre-refactor.
+- `pytest test_riverbend_demo_sanitation.py test_billing_phase4.py` — 48/48 passing.
+- `eslint /app/frontend/src/pages/billing/claim-workflow/` — 0 issues.
+
+**Files changed**
+- `/app/frontend/src/pages/billing/ClaimWorkflow.jsx` — rewritten as composition root.
+- `/app/frontend/src/pages/billing/claim-workflow/*.jsx` — populated with extracted sub-components.
+- `/app/memory/PRD.md` (§4n)
+
 
 ## 4m. 837P wire — decrypt subscriber/patient address (2026-04-22)
 
