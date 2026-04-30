@@ -1,6 +1,83 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-04-23 (Eligibility 270/271 P1 — X12 builders + mock engine + UI + MFA-gated payload viewer)
+**Last updated:** 2026-04-30 (Eligibility P0 expansion — patient/appointment anchors, 9-state status model, expiration, billing-readiness integration, demo seed, RBAC-gated raw payload)
+
+## 4p. Eligibility 270/271 — P0 expansion (2026-04-30)
+
+**User spec:** Full P0 epic — `Verify patient insurance eligibility before visit and claim creation`. 16 acceptance scenarios, 9 canonical statuses, 6 integration surfaces (patient profile, appointment, check-in, billing readiness, claim prep, policy manager), expiration rules, RBAC, audit.
+
+**Status model (`services/billing/eligibility_status.py`)**
+- 9 canonical states: `not_checked`, `submitted`, `active`, `inactive`, `partial`, `rejected`, `error`, `unknown`, `expired`.
+- Classifier `classify_result(parsed)` maps 271 payloads → active/inactive/partial/rejected/unknown.
+- `is_expired(row, target_service_date, target_policy_snapshot)` triggers expiration when >30d old, service-date drift, or policy-snapshot drift.
+- `overlay_expiration(row, ...)` returns row with `effective_status` derived.
+- `policy_snapshot_hash(policy)` — 12-char SHA of {member_id, group_number, payer_id, effective/term dates, subscriber_name, relationship} so policy edits invalidate prior checks.
+- Exposed to UI via `GET /api/billing/eligibility/reference` (labels/tones/disclaimer) so the frontend has a single source of truth.
+
+**Mock engine triggers (demo mode)**
+- `member_id` ending `BAD` → `status=rejected`, rejection_reason populated.
+- `member_id` ending `ERR` → raises `EligibilityEngineError` → persisted row with `status=error`, wires null.
+- `member_id` ending `TERM` → `status=inactive` (existing behaviour preserved).
+
+**New endpoints (all scoped to tenant)**
+- `GET  /api/billing/eligibility/reference` — UI bootstrap (statuses, labels, tones, disclaimer).
+- `POST /api/billing/patients/{pid}/eligibility-check` — patient-anchored check against active primary policy.
+- `GET  /api/billing/patients/{pid}/eligibility-latest` — newest check, with `effective_status` overlay.
+- `GET  /api/billing/patients/{pid}/eligibility-checks` — history.
+- `POST /api/billing/appointments/{aid}/eligibility-check` — auto-binds `appointment_id` + inherits `service_date` from `appointment.start_time`.
+- `GET  /api/billing/appointments/{aid}/eligibility-latest` — appointment-first, DOS-matched fallback to patient-scope.
+- `GET  /api/billing/eligibility-checks/{id}` — raw 270/271 wires. **MFA + role-gated**: doctors and patients get 403; only admin/billing/staff roles may access.
+- Missing-info validation: POST endpoints return 400 with `"Missing info: {field list}. Update the patient record, then retry."` when patient/policy is incomplete.
+- Every row persists `status`, `service_date`, `appointment_id`, `policy_snapshot_hash`, plus the existing wire/payload.
+- Error path persists an anchor row (status=error, wires null, payer_name + member_id echoed) so the retry button has something to point at.
+
+**Billing-readiness integration (`services/clinical/billing_readiness_router.py`)**
+- Added `eligibility_verified` check. Severity rules:
+  - `active` / `partial` → `passed=true, severity=warn`.
+  - `inactive` / `rejected` / `error` → `passed=false, severity=fail` (blocks the encounter from `ready`).
+  - Missing / `unknown` / `expired` / `submitted` → `passed=false, severity=warn` with actionable detail.
+
+**Demo seed (`services/demo/billing_seed.py::_seed_eligibility_checks`)**
+- Walks every active policy in the tenant at seed-time; invokes the mock engine; persists the row with `demo_seed_key="elig:{policy_id}"` so `_wipe_prior_demo` cleans it on reseed. 29 rows populated across Riverbend: 28 active + 1 inactive (`TERM` member).
+
+**Frontend surfaces**
+- `pages/billing/eligibility/statusMeta.jsx` — shared `EligibilityStatusChip` + `EligibilityStatusBanner` with tone-mapped icons (CheckCircle2 / AlertCircle / XCircle / AlertTriangle / Clock3 / HelpCircle / ShieldCheck / Loader2).
+- `pages/billing/PatientEligibilityCard.jsx` — **NEW** top-level eligibility card on the patient profile Insurance tab: chip + banner + 4 stat cards (copay / deductible with met% / coinsurance / OOP max) + "Verify now" / "Re-verify" CTA + "History" button that opens the dialog. Disclaimer always visible.
+- `pages/billing/EligibilityDialog.jsx` — **REWRITTEN** to accept `{policy, patientId, appointmentId}` anchors. Uses shared status meta. Disclaimer stapled to footer.
+- `pages/scheduling/AppointmentEligibilitySection.jsx` — **NEW** strip inside AppointmentWorkflowPanel: chip + Verify button + Details. Warn banner fires for inactive/rejected/error/expired/unknown. One-line financial recap for active/partial.
+- `pages/scheduling/AppointmentWorkflowPanel.jsx` — mounts `AppointmentEligibilityWithDialog` after the operational timeline (so it appears in both calendar and check-in flows).
+- `pages/PatientDetail.jsx` — Insurance tab wraps `PatientEligibilityCard` above `PatientInsuranceManager`.
+- `pages/billing/useBillingAdmin.js` — adds patient- and appointment-anchored helpers + reference fetcher.
+
+**Tests**
+- `tests/test_eligibility_p0_expansion.py` — **NEW** 20 tests (19 pass + 1 conditionally skipped): status module (classify, snapshot, expiration, overlay), demo triggers (ERR/BAD/TERM), reference endpoint shape, patient endpoints (latest/history/run/400), appointment endpoints, RBAC for doctor role on raw payload.
+- `tests/test_eligibility_phase_p1.py` + `tests/test_eligibility_iter68_addl.py` — still 15/15 green.
+- `tests/test_riverbend_demo_sanitation.py` — 26/26 green.
+
+**Testing agent verification (iter_69)**
+- Direct-API walk of all 16 acceptance scenarios + UI smoke of PatientEligibilityCard + legacy policy button preserved + previous iter_68 cosmetic bug resolved.
+- Zero frontend UI bugs. Zero critical backend bugs. One DB cleanup done (stray custom_inuse_test_* role was poisoning admin permissions — unrelated environment pollution).
+
+**Follow-on P3**
+- Add autouse cleanup fixture in `tests/test_custom_roles_phase2.py` so it doesn't leave stray `user_roles` rows shrinking admin's effective permissions.
+- Live Change/Optum sandbox transmission (still scaffold-ready — `services/billing/clearinghouse/change_healthcare.py::eligibility_270_271`).
+
+**Files changed (this phase)**
+- NEW `/app/backend/services/billing/eligibility_status.py`
+- `/app/backend/services/billing/eligibility.py` — ERR/BAD markers.
+- `/app/backend/services/billing/eligibility_router.py` — rewritten (9 endpoints).
+- `/app/backend/services/clinical/billing_readiness_router.py` — `eligibility_verified` check + helper.
+- `/app/backend/services/demo/billing_seed.py` — `_seed_eligibility_checks` + collection cleanup.
+- NEW `/app/backend/tests/test_eligibility_p0_expansion.py`
+- NEW `/app/frontend/src/pages/billing/eligibility/statusMeta.jsx`
+- `/app/frontend/src/pages/billing/EligibilityDialog.jsx` — rewritten for multi-anchor.
+- NEW `/app/frontend/src/pages/billing/PatientEligibilityCard.jsx`
+- `/app/frontend/src/pages/billing/useBillingAdmin.js` — added helpers.
+- `/app/frontend/src/pages/PatientDetail.jsx` — mounts PatientEligibilityCard.
+- NEW `/app/frontend/src/pages/scheduling/AppointmentEligibilitySection.jsx`
+- `/app/frontend/src/pages/scheduling/AppointmentWorkflowPanel.jsx` — mounts the strip.
+- `/app/memory/PRD.md` (§4p)
+
 
 ## 4o. Eligibility 270/271 — P1 (2026-04-23)
 
