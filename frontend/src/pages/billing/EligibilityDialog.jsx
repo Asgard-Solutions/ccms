@@ -42,13 +42,14 @@ export function EligibilityDialog({ open, policy, onClose }) {
   const [payloadDetail, setPayloadDetail] = useState(null);
   const { requestReauth } = useReauth();
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (options = {}) => {
+    const { preserveLatest = false } = options;
     if (!policy?.id) return;
     setLoading(true);
     try {
       const rows = await listEligibilityChecks(policy.id);
       setHistory(rows);
-      if (rows.length) {
+      if (rows.length && !preserveLatest) {
         // Summary row is cheap; full result comes from the just-ran
         // response. History rows are summaries only (list endpoint
         // intentionally omits the wires).
@@ -87,7 +88,9 @@ export function EligibilityDialog({ open, policy, onClose }) {
           ? "Coverage active — benefits loaded"
           : "Coverage inactive — see result for details",
       );
-      await load();
+      // Refresh history without overwriting our fresh full-shape result
+      // (list endpoint intentionally omits coinsurance / OOP / wires).
+      await load({ preserveLatest: true });
       setTab("result");
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Eligibility check failed");

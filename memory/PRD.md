@@ -1,6 +1,52 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-04-23 (ClaimWorkflow.jsx refactor — split into claim-workflow/ folder)
+**Last updated:** 2026-04-23 (Eligibility 270/271 P1 — X12 builders + mock engine + UI + MFA-gated payload viewer)
+
+## 4o. Eligibility 270/271 — P1 (2026-04-23)
+
+**User request:** Ship full X12 270/271 Health-Care Eligibility with wire-level builders/parser and a local mock clearinghouse stub (user chose option b), so the UX flow is production-equivalent and the live Change/Optum plug-in is a one-line config change later.
+
+**Shipped**
+- **Wire layer** (`services/billing/clearinghouse/x12_270_271.py`) —
+  `build_270_request(submitter, receiver, provider, payer, patient, policy, service_type_codes, inquiry_date)` emits a spec-compliant 005010X279A1 270 with ISA/GS envelope, BHT, 3 HL loops (info source, receiver, subscriber), NM1*PR / NM1*1P / NM1*IL, TRN, DMG, DTP*291, EQ per service-type, SE/GE/IEA. Mirror parser `parse_271_response(wire)` walks EB segments (qualifiers 1, 6, A, B, C, G, CB, I, V), DTP*356/357/291, MSG, and returns a canonical result dict.
+- **Mock engine** (`services/billing/eligibility.py::MockEligibilityEngine`) —
+  `_derive_plan_profile(policy, payer)` hash-seeds a deterministic benefit profile from (member_id, group_number, payer_id). Rules: member_id ending `TERM` → inactive; Medicare → $0 copay, 20% coinsurance, $240 deductible; Medicaid / WC / PIP → zero-cost rules; commercial → $25–$40 copay, $1000–$2500 deductible, 20% coinsurance, met%/OOP derived. `check(...)` composes build_270 → synthesise 271 → parse → return `{engine, sandbox, request_wire, response_wire, result, service_type_codes, checked_at}`.
+- **REST API** (`services/billing/eligibility_router.py`):
+  - `POST /api/billing/policies/{policy_id}/eligibility-check` — 201 with full result + wires.
+  - `GET /api/billing/policies/{policy_id}/eligibility-checks` — list (wires omitted).
+  - `GET /api/billing/eligibility-checks/{check_id}` — full wires, **MFA-gated** via `require_reauth`.
+  - Stores rows in `eligibility_checks` collection with `tenant_id` isolation.
+- **Frontend** (`pages/billing/EligibilityDialog.jsx` + wire-up in `PatientInsuranceManager.jsx`) —
+  Each ACTIVE policy row gets a new "Eligibility" button. Dialog has three tabs:
+  - **Latest result** — coverage banner (active ✓ / inactive ✗), Sandbox badge, 4 stat cards (Copay / Deductible with "$X met" sub-line / Coinsurance % / OOP max), payer + plan metadata, payer messages surface.
+  - **History** — reverse-chrono list of prior checks; each row has a "Payload" button.
+  - **270 / 271** — inline `<pre>` blocks showing both wires. Requires step-up reauth (password OR PIN via the existing ReauthGate).
+- **Tests** — `tests/test_eligibility_phase_p1.py` — 13 tests: builder envelope + subscriber identity + HL levels + service-type expansion; mock engine active commercial / inactive on `TERM` marker / Medicare zero-copay / WC zero-cost / determinism; API happy-path 201 + list + detail + 404 on unknown policy + 401 without reauth. Tests green.
+
+**Follow-on fix (post-testing-agent iter_68):** `EligibilityDialog.onCheckNow` was overwriting the fresh full-shape API result with the partial history-summary (which intentionally omits `coinsurance_pct` / `out_of_pocket_cents` / wires). Pass `{preserveLatest: true}` into `load()` so the stat cards stay populated.
+
+**Regression**
+- 13/13 new eligibility tests + 2/2 iter_68 additions (wire sanity + tenant isolation) pass.
+- 48/48 Riverbend sanitation + Billing phase4 pass. 61/63 wider billing phases pass (the 2 misses are pre-existing — statement-body wording drift + email mock `message_id` shape — unrelated to this phase).
+- Integrity verifier 0 violations.
+
+**What's NOT in this phase (future)**
+- Live Change/Optum sandbox POST of the 270 — scaffolding is in `services/billing/clearinghouse/change_healthcare.py::eligibility_270_271` (returns None today). Drop-in once credentials land.
+- Seeded eligibility_checks rows per Riverbend persona (demo quality-of-life — could pre-fill history tab on first login).
+
+**Files changed**
+- NEW `/app/backend/services/billing/clearinghouse/x12_270_271.py` — 270 builder + 271 parser.
+- NEW `/app/backend/services/billing/eligibility.py` — MockEligibilityEngine + default_engine factory.
+- NEW `/app/backend/services/billing/eligibility_router.py` — 3 endpoints.
+- `/app/backend/server.py` — mounted billing_eligibility_router.
+- `/app/backend/services/billing/clearinghouse/none.py` — `supports_eligibility=True` (mock engine is always available).
+- NEW `/app/backend/tests/test_eligibility_phase_p1.py` — 13 tests.
+- NEW `/app/backend/tests/test_eligibility_iter68_addl.py` — 2 tests from testing agent.
+- NEW `/app/frontend/src/pages/billing/EligibilityDialog.jsx` — 3-tab modal.
+- `/app/frontend/src/pages/billing/PatientInsuranceManager.jsx` — Eligibility button on active policies.
+- `/app/frontend/src/pages/billing/useBillingAdmin.js` — `runEligibilityCheck`, `listEligibilityChecks`, `fetchEligibilityCheckDetail` helpers.
+- `/app/memory/PRD.md` (§4o).
+
 
 ## 4n. ClaimWorkflow.jsx refactor — split into sub-components (2026-04-23)
 
