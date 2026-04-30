@@ -85,6 +85,29 @@ export async function deactivatePolicy(id) {
 }
 
 // ---------------------------------------------------------------------------
+// Eligibility 270/271
+// ---------------------------------------------------------------------------
+export async function runEligibilityCheck(policyId, payload = {}) {
+  const { data } = await api.post(
+    `/billing/policies/${policyId}/eligibility-check`,
+    payload,
+  );
+  return data;
+}
+
+export async function listEligibilityChecks(policyId) {
+  const { data } = await api.get(
+    `/billing/policies/${policyId}/eligibility-checks`,
+  );
+  return data || [];
+}
+
+export async function fetchEligibilityCheckDetail(checkId) {
+  const { data } = await api.get(`/billing/eligibility-checks/${checkId}`);
+  return data;
+}
+
+// ---------------------------------------------------------------------------
 // Fee schedules
 // ---------------------------------------------------------------------------
 export function useFeeSchedules() {

@@ -32,7 +32,7 @@ class NoneAdapter:
     route_id: str = "none"
     supports_edi: bool = False
     supports_era: bool = False
-    supports_eligibility: bool = False
+    supports_eligibility: bool = True  # Mock engine is always available
 
     async def submit(
         self,
