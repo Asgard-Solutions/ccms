@@ -15,6 +15,7 @@ import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import RoomAssignmentControl from "./RoomAssignmentControl";
 import { statusMeta } from "./statusMeta";
+import { AppointmentEligibilityWithDialog } from "./AppointmentEligibilitySection";
 
 /**
  * Appointment workflow + intake panel.
@@ -296,6 +297,11 @@ export default function AppointmentWorkflowPanel({
             </li>
           ))}
         </ol>
+      )}
+
+      {/* Eligibility — surface coverage status for the DOS. */}
+      {appointment?.id && (
+        <AppointmentEligibilityWithDialog appointment={appointment} />
       )}
     </div>
   );

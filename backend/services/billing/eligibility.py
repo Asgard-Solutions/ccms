@@ -339,6 +339,13 @@ class MockEligibilityEngine:
         service_type_codes: list[str] | None = None,
         inquiry_date: str | None = None,
     ) -> dict[str, Any]:
+        member_upper = (policy.get("member_id") or "").upper()
+        # Demo trigger — member_id ending `ERR` forces a hard engine
+        # error so operators can exercise the Error status path.
+        if member_upper.endswith("ERR"):
+            raise EligibilityEngineError(
+                "Mock error: trading partner reported a 999 syntax failure.",
+            )
         svc_codes = service_type_codes or ["30", "33", "98"]
         request_wire = build_270_request(
             submitter=submitter,
@@ -351,6 +358,27 @@ class MockEligibilityEngine:
             inquiry_date=inquiry_date,
         )
         profile = _derive_plan_profile(policy, payer)
+        # Demo trigger — member_id ending `BAD` forces a rejected
+        # subscriber-mismatch response.
+        if member_upper.endswith("BAD"):
+            profile = {
+                "coverage_active": False,
+                "rejected": True,
+                "rejection_reason":
+                    "Subscriber not found with the submitted member id.",
+                "plan_name": None,
+                "effective_date": None,
+                "termination_date": None,
+                "copay_cents": None,
+                "coinsurance_pct": None,
+                "deductible_cents": None,
+                "deductible_met_cents": None,
+                "out_of_pocket_cents": None,
+                "notes": [
+                    "AAA*Y*72:Invalid/Missing Subscriber/Insured ID",
+                    "Verify the member ID and DOB, then retry.",
+                ],
+            }
         response_wire = _build_271_response(
             request_wire=request_wire,
             submitter=submitter,
@@ -378,6 +406,15 @@ class MockEligibilityEngine:
             parsed["termination_date"] = profile.get("termination_date")
         if profile.get("notes") and not parsed.get("messages"):
             parsed["messages"] = list(profile["notes"])
+        # Propagate rejection signal from the mock profile so the
+        # status classifier can pick it up without scanning 271 AAA
+        # segments (we don't emit them on the synthesized wire yet).
+        if profile.get("rejected"):
+            parsed["rejected"] = True
+            if profile.get("rejection_reason"):
+                parsed.setdefault("rejection_reason",
+                                  profile["rejection_reason"])
+        parsed["requested_service_types"] = svc_codes
 
         return {
             "engine": self.engine_id,

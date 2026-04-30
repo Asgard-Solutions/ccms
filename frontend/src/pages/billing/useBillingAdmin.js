@@ -102,8 +102,51 @@ export async function listEligibilityChecks(policyId) {
   return data || [];
 }
 
+export async function runPatientEligibilityCheck(patientId, payload = {}) {
+  const { data } = await api.post(
+    `/billing/patients/${patientId}/eligibility-check`,
+    payload,
+  );
+  return data;
+}
+
+export async function fetchPatientEligibilityLatest(patientId, serviceDate) {
+  const params = serviceDate ? `?service_date=${serviceDate}` : "";
+  const { data } = await api.get(
+    `/billing/patients/${patientId}/eligibility-latest${params}`,
+  );
+  return data;
+}
+
+export async function fetchPatientEligibilityHistory(patientId) {
+  const { data } = await api.get(
+    `/billing/patients/${patientId}/eligibility-checks`,
+  );
+  return data || [];
+}
+
+export async function runAppointmentEligibilityCheck(appointmentId, payload = {}) {
+  const { data } = await api.post(
+    `/billing/appointments/${appointmentId}/eligibility-check`,
+    payload,
+  );
+  return data;
+}
+
+export async function fetchAppointmentEligibilityLatest(appointmentId) {
+  const { data } = await api.get(
+    `/billing/appointments/${appointmentId}/eligibility-latest`,
+  );
+  return data;
+}
+
 export async function fetchEligibilityCheckDetail(checkId) {
   const { data } = await api.get(`/billing/eligibility-checks/${checkId}`);
+  return data;
+}
+
+export async function fetchEligibilityReference() {
+  const { data } = await api.get(`/billing/eligibility/reference`);
   return data;
 }
 

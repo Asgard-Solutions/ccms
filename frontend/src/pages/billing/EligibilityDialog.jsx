@@ -1,13 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
-  AlertCircle,
-  CheckCircle2,
   FileText,
   RefreshCw,
   ShieldCheck,
   Timer,
-  XCircle,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
@@ -21,19 +18,37 @@ import {
 } from "../../components/ui/dialog";
 import {
   fetchEligibilityCheckDetail,
+  fetchPatientEligibilityHistory,
   listEligibilityChecks,
+  runAppointmentEligibilityCheck,
   runEligibilityCheck,
+  runPatientEligibilityCheck,
 } from "./useBillingAdmin";
 import { formatCents } from "../../utils/money";
 import { formatDate, formatDateTime } from "../../utils/time";
 import { useReauth } from "../../components/ReauthGate";
+import {
+  EligibilityStatusBanner,
+  EligibilityStatusChip,
+} from "./eligibility/statusMeta";
 
-/** Three-pane modal — "Check eligibility" across the policy.
- *  Tab 1: latest result summary (coverage, copay, deductible, plan).
- *  Tab 2: recent history (scoped to this policy, reverse chrono).
- *  Tab 3: 270/271 raw payloads (MFA-gated — shown once user reauth'd).
- */
-export function EligibilityDialog({ open, policy, onClose }) {
+
+const DISCLAIMER =
+  "Eligibility information is payer-reported and is not a guarantee of payment.";
+
+
+/** Three-pane "Eligibility" dialog. Works against a policy,
+ *  a patient, or an appointment depending on which anchor id is
+ *  provided. Exactly one of `policy`, `patientId`, or
+ *  `appointmentId` should be set per render. */
+export function EligibilityDialog({
+  open,
+  policy,
+  patientId,
+  appointmentId,
+  onClose,
+  onUpdated,
+}) {
   const [tab, setTab] = useState("result");
   const [latest, setLatest] = useState(null);
   const [history, setHistory] = useState([]);
@@ -42,58 +57,92 @@ export function EligibilityDialog({ open, policy, onClose }) {
   const [payloadDetail, setPayloadDetail] = useState(null);
   const { requestReauth } = useReauth();
 
+  const anchorPatientId = patientId || policy?.patient_id || null;
+
   const load = useCallback(async (options = {}) => {
     const { preserveLatest = false } = options;
-    if (!policy?.id) return;
+    if (!open) return;
     setLoading(true);
     try {
-      const rows = await listEligibilityChecks(policy.id);
+      let rows = [];
+      if (policy?.id) {
+        rows = await listEligibilityChecks(policy.id);
+      } else if (anchorPatientId) {
+        rows = await fetchPatientEligibilityHistory(anchorPatientId);
+      }
+      // When anchored to an appointment we still show the patient's
+      // history so the operator has context before running a new check.
       setHistory(rows);
       if (rows.length && !preserveLatest) {
-        // Summary row is cheap; full result comes from the just-ran
-        // response. History rows are summaries only (list endpoint
-        // intentionally omits the wires).
+        const top = rows[0];
         setLatest({
+          id: top.id,
+          status: top.effective_status || top.status,
+          checked_at: top.checked_at,
+          sandbox: top.sandbox,
+          service_type_codes: top.service_type_codes,
+          service_date: top.service_date,
+          appointment_id: top.appointment_id,
           result: {
-            coverage_active: rows[0].coverage_active,
-            plan_name: rows[0].plan_name,
-            copay_cents: rows[0].copay_cents,
-            deductible_cents: rows[0].deductible_cents,
-            deductible_met_cents: rows[0].deductible_met_cents,
+            plan_name: top.plan_name,
+            payer_name: top.payer_name,
+            copay_cents: top.copay_cents,
+            deductible_cents: top.deductible_cents,
+            deductible_met_cents: top.deductible_met_cents,
+            coinsurance_pct: top.coinsurance_pct,
+            out_of_pocket_cents: top.out_of_pocket_cents,
+            rejection_reason: top.rejection_reason,
           },
-          checked_at: rows[0].checked_at,
-          sandbox: rows[0].sandbox,
-          service_type_codes: rows[0].service_type_codes,
-          id: rows[0].id,
         });
+      } else if (!rows.length && !preserveLatest) {
+        setLatest(null);
       }
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not load history");
     } finally { setLoading(false); }
-  }, [policy?.id]);
+  }, [open, policy?.id, anchorPatientId]);
 
   useEffect(() => {
-    if (open) { setTab("result"); load(); }
+    if (open) { setTab("result"); setPayloadDetail(null); load(); }
   }, [open, load]);
 
   async function onCheckNow() {
     setRunning(true);
     try {
-      const fresh = await runEligibilityCheck(policy.id, {
-        service_type_codes: ["30", "33", "98"],
+      let fresh;
+      const body = { service_type_codes: ["30", "33", "98"] };
+      if (appointmentId) {
+        fresh = await runAppointmentEligibilityCheck(appointmentId, body);
+      } else if (policy?.id) {
+        fresh = await runEligibilityCheck(policy.id, body);
+      } else if (anchorPatientId) {
+        fresh = await runPatientEligibilityCheck(anchorPatientId, body);
+      } else {
+        toast.error("No policy, patient, or appointment anchor provided");
+        return;
+      }
+      setLatest({
+        ...fresh,
+        status: fresh.status,
       });
-      setLatest(fresh);
-      toast.success(
-        fresh.result.coverage_active
-          ? "Coverage active — benefits loaded"
-          : "Coverage inactive — see result for details",
+      const toastText = (
+        fresh.status === "active"  ? "Coverage active — benefits loaded" :
+        fresh.status === "partial" ? "Coverage active — some benefits missing" :
+        fresh.status === "inactive"? "Coverage inactive — see details" :
+        fresh.status === "rejected"? "Rejected by payer — verify member info" :
+        fresh.status === "error"   ? "Eligibility inquiry errored" :
+                                     "Eligibility check complete"
       );
-      // Refresh history without overwriting our fresh full-shape result
-      // (list endpoint intentionally omits coinsurance / OOP / wires).
+      (fresh.status === "active" || fresh.status === "partial"
+        ? toast.success : toast.warning)(toastText);
       await load({ preserveLatest: true });
       setTab("result");
+      onUpdated?.(fresh);
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Eligibility check failed");
+      toast.error(
+        e?.response?.data?.detail
+          || "Eligibility check failed — please try again.",
+      );
     } finally { setRunning(false); }
   }
 
@@ -114,9 +163,22 @@ export function EligibilityDialog({ open, policy, onClose }) {
       setPayloadDetail(data);
       setTab("payload");
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Could not load payload");
+      toast.error(
+        e?.response?.data?.detail
+          || "Could not load payload (admin / billing access required)",
+      );
     }
   }
+
+  const anchorTitle = (
+    policy ? `Eligibility · ${policy.subscriber_name || "Policy"}` :
+    appointmentId ? "Eligibility · Appointment" :
+    "Eligibility"
+  );
+  const anchorDescription = (
+    policy ? `X12 270/271 inquiry against member ${policy.member_id}.` :
+    "X12 270/271 inquiry on file for this patient."
+  );
 
   return (
     <Dialog open={!!open} onOpenChange={(v) => !v && onClose?.()}>
@@ -125,12 +187,8 @@ export function EligibilityDialog({ open, policy, onClose }) {
         className="max-w-3xl"
       >
         <DialogHeader>
-          <DialogTitle className="font-display">
-            Eligibility · {policy?.subscriber_name || "—"}
-          </DialogTitle>
-          <DialogDescription>
-            X12 270/271 inquiry against member {policy?.member_id}.
-          </DialogDescription>
+          <DialogTitle className="font-display">{anchorTitle}</DialogTitle>
+          <DialogDescription>{anchorDescription}</DialogDescription>
         </DialogHeader>
 
         <div className="flex items-center justify-between border-b border-border pb-2">
@@ -181,6 +239,13 @@ export function EligibilityDialog({ open, policy, onClose }) {
           )}
         </div>
 
+        <p
+          className="rounded-sm bg-muted/40 px-2 py-1 text-[11px] italic text-muted-foreground"
+          data-testid="eligibility-disclaimer"
+        >
+          {DISCLAIMER}
+        </p>
+
         <DialogFooter>
           <Button
             variant="outline" size="sm"
@@ -195,51 +260,42 @@ export function EligibilityDialog({ open, policy, onClose }) {
   );
 }
 
+
 function ResultPane({ latest, loading, onViewPayload }) {
   if (loading && !latest) return <Skeleton className="h-40 w-full" />;
   if (!latest) {
     return (
-      <div className="flex flex-col items-center gap-2 py-12 text-center text-sm text-muted-foreground">
+      <div
+        data-testid="eligibility-empty-state"
+        className="flex flex-col items-center gap-2 py-12 text-center text-sm text-muted-foreground"
+      >
         <ShieldCheck className="h-8 w-8 text-muted-foreground/60" />
-        No eligibility check on file. Click "Check now" to run one.
+        Eligibility has not been checked. Click "Check now" to verify.
       </div>
     );
   }
   const r = latest.result || {};
-  const active = r.coverage_active;
+  const status = latest.status || "unknown";
+  const subtitle = (
+    status === "active"   ? (r.plan_name || "Benefits loaded") :
+    status === "partial"  ? (r.plan_name || "Some benefits missing") :
+    status === "inactive" ? "Coverage is terminated for this member" :
+    status === "rejected" ? (r.rejection_reason || "Subscriber / payer mismatch") :
+    status === "error"    ? "Payer connection failed — retry required" :
+    status === "expired"  ? "Stored check is stale for this date of service" :
+    status === "unknown"  ? "Payer response inconclusive" :
+                            "Eligibility not yet checked"
+  );
+  const showBenefits = (status === "active" || status === "partial");
   return (
     <div data-testid="eligibility-result-pane" className="space-y-3">
-      <div
-        className={`flex items-center gap-2 rounded-sm border p-3 ${
-          active
-            ? "border-success/40 bg-success-soft/40 text-success"
-            : "border-destructive/40 bg-destructive/10 text-destructive"
-        }`}
-      >
-        {active ? (
-          <CheckCircle2 className="h-5 w-5" />
-        ) : (
-          <XCircle className="h-5 w-5" />
-        )}
-        <div className="flex-1">
-          <div className="font-medium">
-            {active ? "Coverage active" : "Coverage inactive"}
-          </div>
-          <div className="text-xs opacity-80">
-            {r.plan_name || "Plan details pending"}
-          </div>
-        </div>
-        {latest.sandbox && (
-          <span
-            data-testid="eligibility-sandbox-badge"
-            className="rounded-sm bg-muted px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
-          >
-            Sandbox
-          </span>
-        )}
-      </div>
+      <EligibilityStatusBanner
+        status={status}
+        subtitle={subtitle}
+        sandbox={latest.sandbox}
+      />
 
-      {active && (
+      {showBenefits && (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <StatCard label="Copay"
                     value={r.copay_cents != null ? formatCents(r.copay_cents) : "—"}
@@ -266,13 +322,16 @@ function ResultPane({ latest, loading, onViewPayload }) {
         <MetaField label="Terminates" value={r.termination_date ? formatDate(r.termination_date) : null} />
         <MetaField label="Subscriber" value={r.subscriber_name} />
         <MetaField label="Member ID" value={r.member_id} />
+        <MetaField label="Service date" value={latest.service_date ? formatDate(latest.service_date) : null} />
+        <MetaField label="Appointment" value={latest.appointment_id ? "Linked" : "—"} />
       </div>
 
       {r.messages && r.messages.length > 0 && (
-        <div className="rounded-sm border border-warning/30 bg-warning-soft/40 p-2 text-xs">
-          <div className="mb-1 flex items-center gap-1 font-medium text-warning">
-            <AlertCircle className="h-3.5 w-3.5" /> Payer messages
-          </div>
+        <div
+          data-testid="eligibility-payer-messages"
+          className="rounded-sm border border-warning/30 bg-warning-soft/40 p-2 text-xs"
+        >
+          <div className="mb-1 font-medium text-warning">Payer messages</div>
           <ul className="list-disc pl-4 text-foreground/80">
             {r.messages.map((m, i) => <li key={i}>{m}</li>)}
           </ul>
@@ -299,6 +358,7 @@ function ResultPane({ latest, loading, onViewPayload }) {
   );
 }
 
+
 function HistoryPane({ rows, loading, onViewPayload }) {
   if (loading) return <Skeleton className="h-40 w-full" />;
   if (rows.length === 0) {
@@ -308,20 +368,15 @@ function HistoryPane({ rows, loading, onViewPayload }) {
     <ul className="divide-y divide-border text-sm" data-testid="eligibility-history-list">
       {rows.map((r) => (
         <li key={r.id} className="flex items-center gap-2 py-2">
-          {r.coverage_active ? (
-            <CheckCircle2 className="h-4 w-4 text-success" />
-          ) : (
-            <XCircle className="h-4 w-4 text-destructive" />
-          )}
+          <EligibilityStatusChip status={r.effective_status || r.status} />
           <div className="flex-1 min-w-0">
             <div className="truncate">
-              {r.plan_name || "Plan details pending"}
+              {r.plan_name || r.payer_name || "Plan details pending"}
             </div>
             <div className="text-[11px] text-muted-foreground">
               {formatDateTime(r.checked_at)}
-              {r.service_type_codes?.length
-                ? ` · inquired ${r.service_type_codes.join(", ")}`
-                : ""}
+              {r.service_date ? ` · DOS ${formatDate(r.service_date)}` : ""}
+              {r.appointment_id ? " · appt-linked" : ""}
             </div>
           </div>
           <div className="flex items-center gap-2 text-xs">
@@ -346,12 +401,14 @@ function HistoryPane({ rows, loading, onViewPayload }) {
   );
 }
 
+
 function PayloadPane({ detail, latestId, onLoad }) {
   if (!detail && latestId) {
     return (
       <div className="flex flex-col items-center gap-3 py-10 text-center text-sm text-muted-foreground">
         <FileText className="h-8 w-8 text-muted-foreground/60" />
-        Raw 270/271 wires require an MFA re-auth.
+        Raw 270/271 wires require an MFA re-auth. Payload visibility is
+        limited to billing and admin roles.
         <Button
           size="sm"
           onClick={() => onLoad(latestId)}
@@ -373,7 +430,7 @@ function PayloadPane({ detail, latestId, onLoad }) {
           270 request
         </h3>
         <pre className="max-h-56 overflow-auto rounded-sm border border-border bg-muted/40 p-2 font-mono text-[11px] leading-relaxed">
-{detail.request_wire}
+{detail.request_wire || "—"}
         </pre>
       </section>
       <section>
@@ -381,12 +438,13 @@ function PayloadPane({ detail, latestId, onLoad }) {
           271 response
         </h3>
         <pre className="max-h-56 overflow-auto rounded-sm border border-border bg-muted/40 p-2 font-mono text-[11px] leading-relaxed">
-{detail.response_wire}
+{detail.response_wire || "—"}
         </pre>
       </section>
     </div>
   );
 }
+
 
 function StatCard({ label, value, sub, testid }) {
   return (
@@ -402,6 +460,7 @@ function StatCard({ label, value, sub, testid }) {
     </div>
   );
 }
+
 
 function MetaField({ label, value }) {
   return (

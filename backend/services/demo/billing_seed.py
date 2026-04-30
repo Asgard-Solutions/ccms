@@ -445,6 +445,7 @@ async def _wipe_prior_demo(tenant_id: str) -> None:
         "remittance_claims", "remittance_lines",
         "invoices", "invoice_lines", "payments", "payment_allocations",
         "adjustments", "statements",
+        "eligibility_checks",
     ):
         await db[coll].delete_many({
             "tenant_id": tenant_id,
@@ -1101,8 +1102,108 @@ async def seed_demo_billing() -> None:
             seeded.append(result)
 
     await _seed_invoices_and_statements(tid, refs, seeded)
+    await _seed_eligibility_checks(tid, refs)
 
     logger.info(
         "demo.billing_seed complete: %d claims, %d invoices/statements",
         len(seeded), 4,   # Ethan + Aria + Jaxon + Hannah
     )
+
+
+async def _seed_eligibility_checks(tid: str, refs: dict) -> None:
+    """Seed one eligibility check per Riverbend persona with a policy.
+
+    Goal: the Patient profile, Appointment workflow, and Check-in
+    surfaces all have a populated Latest-status chip on first login.
+    Uses `MockEligibilityEngine` for deterministic output. Persists
+    the same document shape the live router does so the UI is
+    indistinguishable.
+    """
+    from services.billing.eligibility import (
+        EligibilityEngineError, default_engine,
+    )
+    from services.billing.eligibility_status import (
+        classify_result, policy_snapshot_hash,
+    )
+
+    db = get_db_write()
+    system_user = "demo-system"
+    engine = default_engine()
+
+    # Iterate every active policy in the tenant.
+    cursor = db.patient_insurance_policies.find(
+        {"tenant_id": tid, "status": "active"}, {"_id": 0},
+    )
+    provider_row = await db.providers.find_one(
+        {"tenant_id": tid, "entity_type": "org"}, {"_id": 0},
+    )
+    submitter_id = (
+        (provider_row or {}).get("tax_id")
+        or (provider_row or {}).get("npi")
+        or tid
+    ).replace("-", "")
+    submitter = {
+        "id": submitter_id,
+        "name": (provider_row or {}).get("organization_name") or "CCMS BILLING",
+        "contact_name": "BILLING",
+        "contact_phone": (provider_row or {}).get("phone"),
+    }
+    async for policy in cursor:
+        patient = await db.patients.find_one(
+            {"id": policy["patient_id"], "tenant_id": tid}, {"_id": 0},
+        )
+        payer = await db.billing_payers.find_one(
+            {"id": policy["payer_id"], "tenant_id": tid}, {"_id": 0},
+        )
+        if not patient or not payer or not policy.get("member_id"):
+            continue
+        receiver = {
+            "id": payer.get("electronic_payer_id")
+                  or payer.get("payer_code") or "PAYER",
+            "name": payer.get("name"),
+        }
+        try:
+            outcome = engine.check(
+                submitter=submitter, receiver=receiver,
+                provider=provider_row or submitter,
+                payer=payer, patient=patient, policy=policy,
+                service_type_codes=["30", "33", "98"],
+            )
+        except EligibilityEngineError:
+            # Skip any `ERR`-tagged policies during seeding — the live
+            # UI will exercise the error branch on demand.
+            continue
+        status = classify_result(outcome["result"])
+        doc = {
+            "id": str(uuid_uuid4_local()),
+            "tenant_id": tid,
+            "patient_id": policy["patient_id"],
+            "policy_id": policy["id"],
+            "payer_id": policy["payer_id"],
+            "provider_id": (provider_row or {}).get("id"),
+            "appointment_id": None,
+            "engine": outcome["engine"],
+            "sandbox": outcome["sandbox"],
+            "service_type_codes": outcome["service_type_codes"],
+            "service_date": outcome["checked_at"][:10],
+            "policy_snapshot_hash": policy_snapshot_hash(policy),
+            "status": status,
+            "request_wire": outcome["request_wire"],
+            "response_wire": outcome["response_wire"],
+            "result": outcome["result"],
+            "checked_at": outcome["checked_at"],
+            "checked_by": system_user,
+            "demo_seed_key": f"elig:{policy['id']}",
+        }
+        await db.eligibility_checks.update_one(
+            {"tenant_id": tid, "demo_seed_key": doc["demo_seed_key"]},
+            {"$set": doc},
+            upsert=True,
+        )
+
+
+def uuid_uuid4_local() -> Any:
+    # Isolated import to avoid leaking `uuid` into module top-level
+    # when the seed function isn't called (keeps cold-start light).
+    import uuid
+    return uuid.uuid4()

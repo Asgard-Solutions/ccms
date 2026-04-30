@@ -51,6 +51,7 @@ import PatientDocumentsCard from "../components/PatientDocumentsCard";
 import PatientLedgerCard from "./billing/PatientLedgerCard";
 import PatientStatementsCard from "./billing/PatientStatementsCard";
 import PatientInsuranceManager from "./billing/PatientInsuranceManager";
+import { PatientEligibilityCard } from "./billing/PatientEligibilityCard";
 import ChargeCaptureDialog from "./billing/ChargeCaptureDialog";
 import ClinicalTab from "./clinical/ClinicalTab";
 
@@ -1470,7 +1471,10 @@ export default function PatientDetail() {
         </TabsContent>
 
         <TabsContent value="insurance" className="mt-6">
-          <PatientInsuranceManager patientId={id} />
+          <div className="space-y-6">
+            <PatientEligibilityCard patientId={id} />
+            <PatientInsuranceManager patientId={id} />
+          </div>
         </TabsContent>
 
         <TabsContent value="billing" className="mt-6">
