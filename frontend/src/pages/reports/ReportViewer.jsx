@@ -502,6 +502,11 @@ export default function ReportViewer() {
         <AggregatesBar aggregates={result.aggregates} columns={meta.columns} />
       )}
 
+      {/* Heat map — rendered when the runner emits an `aggregates.matrix` shape */}
+      {result?.aggregates?.matrix && (
+        <HeatMapPanel matrix={result.aggregates.matrix} />
+      )}
+
       {/* Results table */}
       <section className="rounded-sm border border-border bg-card">
         <div className="flex items-center justify-between border-b border-border px-4 py-2">
@@ -1029,5 +1034,134 @@ function ExportResultDialog({ state, onClose }) {
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// Heat map — renders a pivot matrix emitted by analytical reports
+// (e.g. `denial_heat_map`). Rows = categories (y-axis),
+// cols = months (x-axis), cells carry `{count, amount_cents}`.
+// ---------------------------------------------------------------------------
+function HeatMapPanel({ matrix }) {
+  const { rows = [], cols = [], cells = [], max_count: maxCount = 0,
+          max_amount_cents: maxAmount = 0 } = matrix || {};
+  const [metric, setMetric] = useState("count"); // "count" | "amount"
+  if (!rows.length || !cols.length) {
+    return (
+      <section
+        data-testid="report-heatmap-empty"
+        className="rounded-sm border border-border bg-card px-4 py-3 text-xs text-muted-foreground"
+      >
+        No heat-map data for the current filters.
+      </section>
+    );
+  }
+
+  function intensity(cell) {
+    if (!cell) return 0;
+    const v = metric === "count" ? cell.count : cell.amount_cents;
+    const m = metric === "count" ? maxCount : maxAmount;
+    if (!m) return 0;
+    return Math.min(1, v / m);
+  }
+
+  // Tone palette — a 5-step scale from cool (no activity) to hot
+  // (peak category/month). Deliberately uses `bg-destructive/{pct}`
+  // style utilities so it plays with both light and dark themes.
+  function toneClasses(i) {
+    if (i === 0) return "bg-muted/30 text-muted-foreground";
+    if (i < 0.25) return "bg-destructive/10 text-foreground";
+    if (i < 0.5) return "bg-destructive/25 text-foreground";
+    if (i < 0.75) return "bg-destructive/40 text-foreground";
+    return "bg-destructive/60 text-destructive-foreground";
+  }
+
+  function formatCell(cell) {
+    if (!cell || cell.count === 0) return "—";
+    if (metric === "count") return String(cell.count);
+    return `$${(cell.amount_cents / 100).toFixed(0)}`;
+  }
+
+  return (
+    <section
+      data-testid="report-heatmap"
+      className="rounded-sm border border-border bg-card p-4 space-y-3"
+    >
+      <header className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="font-display text-sm font-medium tracking-tight">
+          Heat map · {rows.length} categor{rows.length === 1 ? "y" : "ies"} ×
+          {" "}{cols.length} month{cols.length === 1 ? "" : "s"}
+        </h3>
+        <div
+          className="inline-flex items-center gap-1 rounded-sm border border-border p-0.5 text-xs"
+          data-testid="report-heatmap-metric-toggle"
+        >
+          <button
+            type="button"
+            onClick={() => setMetric("count")}
+            data-testid="report-heatmap-metric-count"
+            className={`rounded-sm px-2 py-0.5 ${metric === "count" ? "bg-muted text-foreground" : "text-muted-foreground"}`}
+          >
+            Count
+          </button>
+          <button
+            type="button"
+            onClick={() => setMetric("amount")}
+            data-testid="report-heatmap-metric-amount"
+            className={`rounded-sm px-2 py-0.5 ${metric === "amount" ? "bg-muted text-foreground" : "text-muted-foreground"}`}
+          >
+            Amount
+          </button>
+        </div>
+      </header>
+
+      <div className="overflow-x-auto">
+        <table className="text-xs">
+          <thead>
+            <tr>
+              <th className="sticky left-0 bg-card px-2 py-1 text-left font-medium text-muted-foreground">
+                Category
+              </th>
+              {cols.map((m) => (
+                <th key={m} className="px-2 py-1 text-center font-medium text-muted-foreground">
+                  {m}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((cat, i) => (
+              <tr key={cat}>
+                <td className="sticky left-0 bg-card px-2 py-1 text-xs font-medium">
+                  {cat}
+                </td>
+                {cols.map((m, j) => {
+                  const cell = cells?.[i]?.[j] || {};
+                  const t = intensity(cell);
+                  return (
+                    <td
+                      key={`${cat}-${m}`}
+                      data-testid={`report-heatmap-cell-${i}-${j}`}
+                      title={cell.codes?.length
+                        ? `${cell.count} denials · $${(cell.amount_cents/100).toFixed(2)}\nCodes: ${cell.codes.join(", ")}\n${cell.open} open · ${cell.resolved} resolved`
+                        : `${cell.count} denials`}
+                      className={`border border-border px-3 py-1 text-center tabular-nums ${toneClasses(t)}`}
+                    >
+                      {formatCell(cell)}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <p className="text-[11px] text-muted-foreground">
+        Hover any cell to see denial codes and open/resolved split. Toggle
+        Count ↔ Amount to re-colour the intensity scale.
+      </p>
+    </section>
   );
 }

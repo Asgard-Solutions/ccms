@@ -134,10 +134,10 @@ FEATURES: list[tuple[str, list[tuple[str, str]]]] = [
     ("Reporting & Analytics", [
         ("Dashboards (billing, clinical summary, today's schedule)", "shipped"),
         ("Revenue tracking (Outstanding Balance, Lifetime Billed, Payments Recorded)", "shipped"),
-        ("Payer analysis / payer mix", "partial"),
-        ("Custom reports (reports landing page + report viewer)", "partial"),
+        ("Payer analysis / payer mix (per-payer rollup: claim count, billed, paid, outstanding, denial rate, collection rate, avg days-to-pay)", "shipped"),
+        ("Custom reports (reports landing page + report viewer with filters, column picker, views, export, sort, pagination, aggregates bar, heat-map visualisation) — 35 registered reports", "shipped"),
         ("A/R aging", "shipped"),
-        ("Denial heat map", "partial"),
+        ("Denial heat map (category × month pivot with intensity gradient; count/amount toggle; CARC code classifier)", "shipped"),
         ("Outcome trends per measure (inline SVG charts)", "shipped"),
         ("Clinical summary counts (visits / exams / plans / re-exams / notes / dx)", "shipped"),
         ("Patient progression tracking (baseline → current across re-exams)", "shipped"),

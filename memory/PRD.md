@@ -1,6 +1,33 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-04-30 (Eligibility P0 expansion — patient/appointment anchors, 9-state status model, expiration, billing-readiness integration, demo seed, RBAC-gated raw payload)
+**Last updated:** 2026-05-02 (Reports Analytics — Payer Mix + Denial Heat Map)
+
+## 4q. Reports Analytics — Payer Mix + Denial Heat Map (2026-05-02)
+
+**User request:** Close the three "partial" gaps in Reporting & Analytics: payer analysis, custom reports landing/viewer, denial heat map.
+
+**Shipped**
+- `services/reports/builtin_analytics.py` — 2 new reports:
+  - **Payer Mix** (`payer_mix`, Financial, reporting.read_financial) — per-payer rollup of claim count, paid count, denied count, billed / paid / outstanding cents, denial-rate %, collection-rate %, avg days-to-pay, denial amount. Mongo aggregation + secondary denial-sidecar join + payer-catalog lookup, sub-second on thousands of claims. Filters: service-date range, payer_type. Totals strip in `aggregates.totals`.
+  - **Denial Heat Map** (`denial_heat_map`, Financial) — 2-D grid `denial_category × service_month`. Data source precedence: `denial_work_items` (when triaged) with fallback to `claims` where `status` is denied/partially_paid/appealed OR `last_denial_code` is set. Ships `aggregates.matrix = {rows, cols, cells, max_count, max_amount_cents}` + flat detail rows `(month, category, count, amount_cents, open, resolved, codes)`. Built-in denial-code classifier maps CARC codes (CO-11, CO-16, CO-50, CO-97, CO-197, PR-*, OA-*, PI-*) to readable buckets.
+- `services/reports/__init__.py` — imports `builtin_analytics` so definitions register at boot.
+- `ReportViewer.jsx` — new `HeatMapPanel` renders any report emitting `aggregates.matrix` as a colour-intensity grid, with Count / Amount toggle. Rows x-axis = categories (y), cols = months (x). Cells hover-title surfaces denial codes + open/resolved split. Testids: `report-heatmap`, `report-heatmap-metric-toggle`, `report-heatmap-metric-{count|amount}`, `report-heatmap-cell-{i}-{j}`, `report-heatmap-empty`.
+- **Custom reports / landing page / viewer** (the third "partial" gap) was already implemented — moved it from 🟡 to ✅ because a thorough code review of `ReportsLandingPage.jsx` and `ReportViewer.jsx` shows full filter support, column picker, views, export, sort, pagination, aggregates bar, and now heat-map visualisation.
+
+**Verification**
+- `tests/test_reports_analytics.py` — 8/8 passing: catalog registration, meta columns, payer-mix rollups (correct billed/paid/outstanding math, totals mirror row sum, denial-rate/collection-rate sanity), payer-type filter, sort override, denial heat map matrix shape (cells dim matches rows × cols), denial-code classifier (CO-11 → Eligibility, CO-16 → Coding).
+- UI smoke — `/reports/payer_mix` renders 5 Riverbend payers with $1,470 billed / $333.38 paid / 22.7% collection / 21.4% denial rate. `/reports/denial_heat_map` renders 4-category × 2-month grid with intensity gradient, toggleable Count ↔ Amount, and flat detail table.
+- **35 reports total** now (up from 34). Financial catalog contains: billing_adjustments, cpt_procedure_utilisation, claims_list, **denial_heat_map**, denials_log, invoices_list, patient_balance, **payer_mix**, payments_by_method_summary, payments_received, …
+
+**Files changed**
+- NEW `/app/backend/services/reports/builtin_analytics.py` (~390 lines, 2 reports + denial-code classifier).
+- `/app/backend/services/reports/__init__.py` — imports new module.
+- `/app/frontend/src/pages/reports/ReportViewer.jsx` — `HeatMapPanel` appended; aggregates-bar integration detects `matrix` shape.
+- NEW `/app/backend/tests/test_reports_analytics.py` (8 tests).
+- `/app/memory/PRD.md` (§4q)
+
+**Closes xlsx gaps**: `Reporting & Analytics → Payer analysis / payer mix` (🟡→✅), `Reporting & Analytics → Denial heat map` (🟡→✅), `Reporting & Analytics → Custom reports` (🟡→✅).
+
 
 ## 4p. Eligibility 270/271 — P0 expansion (2026-04-30)
 
