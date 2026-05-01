@@ -33,6 +33,10 @@ from services.reports.definitions import (
     SortOption,
     register,
 )
+from services.reports.denial_classifications import (
+    classify_denial_code,
+    load_tenant_overrides,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -317,6 +321,7 @@ async def _run_denial_heat_map(qc: QueryContext) -> RunResult:
     db = tenant_db(qc.tenant.tenant_id)
 
     payer_filter_id = qc.filters.get("payer_id") or None
+    tenant_overrides = await load_tenant_overrides(db, qc.tenant.tenant_id)
 
     # Bucket: category -> month -> cell dict
     cat_index: dict[str, dict[str, dict]] = {}
@@ -370,8 +375,13 @@ async def _run_denial_heat_map(qc: QueryContext) -> RunResult:
     }})
     covered_claim_ids: set[str] = set()
     async for r in db.denial_work_items.aggregate(work_pipeline):
+        # Prefer the operator-assigned category; fall back to the
+        # code classifier (honouring tenant overrides) when blank.
+        cat = r["category"] or "Uncategorised"
+        if cat == "Uncategorised" and r.get("code"):
+            cat = classify_denial_code(r["code"], tenant_overrides)
         _bump(
-            r["category"] or "Uncategorised",
+            cat,
             r.get("month") or "",
             amount=r["amount_cents"],
             code=r.get("code"),
@@ -395,7 +405,9 @@ async def _run_denial_heat_map(qc: QueryContext) -> RunResult:
     }):
         if c["id"] in covered_claim_ids:
             continue
-        cat = _classify_denial_code(c.get("last_denial_code"))
+        cat = classify_denial_code(
+            c.get("last_denial_code"), tenant_overrides,
+        )
         month = _month_key(c.get("service_date_from"))
         amount = max(
             0, (c.get("billed_cents") or 0) - (c.get("paid_cents") or 0),
@@ -472,54 +484,10 @@ async def _run_denial_heat_map(qc: QueryContext) -> RunResult:
     )
 
 
-# ---------------------------------------------------------------------------
-# Denial code → category classifier. Covers the CARC buckets that the
-# Riverbend seed uses (CO, PR, OA, PI) plus the usual suspects. Keeps
-# the heat map rows legible without needing payer remittance parsers.
-# ---------------------------------------------------------------------------
-_DENIAL_CATEGORY_BY_CODE: dict[str, str] = {
-    # Eligibility / coverage
-    "CO-11":  "Eligibility / coverage",
-    "CO-27":  "Eligibility / coverage",
-    "CO-29":  "Timely filing",
-    # Authorization
-    "CO-197": "Authorization",
-    "CO-198": "Authorization",
-    # Bundling / CCI
-    "CO-97":  "Bundling / CCI",
-    "CO-B15": "Bundling / CCI",
-    # Coding / medical necessity
-    "CO-16":  "Coding / documentation",
-    "CO-50":  "Medical necessity",
-    # Coordination of benefits
-    "CO-22":  "COB / primary payer",
-    # Patient responsibility
-    "PR-1":   "Patient deductible",
-    "PR-2":   "Patient coinsurance",
-    "PR-3":   "Patient copay",
-    "PR-45":  "Allowed amount reduction",
-    # Contractual
-    "OA-23":  "Other adjudication",
-    "PI-45":  "Payer contract",
-}
-
-
-def _classify_denial_code(code: str | None) -> str:
-    if not code:
-        return "Uncategorised"
-    up = code.strip().upper()
-    if up in _DENIAL_CATEGORY_BY_CODE:
-        return _DENIAL_CATEGORY_BY_CODE[up]
-    # Prefix fallback — `CO-*` → "Contractual / denial" bucket.
-    if up.startswith("CO"):
-        return "Contractual (CO)"
-    if up.startswith("PR"):
-        return "Patient responsibility (PR)"
-    if up.startswith("OA"):
-        return "Other adjustments (OA)"
-    if up.startswith("PI"):
-        return "Payer initiated (PI)"
-    return "Uncategorised"
+# Denial code → category classification now lives in
+# `services.reports.denial_classifications` so tenant overrides are
+# honoured end-to-end. Import `classify_denial_code` + builtin map
+# from there.
 
 
 _DENIAL_HEAT_MAP_DEF = register(ReportDefinition(

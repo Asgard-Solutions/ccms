@@ -57,6 +57,7 @@ from services.patient.router import router as patient_router  # noqa: E402
 from services.perf.router import router as perf_router, metrics_router  # noqa: E402
 from services.privacy.router import router as privacy_router  # noqa: E402
 from services.reports.router import router as reports_router  # noqa: E402
+from services.reports.denial_classifications import router as reports_denial_class_router  # noqa: E402
 from services.rooms.router import router as rooms_router  # noqa: E402
 from services.scheduling.router import router as scheduling_router  # noqa: E402
 from services.scheduling.checkout_hooks import register_hooks as _register_checkout_hooks  # noqa: E402
@@ -101,6 +102,7 @@ api_router.include_router(compliance_router)
 api_router.include_router(privacy_router)
 api_router.include_router(audit_router)
 api_router.include_router(perf_router)
+api_router.include_router(reports_denial_class_router)
 api_router.include_router(reports_router)
 api_router.include_router(exports_router)
 api_router.include_router(compliance_ops_router)

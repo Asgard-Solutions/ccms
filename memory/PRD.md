@@ -1,6 +1,47 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-05-02 (Reports Analytics — Payer Mix + Denial Heat Map)
+**Last updated:** 2026-05-02 (Denial Classifier — tenant-managed overrides + heat-map Teach-the-Classifier UX)
+
+## 4r. Denial Classifier — tenant-managed CARC overrides (2026-05-02)
+
+**User request:** On every `Uncategorised` row in the denial heat map, let operators teach the system new codes one-click, and keep the dictionary as a tenant-wide asset.
+
+**Shipped**
+- `services/reports/denial_classifications.py` — new tenant-scoped collection `denial_code_classifications` with CRUD:
+  - `GET /api/reports/denial-classifications` — catalog: built-in map + tenant overrides + known category vocabulary.
+  - `POST /api/reports/denial-classifications` — upsert (idempotent on `code`).
+  - `DELETE /api/reports/denial-classifications/{id}` — remove.
+  - Shared `classify_denial_code(code, tenant_overrides)` with lookup order tenant → built-in → prefix-bucket → `Uncategorised`.
+  - Permission: `reporting.read_financial` (audit trail captures every upsert/delete so no need to gate writes behind MFA for a shared dictionary).
+  - Audit events: `reports.denial_classification.upserted`, `reports.denial_classification.removed`.
+- `services/reports/builtin_analytics.py` — heat-map runner now loads tenant overrides once per run, applies them both to the `claims`-fallback path AND the `denial_work_items` path (when the work-item's category is blank). Local duplicate classifier removed.
+- Router wiring — `reports_denial_class_router` mounted BEFORE `reports_router` so the `/reports/{name}` catch-all doesn't shadow `/reports/denial-classifications`.
+- `pages/reports/DenialClassifierDialog.jsx` — NEW modal:
+  - Code input (auto-uppercases, 16-char pattern guard).
+  - Category input with `<datalist>` autocomplete seeded from known categories (built-ins + tenant).
+  - "Currently → X (built-in/tenant)" helper line so users see the status quo before overriding.
+  - Existing-mappings manager — inline list with one-click delete.
+  - Testids: `denial-classifier-dialog`, `denial-classifier-code`, `denial-classifier-category`, `denial-classifier-current-mapping`, `denial-classifier-existing`, `denial-classifier-save-btn`, `denial-classifier-cancel-btn`, `denial-classifier-remove-{id}`.
+- `pages/reports/ReportViewer.jsx` `HeatMapPanel`:
+  - "Manage classifier" button in the heat-map header (visible only on `denial_heat_map`).
+  - Inline `Tag` button on any `Uncategorised` row in the heat-map axis — click routes the first un-classified code straight into the dialog.
+  - Report auto-reloads after save via a `reloadNonce` counter.
+
+**Verification**
+- 11/11 tests pass (`test_reports_denial_classifier.py`) + 8/8 (`test_reports_analytics.py`) = **19/19**.
+- UI smoke: opened /reports/denial_heat_map, clicked Manage classifier, typed `ZZ-777` + `Payer education needed`, saved, toast fired, dialog closed, heat map auto-refreshed, DELETE cleanup returned 204.
+- Full-trip integration test registers an override, seeds a claim with the new code, runs the heat map, and asserts the row lands in the new category.
+
+**Files changed**
+- NEW `/app/backend/services/reports/denial_classifications.py`
+- `/app/backend/services/reports/builtin_analytics.py` — uses shared classifier + tenant overrides.
+- `/app/backend/server.py` — mounts `reports_denial_class_router` before `reports_router`.
+- NEW `/app/backend/tests/test_reports_denial_classifier.py` (11 tests).
+- NEW `/app/frontend/src/pages/reports/DenialClassifierDialog.jsx`
+- `/app/frontend/src/pages/reports/ReportViewer.jsx` — "Categorise" affordance + Manage classifier button + reload nonce.
+- `/app/frontend/src/pages/reports/reportsApi.js` — 3 new helpers.
+- `/app/memory/PRD.md` (§4r)
+
 
 ## 4q. Reports Analytics — Payer Mix + Denial Heat Map (2026-05-02)
 
