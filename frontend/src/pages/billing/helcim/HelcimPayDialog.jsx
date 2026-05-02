@@ -9,6 +9,8 @@ import {
   DialogTitle,
 } from "../../../components/ui/dialog";
 import { Button } from "../../../components/ui/button";
+import { Checkbox } from "../../../components/ui/checkbox";
+import { Label } from "../../../components/ui/label";
 import {
   initializeHelcimCheckout,
   captureHelcimCheckout,
@@ -55,10 +57,14 @@ export default function HelcimPayDialog({
   amountCents, currency = "USD",
   invoiceId, patientId, customerCode, description,
   paymentType = "purchase",
+  enableSaveCard = true,
 }) {
   const [phase, setPhase] = useState("idle"); // idle | initializing | awaiting | capturing | done | error
   const [error, setError] = useState(null);
+  const [saveCard, setSaveCard] = useState(false);
   const sessionRef = useRef(null);
+  const saveCardRef = useRef(false);
+  saveCardRef.current = saveCard && !!patientId;
 
   useEffect(() => {
     if (!open) return;
@@ -99,6 +105,11 @@ export default function HelcimPayDialog({
             response: 1,
             response_message: txn.response || null,
             raw: parsed,
+            save_card: saveCardRef.current,
+            save_card_brand: txn.cardType || txn.cardBrand || null,
+            save_card_last4: txn.cardNumber ? String(txn.cardNumber).slice(-4) : null,
+            save_card_expiry: txn.cardExpiry || txn.expiryDate || null,
+            save_card_cardholder: txn.cardHolderName || null,
           });
           setPhase("done");
           toast.success("Payment approved.");
@@ -197,9 +208,28 @@ export default function HelcimPayDialog({
         )}
 
         {phase === "awaiting" && (
-          <div data-testid="helcim-pay-awaiting" className="text-sm text-muted-foreground">
-            The Helcim secure form has opened. Complete the card entry, then this
-            window will close automatically.
+          <div data-testid="helcim-pay-awaiting" className="space-y-3">
+            <div className="text-sm text-muted-foreground">
+              The Helcim secure form has opened. Complete the card entry, then this
+              window will close automatically.
+            </div>
+            {enableSaveCard && patientId && (
+              <label className="flex items-start gap-2 rounded-sm border border-dashed border-border bg-muted/40 p-2.5 text-xs">
+                <Checkbox
+                  data-testid="helcim-pay-save-card"
+                  checked={saveCard}
+                  onCheckedChange={(v) => setSaveCard(!!v)}
+                />
+                <div>
+                  <span className="font-medium text-foreground">Save card on file for future charges</span>
+                  <p className="mt-0.5 text-muted-foreground">
+                    Stores a Helcim Customer Vault token. Useful for payment plans, treatment
+                    plans, and statement auto-pay. Patient consent required — capture it on the
+                    paper or e-signed authorization form.
+                  </p>
+                </div>
+              </label>
+            )}
           </div>
         )}
 

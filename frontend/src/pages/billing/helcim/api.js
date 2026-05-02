@@ -27,3 +27,40 @@ export const refundHelcim = (body) =>
 
 export const fetchHelcimWebhookLog = () =>
   api.get(`${BASE}/webhook-log`).then((r) => r.data);
+
+// --- Customer Vault (saved cards) ---
+
+export const listSavedCards = (patientId) =>
+  api.get(`${BASE}/cards/${patientId}`).then((r) => r.data);
+
+export const saveCardManual = (body) =>
+  api.post(`${BASE}/cards`, body).then((r) => r.data);
+
+export const deleteSavedCard = (tokenId) =>
+  api.delete(`${BASE}/cards/${tokenId}`).then((r) => r.data);
+
+export const chargeSavedCardById = (body) =>
+  api.post(`${BASE}/cards/charge`, body).then((r) => r.data);
+
+// --- Payment schedules ---
+
+export const listSchedules = (params = {}) =>
+  api.get(`${BASE}/schedules`, { params }).then((r) => r.data);
+
+export const createSchedule = (body) =>
+  api.post(`${BASE}/schedules`, body).then((r) => r.data);
+
+export const patchSchedule = (id, body) =>
+  api.patch(`${BASE}/schedules/${id}`, body).then((r) => r.data);
+
+export const changeScheduleStatus = (id, newStatus) =>
+  api.post(`${BASE}/schedules/${id}/status`, { new_status: newStatus }).then((r) => r.data);
+
+export const fetchScheduleRuns = (id) =>
+  api.get(`${BASE}/schedules/${id}/runs`).then((r) => r.data);
+
+export const runScheduleNow = (id) =>
+  api.post(`${BASE}/schedules/${id}/run-now`).then((r) => r.data);
+
+export const tickScheduler = () =>
+  api.post(`${BASE}/scheduler/tick`).then((r) => r.data);

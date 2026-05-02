@@ -3,6 +3,7 @@ CCMS API Gateway (FastAPI) — HIPAA-hardened build.
 """
 import logging
 import os
+import asyncio
 import time
 from pathlib import Path
 
@@ -224,6 +225,12 @@ async def on_startup():
     except Exception as exc:  # noqa: BLE001
         logger.warning("export cleanup on boot failed: %s", exc)
     redis_alive = await redis_ping()
+    # Start the Helcim payment-schedule worker (best-effort; doesn't block startup).
+    try:
+        from services.billing.helcim.worker import run_forever as _helcim_worker
+        app.state.helcim_worker_task = asyncio.create_task(_helcim_worker())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("helcim scheduler worker failed to start: %s", exc)
     logger.info(
         "CCMS startup complete (HIPAA-hardened, redis_alive=%s).", redis_alive
     )
@@ -231,5 +238,12 @@ async def on_startup():
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    task = getattr(app.state, "helcim_worker_task", None)
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
     await close_redis()
     await close_client()

@@ -2,6 +2,8 @@ import { Link, useParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import PatientLedgerCard from "./PatientLedgerCard";
 import PatientStatementsCard from "./PatientStatementsCard";
+import SavedCardsCard from "./helcim/SavedCardsCard";
+import PaymentPlansCard from "./helcim/PaymentPlansCard";
 
 export default function PatientLedgerPage() {
   const { id } = useParams();
@@ -19,6 +21,10 @@ export default function PatientLedgerPage() {
         </h1>
       </header>
       <PatientLedgerCard patientId={id} title="Activity" />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <SavedCardsCard patientId={id} />
+        <PaymentPlansCard patientId={id} />
+      </div>
       <PatientStatementsCard patientId={id} />
     </div>
   );
