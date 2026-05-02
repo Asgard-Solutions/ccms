@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CreditCard, DollarSign } from "lucide-react";
+import { CreditCard, DollarSign, Sparkles } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -30,8 +30,10 @@ import {
   PAYMENT_METHOD_LABELS,
   createPayment,
 } from "./useBilling";
+import HelcimPayDialog from "./helcim/HelcimPayDialog";
 
 const METHOD_OPTIONS = Object.entries(PAYMENT_METHOD_LABELS);
+const HELCIM_METHODS = new Set(["card_present", "card_not_present"]);
 
 /**
  * PostPaymentDialog — capture a cash/check/card-reference payment and
@@ -57,6 +59,7 @@ export default function PostPaymentDialog({
   const [notes, setNotes] = useState("");
   const [allocations, setAllocations] = useState({});   // invoice_id -> cents
   const [saving, setSaving] = useState(false);
+  const [helcimOpen, setHelcimOpen] = useState(false);
 
   const openInvoices = useMemo(
     () => (invoices || []).filter(
@@ -74,6 +77,7 @@ export default function PostPaymentDialog({
       setReference("");
       setNotes("");
       setAllocations({});
+      setHelcimOpen(false);
     }
   }, [open]);
 
@@ -110,6 +114,26 @@ export default function PostPaymentDialog({
     setAllocations(next);
   }
 
+  async function postPaymentRow(extraReference) {
+    const allocsList = Object.entries(allocations)
+      .filter(([, v]) => v > 0)
+      .map(([invoice_id, amount_cents]) => ({ invoice_id, amount_cents }));
+    await createPayment({
+      patient_id: patient.id,
+      method,
+      amount_cents: amountCents,
+      currency: "USD",
+      reference: extraReference || reference.trim() || undefined,
+      allocations: allocsList,
+    });
+    toast.success(
+      `Posted ${formatCents(amountCents)} payment`
+        + (remaining > 0 ? ` (${formatCents(remaining)} unapplied credit)` : ""),
+    );
+    if (onPosted) onPosted();
+    onOpenChange(false);
+  }
+
   async function onSubmit() {
     if (amountCents == null || amountCents <= 0) {
       toast.error("Enter an amount greater than zero");
@@ -121,25 +145,29 @@ export default function PostPaymentDialog({
     }
     setSaving(true);
     try {
-      const allocsList = Object.entries(allocations)
-        .filter(([, v]) => v > 0)
-        .map(([invoice_id, amount_cents]) => ({ invoice_id, amount_cents }));
-      await createPayment({
-        patient_id: patient.id,
-        method,
-        amount_cents: amountCents,
-        currency: "USD",
-        reference: reference.trim() || undefined,
-        allocations: allocsList,
-      });
-      toast.success(
-        `Posted ${formatCents(amountCents)} payment`
-          + (remaining > 0 ? ` (${formatCents(remaining)} unapplied credit)` : ""),
-      );
-      if (onPosted) onPosted();
-      onOpenChange(false);
+      await postPaymentRow();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Could not post payment");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function onHelcimClose() {
+    setHelcimOpen(false);
+  }
+
+  async function onHelcimSuccess(txn) {
+    setHelcimOpen(false);
+    setSaving(true);
+    try {
+      const ref = `helcim:${txn.transaction_id || txn.transactionId || "ok"}`;
+      setReference(ref);
+      await postPaymentRow(ref);
+    } catch (e) {
+      toast.error(
+        `Card was charged but failed to record locally — please post manually. ${e?.response?.data?.detail || ""}`,
+      );
     } finally {
       setSaving(false);
     }
@@ -157,8 +185,8 @@ export default function PostPaymentDialog({
           </DialogTitle>
           <DialogDescription>
             {patient?.name ? `Posting for ${patient.name}. ` : ""}
-            Cash &amp; checks post as captured. Card / ACH stays pending
-            until the gateway confirms.
+            Cash &amp; checks post as captured. Card methods route through
+            HelcimPay — the gateway transaction id auto-fills the reference.
           </DialogDescription>
         </DialogHeader>
 
@@ -299,17 +327,41 @@ export default function PostPaymentDialog({
             variant="ghost" onClick={() => onOpenChange(false)}
             data-testid="pp-cancel"
           >Cancel</Button>
-          <Button
-            onClick={onSubmit}
-            disabled={saving || amountCents == null || amountCents <= 0 || overAllocated}
-            data-testid="pp-submit"
-            className="rounded-sm"
-          >
-            <CreditCard className="mr-2 h-4 w-4" />
-            {saving ? "Posting…" : `Post ${amountCents ? formatCents(amountCents) : ""}`}
-          </Button>
+          {HELCIM_METHODS.has(method) ? (
+            <Button
+              onClick={() => setHelcimOpen(true)}
+              disabled={saving || amountCents == null || amountCents <= 0 || overAllocated}
+              data-testid="pp-charge-helcim"
+              className="rounded-sm"
+            >
+              <Sparkles className="mr-2 h-4 w-4" />
+              {saving ? "Posting…" : `Charge ${amountCents ? formatCents(amountCents) : ""} via Helcim`}
+            </Button>
+          ) : (
+            <Button
+              onClick={onSubmit}
+              disabled={saving || amountCents == null || amountCents <= 0 || overAllocated}
+              data-testid="pp-submit"
+              className="rounded-sm"
+            >
+              <CreditCard className="mr-2 h-4 w-4" />
+              {saving ? "Posting…" : `Post ${amountCents ? formatCents(amountCents) : ""}`}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
+      {helcimOpen && amountCents != null && amountCents > 0 && (
+        <HelcimPayDialog
+          open={helcimOpen}
+          onClose={onHelcimClose}
+          onSuccess={onHelcimSuccess}
+          amountCents={amountCents}
+          currency="USD"
+          patientId={patient?.id}
+          customerCode={patient?.id}
+          description={notes || `Payment for ${patient?.name || "patient"}`}
+        />
+      )}
     </Dialog>
   );
 }

@@ -2,6 +2,27 @@
 
 **Last updated:** 2026-05-02 (Helcim payment processor integration — per-tenant credentials, HelcimPay.js checkout, Customer Vault saved cards, refunds, signed webhooks)
 
+## 4u. PostPaymentDialog → HelcimPay wiring (2026-05-02)
+
+**User accepted the engagement-angle suggestion** to wire the HelcimPay modal into the existing payment-collection flow so the front-desk "Take payment" button actually opens the Helcim iframe on day one.
+
+**Shipped**
+- `pages/billing/PostPaymentDialog.jsx` — when method is `card_present` or `card_not_present`, the "Post" button is replaced with a "Charge $X via Helcim" button (testid `pp-charge-helcim`). Clicking it opens `HelcimPayDialog`. On success, the `helcim:{transactionId}` reference auto-fills and the local payment row is posted via the existing `createPayment()` path. On decline / cancel, the dialog closes and the user can try again or pick a different method.
+- The dialog description was updated to reflect the new behaviour: "Cash & checks post as captured. Card methods route through HelcimPay — the gateway transaction id auto-fills the reference."
+- Smoke-tested end-to-end on `/billing/invoices/{id}` → "Post Payment" → method "Card (in-person)" → "Charge $30.00 via Helcim" → HelcimPay dialog mounts and gracefully shows the "Helcim is not configured" error from the test creds (real creds will pop the actual iframe).
+
+**Side-fix included** — `services/billing/models.py:InvoiceLine` now coerces `code_type` to lower-case via a `field_validator` to tolerate legacy Mongo rows with `'CPT'` (uppercase). Without this, `GET /api/billing/invoices/{id}/lines` returned a `ResponseValidationError` 500 and prevented `InvoiceDetail.jsx` from loading at all. Pre-existing data integrity bug surfaced while testing — fixed with a 3-line additive change.
+
+**Verification**
+- 25/25 Helcim backend tests still passing.
+- Lint clean (eslint + ruff).
+- Smoke: from invoice detail → Post Payment → Card (in-person) → "Charge via Helcim" button visible → click opens HelcimPay dialog → unconfigured-creds error displayed.
+
+**Files changed**
+- `/app/frontend/src/pages/billing/PostPaymentDialog.jsx`
+- `/app/backend/services/billing/models.py`
+
+
 ## 4t. Helcim payment processor — per-tenant integration (2026-05-02)
 
 **User request:** "we don't want to use stripe for payments we want to use Helcim for payments." Per-tenant credentials are a hard requirement — each chiropractic office uses their own Helcim merchant account. Specifically: HelcimPay.js hosted checkout + Helcim Customer Vault for saved cards + Helcim refund API + Helcim webhooks.

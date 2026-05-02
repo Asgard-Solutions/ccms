@@ -592,6 +592,12 @@ class InvoiceLinePublic(BaseModel):
     modifiers: list[str] = Field(default_factory=list)
     provider_id: str | None = None
 
+    @field_validator("code_type", mode="before")
+    @classmethod
+    def _coerce_code_type(cls, v):
+        # Tolerate legacy upper-case rows in Mongo.
+        return v.lower() if isinstance(v, str) else v
+
 
 # ---------------------------------------------------------------------------
 # Payments & allocations
