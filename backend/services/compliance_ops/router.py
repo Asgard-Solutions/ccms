@@ -303,7 +303,7 @@ async def create_incident(
 async def list_incidents(
     status_filter: str | None = None, severity: str | None = None,
     request: Request = None,  # type: ignore[assignment]
-    user: dict = Depends(require_permission("reporting", "export", audit_allow=False)),
+    user: dict = Depends(require_permission("reporting", "read", audit_allow=False)),
     ctx: TenantContext = Depends(get_tenant_context),
 ):
     q: dict = {}

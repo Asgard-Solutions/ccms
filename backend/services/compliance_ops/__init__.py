@@ -244,11 +244,11 @@ class IncidentPublic(BaseModel):
     title: str
     summary: str
     detected_at: str
-    reported_at: str | None
+    reported_at: str | None = None
     affected_systems: list[str]
     affected_tenant_ids: list[str]
     potential_data_categories: list[str]
-    owner_user_id: str | None
+    owner_user_id: str | None = None
     containment_actions: list[str] = []
     eradication_actions: list[str] = []
     root_cause: str | None = None
