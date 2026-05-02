@@ -1,6 +1,71 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-05-02 (Denial Classifier — tenant-managed overrides + heat-map Teach-the-Classifier UX)
+**Last updated:** 2026-05-02 (ISO 27001 + SOC 2 Compliance Ops UI hub — full register UI for Policies, Risks, Evidence, Incidents, Vendors, Access Reviews, Controls + Audit Trail)
+
+## 4s. ISO 27001 + SOC 2 control plane — full register UI (2026-05-02)
+
+**User request:** Implement Core Platform & Architecture compliance features — ISO 27001 alignment (policy + evidence + risk register) + SOC 2 certifiable controls (audit log, access review, incident register).
+
+**Status going in:** Backend `compliance_ops` module was already complete (8 entity types, full CRUD + status-change + field-patch + dashboard aggregation, idempotent seeds, tenant-scoped, audited, SHA-256 tamper-evident on evidence). The legacy `Compliance.jsx` page only rendered `/api/compliance/overview` (control inventory + env hardening) and never touched the new `/api/compliance-ops/*` registers. Closing that gap.
+
+**Shipped**
+- `pages/Compliance.jsx` — rewritten as a 9-tab control plane (Dashboard, Controls, Policies, Risks, Evidence, Incidents, Access reviews, Vendors, Audit trail). 50 lines of pure composition.
+- `pages/compliance/api.js` — central `compliance-ops/*` client (16 helpers): dashboard, list+create per entity, status-change, field-patch, raw-doc-fetch, evidence legal-hold toggle.
+- `pages/compliance/common.jsx` — shared primitives:
+  - `StatusChip` mapped across 24 status states (controls/risks/policies/incidents/vendors/access reviews) with tone+icon
+  - `SeverityChip` (low/medium/high/critical)
+  - `ScoreChip` (risk inherent score color-graded: 1-3 success, 4-8 info, 9-14 warning, 15-25 danger)
+  - `HistoryDialog` — fetches raw doc via `/compliance-ops/{type}/{id}` and displays the tamper-evident mutation trail
+  - `EmptyState`, `SectionHeader`, `todayIso`, `inDaysIso`, `isOverdue`
+- `pages/compliance/DashboardPanel.jsx` — 8 KPI tiles (controls / open risks / open incidents / overdue policies / BAA missing / access reviews / privacy requests / evidence) with tone-aware color when thresholds are breached.
+- `pages/compliance/registers/PoliciesRegister.jsx` — list + filter (all/draft/approved/retired), `New policy` dialog, status transitions (draft→approved→retired), overdue review highlighting.
+- `pages/compliance/registers/RisksRegister.jsx` — list + filter, `New risk` dialog with live inherent-score chip preview (likelihood × impact), status transitions, treatment label.
+- `pages/compliance/registers/EvidenceRegister.jsx` — list + filter by type, `Capture evidence` dialog (sealed SHA-256 on creation), legal-hold toggle (reauth-gated), tamper-evident hint.
+- `pages/compliance/registers/IncidentsRegister.jsx` — severity + status chips, IR workflow transitions (triage→investigating→contained→eradicated→recovered→closed), `Log incident` dialog (reauth-gated), notification-required indicator.
+- `pages/compliance/registers/VendorsRegister.jsx` — BAA badge logic (Required + Executed → green, Required + Missing → red, Not required → N/A), next-review-date overdue styling, `New vendor` dialog with data categories chips.
+- `pages/compliance/registers/AccessReviewsRegister.jsx` — schedule + complete flow (patch decision then status→complete in one click), filter for overdue/scheduled/in-progress/complete.
+- `pages/compliance/registers/ControlsRegister.jsx` — formal control register with framework filter (HIPAA / SOC2 / ISO27001 / CCPA), shows framework chips with refs in tooltip, status filter.
+- `pages/compliance/registers/AuditTrail.jsx` — last 50 compliance-relevant events from `/api/audit-logs` (filtered to `compliance.*`, `auth.*`, `security.*`, PHI access). Link out to full audit page.
+
+**Backend fixes (uncovered by testing agent iter 70 → fixed iter 71)**
+- `services/compliance_ops/router.py` — `list_incidents` was incorrectly gated by `reporting.export` permission (forced reauth on every Incidents tab open). Downgraded to `reporting.read` to match the other 8 list routes; only the create + status-change routes keep `reporting.export`.
+- `services/compliance_ops/__init__.py` — `IncidentPublic.owner_user_id` and `reported_at` are now `Optional[str] = None`. Without the default the seeded "Replica lag spike on 2026-02-15" row 500'd on serialization.
+- `services/compliance_ops/seed.py` — incidents seed now passes `defaults={"owner_user_id": None}` so future re-seeds are explicit about the field.
+
+**Test fixture pollution fix**
+- `tests/test_custom_roles_phase2.py` — added `_purge_test_role_leaks` autouse module fixture that sweeps any custom role whose name matches a known test prefix (`test role`, `inuse test`, `counttest`, `delete test`, etc.) at session start AND end. Previously a partial run could leave a test role attached to admin and shrink the admin's effective permissions on subsequent runs (the recurring blocker flagged in iter 67/69 handoff notes). Cleaned on this run + verified no false positives on production custom roles.
+
+**Verification**
+- `pytest test_compliance_ops_ui_backend.py` — **8/8 passing**: dashboard shape, policy create + status lifecycle, risk inherent_score math (likelihood*impact), evidence SHA-256 sealing + legal-hold reauth toggle, access review complete pipeline, incident create reauth path, vendor BAA flag logic.
+- `pytest test_custom_roles_phase2.py` — **14/14 passing** (autouse fixture confirmed cleaning leaked roles).
+- `pytest test_riverbend_demo_sanitation.py` — **26/26 passing** (no regressions).
+- Full suite touched: **48/48 passing**.
+- Frontend Playwright (testing agent iter 70 + iter 71) — 9/9 tabs functional, 0 ui_bugs, 0 integration_issues, 0 design_issues. Login as Sunrise group-admin shows 12 controls, 7 open risks, 8 incidents, 3 policies, 8 evidence rows, 4 access reviews, 4 vendors, working KPI dashboard.
+- ESLint clean across all new files.
+
+**Files added**
+- `/app/frontend/src/pages/compliance/api.js`
+- `/app/frontend/src/pages/compliance/common.jsx`
+- `/app/frontend/src/pages/compliance/DashboardPanel.jsx`
+- `/app/frontend/src/pages/compliance/registers/PoliciesRegister.jsx`
+- `/app/frontend/src/pages/compliance/registers/RisksRegister.jsx`
+- `/app/frontend/src/pages/compliance/registers/EvidenceRegister.jsx`
+- `/app/frontend/src/pages/compliance/registers/IncidentsRegister.jsx`
+- `/app/frontend/src/pages/compliance/registers/VendorsRegister.jsx`
+- `/app/frontend/src/pages/compliance/registers/AccessReviewsRegister.jsx`
+- `/app/frontend/src/pages/compliance/registers/ControlsRegister.jsx`
+- `/app/frontend/src/pages/compliance/registers/AuditTrail.jsx`
+- `/app/backend/tests/test_compliance_ops_ui_backend.py`
+
+**Files changed**
+- `/app/frontend/src/pages/Compliance.jsx` — replaced legacy readiness dashboard with 9-tab control plane.
+- `/app/backend/services/compliance_ops/router.py` — fixed `list_incidents` permission.
+- `/app/backend/services/compliance_ops/__init__.py` — Optional defaults on IncidentPublic.
+- `/app/backend/services/compliance_ops/seed.py` — incidents seed passes owner_user_id default.
+- `/app/backend/tests/test_custom_roles_phase2.py` — autouse role cleanup fixture.
+
+**Closes:** ISO 27001 (A.5 policies, A.6 organisation, A.8 asset / vendor management, A.16 incident management, A.18 compliance) + SOC 2 (CC4.1 audit logs, CC6.x access reviews, CC7.3/4 incident response, CC9 vendor management) UI gap. Application-layer evidence is now operator-driven; the seeded 8 entity types provide a turnkey starting register that maps every existing control to its HIPAA / SOC2 / ISO27001 / CCPA citations.
+
 
 ## 4r. Denial Classifier — tenant-managed CARC overrides (2026-05-02)
 
