@@ -1,0 +1,28 @@
+{
+  "summary": "Validated Helcim payment integration end-to-end. Backend: 14/14 mocked unit tests pass + new 11/11 live-endpoint pytest suite (test_helcim_live_endpoints.py) covering admin enforcement, /settings/test 400/502 paths, /checkout/initialize 400/502 paths, encryption-at-rest verification reading raw Mongo doc, and webhook-log access. Frontend: full UI flow tested as admin — unconfigured card → Configure form → configured card with TEST MODE badge + last4 + account ID + webhook URL + processed webhook log rows; Test connection click bubbled Helcim's Unauthorized response as a 502 (NO 500 crash). Doctor role correctly returns 403 on /api/billing/helcim/settings and the 'nav-payments' link is hidden for non-admins. All 25/25 backend tests + all UI assertions PASSED.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_helcim_integration.py",
+    "/app/backend/tests/test_helcim_live_endpoints.py",
+    "/app/test_reports/pytest/iter72_helcim.xml",
+    "/app/test_reports/pytest/iter72_helcim_live.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "credentials.py: get_decrypted_credentials returns plaintext fields including api_token, account_id, webhook_verifier_token — caller responsibility comments are present, but consider wrapping in a context manager or zero-length-clear pattern; currently low risk since values are bound to a request scope only.",
+    "router.py POST /webhook/{tenant_id}: dedupe key is webhook-id from request headers — if Helcim retries with no header (broken sender) the value is None and could collide; current implementation falls through to insert with webhook_id=None. Suggest rejecting 400 when webhook-id header missing (currently verify_signature returns 'missing' → 401, so this is already covered upstream). No change needed.",
+    "router.py /webhook-log: returns only last 50 rows with no pagination param. Acceptable for MVP but should add ?limit/skip when production webhook volume is known.",
+    "PaymentsSettings.jsx: webhook-section is rendered only inside ConfiguredCard; on first-load (unconfigured) the user has no preview of the webhook URL. Consider always showing the URL so admin can pre-register it in Helcim before saving creds. Minor UX nit, not a blocker."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_helcim_live_endpoints.py (NEW — 11 live-endpoint pytest tests)"
+  ],
+  "success_rate": {"backend": "100% (25/25 — 14 mocked + 11 live)", "frontend": "100% (admin flow + doctor RBAC)"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 ; doctor@ccms.app / Doctor@ComplianceClinic1 (both verified working).",
+  "seed_data_creation": "Test artefacts (helcim_credentials with TEST_/UI-TEST_ prefix) cleaned up at end of each test class; final manual sweep removed 1 residual UI-TEST-1 doc post-test.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Helcim integration is fully functional in mock-mode. To exercise against a real sandbox, plug a valid Helcim API token into PaymentsSettings → Test connection should return 200 instead of 502. The HelcimPay.js dialog (HelcimPayDialog.jsx) was NOT exercised end-to-end because it requires a live checkoutToken — when real creds are provided, opening the dialog should display 'Preparing secure session…', call /checkout/initialize, mount the Helcim iframe, and post back to /checkout/capture. test_helcim_live_endpoints.py is the regression suite for this feature going forward.",
+  "rca of the issue": "N/A — no bugs found. The backend correctly returns 502 (not 500) when Helcim rejects mock tokens, encryption-at-rest verified by direct Mongo doc inspection (api_token_encrypted present, plaintext absent, last4='1234'/'9876' as expected), webhook signature verifier rejects tampered/skewed/missing-header payloads with the right status codes, and the React UI state-machine cleanly transitions unconfigured → configured."
+}

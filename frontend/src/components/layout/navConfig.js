@@ -7,6 +7,7 @@ import {
   ClipboardCheck,
   ClipboardList,
   Coins,
+  CreditCard,
   DoorOpen,
   FileBarChart,
   FileStack,
@@ -206,6 +207,13 @@ export const NAV_GROUPS = [
         label: "Clearinghouse",
         testId: "nav-clearinghouse",
         icon: Cable,
+        roles: ["admin"],
+      },
+      {
+        to: "/settings/payments",
+        label: "Payments (Helcim)",
+        testId: "nav-payments",
+        icon: CreditCard,
         roles: ["admin"],
       },
       {

@@ -41,6 +41,7 @@ from services.appointment_types.router import router as appointment_types_router
 from services.authz.router import router as authz_router  # noqa: E402
 from services.billing.router import router as billing_router  # noqa: E402
 from services.billing.eligibility_router import router as billing_eligibility_router  # noqa: E402
+from services.billing.helcim.router import router as billing_helcim_router  # noqa: E402
 from services.billing.seed import seed_billing  # noqa: E402
 from services.authz.reporting import router as authz_reports_router  # noqa: E402
 from services.authz.seed import seed_authz  # noqa: E402
@@ -126,6 +127,7 @@ api_router.include_router(clinical_billing_readiness_router)
 api_router.include_router(appointment_types_router)
 api_router.include_router(billing_router)
 api_router.include_router(billing_eligibility_router)
+api_router.include_router(billing_helcim_router)
 api_router.include_router(metrics_router)  # GET /api/metrics
 
 # Non-production debug endpoints (rate-limit reset for integration tests).
