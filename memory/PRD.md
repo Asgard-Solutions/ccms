@@ -1,6 +1,71 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-05-02 (ISO 27001 + SOC 2 Compliance Ops UI hub — full register UI for Policies, Risks, Evidence, Incidents, Vendors, Access Reviews, Controls + Audit Trail)
+**Last updated:** 2026-05-02 (Helcim payment processor integration — per-tenant credentials, HelcimPay.js checkout, Customer Vault saved cards, refunds, signed webhooks)
+
+## 4t. Helcim payment processor — per-tenant integration (2026-05-02)
+
+**User request:** "we don't want to use stripe for payments we want to use Helcim for payments." Per-tenant credentials are a hard requirement — each chiropractic office uses their own Helcim merchant account. Specifically: HelcimPay.js hosted checkout + Helcim Customer Vault for saved cards + Helcim refund API + Helcim webhooks.
+
+**Shipped**
+
+Backend (`/app/backend/services/billing/helcim/`)
+- `__init__.py` — module-level constants (`HELCIM_API_BASE = "https://api.helcim.com/v2"`, `HELCIM_PAY_INIT_URL`, `HELCIM_PAY_SCRIPT_URL`).
+- `credentials.py` — per-tenant encrypted credential storage in `helcim_credentials` collection. AES-256 via `core.crypto.encrypt_text/decrypt_text`. Public surface (`HelcimCredentialsPublic`) only ever exposes `api_token_last4` + `account_id` + `updated_at` + `last_test_outcome` — plaintext token never crosses the API boundary.
+- `client.py` — `HelcimClient` async httpx wrapper with `connection_test()`, `initialize_helcim_pay()`, `purchase_with_card_token()`, `refund()`. Adds `idempotency-key` header on every payment-mutating request.
+- `webhook_verify.py` — HMAC-SHA256 signature verifier with 5-minute skew tolerance and multi-signature support (Helcim may send comma-separated rotating signatures during key rollover).
+- `router.py` — 9 routes mounted at `/api/billing/helcim/*`:
+  - `GET/PUT/DELETE /settings` — admin-only credential management.
+  - `POST /settings/test` — admin connection test (calls Helcim `/connection-test`).
+  - `POST /checkout/initialize` — creates a HelcimPay session token + persists `helcim_sessions` row.
+  - `POST /checkout/capture` — records the postMessage result from the iframe (idempotent).
+  - `POST /charges/saved-card` — charges a stored `card_token` (Customer Vault).
+  - `POST /refunds` — full or partial refund using Helcim transactionId.
+  - `POST /webhook/{tenant_id}` — verified webhook receiver (HMAC + dedupe via `webhook_id`).
+  - `GET /webhook-log` — admin diagnostic of the last 50 webhook events.
+
+Frontend
+- `pages/settings/PaymentsSettings.jsx` — admin Settings page at `/settings/payments`. Two states: unconfigured (CTA `Configure Helcim`) → configured (`Test connection` / `Update credentials` / `Delete` actions, masked last4, TEST MODE badge, webhook URL with copy button, webhook log table).
+- `pages/billing/helcim/api.js` — typed client wrapper for all 9 endpoints.
+- `pages/billing/helcim/HelcimPayDialog.jsx` — modal that loads `helcim-pay.js`, listens for the postMessage `helcim-pay-js-success` event, posts the result back to `/checkout/capture`. PCI scope minimal — card data never touches our origin.
+- `App.js` — route added at `/settings/payments` with `roles: ["admin"]` guard.
+- `components/layout/navConfig.js` — nav link "Payments (Helcim)" under Settings (admin-only).
+
+**Permissions**
+- Settings management: `require_role("admin")` (matches the pattern used by `ClinicSettings.jsx` and `ClearinghouseSettingsPage.jsx`).
+- Charge / save-card: `require_permission("payment", "collect")` — billing roles.
+- Refund: `require_permission("payment", "refund")` — admin + billing manager only, MFA-gated by the existing policy catalog.
+
+**Verification**
+- `pytest test_helcim_integration.py` — **14/14 passing**: credential round-trip + masking + admin-only access + webhook signature (valid/tamper/skew/missing/dedupe) + mocked HelcimClient calls (`connection_test`, `purchase_with_card_token`, `refund` partial amount with idempotency-key assertion).
+- `pytest test_helcim_live_endpoints.py` — **11/11 passing** (added by testing agent iter 72): admin enforcement, encryption-at-rest verification (reads raw Mongo doc, confirms `api_token_encrypted` field is not plaintext), 400/502 error-path coverage on `/settings/test` + `/checkout/initialize` (Helcim returns Unauthorized for mock tokens — verified we surface 502 not 500).
+- Full suite: **62/62 passing** (helcim + compliance-ops + custom-roles + Riverbend sanitation).
+- Frontend Playwright (testing agent iter 72) — full UI flow validated: unconfigured → form → configured → TEST MODE badge → webhook URL → webhook log → doctor 403 on settings + nav link hidden.
+- ESLint clean. ruff clean.
+
+**Files added**
+- `/app/backend/services/billing/helcim/__init__.py`
+- `/app/backend/services/billing/helcim/credentials.py`
+- `/app/backend/services/billing/helcim/client.py`
+- `/app/backend/services/billing/helcim/webhook_verify.py`
+- `/app/backend/services/billing/helcim/router.py`
+- `/app/backend/tests/test_helcim_integration.py` (14 tests)
+- `/app/backend/tests/test_helcim_live_endpoints.py` (11 tests, added by testing agent)
+- `/app/frontend/src/pages/billing/helcim/api.js`
+- `/app/frontend/src/pages/billing/helcim/HelcimPayDialog.jsx`
+- `/app/frontend/src/pages/settings/PaymentsSettings.jsx`
+
+**Files changed**
+- `/app/backend/server.py` — registered `billing_helcim_router`.
+- `/app/frontend/src/App.js` — added `/settings/payments` route.
+- `/app/frontend/src/components/layout/navConfig.js` — added "Payments (Helcim)" nav link.
+- `/app/memory/CCMS_Features.xlsx` — flipped rows 61, 62, 70, 112, 113 to ✅ Shipped (5 features). Summary: 116→121 shipped, 9→7 partial, 8→5 planned.
+
+**Known gap (not a bug)**
+- Helcim sandbox keys are not configured for any tenant — endpoints calling api.helcim.com will return 502 with a clean Helcim Unauthorized error until the user enters real merchant credentials. This is by design.
+- HelcimPay.js iframe cannot be exercised in headless tests without a real checkout token. The modal mounts and shows "Preparing secure session…" state correctly; the success/decline branches are covered by code review only until live keys are added.
+
+**Closes:** Stripe → Helcim swap (rows 112/113), unblocks "Recurring/saved payment methods" (row 62 via Customer Vault), and finishes "Refund/void tracking" (row 70 via `/refunds` route).
+
 
 ## 4s. ISO 27001 + SOC 2 control plane — full register UI (2026-05-02)
 
