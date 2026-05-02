@@ -51,6 +51,45 @@ def _cleanup_role(s, key: str) -> None:
         pass
 
 
+# Test-fixture leakage guard: at the start AND end of this module's test
+# session, force-delete any leftover custom roles whose name matches a
+# pattern this test file is known to create. Without this, a partial run
+# can leave a role like `inuse_test_*` attached to the admin and shrink
+# the admin's effective permissions on subsequent runs (which then makes
+# unrelated tests fail with mysterious 401/403 results).
+import pytest as _pytest
+
+_LEAKED_NAME_PREFIXES = (
+    "test role ", "filter test ", "cloned front desk ", "patch test ",
+    "empty patch ", "delete test ", "inuse test ", "counttest ",
+    "renamed role",
+)
+
+
+def _purge_leaked_test_roles() -> None:
+    try:
+        s = _login(*DEFAULT_ADMIN)
+    except Exception:
+        return
+    try:
+        rows = s.get(f"{API}/authz/roles", timeout=10).json()
+    except Exception:
+        return
+    for r in rows or []:
+        if not r.get("is_custom"):
+            continue
+        name = (r.get("name") or "").strip().lower()
+        if any(name.startswith(p) for p in _LEAKED_NAME_PREFIXES):
+            _cleanup_role(s, r.get("key"))
+
+
+@_pytest.fixture(scope="module", autouse=True)
+def _purge_test_role_leaks():
+    _purge_leaked_test_roles()
+    yield
+    _purge_leaked_test_roles()
+
+
 def test_list_roles_includes_is_custom_and_user_counts():
     s = _login(*DEFAULT_ADMIN)
     r = s.get(f"{API}/authz/roles", params={"include_user_counts": "true"}, timeout=15)
