@@ -1,6 +1,82 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-05-02 (Helcim payment processor integration — per-tenant credentials, HelcimPay.js checkout, Customer Vault saved cards, refunds, signed webhooks)
+**Last updated:** 2026-05-02 (Recurring auto-charge engine — Helcim Customer Vault + payment plans + treatment-plan auto-pay + statement auto-pay + worker)
+
+## 4v. Recurring auto-charge engine — Helcim Customer Vault (2026-05-02)
+
+**User request:** "Recurring auto-charge engine on top of Customer Vault tokens (treatment plans, payment plans, monthly statements)." Chose Sprint 1 + Sprint 2 in one shot.
+
+**Shipped — backend**
+
+`services/billing/helcim/card_vault.py` — per-patient encrypted card storage:
+- `patient_card_tokens` collection — `helcim_card_token_encrypted` + `helcim_customer_code_encrypted` via `core.crypto.encrypt_text`
+- Public surface (`SavedCardPublic`) exposes only `brand/last4/expiry/cardholder/is_default` — never the token
+- `is_default` enforced single-per-patient on every save (auto-unsets prior default)
+- `delete_card` is soft-delete (`deleted_at` timestamp)
+
+`services/billing/helcim/scheduler.py` — recurring engine:
+- `payment_schedules` + `payment_schedule_runs` collections
+- `ScheduleKind = payment_plan | treatment_plan | statement_autopay`
+- `Frequency = weekly | biweekly | monthly`
+- `_split_amount(total, n)` — even cents per charge with the final charge absorbing rounding ($100/3 → 33.33 + 33.33 + 33.34)
+- `_advance(prev, frequency)` — calendar-correct cadence advancement (clamp to day≤28 for monthly to avoid Feb-30 errors)
+- `charge_one_schedule(tenant_id, sched)` — pure async helper used by the worker AND the admin run-now endpoint:
+  - Approved → advance `next_charge_at`, increment `charges_completed`, mark `completed` if final
+  - Declined/error → increment `consecutive_failures`, schedule retry with `RETRY_BACKOFF_DAYS=(1,3,7)`, after `MAX_FAILED_ATTEMPTS=3` mark `failed` + post `notifications` row tagged `category=billing severity=warning`
+- `process_due_schedules(tenant_id)` — finds rows where `next_charge_at <= now` AND `status=active`, fans out to `charge_one_schedule`
+
+`services/billing/helcim/worker.py` — asyncio background loop:
+- Started in `app.on_event("startup")`, cancelled cleanly on shutdown
+- Default 60s tick interval, configurable via `HELCIM_SCHEDULER_INTERVAL_SECONDS` (1-3600)
+- Enumerates non-archived tenants from the shared admin DB and ticks each
+- Best-effort: per-tenant exceptions are logged, the next tick still fires
+
+`services/billing/helcim/router.py` — appended 9 routes:
+- `GET /cards/{patient_id}` — list saved cards
+- `POST /cards` — manual save (already-tokenised flow)
+- `DELETE /cards/{token_id}` — soft-delete
+- `POST /cards/charge` — one-off charge against a saved token id (`payment.collect`)
+- `POST /schedules` — create payment plan / treatment plan / statement-autopay
+- `GET /schedules` — list with `patient_id` + `status_filter` query params
+- `PATCH /schedules/{sid}` — patch label/notes/next_charge_at
+- `POST /schedules/{sid}/status` — pause/resume/cancel
+- `GET /schedules/{sid}/runs` — full mutation trail
+- `POST /schedules/{sid}/run-now` — admin/staff-trigger immediate charge (also resets `failed` for one retry)
+- `POST /scheduler/tick` — admin-only sweep (mirrors what the worker does for one tenant)
+
+`/checkout/capture` — extended with `save_card` + `save_card_brand/last4/expiry/cardholder` fields. When `save_card=true` AND the session has a `patient_id` AND Helcim returned a `card_token`, a vault row is created automatically.
+
+**Shipped — frontend**
+
+- `pages/billing/helcim/SavedCardsCard.jsx` — saved-cards list with brand/last4/default-badge/cardholder/expiry/saved-date, "Charge" button (opens `ChargeSavedCardDialog` for one-off charges), "Delete" button (with confirm). Empty state copy: "No saved cards yet. Take a payment via Helcim and tick 'Save card on file' to register one."
+- `pages/billing/helcim/PaymentPlansCard.jsx` — schedules list with status chips, kind chips, progress (e.g. "0/4 charged · $50.00 monthly · Visa ****4242 · next 2026-06-01"), action buttons (Charge now / Pause / Resume / Cancel / Retry / History). New plan dialog with live summary "N-1 × per + 1 × last = total". `plan-add-btn` disabled when no saved card exists.
+- `pages/billing/helcim/HelcimPayDialog.jsx` — added "Save card on file for future charges" checkbox under the awaiting phase. State propagated to `/checkout/capture` via the `save_card` field. Brand/last4/expiry parsed out of the Helcim postMessage payload.
+- `pages/billing/PatientLedgerPage.jsx` — wired both new cards in a side-by-side grid under the existing `PatientLedgerCard`.
+
+**Verification**
+- 43/43 backend pytest passing across `test_helcim_scheduler.py` (11) + `test_helcim_integration.py` (14) + `test_helcim_live_endpoints.py` (11) + 7 new tests added by the testing agent in `test_helcim_scheduler_extra.py`. Covers: vault CRUD with encryption, single-default semantics, soft-delete, payment plan amount math ($100/3 + 99c/3 edge case), schedule lifecycle, retry-with-backoff (3 declines → failed + notification), credentials-missing path, /scheduler/tick due-only filter, run-now rejects non-runnable status, capture+save_card persists vault row.
+- RBAC verified: doctor (no `payment.collect`) → 403 on cards listing/create, schedules create. `/scheduler/tick` is admin-only.
+- Background worker confirmed running via backend log line `scheduler.worker started (interval=60s)`.
+- Testing agent iter 73 — 0 critical, 0 minor, 0 UI/integration/design issues.
+- Lint clean (eslint + ruff).
+
+**Files added**
+- `/app/backend/services/billing/helcim/card_vault.py`
+- `/app/backend/services/billing/helcim/scheduler.py`
+- `/app/backend/services/billing/helcim/worker.py`
+- `/app/backend/tests/test_helcim_scheduler.py` (11 tests)
+- `/app/backend/tests/test_helcim_scheduler_extra.py` (7 tests, added by testing agent)
+- `/app/frontend/src/pages/billing/helcim/SavedCardsCard.jsx`
+- `/app/frontend/src/pages/billing/helcim/PaymentPlansCard.jsx`
+
+**Files changed**
+- `/app/backend/server.py` — start/stop scheduler worker
+- `/app/backend/services/billing/helcim/router.py` — appended 9 routes; extended `/checkout/capture` to honour `save_card`
+- `/app/frontend/src/pages/billing/helcim/api.js` — added 11 client wrappers
+- `/app/frontend/src/pages/billing/helcim/HelcimPayDialog.jsx` — Save card checkbox
+- `/app/frontend/src/pages/billing/PatientLedgerPage.jsx` — wired new cards
+- `/app/memory/CCMS_Features.xlsx` — appended rows 135-137 ✅ Shipped (engine + payment plan UX + saved cards UI). Summary: 121→124 shipped, 7 partial, 5 planned.
+
 
 ## 4u. PostPaymentDialog → HelcimPay wiring (2026-05-02)
 
