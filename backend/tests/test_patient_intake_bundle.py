@@ -129,6 +129,13 @@ class TestPortalOtp:
         assert body["user"]["linked_patient_id"] == pid
         # Cookie set
         assert session.cookies.get("access_token")
+        # /auth/me MUST round-trip — this is how the frontend
+        # rehydrates the AuthContext on page reload. Regression: the
+        # placeholder email domain must not hit pydantic's reserved
+        # TLD blocklist (`.local`, `.invalid`, etc.).
+        me = session.get(f"{API}/auth/me", timeout=10)
+        assert me.status_code == 200, me.text
+        assert me.json()["role"] == "patient"
         # Overview endpoint reachable
         r3 = session.get(f"{API}/portal/overview", timeout=10)
         assert r3.status_code == 200, r3.text

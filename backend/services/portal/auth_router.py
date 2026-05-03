@@ -139,7 +139,7 @@ async def _ensure_portal_user(
     hashed = hash_password(random_secret)
     user_id = str(uuid.uuid4())
     fallback_email = email or (
-        f"portal-{patient['id'][:8]}@portal.local"
+        f"portal-{patient['id'][:8]}@portal.ccms.app"
     )
     doc = {
         "id": user_id,
