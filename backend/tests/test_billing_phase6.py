@@ -444,9 +444,10 @@ class TestDeliveryEndpoints:
             assert r.status_code == 200, r.text
             body = r.json()
             # Note: the in-process backend may have a real key cached,
-            # so we only assert the mandatory fields.
+            # so we only assert the mandatory fields. The /send endpoint
+            # surfaces a `delivery_id` whose row carries the message_id.
             assert body["sent"] is True
-            assert body["message_id"]
+            assert body["delivery_id"]
             # Delivery log row should exist.
             dr = s.get(
                 f"{API}/billing/patients/{patient['id']}/statements/{stmt['id']}/deliveries",

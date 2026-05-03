@@ -64,3 +64,25 @@ export const runScheduleNow = (id) =>
 
 export const tickScheduler = () =>
   api.post(`${BASE}/scheduler/tick`).then((r) => r.data);
+
+// --- Billing failures dashboard ---
+
+export const fetchBillingFailures = (params = {}) =>
+  api.get(`${BASE}/billing-failures`, { params }).then((r) => r.data);
+
+export const dismissBillingFailure = (notifId) =>
+  api.post(`${BASE}/billing-failures/${notifId}/dismiss`).then((r) => r.data);
+
+// --- Statement auto-pay ---
+
+export const fetchStatementAutopaySettings = () =>
+  api.get(`${BASE}/statement-autopay/settings`).then((r) => r.data);
+
+export const saveStatementAutopaySettings = (body) =>
+  api.put(`${BASE}/statement-autopay/settings`, body).then((r) => r.data);
+
+export const fetchPatientAutopayOptIn = (patientId) =>
+  api.get(`${BASE}/statement-autopay/patients/${patientId}`).then((r) => r.data);
+
+export const savePatientAutopayOptIn = (patientId, body) =>
+  api.put(`${BASE}/statement-autopay/patients/${patientId}`, body).then((r) => r.data);

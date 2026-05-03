@@ -215,7 +215,7 @@ def test_checkout_hook_creates_draft_invoice_stub():
         finally:
             client.close()
         return row
-    row = asyncio.get_event_loop().run_until_complete(_run())
+    row = asyncio.new_event_loop().run_until_complete(_run())
     assert row is not None, f"No draft invoice stub for {aid}"
     assert row["status"] == "draft"
     assert row["source"] == "checkout_hook"

@@ -5100,6 +5100,24 @@ async def _build_statement_for_patient(
                   "total_balance_cents": total,
                   "invoice_count": len(open_invoices)},
     )
+    # Statement auto-pay hook — fire-and-forget creation of a one-shot
+    # `statement_autopay` schedule when the tenant has the toggle on AND the
+    # patient has opted in AND has a saved card on file. Failures are logged
+    # but never block statement generation.
+    if total > 0:
+        try:
+            from services.billing.helcim.statement_autopay import (
+                maybe_create_statement_autopay,
+            )
+            await maybe_create_statement_autopay(
+                ctx.tenant_id, patient_id=patient_id,
+                statement_id=stmt_id, total_cents=total, actor=user,
+            )
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger("ccms.billing").warning(
+                "statement_autopay hook failed for stmt=%s: %s", stmt_id, e,
+            )
     fresh = await db.statements.find_one(
         {"id": stmt_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
     )

@@ -742,3 +742,174 @@ async def scheduler_tick(
             for o in outcomes
         ],
     }
+
+
+
+# ---------------------------------------------------------------------------
+# Billing-failures dashboard — surfaces unread `notifications` rows that
+# the scheduler emitted on terminal schedule failure.
+# ---------------------------------------------------------------------------
+
+@router.get("/billing-failures", response_model=list[dict])
+async def list_billing_failures(
+    request: Request,
+    include_read: bool = False,
+    limit: int = 50,
+    user: dict = Depends(require_permission("payment", "collect", audit_allow=False)),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    db = tenant_db(ctx.tenant_id)
+    q: dict = {"tenant_id": ctx.tenant_id, "category": "billing"}
+    if not include_read:
+        q["read"] = False
+    rows = await db.notifications.find(
+        q, {"_id": 0},
+    ).sort("created_at", -1).limit(min(max(limit, 1), 200)).to_list(length=limit)
+    # Hydrate each row with the underlying schedule + patient name when available.
+    out: list[dict] = []
+    sched_ids = {(r.get("body") or "").split("schedule ")[1].split(" ")[0]
+                 for r in rows if "schedule " in (r.get("body") or "")}
+    sched_ids.discard("")
+    schedules = {}
+    if sched_ids:
+        async for s in db.payment_schedules.find(
+            {"tenant_id": ctx.tenant_id, "id": {"$in": list(sched_ids)}},
+            {"_id": 0},
+        ):
+            schedules[s["id"]] = s
+    patient_ids = {r.get("patient_id") for r in rows if r.get("patient_id")}
+    patients = {}
+    if patient_ids:
+        async for p in db.patients.find(
+            {"tenant_id": ctx.tenant_id, "id": {"$in": list(patient_ids)}},
+            {"_id": 0, "id": 1, "first_name": 1, "last_name": 1},
+        ):
+            patients[p["id"]] = f"{p.get('first_name', '')} {p.get('last_name', '')}".strip() or p["id"]
+    for r in rows:
+        sid = next((sid for sid in sched_ids if sid in (r.get("body") or "")), None)
+        sched = schedules.get(sid) if sid else None
+        out.append({
+            **r,
+            "schedule_id": sid,
+            "schedule_status": sched.get("status") if sched else None,
+            "schedule_label": sched.get("label") if sched else None,
+            "patient_name": patients.get(r.get("patient_id")),
+        })
+    return out
+
+
+@router.post("/billing-failures/{notif_id}/dismiss")
+async def dismiss_billing_failure(
+    notif_id: str, request: Request,
+    user: dict = Depends(require_permission("payment", "collect")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    db = tenant_db(ctx.tenant_id)
+    res = await db.notifications.update_one(
+        {"id": notif_id, "tenant_id": ctx.tenant_id, "category": "billing"},
+        {"$set": {"read": True, "read_at": now_iso(),
+                  "read_by": user.get("email") or user.get("id")}},
+    )
+    if not res.matched_count:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Notification not found.")
+    await audit_success(
+        user, "billing.helcim.failure_dismissed", request,
+        entity_type="notification", entity_id=notif_id,
+    )
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Statement auto-pay — per-tenant toggle + per-patient opt-in flag
+# ---------------------------------------------------------------------------
+
+class StatementAutopaySettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
+    default_card_token_id: str | None = None  # ignored — kept for forward compat
+    notes: str | None = Field(default=None, max_length=240)
+
+
+@router.get("/statement-autopay/settings", response_model=dict)
+async def get_statement_autopay(
+    request: Request,
+    user: dict = Depends(require_role("admin")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    db = tenant_db(ctx.tenant_id)
+    doc = await db.helcim_statement_autopay.find_one(
+        {"tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    return doc or {"tenant_id": ctx.tenant_id, "enabled": False}
+
+
+@router.put("/statement-autopay/settings", response_model=dict)
+async def put_statement_autopay(
+    payload: StatementAutopaySettings, request: Request,
+    user: dict = Depends(require_role("admin")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    db = tenant_db(ctx.tenant_id)
+    doc = {
+        "tenant_id": ctx.tenant_id,
+        "enabled": payload.enabled,
+        "notes": payload.notes,
+        "updated_at": now_iso(),
+        "updated_by": user.get("email") or user.get("id"),
+    }
+    await db.helcim_statement_autopay.update_one(
+        {"tenant_id": ctx.tenant_id}, {"$set": doc}, upsert=True,
+    )
+    await audit_success(
+        user, "billing.helcim.statement_autopay_settings_updated", request,
+        entity_type="helcim_statement_autopay", entity_id=ctx.tenant_id,
+        metadata={"enabled": payload.enabled},
+    )
+    return doc
+
+
+class PatientAutopayOptIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    opted_in: bool
+    card_token_id: str | None = None
+
+
+@router.get("/statement-autopay/patients/{patient_id}", response_model=dict)
+async def get_patient_autopay_optin(
+    patient_id: str, request: Request,
+    user: dict = Depends(require_permission("payment", "collect", audit_allow=False)),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    db = tenant_db(ctx.tenant_id)
+    doc = await db.helcim_statement_autopay_patients.find_one(
+        {"tenant_id": ctx.tenant_id, "patient_id": patient_id}, {"_id": 0},
+    )
+    return doc or {"tenant_id": ctx.tenant_id, "patient_id": patient_id,
+                   "opted_in": False, "card_token_id": None}
+
+
+@router.put("/statement-autopay/patients/{patient_id}", response_model=dict)
+async def put_patient_autopay_optin(
+    patient_id: str, payload: PatientAutopayOptIn, request: Request,
+    user: dict = Depends(require_permission("payment", "collect")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    db = tenant_db(ctx.tenant_id)
+    doc = {
+        "tenant_id": ctx.tenant_id, "patient_id": patient_id,
+        "opted_in": payload.opted_in,
+        "card_token_id": payload.card_token_id,
+        "updated_at": now_iso(),
+        "updated_by": user.get("email") or user.get("id"),
+    }
+    await db.helcim_statement_autopay_patients.update_one(
+        {"tenant_id": ctx.tenant_id, "patient_id": patient_id},
+        {"$set": doc}, upsert=True,
+    )
+    await audit_success(
+        user, "billing.helcim.statement_autopay_patient_updated", request,
+        entity_type="helcim_statement_autopay", entity_id=patient_id,
+        metadata={"opted_in": payload.opted_in,
+                  "card_token_id": payload.card_token_id},
+    )
+    return doc

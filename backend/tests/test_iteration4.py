@@ -18,7 +18,7 @@ import uuid
 import pytest
 import requests
 
-BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://certify-platform-2.preview.emergentagent.com").rstrip("/")
+BASE = os.environ.get("REACT_APP_BACKEND_URL", "https://helcim-payments.preview.emergentagent.com").rstrip("/")
 API = f"{BASE}/api"
 
 ADMIN = ("admin@ccms.app", "Admin@ComplianceClinic1")

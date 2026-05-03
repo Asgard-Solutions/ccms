@@ -21,7 +21,7 @@ import requests
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
 if not BASE_URL:
     # fall back to local preview if env var missing in this shell
-    BASE_URL = "https://certify-platform-2.preview.emergentagent.com"
+    BASE_URL = "https://helcim-payments.preview.emergentagent.com"
 
 ADMIN_EMAIL = "admin@ccms.app"
 ADMIN_PASSWORD = "Admin@ComplianceClinic1"

@@ -202,7 +202,8 @@ class TestScrubberRules:
         }
         res = run_rules(_ctx(
             claim=claim, dx=dx, lines=lines,
-            patient={"id": "pt"},
+            patient={"id": "pt", "date_of_birth": "1990-01-01",
+                    "gender": "female"},
             payer={"id": "pa"},
             policy={"payer_id": "pa", "status": "active", "member_id": "M"},
         ))

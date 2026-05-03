@@ -15,6 +15,7 @@ import {
   Loader2,
   PlusCircle,
   Save,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import { api, formatApiError } from "../../api/client";
@@ -32,6 +33,7 @@ import {
 import { useAuth } from "../../contexts/AuthContext";
 import { useReauth } from "../../components/ReauthGate";
 import { formatDateTime } from "../../utils/time";
+import LinkAutoPayDialog from "../billing/helcim/LinkAutoPayDialog";
 
 const STATUS_BADGE = {
   active: { label: "Active", class: "border-success/40 bg-success-soft text-success" },
@@ -79,6 +81,7 @@ export default function TreatmentPlanEditor() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [statusDialog, setStatusDialog] = useState(null);
+  const [autoPayOpen, setAutoPayOpen] = useState(false);
 
   const [form, setForm] = useState(null);
   const [outcomesTrends, setOutcomesTrends] = useState(null);
@@ -290,8 +293,31 @@ export default function TreatmentPlanEditor() {
                 Change status
               </Button>
             )}
+            {canWrite && plan?.id && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setAutoPayOpen(true)}
+                data-testid="plan-link-autopay-btn"
+                className="rounded-sm gap-1"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                Link auto-pay
+              </Button>
+            )}
           </div>
         </div>
+
+        {plan?.id && (
+          <LinkAutoPayDialog
+            open={autoPayOpen}
+            onClose={() => setAutoPayOpen(false)}
+            patientId={pid}
+            treatmentPlanId={plan.id}
+            defaultNumCharges={form.frequency_total_visits || 12}
+            defaultLabel={form.diagnosis_summary || "Treatment plan auto-pay"}
+          />
+        )}
 
         {/* Progress bar */}
         <div

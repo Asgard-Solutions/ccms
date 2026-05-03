@@ -16,9 +16,12 @@ import {
   listSavedCards,
   deleteSavedCard,
   chargeSavedCardById,
+  fetchPatientAutopayOptIn,
+  savePatientAutopayOptIn,
 } from "./api";
 import { formatDateTime } from "../../../utils/time";
 import { formatCents, parseDollarsToCents } from "../../../utils/money";
+import { Switch } from "../../../components/ui/switch";
 
 function ChargeSavedCardDialog({ open, onClose, card, onCharged }) {
   const [amountStr, setAmountStr] = useState("");
@@ -100,12 +103,19 @@ export default function SavedCardsCard({ patientId, onChanged }) {
   const [error, setError] = useState(null);
   const [chargeOpen, setChargeOpen] = useState(false);
   const [activeCard, setActiveCard] = useState(null);
+  const [optIn, setOptIn] = useState({ opted_in: false, card_token_id: null });
+  const [optInBusy, setOptInBusy] = useState(false);
 
   const load = useCallback(async () => {
     if (!patientId) return;
     setLoading(true);
     try {
-      setCards(await listSavedCards(patientId));
+      const [c, oi] = await Promise.all([
+        listSavedCards(patientId),
+        fetchPatientAutopayOptIn(patientId).catch(() => ({ opted_in: false })),
+      ]);
+      setCards(c);
+      setOptIn({ opted_in: !!oi.opted_in, card_token_id: oi.card_token_id || null });
       setError(null);
     } catch (e) {
       setError(e?.response?.data?.detail || "Failed to load cards.");
@@ -115,6 +125,22 @@ export default function SavedCardsCard({ patientId, onChanged }) {
   }, [patientId]);
 
   useEffect(() => { load(); }, [load]);
+
+  const onToggleOptIn = async (v) => {
+    setOptInBusy(true);
+    try {
+      const saved = await savePatientAutopayOptIn(patientId, {
+        opted_in: !!v,
+        card_token_id: optIn.card_token_id,
+      });
+      setOptIn({ opted_in: !!saved.opted_in, card_token_id: saved.card_token_id || null });
+      toast.success(`Statement auto-pay ${saved.opted_in ? "enabled" : "disabled"} for this patient.`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to update opt-in.");
+    } finally {
+      setOptInBusy(false);
+    }
+  };
 
   const onDelete = async (card) => {
     if (!confirm(`Remove saved card ****${card.last4}?`)) return;
@@ -206,6 +232,25 @@ export default function SavedCardsCard({ patientId, onChanged }) {
         <ShieldCheck className="mt-0.5 h-3 w-3 flex-none text-primary" />
         Tokens are stored encrypted in the Helcim Customer Vault. We never see the PAN.
       </p>
+
+      {cards.length > 0 && (
+        <div data-testid="patient-autopay-optin"
+             className="flex items-center justify-between gap-3 rounded-sm border border-dashed border-border bg-muted/30 px-3 py-2.5 text-xs">
+          <div>
+            <div className="font-medium text-foreground">Statement auto-pay</div>
+            <div className="text-muted-foreground">
+              Auto-charge this patient&apos;s default card 3 days after every statement is generated.
+              Tenant toggle must also be enabled in Settings → Payments.
+            </div>
+          </div>
+          <Switch
+            data-testid="patient-autopay-toggle"
+            checked={optIn.opted_in}
+            disabled={optInBusy}
+            onCheckedChange={onToggleOptIn}
+          />
+        </div>
+      )}
 
       {activeCard && (
         <ChargeSavedCardDialog

@@ -15,6 +15,8 @@ import {
   deleteHelcimSettings,
   testHelcimConnection,
   fetchHelcimWebhookLog,
+  fetchStatementAutopaySettings,
+  saveStatementAutopaySettings,
 } from "../billing/helcim/api";
 import { formatDateTime } from "../../utils/time";
 
@@ -32,6 +34,8 @@ export default function PaymentsSettings() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [webhookLog, setWebhookLog] = useState([]);
+  const [autopay, setAutopay] = useState({ enabled: false, notes: "" });
+  const [autopaySaving, setAutopaySaving] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -41,6 +45,13 @@ export default function PaymentsSettings() {
         try {
           setWebhookLog(await fetchHelcimWebhookLog());
         } catch (_) { /* perms */ }
+        try {
+          const ap = await fetchStatementAutopaySettings();
+          setAutopay({
+            enabled: !!ap.enabled,
+            notes: ap.notes || "",
+          });
+        } catch (_) { /* perms or unconfigured */ }
       }
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to load Helcim settings.");
@@ -95,6 +106,21 @@ export default function PaymentsSettings() {
       setWebhookLog([]);
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Failed to delete credentials.");
+    }
+  };
+
+  const onSaveAutopay = async (next) => {
+    setAutopaySaving(true);
+    try {
+      const saved = await saveStatementAutopaySettings({
+        enabled: next.enabled, notes: next.notes || null,
+      });
+      setAutopay({ enabled: !!saved.enabled, notes: saved.notes || "" });
+      toast.success(`Statement auto-pay ${saved.enabled ? "enabled" : "disabled"}.`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to update statement auto-pay.");
+    } finally {
+      setAutopaySaving(false);
     }
   };
 
@@ -203,6 +229,38 @@ export default function PaymentsSettings() {
               </table>
             </div>
           )}
+        </section>
+      )}
+
+      {settings?.configured && (
+        <section data-testid="statement-autopay-section" className="space-y-3">
+          <h2 className="font-display text-lg font-medium">Statement auto-pay</h2>
+          <div className="rounded-sm border border-border bg-card p-4 space-y-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <p className="text-sm text-foreground">
+                  Auto-charge open balances when patient statements are generated.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Each statement triggers a one-shot Helcim charge against the patient&apos;s saved
+                  card after a 3-day grace window. Patients must opt in individually from their
+                  ledger page, and a saved card on file is required. Failed charges follow the
+                  standard 1d/3d/7d retry cadence and surface on the Dashboard.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <Switch
+                  data-testid="statement-autopay-toggle"
+                  checked={autopay.enabled}
+                  disabled={autopaySaving}
+                  onCheckedChange={(v) => onSaveAutopay({ ...autopay, enabled: !!v })}
+                />
+                <Label className="cursor-pointer text-sm">
+                  {autopay.enabled ? "Enabled" : "Disabled"}
+                </Label>
+              </div>
+            </div>
+          </div>
         </section>
       )}
     </div>

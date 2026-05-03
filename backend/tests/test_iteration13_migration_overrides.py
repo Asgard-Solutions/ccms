@@ -21,7 +21,7 @@ import uuid
 
 import requests
 
-API = os.environ.get("CCMS_BASE_URL", "https://certify-platform-2.preview.emergentagent.com/api")
+API = os.environ.get("CCMS_BASE_URL", "https://helcim-payments.preview.emergentagent.com/api")
 
 ADMIN = ("admin@ccms.app", "Admin@ComplianceClinic1")
 DOCTOR = ("doctor@ccms.app", "Doctor@ComplianceClinic1")
