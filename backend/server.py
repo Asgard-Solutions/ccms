@@ -68,6 +68,14 @@ from services.tenancy.seed import seed_tenancy  # noqa: E402
 from services.demo.seed import seed_demo_clinic  # noqa: E402
 from services.demo.billing_seed import seed_demo_billing  # noqa: E402
 from services.workforce.router import router as workforce_router  # noqa: E402
+from services.sms.router import router as sms_router  # noqa: E402
+from services.portal.auth_router import router as portal_auth_router  # noqa: E402
+from services.portal.booking_router import router as portal_booking_router  # noqa: E402
+from services.portal.checkin_router import router as portal_checkin_router  # noqa: E402
+from services.portal.questionnaire_router import router as portal_questionnaire_router  # noqa: E402
+from services.kiosk.router import router as kiosk_router  # noqa: E402
+from services.questionnaires.router import router as questionnaires_router  # noqa: E402
+from services.scheduling.booking_requests import staff_router as booking_requests_router  # noqa: E402
 
 
 logging.basicConfig(
@@ -129,6 +137,14 @@ api_router.include_router(appointment_types_router)
 api_router.include_router(billing_router)
 api_router.include_router(billing_eligibility_router)
 api_router.include_router(billing_helcim_router)
+api_router.include_router(sms_router)
+api_router.include_router(portal_auth_router)
+api_router.include_router(portal_booking_router)
+api_router.include_router(portal_checkin_router)
+api_router.include_router(portal_questionnaire_router)
+api_router.include_router(kiosk_router)
+api_router.include_router(questionnaires_router)
+api_router.include_router(booking_requests_router)
 api_router.include_router(metrics_router)  # GET /api/metrics
 
 # Non-production debug endpoints (rate-limit reset for integration tests).

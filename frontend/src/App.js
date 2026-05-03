@@ -33,6 +33,13 @@ import AccessHistoryPage from "./pages/admin/AccessHistoryPage";
 import PortalShell from "./portal/PortalShell";
 import PortalOverview from "./portal/PortalOverview";
 import PortalStatements from "./portal/PortalStatements";
+import PortalLogin from "./portal/PortalLogin";
+import PortalBook from "./portal/PortalBook";
+import PortalQuestionnaires from "./portal/PortalQuestionnaires";
+import PortalQuestionnaireDetail from "./portal/PortalQuestionnaireDetail";
+import Kiosk from "./pages/Kiosk";
+import SmsSettings from "./pages/settings/SmsSettings";
+import BookingRequestsQueue from "./pages/scheduling/BookingRequestsQueue";
 import Elevation from "./pages/Elevation";
 import ThemePreview from "./pages/ThemePreview";
 import ClinicSettings from "./pages/ClinicSettings";
@@ -77,6 +84,8 @@ export default function App() {
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
               <Route path="/password-reset" element={<PasswordReset />} />
+              <Route path="/portal/login" element={<PortalLogin />} />
+              <Route path="/kiosk" element={<Kiosk />} />
 
               {/* ----- Patient portal (role=patient only) ----- */}
               <Route
@@ -88,6 +97,9 @@ export default function App() {
                 }
               >
                 <Route index element={<PortalOverview />} />
+                <Route path="book" element={<PortalBook />} />
+                <Route path="questionnaires" element={<PortalQuestionnaires />} />
+                <Route path="questionnaires/:id" element={<PortalQuestionnaireDetail />} />
                 <Route path="statements" element={<PortalStatements />} />
               </Route>
 
@@ -109,6 +121,8 @@ export default function App() {
               <Route path="/settings/fee-schedules" element={<Shell roles={["admin"]}><FeeSchedulesPage /></Shell>} />
               <Route path="/settings/clearinghouse" element={<Shell roles={["admin"]}><ClearinghouseSettingsPage /></Shell>} />
               <Route path="/settings/payments" element={<Shell roles={["admin"]}><PaymentsSettings /></Shell>} />
+              <Route path="/settings/sms" element={<Shell roles={["admin"]}><SmsSettings /></Shell>} />
+              <Route path="/scheduling/booking-requests" element={<Shell roles={["admin", "staff", "doctor"]}><BookingRequestsQueue /></Shell>} />
               <Route path="/billing" element={<Shell roles={["admin", "doctor", "staff"]}><BillingDashboard /></Shell>} />
               <Route path="/billing/invoices" element={<Shell roles={["admin", "doctor", "staff"]}><InvoicesList /></Shell>} />
               <Route path="/billing/invoices/:id" element={<Shell roles={["admin", "doctor", "staff"]}><InvoiceDetail /></Shell>} />

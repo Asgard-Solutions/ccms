@@ -8,7 +8,7 @@
  * Patients (role="patient") are routed here automatically on login.
  */
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { FileText, LogOut, User2 } from "lucide-react";
+import { CalendarPlus, ClipboardList, FileText, LogOut, User2 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -78,6 +78,8 @@ export default function PortalShell() {
           className="flex w-full flex-row gap-1 sm:w-48 sm:flex-col sm:flex-shrink-0"
         >
           <NavItem to="/portal" icon={User2} label="Overview" testid="portal-nav-overview" />
+          <NavItem to="/portal/book" icon={CalendarPlus} label="Book visit" testid="portal-nav-book" />
+          <NavItem to="/portal/questionnaires" icon={ClipboardList} label="Questionnaires" testid="portal-nav-questionnaires" />
           <NavItem to="/portal/statements" icon={FileText} label="Statements" testid="portal-nav-statements" />
         </nav>
 
