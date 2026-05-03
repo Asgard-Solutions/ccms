@@ -310,6 +310,34 @@ class TestQuestionnaires:
         assert r["score"] == 100.0
         assert "Bed-bound" in r["interpretation"]
 
+    def test_submit_rejects_missing_answers(self):
+        """Empty submissions are rejected with 422 — avoids the
+        clinically-dangerous default-to-zero bug."""
+        admin = _login(*DEFAULT_ADMIN)
+        pid, phone, _ = _ensure_patient_with_phone(admin)
+        a = admin.post(
+            f"{API}/questionnaires/assign",
+            json={"patient_id": pid, "template_id": "nprs",
+                  "send_sms": False},
+            timeout=10,
+        )
+        aid = a.json()["id"]
+        code = requests.post(
+            f"{API}/portal/auth/otp/request",
+            json={"phone": phone}, timeout=10,
+        ).json()["dev_code"]
+        patient = requests.Session()
+        patient.post(
+            f"{API}/portal/auth/otp/verify",
+            json={"phone": phone, "code": code}, timeout=10,
+        )
+        r = patient.post(
+            f"{API}/portal/questionnaires/{aid}/submit",
+            json={"answers": {}}, timeout=10,
+        )
+        assert r.status_code == 422
+        assert "now" in r.text  # required item id present in message
+
 
 # ---------------------------------------------------------------------------
 # Kiosk

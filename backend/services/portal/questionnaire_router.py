@@ -103,6 +103,25 @@ async def submit_my_assignment(
     tpl = get_template(row["template_id"])
     if not tpl:
         raise HTTPException(422, "Template missing")
+    # Reject empty / no-meaningful-answer submissions. For each
+    # non-optional item the payload must include a concrete value.
+    missing: list[str] = []
+    for item in tpl.get("items", []):
+        if item.get("optional"):
+            continue
+        v = (payload.answers or {}).get(item["id"])
+        if v is None:
+            missing.append(item["id"])
+            continue
+        if item.get("type") == "activity":
+            rating = v.get("rating") if isinstance(v, dict) else v
+            if rating is None:
+                missing.append(item["id"])
+    if missing:
+        raise HTTPException(
+            422,
+            f"Missing answers for required items: {', '.join(missing)}",
+        )
     scored = score_answers(row["template_id"], payload.answers)
 
     # Write an outcome_entries row so existing charts pick it up.

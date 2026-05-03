@@ -43,7 +43,9 @@ async def portal_overview(user: dict = Depends(get_current_user)):
     now = datetime.now(timezone.utc)
     now_iso = now.isoformat()
 
-    # Upcoming appointments (next 3).
+    # Upcoming appointments (next 10, regardless of how far out — so
+    # that a patient who just had a booking request approved for a few
+    # weeks out still sees it confirmed on their overview).
     upcoming = []
     cur = db.appointments.find(
         {
@@ -54,8 +56,8 @@ async def portal_overview(user: dict = Depends(get_current_user)):
         },
         {"_id": 0, "id": 1, "start_time": 1, "end_time": 1,
          "status": 1, "provider_id": 1, "location_id": 1,
-         "appointment_type_id": 1},
-    ).sort("start_time", 1).limit(5)
+         "appointment_type_id": 1, "arrived_at": 1, "arrived_via": 1},
+    ).sort("start_time", 1).limit(10)
     async for row in cur:
         upcoming.append(row)
 

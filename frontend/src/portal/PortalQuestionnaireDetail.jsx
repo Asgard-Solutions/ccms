@@ -120,6 +120,25 @@ export default function PortalQuestionnaireDetail() {
     [data]
   );
 
+  // Answer validation — must have a non-null response for every
+  // non-optional item before submit is enabled.
+  const canSubmit = useMemo(() => {
+    const tpl = data?.template;
+    if (!tpl) return false;
+    for (const item of tpl.items) {
+      if (item.optional) continue;
+      const v = answers[item.id];
+      if (item.type === "scale") {
+        if (v === undefined || v === null) return false;
+      } else if (item.type === "choice") {
+        if (v === undefined || v === null) return false;
+      } else if (item.type === "activity") {
+        if (!v || !v.name || (v.rating ?? null) === null) return false;
+      }
+    }
+    return true;
+  }, [answers, data]);
+
   async function submit(e) {
     e.preventDefault();
     setSubmitting(true);
@@ -181,7 +200,7 @@ export default function PortalQuestionnaireDetail() {
           <div className="flex justify-end">
             <Button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !canSubmit}
               data-testid="portal-q-submit-btn"
             >
               {submitting ? "Submitting…" : "Submit answers"}

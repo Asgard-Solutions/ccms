@@ -1,6 +1,79 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-02-15 (Helcim engagement UX wrap-up — billing-failures panel + statement auto-pay toggle + treatment-plan Link auto-pay + backend test drift fixed)
+**Last updated:** 2026-02-16 (Patient Intake & Engagement — self check-in (portal + kiosk), request-only online booking, questionnaires with scoring, two-way Twilio SMS with log-only fallback, phone-first portal OTP auth)
+
+## 5a. Patient Intake & Engagement bundle (2026-02-16)
+
+**User request:** "Patient self check-in, Online booking (patient portal), Questionnaires (outcome measures delivered to patient), Two-way texting (Twilio SMS integration)." User choices: **SMS-OTP portal auth**, **request-only booking**, **both portal & kiosk self check-in**, **chiropractic starter pack (ODI/NDI/PSFS/NPRS)**, **SMS plumbing + log-only fallback**.
+
+**Shipped — backend**
+
+- `services/sms/` — new module. Per-tenant Twilio credentials encrypted at rest (`credentials.py`), unified `send_sms()` with automatic log-only fallback (`client.py`), 6-digit OTP request/verify with 10-min TTL + 5-attempt cap (`otp.py`), Twilio `X-Twilio-Signature` HMAC-SHA1 webhook verification (`webhook_verify.py`), and the full router at `/api/sms/*` (settings CRUD, test send, staff send, threads + messages inbox, inbound webhook).
+- `services/portal/auth_router.py` — `POST /api/portal/auth/otp/{request,verify}`. OTP verify resolves a patient row (forgiving phone match across legacy formats), provisions a `users` row with `role=patient, linked_patient_id, portal_otp_only=true`, and sets access+refresh cookies. Placeholder emails use `@portal.ccms.app` so Pydantic v2's reserved-TLD validator doesn't block `/auth/me`.
+- `services/portal/booking_router.py` — `/api/portal/booking-requests` (patient), `/api/portal/overview`, `/api/portal/providers`, `/api/portal/appointment-types`.
+- `services/portal/checkin_router.py` — `POST /api/portal/appointments/{id}/check-in`. Day-of-visit check, flips appointment status → `arrived`, stamps `arrived_via=portal`.
+- `services/portal/questionnaire_router.py` — `/api/portal/questionnaires`, `/{id}`, `/{id}/submit`. Submit rejects empty/missing required answers with 422 (defense against the default-to-zero clinical hazard) and persists a row into the existing `outcome_entries` collection so the Phase-7 trends UI picks it up automatically.
+- `services/kiosk/__init__.py` — **public** `POST /api/kiosk/check-in {last_name, date_of_birth}`. Resolves tenant via `X-Kiosk-Tenant` header (defaults to `default`). Matches on DOB + case-insensitive last-name, pulls today's scheduled appointment, flips to `arrived` / `arrived_via=kiosk`.
+- `services/scheduling/booking_requests.py` — staff router at `/api/booking-requests` with `list / get / approve / decline`. On approve we insert an `appointments` row directly and fire an SMS confirmation (log-only when Twilio is absent). Approve supports a staff-supplied `start_time` override that differs from the patient's preferred slots.
+- `services/questionnaires/templates.py` — code-first template registry for **NPRS, ODI, NDI, PSFS** with pure scoring functions (`score_answers`). ODI uses the raw/max percentage formula with standard disability bands (0-20 minimal → 80-100 bed-bound); NDI mirrors the same math; NPRS returns the raw 0-10 score with the standard clinical bands; PSFS averages rated activities to a 0-10 figure.
+- `services/questionnaires/router.py` — staff `/api/questionnaires/{templates,assign,assignments}`. Assign auto-fires an SMS invite to the patient (log-only fallback) with a `/portal/questionnaires/{id}` deep link.
+- `server.py` wiring — 9 new `include_router` calls.
+
+**Shipped — frontend**
+
+- `pages/Kiosk.jsx` — public `/kiosk` tablet flow (last-name + DOB, auto-reset 10 s after success).
+- `portal/PortalLogin.jsx` — `/portal/login` two-step phone → OTP flow. In log-only mode the dev OTP is surfaced via a toast and inline hint so demo/testing works without Twilio keys.
+- `portal/PortalShell.jsx` — added Book, Questionnaires nav items.
+- `portal/PortalOverview.jsx` — rewritten: upcoming appointments (with day-of Check-in CTA), pending questionnaires, pending booking requests. Overview window now shows the next **10** upcoming appointments regardless of distance so a freshly-approved booking is immediately visible.
+- `portal/PortalBook.jsx` — booking-request form (provider + visit type dropdowns, reason, 1–3 preferred `datetime-local` slots, notes). Submit → `/api/portal/booking-requests`.
+- `portal/PortalQuestionnaires.jsx` + `PortalQuestionnaireDetail.jsx` — list + generic survey renderer handling `scale` (number-button grid + slider, one testid per value), `choice` (ODI/NDI 6-choice radios), and `activity` (PSFS name + rating). Submit button is disabled until every non-optional item has an answer; backend mirrors the same validation and returns 422 on incomplete submissions.
+- `pages/settings/SmsSettings.jsx` — admin `/settings/sms` with credentials form (Account SID, Auth Token, Messaging Service SID or `from_number`), enabled toggle, test-send card (status=`logged` in log-only mode), and a recent-outbound log. Banner reminds admins the system ships in log-only mode until keys are saved and enabled.
+- `pages/scheduling/BookingRequestsQueue.jsx` — staff queue at `/scheduling/booking-requests` with status filter chips, an Approve dialog (start_time + duration + optional patient note), and a Decline prompt.
+- `pages/patients/PatientQuestionnairesCard.jsx` — on the patient chart. Assign dialog with radio list of the 4 templates + send-SMS toggle. Completed rows show score + interpretation.
+- `App.js` routes — `/portal/login`, `/kiosk`, `/portal/book`, `/portal/questionnaires`, `/portal/questionnaires/:id`, `/scheduling/booking-requests`, `/settings/sms`.
+- `components/layout/navConfig.js` — sidebar items for **Booking Requests** and **SMS (Twilio)** (admin).
+
+**Verification**
+
+- 15/15 backend pytest in `tests/test_patient_intake_bundle.py` green (SMS log-only fallback, OTP request/verify+`/auth/me` round-trip, booking request create/approve/decline, kiosk 404 paths, questionnaire assign/submit/scoring, ODI math, empty-submission rejection).
+- Testing agent iter 75 → found one CRITICAL (`/auth/me` 500 for portal users because `@portal.local` hit Pydantic v2's reserved-TLD block). Fix in iter 76: use `@portal.ccms.app` + migrate 18 stale rows. Iter 76 returned green with `retest_needed=false`; two polish recs (overview window, scale testids, empty-submit validation) were also applied.
+- No regression across the 110-test cross-phase suite (billing phase 3/4/5/6 + checkout hooks + Helcim integration + scheduler + dashboard + intake bundle).
+
+**Twilio**
+
+- Runs in **log-only mode** out of the box. Every OTP / booking confirmation / questionnaire invite is persisted to `sms_outbound_log` with `provider=log-only, status=logged`. No real Twilio calls until `PUT /api/sms/settings {account_sid, auth_token, messaging_service_sid|from_number, enabled:true}` is performed via `/settings/sms`.
+- Webhook lives at `POST /api/sms/webhook/{tenant_id}` — verifies `X-Twilio-Signature` against the tenant's stored auth token.
+
+**Files added**
+
+- `/app/backend/services/sms/{__init__,credentials,client,otp,webhook_verify,router}.py`
+- `/app/backend/services/portal/{__init__,auth_router,booking_router,checkin_router,questionnaire_router}.py`
+- `/app/backend/services/kiosk/{__init__,router}.py`
+- `/app/backend/services/questionnaires/{__init__,templates,router}.py`
+- `/app/backend/services/scheduling/booking_requests.py`
+- `/app/backend/tests/test_patient_intake_bundle.py`
+- `/app/frontend/src/api/{sms,portal}.js`
+- `/app/frontend/src/portal/{PortalLogin,PortalBook,PortalQuestionnaires,PortalQuestionnaireDetail}.jsx`
+- `/app/frontend/src/pages/{Kiosk,settings/SmsSettings,scheduling/BookingRequestsQueue,patients/PatientQuestionnairesCard}.jsx`
+
+**Files changed**
+
+- `/app/backend/server.py` — include 9 new routers.
+- `/app/frontend/src/App.js` — new routes.
+- `/app/frontend/src/portal/PortalOverview.jsx` — full rewrite.
+- `/app/frontend/src/portal/PortalShell.jsx` — extra nav links.
+- `/app/frontend/src/components/layout/navConfig.js` — Booking Requests + SMS settings sidebar items.
+- `/app/frontend/src/pages/PatientDetail.jsx` — mounts PatientQuestionnairesCard.
+
+**Known follow-ups (backlog)**
+
+- Twilio credentials not yet pasted — `/settings/sms` ready when the operator has them.
+- `/auth/me` response-model `email` still typed `EmailStr`; future synthetic-email introductions (bots, imports) could hit the same reserved-TLD trap. Worth switching to `Optional[str]` when touched next.
+- NPRS scale renders both number-button grid and slider; pick one after UAT feedback.
+- Scheduling router writes through `get_db_write()` while booking approve writes through `tenant_db()` — currently the same DB in single-tenant deployments, but add a shared helper before any multi-DB tenant rollout.
+- Two-way SMS inbox screen (`/communications/sms`) exists on the backend (threads + messages routes) but the staff UI for it is not yet built.
+
+---
 
 ## 4w. Helcim engagement UX + test-suite stabilisation (2026-02-15)
 
