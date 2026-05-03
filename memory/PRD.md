@@ -1,6 +1,53 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-05-02 (Recurring auto-charge engine — Helcim Customer Vault + payment plans + treatment-plan auto-pay + statement auto-pay + worker)
+**Last updated:** 2026-02-15 (Helcim engagement UX wrap-up — billing-failures panel + statement auto-pay toggle + treatment-plan Link auto-pay + backend test drift fixed)
+
+## 4w. Helcim engagement UX + test-suite stabilisation (2026-02-15)
+
+**User request:** "Wire a small billing-failures dashboard panel … P1 — Treatment plan editor → 'Link auto-pay' … P1 — Per-tenant Statement auto-pay toggle …" (+ accepted `a + b`: run E2E testing on new features **and** fix the 4 pre-existing billing-phase test failures before finish).
+
+**Shipped**
+
+Frontend:
+- `pages/billing/helcim/BillingFailuresPanel.jsx` — admin-dashboard panel listing schedules with `status=failed` or `consecutive_failures>=1`, Retry / Resolve CTAs, fail-soft empty state. Mounted in `pages/Dashboard.jsx`.
+- `pages/settings/PaymentsSettings.jsx` — per-tenant *Statement auto-pay* toggle, persists to `GET/PUT /api/billing/helcim/settings`, survives refresh, only rendered when `settings.configured=true`.
+- `pages/clinical/TreatmentPlanEditor.jsx` — *Link auto-pay* button (`plan-link-autopay-btn`) opens `LinkAutoPayDialog` to attach a saved-card payment schedule to the plan. Missing imports `Sparkles` (lucide-react) and `LinkAutoPayDialog` were surfaced by the testing agent and patched.
+- `pages/billing/helcim/LinkAutoPayDialog.jsx` — no-card warning + "Open patient ledger" CTA; otherwise posts `POST /api/billing/helcim/schedules` with `kind=treatment_plan`.
+
+Backend:
+- `services/billing/helcim/router.py` — added 5 dashboard/auto-pay routes:
+  - `GET /billing-failures`, `POST /billing-failures/{schedule_id}/resolve`
+  - `GET /statement-autopay/settings`, `PUT /statement-autopay/settings`
+  - `POST /statement-autopay/patients/{patient_id}` (opt-in wiring)
+- `services/billing/helcim/statement_autopay.py` — scheduler helper gated by tenant toggle + saved-card presence.
+
+**Verification (testing agent iter 74)**
+- 9/9 `test_helcim_dashboard_autopay.py` pass; 52/52 Helcim suite green; 128/128 passing across the billing-phase + checkout-hooks + Helcim test surface.
+- Frontend E2E: dashboard panel, settings toggle round-trip after reload, treatment-plan dialog all verified. Ledger regression clean.
+- `retest_needed: false`, `main_agent_can_self_test: true`.
+
+**Pre-existing test drift — fixed (2026-02-15)**
+
+| Test | Root cause | Fix |
+|---|---|---|
+| `test_billing_phase3.py::TestScrubberRules::test_run_rules_clean_claim` | Scrubber gained Phase-4 `rule_patient_dob_required` + `rule_patient_gender_recommended`; the Phase-3 fixture patient had no `date_of_birth` / `gender`. | Added `date_of_birth` + `gender` to the fixture patient dict. |
+| `test_billing_phase5.py::TestAgingMath::test_statement_body_deterministic` | `render_statement_body` was upgraded to a tabular layout; the old `TOTAL DUE: $X` / `balance $45.00` strings no longer exist. | Updated assertions to the new `AMOUNT DUE FROM PATIENT: $65.00` line + tabular `$    45.00` / `$    20.00` balance columns. |
+| `test_billing_phase6.py::TestDeliveryEndpoints::test_email_mock_path_when_no_key` | The `/send` endpoint now returns `delivery_id` (the `message_id` lives on the persisted `statement_deliveries` row, not in the response). | Asserted `body["delivery_id"]` instead of `body["message_id"]`. |
+| `test_checkout_hooks.py::test_checkout_hook_creates_draft_invoice_stub` | `asyncio.get_event_loop()` raises in Python 3.12+ when there is no current loop in the main thread. | Switched to `asyncio.new_event_loop().run_until_complete(...)`. |
+
+**Files changed**
+- `/app/backend/tests/test_billing_phase3.py`
+- `/app/backend/tests/test_billing_phase5.py`
+- `/app/backend/tests/test_billing_phase6.py`
+- `/app/backend/tests/test_checkout_hooks.py`
+- `/app/frontend/src/pages/clinical/TreatmentPlanEditor.jsx` (imports — testing agent)
+- `/app/memory/test_credentials.md` (re-seeded)
+
+**Known follow-ups (deferred, captured from iter 74)**
+- `POST /api/billing/helcim/cards` returns 422 on the straightforward `{patient_id, helcim_card_token, brand, last4, cardholder, exp_month, exp_year, is_default, label}` payload — schema wants one or more additional fields. Not blocking, worth a quick OpenAPI audit.
+- Frontend could benefit from `react/jsx-no-undef` enforcement in ESLint to catch the class of regression that cost us the two missing imports on TreatmentPlanEditor.
+
+---
 
 ## 4v. Recurring auto-charge engine — Helcim Customer Vault (2026-05-02)
 
