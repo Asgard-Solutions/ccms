@@ -4,6 +4,52 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-05-04 — NL scheduling + override propagation + picker UX
+
+**1. Natural-language scheduling (P2)**
+- `services/scheduling/nl_router.py` exposes `POST /api/scheduling/nl/parse`
+  and `POST /api/scheduling/nl/create` (admin / doctor / staff).
+- Parse turns free text like *"Book Hannah Whitaker for an adjustment
+  with Dr. Carter next Friday at 10am"* into a structured intent —
+  resolved patient/provider/appointment_type/location IDs, ISO start,
+  duration, plus a `clarifications[]` array surfaced to the UI when
+  anything is ambiguous.
+- Hallucination-guarded: every ID returned by Claude is re-validated
+  against the tenant's own data before reaching `nl/create`. Create
+  delegates to the canonical `create_appointment` so existing event-bus
+  hooks (reminders, billing, etc.) still fire.
+- New `pages/scheduling/NLBookCard.jsx` mounts above the scheduling
+  toolbar. Two-phase flow: parse → confirm. Pre-fills Selects with
+  candidate lists when an entity isn't uniquely resolved. Never
+  auto-creates without an explicit confirm click.
+
+**2. Template-override propagation**
+- `services/ai/router.py::_augment_with_template` resolves merged
+  per-tenant / per-location / per-provider override instructions at
+  runtime and appends them to the base system prompt for chart-brief,
+  prior-sections, and draft-sections (in addition to scribe SOAP).
+- `_note_to_patient` now returns `location_id` + `provider_id` so the
+  encounter-scoped surfaces can scope the override correctly.
+
+**3. Per-location id picker UI**
+- `pages/settings/AITemplatesPage.jsx` replaces the free-text scope_id
+  Input with a context-aware Select. When scope=location the dropdown
+  pulls `/api/authz/locations`; when scope=provider it pulls
+  `/api/auth/users?role=doctor`. Shows the location name + code or the
+  doctor's display_name fallback chain (display_name → first+last →
+  name → email) plus an email tiebreaker so duplicate-named seed
+  doctors are distinguishable. The list view labels saved rows with
+  the same friendly names instead of raw UUIDs.
+
+**Tests**
+- `tests/test_nl_scheduling.py` — 7/7 (parse happy path, role gates,
+  text-too-short 422, hallucination guard, create 404 + 422,
+  template-override propagation smoke for chart-brief).
+- Cross-suite AI: 43 passed + 1 skip across the five AI test files.
+- iteration_84 caught a frontend-only URL bug (`/locations` and
+  `/users` returned 404); fixed and re-verified at iteration_85
+  (100% frontend-only retest pass).
+
 ## 2026-05-04 — Post-scribe AI bundle (coding-suggest + semantic search + template overrides + collection-name refactor)
 
 Closed the documentation→billing loop and added a chart-search surface

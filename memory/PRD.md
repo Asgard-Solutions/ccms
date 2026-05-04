@@ -1,6 +1,38 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-05-04 (Post-scribe AI bundle — inline billing-readiness coding suggester, natural-language chart search, SOAP-template overrides per scope, and the FOLLOW_UP_NOTES_COLL constant refactor)
+**Last updated:** 2026-05-04 (Natural-language scheduling + template-override propagation + per-scope picker UX)
+
+## 5g. NL scheduling + override propagation + picker (2026-05-04, P2)
+
+**User request:** Natural-language scheduling, wire merged template overrides into chart-brief / prior-sections / draft-sections, replace free-text scope_id input with a real picker.
+
+### Shipped
+
+**Backend** —
+- `services/scheduling/nl_router.py` (new) — `POST /api/scheduling/nl/parse` + `/create`. LLM-suggested IDs are re-validated against tenant data before any state mutation; create delegates to existing `create_appointment` so event-bus hooks still fire.
+- `services/ai/router.py::_augment_with_template` propagates merged tenant/location/provider override instructions into chart-brief, prior-sections, and draft-sections in addition to scribe SOAP. `_note_to_patient` now also returns `location_id` and `provider_id` for scope resolution.
+- `services/ai/prompts.py` adds `NL_SCHEDULE_SYSTEM` strict-JSON prompt with hallucination + clarification rules.
+
+**Frontend** —
+- `pages/scheduling/NLBookCard.jsx` (new) on `/scheduling`. Quick-book widget; two-phase parse → confirm.
+- `pages/settings/AITemplatesPage.jsx` replaces free-text scope_id with a context-aware Select. Lookup URLs corrected to `/api/authz/locations` and `/api/auth/users?role=doctor` (was `/locations` and `/users` — 404 in iteration_84, fixed in iteration_85).
+
+### Verification
+
+- Backend: 43 passed + 1 benign skip across all five AI test files; new `tests/test_nl_scheduling.py` (7/7).
+- Frontend: NL Quick-book parsed "Book Hannah Whitaker for an adjustment with Dr. Carter next Friday at 10am" → confirmed appointment at 2026-05-08T10:00 in the calendar (iter_84). AITemplatesPage location/provider dropdowns populate (iter_85, 100%).
+
+### Files added/modified
+
+- `/app/backend/services/scheduling/nl_router.py` (new)
+- `/app/backend/services/ai/{router.py, prompts.py}`
+- `/app/backend/server.py` (registers `scheduling_nl_router`)
+- `/app/backend/tests/test_nl_scheduling.py` (new)
+- `/app/frontend/src/pages/scheduling/{NLBookCard.jsx (new), SchedulingPage.jsx}`
+- `/app/frontend/src/pages/settings/AITemplatesPage.jsx`
+- `/app/frontend/src/api/ai.js`
+
+---
 
 ## 5f. Post-scribe AI bundle (2026-05-04, P2)
 
