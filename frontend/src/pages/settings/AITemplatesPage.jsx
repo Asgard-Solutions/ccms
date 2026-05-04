@@ -70,8 +70,8 @@ export default function AITemplatesPage() {
   useEffect(() => {
     let cancelled = false;
     Promise.all([
-      api.get("/locations").then((r) => r.data).catch(() => []),
-      api.get("/users", { params: { role: "doctor" } }).then((r) => r.data).catch(() => []),
+      api.get("/authz/locations").then((r) => r.data).catch(() => []),
+      api.get("/auth/users", { params: { role: "doctor" } }).then((r) => r.data).catch(() => []),
     ]).then(([locs, docs]) => {
       if (cancelled) return;
       setLocations(Array.isArray(locs) ? locs : []);
@@ -90,7 +90,12 @@ export default function AITemplatesPage() {
     }
     if (row.scope_type === "provider") {
       const p = providers.find((x) => x.id === row.scope_id);
-      return p ? (p.name || p.email || p.id) : row.scope_id;
+      if (!p) return row.scope_id;
+      const firstLast = [p.first_name, p.last_name].filter(Boolean).join(" ");
+      const display = p.display_name
+        || firstLast
+        || (p.name && p.name !== "License doctor" ? p.name : null);
+      return display ? `${display}${p.email ? ` · ${p.email}` : ""}` : (p.email || p.id);
     }
     return row.scope_id || "—";
   }, [locations, providers]);
@@ -227,7 +232,16 @@ export default function AITemplatesPage() {
                   {(draft.scope_type === "location" ? locations : providers).map((opt) => {
                     const label = draft.scope_type === "location"
                       ? `${opt.name}${opt.code ? ` (${opt.code})` : ""}`
-                      : `${(opt.name || opt.email || opt.id)}`;
+                      : (() => {
+                          const firstLast = [opt.first_name, opt.last_name]
+                            .filter(Boolean).join(" ");
+                          const display = opt.display_name
+                            || firstLast
+                            || (opt.name && opt.name !== "License doctor" ? opt.name : null);
+                          return display
+                            ? `${display}${opt.email ? ` · ${opt.email}` : ""}`
+                            : (opt.email || opt.id);
+                        })();
                     return (
                       <SelectItem
                         key={opt.id}
