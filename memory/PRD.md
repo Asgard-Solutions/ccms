@@ -1,6 +1,49 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-05-04 (Send-to-claim + NL reschedule/cancel + paginated provider dropdown — VERIFIED)
+**Last updated:** 2026-05-04 (UX nits + one-click Submit-to-Clearinghouse — VERIFIED)
+
+## 5i. UX nits + one-click Submit-to-Clearinghouse (2026-05-04, P0/P1/P2)
+
+**User request:** "1) Minor UX nits: payer fee schedule on send-to-claim, hide irrelevant inputs on NL reschedule/cancel, server-side provider search for tenants >500 doctors. 2) Wire 'Send to claim' into a one-click Submit to Clearinghouse (Change/Optum sandbox) — AI-drafted SOAP all the way to a submittable 837 in a single click."
+
+### Shipped
+
+**Backend** —
+- `services/scribe/router.py::send_to_claim` resolves zero-priced CPT lines through `resolve_charge_price` (payer fee schedule → self_pay → catalog). Response includes `price_sources[]`.
+- `services/identity/router.py::list_users` adds `q`, `limit`, `offset`. Search is regex-escaped, case-insensitive across name/email fields, capped at 500 results.
+- `services/billing/router.py::quick_submit_claim` (NEW) — `POST /api/billing/claims/{claim_id}/quick-submit`. Single-call pipeline: scrubber + ready transition + adapter.submit. Sandbox/disabled adapters accept scrubber failures with `submitted_with_warnings`; production strictly enforces scrubber pass.
+- The clearinghouse adapter stack (`services/billing/clearinghouse/`) was already complete (Phase 2c). This wave only adds the user-facing one-click flow on top.
+
+**Frontend** —
+- `pages/scheduling/NLBookCard.jsx` — patient/provider selects hidden when intent ≠ create. Cancel intent shows a destructive-styled summary only.
+- `pages/settings/AITemplatesPage.jsx` — debounced (250 ms) server-side provider search; search box unconditional on Provider scope.
+- `pages/ai/ScribePanel.jsx` — `scribe-quick-submit-btn` after send-to-claim. Renders status pill (queued / accepted / rejected / manual) + adapter route + sandbox indicator.
+- `pages/billing/ClaimDetail.jsx` — `claim-quick-submit-btn` next to the existing Submit. Disabled unless status ∈ {draft, validation_failed, ready}.
+- `pages/billing/useClaims.js` exposes `quickSubmitClaim`.
+
+### Verification
+
+- Backend: `tests/test_quick_submit.py` 3/3 + `tests/test_iter87_wave_b.py` 7/7 (testing-agent iter_87). All older billing/clearinghouse/scribe tests still pass — no regressions.
+- Frontend E2E (iter_87): live Playwright validation of server-side provider search and ClaimDetail one-click button. ScribePanel one-click button covered by code review + transitive backend test.
+
+### Files added/modified
+
+- `/app/backend/services/scribe/router.py`
+- `/app/backend/services/identity/router.py`
+- `/app/backend/services/billing/router.py`
+- `/app/backend/tests/test_quick_submit.py` (new)
+- `/app/frontend/src/pages/ai/ScribePanel.jsx`
+- `/app/frontend/src/pages/billing/ClaimDetail.jsx`
+- `/app/frontend/src/pages/billing/useClaims.js`
+- `/app/frontend/src/pages/scheduling/NLBookCard.jsx`
+- `/app/frontend/src/pages/settings/AITemplatesPage.jsx`
+
+### Future work
+- Live HTTPS transport for production-mode CHC/Optum (currently behaves as sandbox + WARNING log when `CLEARINGHOUSE_CHC_MODE=production`).
+- 999 / 277CA / 835 ack-pollers (existing scaffolding stubs return None / []).
+- AITemplatesPage server-side `?offset=` cursor for tenants > 500 doctors (current `limit=200` cap is fine for the current scale).
+
+---
 
 ## 5h. Send-to-claim + NL reschedule/cancel + paginated provider dropdown (2026-05-04, P1/P2)
 

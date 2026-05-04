@@ -4,6 +4,83 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-05-04 — UX nits + One-click Submit-to-Clearinghouse (VERIFIED)
+
+**1. Payer fee schedule on send-to-claim (P1)**
+- `services/scribe/router.py::send_to_claim` now calls
+  `services.billing.charge_capture.resolve_charge_price` whenever the
+  caller passes `billed_cents=0` for a CPT line. Resolution order:
+  payer schedule → self-pay schedule → catalog → 0. Response now
+  includes a `price_sources[]` array (one entry per CPT line) so the
+  doctor can see where each price came from.
+- AI Scribe never asks the doctor to type fees; this closes the loop
+  so the auto-generated draft claim has real money values out of the
+  box.
+
+**2. NLBookCard — hide irrelevant inputs (P2)**
+- Reschedule intent now only renders Start + Duration. Cancel intent
+  renders no inputs (just a destructive-styled summary with the LLM's
+  cancel reason). Create intent unchanged.
+
+**3. Server-side provider search on AITemplatesPage (P2)**
+- `GET /api/auth/users` now accepts `q`, `limit` (cap 500), and
+  `offset`. Search uses regex-escaped case-insensitive matching across
+  name / first_name / last_name / display_name / email.
+- `pages/settings/AITemplatesPage.jsx` was rewritten to debounce
+  search input (250 ms) and re-fetch from the server. The list-of-
+  truth is the server's response; client-side filter was removed.
+  Search box now appears unconditionally on Provider scope.
+
+**4. One-click Submit to Clearinghouse (P0)**
+- New `POST /api/billing/claims/{claim_id}/quick-submit` endpoint.
+  Pipeline: scrub → ready → submit through resolved adapter, in one
+  transactional call. Sandbox/disabled adapters accept claims that
+  fail the scrubber but flag them with `submitted_with_warnings:true`
+  so demos and pre-enrollment testing keep working without sending
+  PHI on the wire. Production-mode adapters strictly enforce
+  scrubber pass.
+- Frontend buttons:
+  * `ScribePanel.jsx` → `scribe-quick-submit-btn` appears next to
+    "Open claim →" after send-to-claim succeeds. Click renders a
+    status pill (queued / accepted / rejected / manual), the adapter
+    route, the synthetic `chc-sbx-{hex}` external id, and a sandbox
+    indicator.
+  * `ClaimDetail.jsx` → `claim-quick-submit-btn` next to the
+    existing "Submit" button. Disabled unless status ∈ {draft,
+    validation_failed, ready}.
+- `useClaims.js` exposes `quickSubmitClaim(claimId, body?)`.
+
+### Verification
+
+- Backend: `tests/test_quick_submit.py` 3/3 + `test_iter87_wave_b.py`
+  7/7 pass (testing-agent iter_87). Existing
+  `test_third_wave_ai.py` 8/8 + `test_clearinghouse_phase2c.py` 11/11
+  + `test_billing_phase9.py` 6/6 — no regressions.
+- Frontend (iter_87): live Playwright verification of A3 (server-side
+  search) and B2 (claim-quick-submit-btn gating). B3 verified by code
+  review + transitive backend coverage. No UI defects.
+
+### Files added/modified
+
+- `/app/backend/services/scribe/router.py` (fee-schedule lookup)
+- `/app/backend/services/identity/router.py` (q/limit/offset)
+- `/app/backend/services/billing/router.py` (`/quick-submit`)
+- `/app/backend/tests/test_quick_submit.py` (new)
+- `/app/frontend/src/pages/scheduling/NLBookCard.jsx`
+- `/app/frontend/src/pages/settings/AITemplatesPage.jsx`
+- `/app/frontend/src/pages/ai/ScribePanel.jsx`
+- `/app/frontend/src/pages/billing/ClaimDetail.jsx`
+- `/app/frontend/src/pages/billing/useClaims.js`
+
+### Notes for future work
+- Sandbox-only mode is current default (`CLEARINGHOUSE_CHC_MODE=sandbox`
+  in `/app/backend/.env`). Production-mode flip requires
+  CLEARINGHOUSE_CHC_CLIENT_ID + CLEARINGHOUSE_CHC_CLIENT_SECRET +
+  enrollment_status='enrolled' on the payer; live HTTPS transport is
+  the next phase (currently logs a WARNING and behaves as sandbox).
+
+
+
 ## 2026-05-04 — Send-to-claim + NL reschedule/cancel + paginated provider dropdown (VERIFIED)
 
 **1. Send-to-claim from Scribe SOAP draft (P1)**
