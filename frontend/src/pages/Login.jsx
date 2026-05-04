@@ -241,24 +241,28 @@ function LoginForm() {
               person: "Ava Bennett",
               email: "admin@ccms.app",
               password: "Admin@ComplianceClinic1",
+              pin: "100001",
             },
             {
               role: "Chiropractor",
               person: "Dr. Noah Carter, DC",
               email: "doctor@ccms.app",
               password: "Doctor@ComplianceClinic1",
+              pin: "200002",
             },
             {
               role: "Front desk",
               person: "Mia Ramirez",
               email: "staff@ccms.app",
               password: "Staff@ComplianceClinic1",
+              pin: "300003",
             },
             {
               role: "Patient portal",
               person: "Ethan Parker",
               email: "patient@ccms.app",
               password: "Patient@ComplianceClinic1",
+              pin: "400004",
             },
           ].map((d) => (
             <button
@@ -266,18 +270,40 @@ function LoginForm() {
               type="button"
               data-testid={`login-demo-${d.role.toLowerCase().replace(/\s+/g, "-")}`}
               onClick={() => { setEmail(d.email); setPassword(d.password); }}
-              className="grid grid-cols-[6.5rem_1fr] items-baseline gap-x-4 rounded-sm px-1 py-0.5 text-left transition-colors hover:bg-muted/60"
+              className="grid grid-cols-[6.5rem_1fr] items-baseline gap-x-4 rounded-sm px-1 py-1 text-left transition-colors hover:bg-muted/60"
             >
               <span className="font-sans text-[11px] font-semibold uppercase tracking-[0.12em] text-foreground">
                 {d.role}
               </span>
               <span className="flex flex-col font-mono text-[11px] leading-tight">
                 <span className="font-sans text-foreground">{d.person}</span>
-                <span className="text-muted-foreground">{d.email}</span>
+                <span
+                  data-testid={`login-demo-${d.role.toLowerCase().replace(/\s+/g, "-")}-email`}
+                  className="text-muted-foreground"
+                >
+                  {d.email}
+                </span>
+                <span className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px]">
+                  <span
+                    data-testid={`login-demo-${d.role.toLowerCase().replace(/\s+/g, "-")}-password`}
+                    className="text-muted-foreground"
+                  >
+                    pwd <span className="text-foreground">{d.password}</span>
+                  </span>
+                  <span
+                    data-testid={`login-demo-${d.role.toLowerCase().replace(/\s+/g, "-")}-pin`}
+                    className="text-muted-foreground"
+                  >
+                    pin <span className="text-foreground">{d.pin}</span>
+                  </span>
+                </span>
               </span>
             </button>
           ))}
         </div>
+        <p className="mt-3 text-[10px] leading-relaxed text-muted-foreground">
+          PIN is for in-app re-verification (not sign-in). Click a row to auto-fill email + password; copy the PIN by hand for sensitive-action prompts.
+        </p>
       </div>
     </div>
   );
