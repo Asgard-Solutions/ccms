@@ -51,6 +51,7 @@ import PatientDocumentsCard from "../components/PatientDocumentsCard";
 import PatientLedgerCard from "./billing/PatientLedgerCard";
 import PatientStatementsCard from "./billing/PatientStatementsCard";
 import PatientQuestionnairesCard from "./patients/PatientQuestionnairesCard";
+import ChartBriefCard from "./ai/ChartBriefCard";
 import PatientInsuranceManager from "./billing/PatientInsuranceManager";
 import { PatientEligibilityCard } from "./billing/PatientEligibilityCard";
 import ChargeCaptureDialog from "./billing/ChargeCaptureDialog";
@@ -1483,6 +1484,7 @@ export default function PatientDetail() {
             <PatientLedgerCard patientId={id} title="Activity" />
             <PatientStatementsCard patientId={id} />
             <PatientQuestionnairesCard patientId={id} />
+            <ChartBriefCard patientId={id} />
           </div>
         </TabsContent>
       </Tabs>

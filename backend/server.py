@@ -71,6 +71,7 @@ from services.workforce.router import router as workforce_router  # noqa: E402
 from services.sms.router import router as sms_router  # noqa: E402
 from services.email.router import router as email_router  # noqa: E402
 from services.identity.google_auth import router as google_auth_router  # noqa: E402
+from services.ai.router import router as ai_router  # noqa: E402
 from services.portal.auth_router import router as portal_auth_router  # noqa: E402
 from services.portal.booking_router import router as portal_booking_router  # noqa: E402
 from services.portal.checkin_router import router as portal_checkin_router  # noqa: E402
@@ -142,6 +143,7 @@ api_router.include_router(billing_helcim_router)
 api_router.include_router(sms_router)
 api_router.include_router(email_router)
 api_router.include_router(google_auth_router)
+api_router.include_router(ai_router)
 api_router.include_router(portal_auth_router)
 api_router.include_router(portal_booking_router)
 api_router.include_router(portal_checkin_router)
