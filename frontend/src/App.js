@@ -39,6 +39,10 @@ import PortalQuestionnaires from "./portal/PortalQuestionnaires";
 import PortalQuestionnaireDetail from "./portal/PortalQuestionnaireDetail";
 import Kiosk from "./pages/Kiosk";
 import SmsSettings from "./pages/settings/SmsSettings";
+import EmailSettings from "./pages/settings/EmailSettings";
+import GoogleAuthSettings from "./pages/settings/GoogleAuthSettings";
+import SmsInbox from "./pages/communications/SmsInbox";
+import GoogleAuthCallback from "./pages/GoogleAuthCallback";
 import BookingRequestsQueue from "./pages/scheduling/BookingRequestsQueue";
 import Elevation from "./pages/Elevation";
 import ThemePreview from "./pages/ThemePreview";
@@ -85,6 +89,7 @@ export default function App() {
               <Route path="/register" element={<Register />} />
               <Route path="/password-reset" element={<PasswordReset />} />
               <Route path="/portal/login" element={<PortalLogin />} />
+              <Route path="/auth/google/callback" element={<GoogleAuthCallback />} />
               <Route path="/kiosk" element={<Kiosk />} />
 
               {/* ----- Patient portal (role=patient only) ----- */}
@@ -122,6 +127,9 @@ export default function App() {
               <Route path="/settings/clearinghouse" element={<Shell roles={["admin"]}><ClearinghouseSettingsPage /></Shell>} />
               <Route path="/settings/payments" element={<Shell roles={["admin"]}><PaymentsSettings /></Shell>} />
               <Route path="/settings/sms" element={<Shell roles={["admin"]}><SmsSettings /></Shell>} />
+              <Route path="/settings/email" element={<Shell roles={["admin"]}><EmailSettings /></Shell>} />
+              <Route path="/settings/google" element={<Shell roles={["admin"]}><GoogleAuthSettings /></Shell>} />
+              <Route path="/communications/sms" element={<Shell roles={["admin", "staff"]}><SmsInbox /></Shell>} />
               <Route path="/scheduling/booking-requests" element={<Shell roles={["admin", "staff", "doctor"]}><BookingRequestsQueue /></Shell>} />
               <Route path="/billing" element={<Shell roles={["admin", "doctor", "staff"]}><BillingDashboard /></Shell>} />
               <Route path="/billing/invoices" element={<Shell roles={["admin", "doctor", "staff"]}><InvoicesList /></Shell>} />

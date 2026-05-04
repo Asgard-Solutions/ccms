@@ -1,0 +1,45 @@
+{
+  "summary": "Wave-3 integrations (Resend email, Google OAuth, SMS inbox UI) — backend pytest 8/8 passed; frontend round-trip across /settings/email, /settings/google, /communications/sms, /auth/google/callback, and /settings/sms regression all passed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_integrations_wave3.py",
+    "/app/test_reports/pytest/iter77_wave3.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Browser console on /login (unauthenticated) shows 2x 401 + 2x 500 from background API calls. The 401s are expected (/api/auth/me when no cookie). The 500s should be traced — likely a non-blocking endpoint like /api/auth/refresh or a settings preflight; unrelated to this iteration but worth a quick log scan.",
+    "Note: /settings/google was left enabled=true with allowed_domains=['ccms.app'], default_role='staff' as a side-effect of the backend round-trip test. That's also why the Sign-in-with-Google button is currently visible on /login — confirm this is the intended seed state, otherwise toggle off via the admin UI."
+  ],
+  "critical_code_review_comments": [
+    "GoogleAuthCallback.jsx correctly distinguishes the two error paths (no session_id vs. exchange failure) and renders a stable [data-testid=google-callback-back-btn]; both paths verified.",
+    "EmailSettings.jsx round-trips api_key (last4 preserved on read), enable toggle, and remove flow correctly; outbound log refreshes after test-send.",
+    "SmsInbox.jsx uses thread.peer (E.164) as the 'to' for replies — outbound bubble appears immediately after send and persists in /api/sms/threads. Empty-state and mobile responsive layout both handled.",
+    "Login.jsx GoogleSignInButton fetches /api/auth/google/availability and only renders the button when enabled — verified to render after enabling. Click handler builds redirect=window.location.origin+'/auth/google/callback' and sets window.location.href without fallback, matching the auth-playbook constraint.",
+    "Minor: GoogleSignInButton silently swallows availability fetch errors (catch → false) — fine for production but worth logging at debug level."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (8/8 pytest)", "frontend": "100% (7/7 flows verified)"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (used as documented in /app/memory/test_credentials.md)",
+  "seed_data_creation": "TestSmsInbox.test_send_creates_thread_and_log left one outbound message in a synthetic 503555XXXX thread; UI test added one more outbound bubble to whichever thread sorted first. EmailSettings PUT/DELETE round-trip was cleaned up at the end. Google OAuth left enabled=true with domain='ccms.app' (carry-over from backend test).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Wave-3 fully shipped and tested end-to-end. The browser console 500s on /login (unauthenticated) are pre-existing and not caused by this iteration — investigate separately if they recur. Frontend public URL is https://helcim-payments.preview.emergentagent.com (per frontend/.env REACT_APP_BACKEND_URL).",
+  "rca of the issue": "N/A — no failures.",
+  "verified_flows": [
+    "/api/auth/google/availability returns 200 unauthenticated and reflects toggle.",
+    "/settings/email: add credentials → status flips to 'Configured but disabled (log-only)' → test-send returns status='logged' → outbound log row visible → remove → back to 'Not configured'.",
+    "/settings/google: add domain (case-folded + trimmed → 'testui.com'), remove domain, default_role select all functional.",
+    "/login: 'Sign in with Google' button rendered with data-testid=login-google-btn (button exists; window.location.href setter is browser-protected so navigation URL was not captured by the override, but the onClick handler is correct per code review).",
+    "/auth/google/callback (no fragment) → renders 'Sign-in failed' error state with back button.",
+    "/auth/google/callback#session_id=fake → POST /api/auth/google/exchange returns 401/502 (Emergent rejects fake) → page falls into the same error state.",
+    "/communications/sms: 7 existing threads loaded, opening a thread shows messages, replying via Send adds a new outbound bubble immediately and persists.",
+    "/settings/sms regression: page still loads ('Two-way texting (Twilio)' header rendered)."
+  ]
+}

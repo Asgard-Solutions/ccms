@@ -106,6 +106,13 @@ export const NAV_GROUPS = [
         icon: Inbox,
         roles: ["admin", "staff", "doctor"],
       },
+      {
+        to: "/communications/sms",
+        label: "SMS Inbox",
+        testId: "nav-sms-inbox",
+        icon: MessageSquareText,
+        roles: ["admin", "staff"],
+      },
     ],
   },
   {
@@ -230,6 +237,20 @@ export const NAV_GROUPS = [
         label: "SMS (Twilio)",
         testId: "nav-sms",
         icon: MessageSquareText,
+        roles: ["admin"],
+      },
+      {
+        to: "/settings/email",
+        label: "Email (Resend)",
+        testId: "nav-email",
+        icon: BellRing,
+        roles: ["admin"],
+      },
+      {
+        to: "/settings/google",
+        label: "Google sign-in",
+        testId: "nav-google-auth",
+        icon: ShieldCheck,
         roles: ["admin"],
       },
       {

@@ -35,6 +35,14 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
+    // CRITICAL: If returning from Google OAuth callback, skip the
+    // /auth/me check. The GoogleAuthCallback page will exchange the
+    // session_id and establish the cookie session first, then
+    // explicitly call refresh().
+    if (window.location.hash?.includes("session_id=")) {
+      setUser(null);
+      return;
+    }
     fetchMe();
   }, [fetchMe]);
 
