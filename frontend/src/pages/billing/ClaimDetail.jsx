@@ -10,6 +10,7 @@ import {
   ListChecks,
   Pencil,
   Send,
+  Zap,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -36,6 +37,7 @@ import {
   CLAIM_STATUS_LABELS,
   claimStatusTone,
   fetchClaimDetail,
+  quickSubmitClaim,
   replaceClaimDiagnoses,
   replaceClaimLines,
   submitClaim,
@@ -94,6 +96,32 @@ export default function ClaimDetail() {
       await refresh();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Submit failed");
+    } finally { setBusy(false); }
+  }
+
+  async function onQuickSubmit() {
+    setBusy(true);
+    try {
+      const res = await quickSubmitClaim(id);
+      const route = res?.adapter_route || "none";
+      const status = res?.adapter_status || "manual";
+      const label = res?.sandbox ? `${route} (sandbox)` : route;
+      const warn = res?.submitted_with_warnings
+        ? ` — submitted with ${res.scrubber_error_count || 0} scrubber findings`
+        : "";
+      toast[status === "rejected" ? "error" : "success"](
+        `${label}: ${status}${warn}`,
+      );
+      await refresh();
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      if (detail && typeof detail === "object" && detail.code === "VALIDATION_FAILED") {
+        toast.error(
+          `Scrubber blocked submission — ${detail.errors?.length || 0} errors`,
+        );
+      } else {
+        toast.error(typeof detail === "string" ? detail : "Quick-submit failed");
+      }
     } finally { setBusy(false); }
   }
 
@@ -185,6 +213,16 @@ export default function ClaimDetail() {
             className="rounded-sm"
           >
             <Send className="mr-2 h-4 w-4" /> Submit
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={onQuickSubmit}
+            disabled={busy || !["draft", "validation_failed", "ready"].includes(claim.status)}
+            data-testid="claim-quick-submit-btn"
+            className="rounded-sm"
+            title="Run scrubber and submit through the resolved clearinghouse adapter in one step."
+          >
+            <Zap className="mr-2 h-4 w-4" /> Submit to clearinghouse
           </Button>
         </div>
       </header>

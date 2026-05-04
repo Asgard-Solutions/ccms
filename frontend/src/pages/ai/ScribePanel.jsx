@@ -16,7 +16,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Mic, Square, Loader2, Sparkles, Trash2, ArrowDownToLine, FileText, Receipt, AlertTriangle, Send } from "lucide-react";
+import { Mic, Square, Loader2, Sparkles, Trash2, ArrowDownToLine, FileText, Receipt, AlertTriangle, Send, Zap } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Textarea } from "../../components/ui/textarea";
@@ -27,6 +27,7 @@ import {
   uploadScribeAudio, listScribeAudio, deleteScribeAudio, draftScribeSoap,
   suggestScribeCodes, sendScribeToClaim,
 } from "../../api/scribe";
+import { quickSubmitClaim } from "../billing/useClaims";
 import { api } from "../../api/client";
 
 const SECTIONS = [
@@ -65,6 +66,8 @@ export default function ScribePanel({
   const [payerId, setPayerId] = useState("");
   const [sendingToClaim, setSendingToClaim] = useState(false);
   const [createdClaimId, setCreatedClaimId] = useState(null);
+  const [submittingClaim, setSubmittingClaim] = useState(false);
+  const [clearinghouseResult, setClearinghouseResult] = useState(null);
 
   const recorderRef = useRef(null);
   const streamRef = useRef(null);
@@ -256,6 +259,32 @@ export default function ScribePanel({
       toast.error(err?.response?.data?.detail || "Send-to-claim failed");
     } finally {
       setSendingToClaim(false);
+    }
+  }
+
+  async function submitToClearinghouse() {
+    if (!createdClaimId) return;
+    setSubmittingClaim(true);
+    try {
+      const res = await quickSubmitClaim(createdClaimId);
+      setClearinghouseResult(res);
+      const route = res?.adapter_route || "none";
+      const status = res?.adapter_status || "manual";
+      const label = res?.sandbox ? `${route} (sandbox)` : route;
+      toast[status === "rejected" ? "error" : "success"](
+        `${label}: ${status}`,
+      );
+    } catch (err) {
+      const detail = err?.response?.data?.detail;
+      if (detail && typeof detail === "object" && detail.code === "VALIDATION_FAILED") {
+        toast.error(
+          `Scrubber blocked submission — ${detail.errors?.length || 0} errors`,
+        );
+      } else {
+        toast.error(typeof detail === "string" ? detail : "Submission failed");
+      }
+    } finally {
+      setSubmittingClaim(false);
     }
   }
 
@@ -626,17 +655,85 @@ export default function ScribePanel({
                         </Button>
                       </>
                     ) : (
-                      <div data-testid="scribe-send-to-claim-success" className="text-xs">
+                      <div data-testid="scribe-send-to-claim-success" className="space-y-2 text-xs">
                         <p className="text-foreground/85">
                           Draft claim ready.
                         </p>
-                        <a
-                          href={`/billing/claims/${createdClaimId}`}
-                          data-testid="scribe-send-to-claim-link"
-                          className="text-primary underline-offset-2 hover:underline"
-                        >
-                          Open claim →
-                        </a>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <a
+                            href={`/billing/claims/${createdClaimId}`}
+                            data-testid="scribe-send-to-claim-link"
+                            className="text-primary underline-offset-2 hover:underline"
+                          >
+                            Open claim →
+                          </a>
+                          {!clearinghouseResult && (
+                            <Button
+                              size="sm"
+                              variant="default"
+                              onClick={submitToClearinghouse}
+                              disabled={submittingClaim}
+                              data-testid="scribe-quick-submit-btn"
+                              className="ml-auto h-7 rounded-sm text-[11px]"
+                              title="Run scrubber and submit through the resolved clearinghouse adapter."
+                            >
+                              {submittingClaim ? (
+                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                              ) : (
+                                <Zap className="mr-1 h-3 w-3" />
+                              )}
+                              Submit to clearinghouse
+                            </Button>
+                          )}
+                        </div>
+                        {clearinghouseResult && (
+                          <div
+                            data-testid="scribe-clearinghouse-result"
+                            className="rounded-sm border border-border/60 bg-background/40 p-2 space-y-1"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span
+                                data-testid="scribe-clearinghouse-status"
+                                className={`rounded-sm px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                                  clearinghouseResult.adapter_status === "rejected"
+                                    ? "bg-destructive/15 text-destructive"
+                                    : clearinghouseResult.adapter_status === "queued"
+                                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                                    : clearinghouseResult.adapter_status === "accepted"
+                                    ? "bg-emerald-500/20 text-emerald-700 dark:text-emerald-300"
+                                    : "bg-muted text-muted-foreground"
+                                }`}
+                              >
+                                {clearinghouseResult.adapter_status || "manual"}
+                              </span>
+                              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                                via {clearinghouseResult.adapter_route || "none"}
+                                {clearinghouseResult.sandbox && " · sandbox"}
+                              </span>
+                            </div>
+                            {clearinghouseResult.adapter_external_id && (
+                              <p
+                                data-testid="scribe-clearinghouse-external-id"
+                                className="font-mono text-[10px] text-muted-foreground"
+                              >
+                                {clearinghouseResult.adapter_external_id}
+                              </p>
+                            )}
+                            {clearinghouseResult.adapter_message && (
+                              <p className="text-[11px] italic text-muted-foreground">
+                                {clearinghouseResult.adapter_message}
+                              </p>
+                            )}
+                            {clearinghouseResult.submitted_with_warnings && (
+                              <p className="flex items-start gap-1.5 text-[11px] text-amber-700 dark:text-amber-300">
+                                <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                                <span>
+                                  Submitted with {clearinghouseResult.scrubber_error_count} scrubber findings (sandbox-only).
+                                </span>
+                              </p>
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>

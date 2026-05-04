@@ -1676,22 +1676,49 @@ async def list_users(
     request: Request,
     role: str | None = None,
     include_disabled: bool = False,
+    q: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
     admin: dict = Depends(require_role("admin")),
 ):
     db = get_db()
-    q: dict = {}
+    query: dict = {}
     # Tenant scoping: non-platform admins only see users in their tenant.
     if not (admin.get("is_platform_admin") or admin.get("role") == "platform_admin"):
-        q["tenant_id"] = admin.get("tenant_id")
+        query["tenant_id"] = admin.get("tenant_id")
     if role:
-        q["role"] = role
+        query["role"] = role
     if not include_disabled:
-        q["status"] = {"$ne": "disabled"}
-    cursor = db.users.find(q, {"_id": 0, "password_hash": 0, "password_history": 0}).sort(
-        "created_at", -1
+        query["status"] = {"$ne": "disabled"}
+    # Server-side search across the most common identity fields. Used
+    # by the admin AI-templates picker so tenants with hundreds of
+    # doctors don't have to ship the full list to the browser.
+    if q and q.strip():
+        needle = q.strip()
+        # Mongo regex is anchored loosely so partial matches work; we
+        # escape the raw input to keep this safe from regex injection.
+        import re
+        safe = re.escape(needle)
+        query["$or"] = [
+            {"name": {"$regex": safe, "$options": "i"}},
+            {"first_name": {"$regex": safe, "$options": "i"}},
+            {"last_name": {"$regex": safe, "$options": "i"}},
+            {"display_name": {"$regex": safe, "$options": "i"}},
+            {"email": {"$regex": safe, "$options": "i"}},
+        ]
+    capped = max(1, min(int(limit or 200), 500))
+    skip = max(0, int(offset or 0))
+    cursor = (
+        db.users.find(query, {"_id": 0, "password_hash": 0, "password_history": 0})
+        .sort("created_at", -1)
+        .skip(skip)
+        .limit(capped)
     )
     rows = [_to_public(u) async for u in cursor]
-    await audit_success(admin, "user.list_viewed", request, metadata={"count": len(rows)})
+    await audit_success(
+        admin, "user.list_viewed", request,
+        metadata={"count": len(rows), "q": bool(q), "offset": skip, "limit": capped},
+    )
     return rows
 
 

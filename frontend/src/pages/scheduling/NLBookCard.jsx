@@ -130,6 +130,9 @@ export default function NLBookCard({ onBooked }) {
   }
 
   const candidates = parsed || {};
+  const intent = parsed?.intent || "create";
+  const showFullForm = intent === "create";
+  const showStartAndDuration = intent === "create" || intent === "reschedule";
 
   return (
     <section
@@ -206,7 +209,8 @@ export default function NLBookCard({ onBooked }) {
           )}
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            {/* Patient */}
+            {/* Patient — only meaningful when creating a brand new appt */}
+            {showFullForm && (
             <label className="space-y-1">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Patient
@@ -238,8 +242,10 @@ export default function NLBookCard({ onBooked }) {
                 </Select>
               )}
             </label>
+            )}
 
-            {/* Provider */}
+            {/* Provider — only for create */}
+            {showFullForm && (
             <label className="space-y-1">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Provider
@@ -271,8 +277,10 @@ export default function NLBookCard({ onBooked }) {
                 </Select>
               )}
             </label>
+            )}
 
-            {/* Start */}
+            {/* Start — used for create + reschedule */}
+            {showStartAndDuration && (
             <label className="space-y-1">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Start
@@ -284,8 +292,10 @@ export default function NLBookCard({ onBooked }) {
                 onChange={(e) => setStartLocal(e.target.value)}
               />
             </label>
+            )}
 
-            {/* Duration */}
+            {/* Duration — used for create + reschedule */}
+            {showStartAndDuration && (
             <label className="space-y-1">
               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Duration (minutes)
@@ -299,6 +309,20 @@ export default function NLBookCard({ onBooked }) {
                 onChange={(e) => setDuration(Number(e.target.value) || 30)}
               />
             </label>
+            )}
+
+            {/* Cancel intent — show a static confirmation block */}
+            {intent === "cancel" && (
+              <div
+                data-testid="nl-book-cancel-summary"
+                className="sm:col-span-2 rounded-sm border border-destructive/30 bg-destructive/5 p-2 text-xs text-destructive"
+              >
+                This will cancel the targeted appointment.
+                {parsed?.cancel_reason && (
+                  <span className="ml-1 italic">Reason: {parsed.cancel_reason}</span>
+                )}
+              </div>
+            )}
           </div>
 
           <Button

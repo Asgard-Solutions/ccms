@@ -39,6 +39,7 @@ from core.tenancy import TenantContext, get_tenant_context, tenant_db
 from services.ai.client import generate, parse_json_safely
 from services.ai.prompts import CODING_SUGGEST_SYSTEM
 from services.ai.router import resolve_template_instructions
+from services.billing.charge_capture import resolve_charge_price
 from services.scribe.prompts import SCRIBE_SOAP_SYSTEM
 from services.scribe.transcribe import transcribe_audio_bytes
 
@@ -619,6 +620,7 @@ async def send_to_claim(
     lines_payload: list[dict] = []
     billed_total = 0
     seen_lines: set[tuple[str, tuple[str, ...]]] = set()
+    price_sources: list[str] = []
     for c in body.cpt:
         code = (c.code or "").strip().upper()
         if not code:
@@ -630,6 +632,20 @@ async def send_to_claim(
         seen_lines.add(key)
         units = max(int(c.units or 1), 1)
         billed_cents = max(int(c.billed_cents or 0), 0)
+        # When caller didn't supply a price, look it up via the fee
+        # schedule resolver (payer schedule → self_pay → catalog → 0).
+        # The doctor never types CPT prices in the scribe panel, so
+        # this is the path actually exercised by the AI flow.
+        line_price_source = "client"
+        if billed_cents == 0:
+            resolution = await resolve_charge_price(
+                db, tenant_id=ctx.tenant_id,
+                responsibility="insurance", payer_id=body.payer_id,
+                code_type="cpt", code=code,
+            )
+            billed_cents = int(resolution.unit_price_cents or 0)
+            line_price_source = resolution.source
+        price_sources.append(line_price_source)
         billed_total += billed_cents * units
         lines_payload.append({
             "sequence": len(lines_payload) + 1,
@@ -750,4 +766,5 @@ async def send_to_claim(
         "diagnoses": len(diag_docs),
         "patient_id": note["patient_id"],
         "encounter_id": note.get("encounter_id"),
+        "price_sources": price_sources,
     }

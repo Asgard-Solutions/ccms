@@ -17,7 +17,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Literal, get_args
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import Response
 
 from core.audit import audit_success, audit_failure
@@ -3893,6 +3893,141 @@ async def _do_submit_claim(
         {"id": sub_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
     )
     return fresh
+
+
+
+# ---------------------------------------------------------------------------
+# POST /claims/{claim_id}/quick-submit
+#
+# One-click pipeline: scrub → ready → submit through the resolved
+# clearinghouse adapter. Designed for the AI-Scribe → claim →
+# clearinghouse demo loop and the "Submit to clearinghouse" button on
+# /billing/claims/{id}. Mirrors the existing two-step flow but runs as
+# a single transactional call with consolidated response metadata.
+#
+# Behavior
+# --------
+#   * Allowed for `draft`, `validation_failed`, and `ready` claims.
+#   * Always runs the scrubber (`_run_validation_gate`).
+#       - Pass: claim transitions through `ready` (via `validate_claim`
+#         logic) and is submitted via the resolved adapter.
+#       - Fail + adapter is sandbox/disabled: claim is force-flipped to
+#         `ready` and submitted with the warnings flag set so demos +
+#         pre-enrollment testing keep working without sending PHI on
+#         the wire.
+#       - Fail + adapter is in production mode: returns 422 with the
+#         scrubber findings (same shape as `/submissions`).
+# ---------------------------------------------------------------------------
+@router.post("/claims/{claim_id}/quick-submit", status_code=200)
+async def quick_submit_claim(
+    claim_id: str,
+    request: Request,
+    body: dict | None = Body(None),
+    user: dict = Depends(require_permission("claim", "submit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+
+    if claim["status"] not in ("draft", "validation_failed", "ready"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Claim in status '{claim['status']}' cannot be submitted; "
+            "it must be in draft, validation_failed, or ready.",
+        )
+
+    # Resolve adapter early so we know whether the scrubber is allowed
+    # to be lenient. Sandbox / disabled adapters never put PHI on the
+    # wire so warnings-only submissions are safe.
+    payer = await db.billing_payers.find_one(
+        {"id": claim.get("payer_id"), "tenant_id": ctx.tenant_id}, {"_id": 0},
+    ) if claim.get("payer_id") else None
+    adapter = get_adapter_for_payer(payer)
+    adapter_mode = (getattr(adapter, "_mode", None) or "").lower()
+    is_lenient = adapter_mode in ("", "sandbox", "disabled")  # NoneAdapter has no mode
+
+    # Run scrubber — persists + audits + emits as the regular gate.
+    gate = await _run_validation_gate(db, ctx, user, claim, request)
+
+    if not gate["passed"] and not is_lenient:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": (
+                    "Claim failed validation; production-mode adapters "
+                    "require a clean scrubber pass."
+                ),
+                "claim_id": claim_id,
+                "validation_run_id": gate["validation_run_id"],
+                "errors": gate["errors"],
+                "warnings": gate["warnings"],
+            },
+        )
+
+    # Re-fetch the claim — _run_validation_gate may have flipped the
+    # status to validation_failed (only happens when starting in ready).
+    fresh = await db.claims.find_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+
+    # Auto-advance draft → ready when the scrubber passed. This mirrors
+    # the side effect of POST /claims/{id}/validate so callers don't
+    # have to chain endpoints. When the scrubber failed but the
+    # adapter is lenient, force-flip so _do_submit_claim can run.
+    if fresh["status"] != "ready":
+        try:
+            transitions.advance("claim", fresh["status"], "ready")
+        except transitions.TransitionError:
+            # validation_failed → ready isn't always a legal canonical
+            # transition; for the lenient sandbox path we force the
+            # write since no PHI leaves the system.
+            if not is_lenient:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    f"Cannot advance claim to 'ready' from "
+                    f"'{fresh['status']}'.",
+                )
+        await db.claims.update_one(
+            {"id": claim_id, "tenant_id": ctx.tenant_id},
+            {"$set": {"status": "ready", "updated_at": _now()}},
+        )
+        fresh["status"] = "ready"
+
+    submit_body = ClaimSubmissionCreate(
+        method=(body or {}).get("method") or "batch_file",
+        external_reference=(body or {}).get("external_reference"),
+        notes=(body or {}).get("notes"),
+    )
+    submission = await _do_submit_claim(
+        db, ctx, user, fresh, submit_body, request,
+    )
+
+    return {
+        "claim_id": claim_id,
+        "claim_status": "submitted",
+        "scrubber_passed": gate["passed"],
+        "scrubber_error_count": len(gate["errors"]),
+        "scrubber_warning_count": len(gate["warnings"]),
+        "scrubber_top_errors": [
+            {"code": e.get("code"), "message": e.get("message")}
+            for e in gate["errors"][:5]
+        ],
+        "submission_id": submission["id"],
+        "method": submission["method"],
+        "adapter_route": submission.get("adapter_route"),
+        "adapter_status": submission.get("adapter_status"),
+        "adapter_external_id": submission.get("adapter_external_id"),
+        "adapter_message": submission.get("adapter_message"),
+        "sandbox": bool(submission.get("sandbox", False)),
+        "trace_id": submission.get("trace_id"),
+        "correlation_id": submission.get("correlation_id"),
+        "submitted_at": submission.get("submitted_at"),
+        "submitted_with_warnings": (not gate["passed"]) and is_lenient,
+    }
+
 
 
 @router.get(

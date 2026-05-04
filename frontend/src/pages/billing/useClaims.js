@@ -121,6 +121,14 @@ export async function submitClaim(claimId) {
   return data;
 }
 
+export async function quickSubmitClaim(claimId, body) {
+  const { data } = await api.post(
+    `/billing/claims/${claimId}/quick-submit`,
+    body || {},
+  );
+  return data;
+}
+
 export async function updateClaimHeader(claimId, patch) {
   const { data } = await api.patch(`/billing/claims/${claimId}/header`, patch);
   return data;

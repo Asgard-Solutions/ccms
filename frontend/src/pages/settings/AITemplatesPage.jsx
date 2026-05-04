@@ -67,35 +67,62 @@ export default function AITemplatesPage() {
 
   // Load lookup tables once so we can render friendly names instead
   // of raw UUIDs in both the form picker and the list view.
+  // Locations are loaded eagerly (typically a small list); providers
+  // are loaded on-demand with server-side search so tenants with
+  // hundreds of doctors stay snappy.
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      api.get("/authz/locations").then((r) => r.data).catch(() => []),
-      api.get("/auth/users", { params: { role: "doctor" } }).then((r) => r.data).catch(() => []),
-    ]).then(([locs, docs]) => {
-      if (cancelled) return;
-      setLocations(Array.isArray(locs) ? locs : []);
-      setProviders(Array.isArray(docs) ? docs : []);
-    });
+    api.get("/authz/locations").then((r) => r.data).catch(() => [])
+      .then((locs) => {
+        if (cancelled) return;
+        setLocations(Array.isArray(locs) ? locs : []);
+      });
     return () => { cancelled = true; };
   }, []);
 
   useEffect(() => { refresh(); }, [refresh]);
 
   const [providerQuery, setProviderQuery] = useState("");
+  const [providersLoading, setProvidersLoading] = useState(false);
+  const [providerOverflow, setProviderOverflow] = useState(false);
+
+  // Debounced server-side provider search. Triggered when the picker
+  // is on the provider scope OR when we need to resolve labels for
+  // already-saved overrides (rows). Capped at 200 rows per call.
+  useEffect(() => {
+    let cancelled = false;
+    const needsProviders = (
+      draft.scope_type === "provider"
+      || rows.some((r) => r.scope_type === "provider")
+    );
+    if (!needsProviders) return undefined;
+    setProvidersLoading(true);
+    const handle = setTimeout(async () => {
+      try {
+        const params = { role: "doctor", limit: 200 };
+        if (providerQuery.trim()) params.q = providerQuery.trim();
+        const res = await api.get("/auth/users", { params }).then((r) => r.data);
+        if (cancelled) return;
+        const list = Array.isArray(res) ? res : [];
+        setProviders(list);
+        setProviderOverflow(list.length >= 200);
+      } catch {
+        if (!cancelled) setProviders([]);
+      } finally {
+        if (!cancelled) setProvidersLoading(false);
+      }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(handle); };
+  }, [draft.scope_type, providerQuery, rows]);
 
   const visibleScopeOptions = useMemo(() => {
     if (draft.scope_type === "location") return locations;
     if (draft.scope_type !== "provider") return [];
-    const q = providerQuery.trim().toLowerCase();
-    if (!q) return providers;
-    return providers.filter((p) => {
-      const blob = [
-        p.first_name, p.last_name, p.name, p.display_name, p.email,
-      ].filter(Boolean).join(" ").toLowerCase();
-      return blob.includes(q);
-    });
-  }, [draft.scope_type, providers, locations, providerQuery]);
+    // Providers are already server-filtered by `providerQuery`, so we
+    // just hand the array through. Client-side fallback filter is
+    // intentionally omitted to keep this list-of-truth single-source.
+    return providers;
+  }, [draft.scope_type, providers, locations]);
 
   const labelForScope = useCallback((row) => {
     if (row.scope_type === "tenant") return "(tenant default)";
@@ -233,7 +260,7 @@ export default function AITemplatesPage() {
               />
             ) : (
               <div className="space-y-1.5">
-                {draft.scope_type === "provider" && providers.length > 50 && (
+                {draft.scope_type === "provider" && (
                   <Input
                     data-testid="ai-templates-provider-search"
                     value={providerQuery}
@@ -277,17 +304,27 @@ export default function AITemplatesPage() {
                         </SelectItem>
                       );
                     })}
-                    {visibleScopeOptions.length === 0 && (
+                    {visibleScopeOptions.length === 0 && !providersLoading && (
                       <div className="px-2 py-1.5 text-xs text-muted-foreground">
                         No matches
                       </div>
                     )}
-                    {visibleScopeOptions.length > 100 && (
+                    {providersLoading && draft.scope_type === "provider" && (
+                      <div
+                        data-testid="ai-templates-provider-loading"
+                        className="px-2 py-1.5 text-xs text-muted-foreground"
+                      >
+                        Searching…
+                      </div>
+                    )}
+                    {(providerOverflow || visibleScopeOptions.length > 100) && (
                       <div
                         data-testid="ai-templates-overflow-hint"
                         className="border-t border-border/40 px-2 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground"
                       >
-                        Showing first 100 of {visibleScopeOptions.length} — refine search
+                        {draft.scope_type === "provider"
+                          ? "Showing up to 200 results — refine your search"
+                          : `Showing first 100 of ${visibleScopeOptions.length} — refine search`}
                       </div>
                     )}
                   </SelectContent>
