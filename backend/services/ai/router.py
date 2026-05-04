@@ -123,11 +123,12 @@ async def regenerate_chart_brief(
 # note it's currently editing; we derive the patient_id from that.
 # ---------------------------------------------------------------------------
 from core.tenancy import tenant_db  # noqa: E402 — kept near usage
+from core.clinical_collections import FOLLOW_UP_NOTES_COLL  # noqa: E402
 
 
 async def _note_to_patient(tenant_id: str, note_id: str) -> dict:
     db = tenant_db(tenant_id)
-    note = await db.clinical_follow_up_notes.find_one(
+    note = await db[FOLLOW_UP_NOTES_COLL].find_one(
         {"tenant_id": tenant_id, "id": note_id},
         {"_id": 0, "patient_id": 1, "id": 1, "date_of_service": 1},
     )
@@ -326,3 +327,149 @@ async def settings_put(
         metadata={"model": f"{payload.model_provider}/{payload.model_name}"},
     )
     return {**doc, "configured": True}
+
+
+# ---------------------------------------------------------------------------
+# SOAP-template overrides — per location and/or per provider.
+# Stored in `ai_template_overrides` keyed on (tenant_id, scope_type,
+# scope_id). Resolution order at runtime: provider → location → tenant
+# default. Empty / unset == fall back to system prompt.
+# ---------------------------------------------------------------------------
+TEMPLATE_OVERRIDES_COLL = "ai_template_overrides"
+
+
+class _TemplateOverride(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scope_type: str = Field(pattern=r"^(tenant|location|provider)$")
+    scope_id: str | None = None  # None ⇒ tenant-level default
+    surface: str = Field(
+        default="scribe_soap",
+        pattern=r"^(scribe_soap|chart_brief|prior_sections|draft_sections)$",
+    )
+    instructions: str = Field(default="", max_length=4000)
+    enabled: bool = True
+
+
+@router.get("/templates")
+async def list_templates(
+    user: dict = Depends(require_role("admin", "doctor")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    from core.db import get_db
+    cur = get_db()[TEMPLATE_OVERRIDES_COLL].find(
+        {"tenant_id": ctx.tenant_id}, {"_id": 0},
+    ).sort([("scope_type", 1), ("scope_id", 1)])
+    rows = [r async for r in cur]
+    return {"templates": rows}
+
+
+@router.put("/templates")
+async def upsert_template(
+    request: Request,
+    payload: _TemplateOverride = Body(...),
+    user: dict = Depends(require_role("admin")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    from core.db import get_db
+    from services.ai import now_iso as _now
+    if payload.scope_type != "tenant" and not payload.scope_id:
+        raise HTTPException(400, "scope_id required for location/provider scope")
+    if payload.scope_type == "tenant":
+        scope_id = ctx.tenant_id
+    else:
+        scope_id = payload.scope_id
+    doc = {
+        "tenant_id": ctx.tenant_id,
+        "scope_type": payload.scope_type,
+        "scope_id": scope_id,
+        "surface": payload.surface,
+        "instructions": payload.instructions,
+        "enabled": payload.enabled,
+        "updated_at": _now(),
+        "updated_by": user.get("email") or user.get("id"),
+    }
+    await get_db()[TEMPLATE_OVERRIDES_COLL].update_one(
+        {
+            "tenant_id": ctx.tenant_id, "scope_type": payload.scope_type,
+            "scope_id": scope_id, "surface": payload.surface,
+        },
+        {"$set": doc, "$setOnInsert": {"created_at": _now()}},
+        upsert=True,
+    )
+    await audit_success(
+        user, "ai.template.upserted", request,
+        entity_type="ai_template_override",
+        entity_id=f"{payload.scope_type}:{scope_id}:{payload.surface}",
+        metadata={"surface": payload.surface, "scope": payload.scope_type},
+    )
+    return {**doc}
+
+
+@router.delete("/templates")
+async def delete_template(
+    request: Request,
+    scope_type: str,
+    scope_id: str,
+    surface: str = "scribe_soap",
+    user: dict = Depends(require_role("admin")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    from core.db import get_db
+    res = await get_db()[TEMPLATE_OVERRIDES_COLL].delete_one({
+        "tenant_id": ctx.tenant_id,
+        "scope_type": scope_type, "scope_id": scope_id, "surface": surface,
+    })
+    if not res.deleted_count:
+        raise HTTPException(404, "Template not found")
+    await audit_success(
+        user, "ai.template.deleted", request,
+        entity_type="ai_template_override",
+        entity_id=f"{scope_type}:{scope_id}:{surface}",
+    )
+    return {"deleted": True}
+
+
+async def resolve_template_instructions(
+    *, tenant_id: str, surface: str,
+    location_id: str | None = None, provider_id: str | None = None,
+) -> str:
+    """Resolve the most-specific template override for a given context.
+    Returns the merged instruction text (provider → location → tenant)
+    or empty string if no overrides exist.
+    """
+    from core.db import get_db
+    db = get_db()
+    parts: list[str] = []
+    # Tenant default
+    base = await db[TEMPLATE_OVERRIDES_COLL].find_one(
+        {
+            "tenant_id": tenant_id, "scope_type": "tenant",
+            "surface": surface, "enabled": True,
+        },
+        {"_id": 0, "instructions": 1},
+    )
+    if base and (base.get("instructions") or "").strip():
+        parts.append(base["instructions"].strip())
+    # Location override
+    if location_id:
+        loc = await db[TEMPLATE_OVERRIDES_COLL].find_one(
+            {
+                "tenant_id": tenant_id, "scope_type": "location",
+                "scope_id": location_id, "surface": surface, "enabled": True,
+            },
+            {"_id": 0, "instructions": 1},
+        )
+        if loc and (loc.get("instructions") or "").strip():
+            parts.append(loc["instructions"].strip())
+    # Provider override (most specific — wins last)
+    if provider_id:
+        prov = await db[TEMPLATE_OVERRIDES_COLL].find_one(
+            {
+                "tenant_id": tenant_id, "scope_type": "provider",
+                "scope_id": provider_id, "surface": surface, "enabled": True,
+            },
+            {"_id": 0, "instructions": 1},
+        )
+        if prov and (prov.get("instructions") or "").strip():
+            parts.append(prov["instructions"].strip())
+    return "\n\n".join(parts).strip()

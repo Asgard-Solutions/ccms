@@ -16,14 +16,13 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import {
-  Mic, Square, Loader2, Sparkles, Trash2, ArrowDownToLine, FileText,
-} from "lucide-react";
+import { Mic, Square, Loader2, Sparkles, Trash2, ArrowDownToLine, FileText, Receipt, AlertTriangle } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Textarea } from "../../components/ui/textarea";
 import {
   uploadScribeAudio, listScribeAudio, deleteScribeAudio, draftScribeSoap,
+  suggestScribeCodes,
 } from "../../api/scribe";
 
 const SECTIONS = [
@@ -56,6 +55,8 @@ export default function ScribePanel({
   const [drafts, setDrafts] = useState(null);
   const [rationale, setRationale] = useState("");
   const [addendum, setAddendum] = useState("");
+  const [coding, setCoding] = useState(null);
+  const [codingLoading, setCodingLoading] = useState(false);
 
   const recorderRef = useRef(null);
   const streamRef = useRef(null);
@@ -172,11 +173,33 @@ export default function ScribePanel({
       });
       setDrafts(res?.drafts || null);
       setRationale(res?.rationale || "");
+      setCoding(null); // fresh drafts ⇒ stale codes
       toast.success("SOAP draft ready.");
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Draft failed");
     } finally {
       setDrafting(false);
+    }
+  }
+
+  /**
+   * After applying drafts to the editor, fire the billing-readiness
+   * coding suggester so the doctor sees CPT/ICD hints inline. Auto-
+   * triggered by Apply-All; available manually via the Coding button.
+   */
+  async function fetchCodingSuggestions() {
+    const d = drafts;
+    if (!d) return;
+    setCodingLoading(true);
+    try {
+      const res = await suggestScribeCodes(noteId, noteType, {
+        drafts: d, addendum,
+      });
+      setCoding(res || null);
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Coding suggestion failed");
+    } finally {
+      setCodingLoading(false);
     }
   }
 
@@ -190,6 +213,9 @@ export default function ScribePanel({
       });
     }
     toast.success("Applied to all sections.");
+    // Auto-fire coding suggestions so the doctor sees CPT/ICD hints
+    // inline immediately after pulling the draft into the note.
+    fetchCodingSuggestions();
   }
 
   function applySection(section) {
@@ -393,6 +419,112 @@ export default function ScribePanel({
               {rationale}
             </p>
           )}
+
+          {/* Inline CPT/ICD coding suggestions */}
+          <div className="pt-2" data-testid="scribe-coding">
+            {!coding && !codingLoading && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full rounded-sm"
+                onClick={fetchCodingSuggestions}
+                data-testid="scribe-coding-btn"
+              >
+                <Receipt className="mr-1.5 h-3.5 w-3.5" />
+                Suggest CPT / ICD codes
+              </Button>
+            )}
+            {codingLoading && (
+              <div
+                data-testid="scribe-coding-loading"
+                className="flex items-center gap-2 text-xs text-muted-foreground"
+              >
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Checking billing readiness…
+              </div>
+            )}
+            {coding && (
+              <div className="space-y-2">
+                {coding.cpt_suggestions?.length > 0 && (
+                  <div data-testid="scribe-coding-cpt">
+                    <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      CPT
+                    </h4>
+                    <ul className="space-y-1">
+                      {coding.cpt_suggestions.map((c, i) => (
+                        <li
+                          key={`cpt-${i}`}
+                          data-testid={`scribe-coding-cpt-${c.code}`}
+                          className="rounded-sm border border-border/60 bg-muted/30 px-2 py-1.5 text-xs"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono font-semibold">{c.code}</span>
+                            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                              {c.confidence}
+                            </span>
+                          </div>
+                          <div className="text-foreground/80">{c.description}</div>
+                          {c.rationale && (
+                            <div className="mt-0.5 text-[11px] italic text-muted-foreground">
+                              {c.rationale}
+                            </div>
+                          )}
+                          {Array.isArray(c.modifier_suggestions) && c.modifier_suggestions.length > 0 && (
+                            <div className="mt-0.5 text-[11px] text-muted-foreground">
+                              modifiers: {c.modifier_suggestions.join(", ")}
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {coding.icd_suggestions?.length > 0 && (
+                  <div data-testid="scribe-coding-icd">
+                    <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      ICD-10
+                    </h4>
+                    <ul className="space-y-1">
+                      {coding.icd_suggestions.map((c, i) => (
+                        <li
+                          key={`icd-${i}`}
+                          data-testid={`scribe-coding-icd-${c.code}`}
+                          className="rounded-sm border border-border/60 bg-muted/30 px-2 py-1.5 text-xs"
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-mono font-semibold">{c.code}</span>
+                            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                              {c.is_primary_candidate ? "primary" : c.confidence}
+                            </span>
+                          </div>
+                          <div className="text-foreground/80">{c.description}</div>
+                          {c.rationale && (
+                            <div className="mt-0.5 text-[11px] italic text-muted-foreground">
+                              {c.rationale}
+                            </div>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {coding.documentation_warnings?.length > 0 && (
+                  <div data-testid="scribe-coding-warnings" className="space-y-1">
+                    {coding.documentation_warnings.map((w, i) => (
+                      <div
+                        key={`warn-${i}`}
+                        data-testid={`scribe-coding-warning-${i}`}
+                        className="flex items-start gap-1.5 rounded-sm border border-amber-500/30 bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-900 dark:text-amber-200"
+                      >
+                        <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                        <span>{w}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </section>
       )}
     </aside>

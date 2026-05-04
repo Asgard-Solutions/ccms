@@ -41,6 +41,7 @@ import Kiosk from "./pages/Kiosk";
 import SmsSettings from "./pages/settings/SmsSettings";
 import EmailSettings from "./pages/settings/EmailSettings";
 import GoogleAuthSettings from "./pages/settings/GoogleAuthSettings";
+import AITemplatesPage from "./pages/settings/AITemplatesPage";
 import SmsInbox from "./pages/communications/SmsInbox";
 import GoogleAuthCallback from "./pages/GoogleAuthCallback";
 import BookingRequestsQueue from "./pages/scheduling/BookingRequestsQueue";
@@ -128,6 +129,7 @@ export default function App() {
               <Route path="/settings/payments" element={<Shell roles={["admin"]}><PaymentsSettings /></Shell>} />
               <Route path="/settings/sms" element={<Shell roles={["admin"]}><SmsSettings /></Shell>} />
               <Route path="/settings/email" element={<Shell roles={["admin"]}><EmailSettings /></Shell>} />
+              <Route path="/settings/ai-templates" element={<Shell roles={["admin"]}><AITemplatesPage /></Shell>} />
               <Route path="/settings/google" element={<Shell roles={["admin"]}><GoogleAuthSettings /></Shell>} />
               <Route path="/communications/sms" element={<Shell roles={["admin", "staff"]}><SmsInbox /></Shell>} />
               <Route path="/scheduling/booking-requests" element={<Shell roles={["admin", "staff", "doctor"]}><BookingRequestsQueue /></Shell>} />

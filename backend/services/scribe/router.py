@@ -33,9 +33,12 @@ from pydantic import BaseModel
 
 from core import object_storage
 from core.audit import audit_success
+from core.clinical_collections import NOTE_TYPE_TO_COLL
 from core.deps import require_role
 from core.tenancy import TenantContext, get_tenant_context, tenant_db
 from services.ai.client import generate, parse_json_safely
+from services.ai.prompts import CODING_SUGGEST_SYSTEM
+from services.ai.router import resolve_template_instructions
 from services.scribe.prompts import SCRIBE_SOAP_SYSTEM
 from services.scribe.transcribe import transcribe_audio_bytes
 
@@ -51,11 +54,7 @@ ALLOWED_MIMES = {
     "audio/m4a", "audio/x-m4a", "audio/wav", "audio/x-wav",
     "audio/webm", "video/webm",  # Chrome MediaRecorder labels webm/audio as video/webm
 }
-NOTE_COLLECTIONS = {
-    "follow_up": "clinical_follow_up_notes",
-    "initial_exam": "clinical_initial_exams",
-    "reexam": "clinical_reexams",
-}
+NOTE_COLLECTIONS = NOTE_TYPE_TO_COLL
 
 
 def _ext_for(mime: str) -> str:
@@ -296,10 +295,25 @@ async def draft_soap_from_scribe(
         user_text_parts.append(f"\n# Doctor's free-text addendum\n{body.addendum.strip()}")
     user_text = "\n\n".join(user_text_parts)
 
+    # Honour SOAP-template overrides per location/provider/tenant.
+    note_full = await tenant_db(ctx.tenant_id)[NOTE_TYPE_TO_COLL[note_type]].find_one(
+        {"tenant_id": ctx.tenant_id, "id": note_id},
+        {"_id": 0, "location_id": 1, "provider_id": 1},
+    ) or {}
+    extra = await resolve_template_instructions(
+        tenant_id=ctx.tenant_id, surface="scribe_soap",
+        location_id=note_full.get("location_id"),
+        provider_id=note_full.get("provider_id"),
+    )
+    system_prompt = (
+        SCRIBE_SOAP_SYSTEM + "\n\n# Clinic-specific overrides\n" + extra
+        if extra else SCRIBE_SOAP_SYSTEM
+    )
+
     try:
         result = await generate(
             tenant_id=ctx.tenant_id, actor=user,
-            system_prompt=SCRIBE_SOAP_SYSTEM,
+            system_prompt=system_prompt,
             user_text=user_text,
             surface="scribe_soap_draft",
             response_format="json",
@@ -333,6 +347,108 @@ async def draft_soap_from_scribe(
         "note_type": note_type,
         "drafts": drafts,
         "rationale": rationale,
+        "model": result["model"],
+        "provider": result["provider"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# POST /scribe/encounters/{note_type}/{note_id}/coding-suggest
+# Inline CPT/ICD coding hints based on the SOAP draft. Closes the
+# documentation→billing loop so the doctor can adjust diagnoses /
+# procedures right after applying a draft, before the readiness check.
+# ---------------------------------------------------------------------------
+class _CodingSuggestRequest(BaseModel):
+    drafts: dict | None = None  # {subjective,objective,assessment,plan}
+    addendum: str | None = None
+
+
+@router.post("/encounters/{note_type}/{note_id}/coding-suggest")
+async def suggest_codes(
+    note_type: str,
+    note_id: str,
+    request: Request,
+    body: _CodingSuggestRequest = Body(default_factory=_CodingSuggestRequest),
+    user: dict = Depends(require_role("doctor")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    if note_type not in NOTE_TYPE_TO_COLL:
+        raise HTTPException(400, f"Unsupported note_type `{note_type}`")
+    note = await _resolve_note(ctx.tenant_id, note_type, note_id)
+
+    drafts = body.drafts or {}
+    soap_text_parts = []
+    for k in ("subjective", "objective", "assessment", "plan"):
+        v = (drafts.get(k) or "").strip()
+        if v:
+            soap_text_parts.append(f"## {k.title()}\n{v}")
+    if body.addendum and body.addendum.strip():
+        soap_text_parts.append(f"## Doctor's addendum\n{body.addendum.strip()}")
+    if not soap_text_parts:
+        raise HTTPException(
+            422, "Provide drafts (S/O/A/P) or an addendum to suggest codes from.",
+        )
+
+    # Pull the active diagnosis list so the model can prefer existing
+    # ICD-10s over newly invented ones.
+    db = tenant_db(ctx.tenant_id)
+    dx_cur = db.clinical_diagnoses.find(
+        {
+            "tenant_id": ctx.tenant_id,
+            "patient_id": note["patient_id"],
+            "is_active": True,
+        },
+        {"_id": 0, "icd10_code": 1, "label": 1},
+    ).sort("created_at", -1).limit(10)
+    active_dx = [d async for d in dx_cur]
+    dx_block = (
+        "## Active diagnoses on file\n"
+        + "\n".join(f"- {d.get('icd10_code', '')}: {d.get('label', '')}" for d in active_dx)
+        if active_dx else ""
+    )
+
+    user_text = (
+        f"Note type: {note_type}\n"
+        f"Patient ID: {note['patient_id']}\n\n"
+        + "\n\n".join(soap_text_parts)
+        + (f"\n\n{dx_block}" if dx_block else "")
+    )
+
+    try:
+        result = await generate(
+            tenant_id=ctx.tenant_id, actor=user,
+            system_prompt=CODING_SUGGEST_SYSTEM,
+            user_text=user_text,
+            surface="scribe_coding_suggest",
+            response_format="json",
+            max_tokens=1500,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("coding-suggest failed: %s", str(exc)[:200])
+        raise HTTPException(502, "AI coding suggestion failed")
+
+    parsed = parse_json_safely(result["text"]) or {}
+    cpt = parsed.get("cpt_suggestions") or []
+    icd = parsed.get("icd_suggestions") or []
+    warnings = parsed.get("documentation_warnings") or []
+
+    await audit_success(
+        user, "scribe.coding.suggested", request,
+        entity_type=f"clinical_{note_type}_note", entity_id=note_id,
+        phi_accessed=True,
+        metadata={
+            "model": result["model"],
+            "cpt_count": len(cpt), "icd_count": len(icd),
+            "warning_count": len(warnings),
+        },
+    )
+    return {
+        "note_id": note_id,
+        "note_type": note_type,
+        "cpt_suggestions": cpt,
+        "icd_suggestions": icd,
+        "documentation_warnings": warnings,
+        "active_diagnoses": active_dx,
         "model": result["model"],
         "provider": result["provider"],
     }

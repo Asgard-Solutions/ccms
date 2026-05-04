@@ -9,6 +9,7 @@ import json
 from datetime import datetime, timezone
 
 from core.tenancy import tenant_db
+from core.clinical_collections import FOLLOW_UP_NOTES_COLL
 
 
 # How far back to look when building context. Picked to balance token
@@ -55,7 +56,7 @@ async def load_patient_context(
     if exclude_note_id:
         notes_q["id"] = {"$ne": exclude_note_id}
     notes_cur = (
-        db.clinical_follow_up_notes.find(notes_q, {"_id": 0})
+        db[FOLLOW_UP_NOTES_COLL].find(notes_q, {"_id": 0})
         .sort("date_of_service", -1)
         .limit(MAX_ENCOUNTERS)
     )

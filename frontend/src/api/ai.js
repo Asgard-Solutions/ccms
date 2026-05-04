@@ -19,3 +19,15 @@ export const fetchAISettings = () =>
   api.get("/ai/settings").then((r) => r.data);
 export const saveAISettings = (body) =>
   api.put("/ai/settings", body).then((r) => r.data);
+
+// SOAP-template overrides (admin)
+export const listAITemplates = () =>
+  api.get("/ai/templates").then((r) => r.data);
+export const upsertAITemplate = (body) =>
+  api.put("/ai/templates", body).then((r) => r.data);
+export const deleteAITemplate = (params) =>
+  api.delete("/ai/templates", { params }).then((r) => r.data);
+
+// Natural-language semantic search across patient charts
+export const aiSemanticSearch = (body) =>
+  api.post("/ai/search", body).then((r) => r.data);

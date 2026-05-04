@@ -33,3 +33,8 @@ export const draftScribeSoap = (noteId, noteType, body) =>
   api
     .post(`/scribe/encounters/${noteType}/${noteId}/soap/draft`, body || {})
     .then((r) => r.data);
+
+export const suggestScribeCodes = (noteId, noteType, body) =>
+  api
+    .post(`/scribe/encounters/${noteType}/${noteId}/coding-suggest`, body || {})
+    .then((r) => r.data);
