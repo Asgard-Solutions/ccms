@@ -4,6 +4,42 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-05-04 — Send-to-claim + NL reschedule/cancel + paginated provider dropdown (VERIFIED)
+
+**1. Send-to-claim from Scribe SOAP draft (P1)**
+- `POST /api/scribe/encounters/{note_type}/{note_id}/send-to-claim`
+  creates a draft claim directly from accepted CPT/ICD suggestions on the
+  scribe-generated SOAP note. Role-gated (admin / doctor); 404 on unknown
+  note or payer; 422 when no codes selected.
+- `ScribePanel.jsx` exposes a "Create draft claim" button (payer Select +
+  submit) that appears once CPT **and** ICD lists are non-empty. Success
+  renders a link to `/billing/claims/{id}`.
+
+**2. NL scheduling — reschedule + cancel intents (P1)**
+- `nl_router.py` extends `/parse` with `intent ∈ {create, reschedule, cancel}`,
+  resolves `target_appointment_id` from free text, and adds
+  `POST /nl/reschedule` + `POST /nl/cancel` (same conflict/404/403 guards
+  as canonical endpoints).
+- `NLBookCard.jsx` switches confirm-button label + icon based on intent
+  (Reschedule → calendar-clock, Cancel → calendar-x). Conflict 409 surfaces
+  as an in-card error; clarifications bubble up when the target appointment
+  is ambiguous.
+
+**3. AITemplatesPage paginated provider dropdown (P2)**
+- `AITemplatesPage.jsx`: when Scope=Provider and the tenant has >50 doctors
+  the dropdown shows a search box and caps visible options at 100 to keep
+  the Select snappy. Server-side `?q=` pagination noted as a future upgrade
+  once tenants cross ~500 providers.
+
+**Verification**
+- `test_third_wave_ai.py`: 8 passed / 4 skipped (skips are seeded-audio
+  happy paths, identical to last wave).
+- Playwright E2E (iteration_86.json): all three new flows green on
+  Riverbend seed with admin + doctor credentials. No regressions on
+  context-aware docs, semantic search, or scribe transcription.
+
+
+
 ## 2026-05-04 — NL scheduling + override propagation + picker UX
 
 **1. Natural-language scheduling (P2)**

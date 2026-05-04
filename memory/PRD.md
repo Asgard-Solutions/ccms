@@ -1,6 +1,42 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-05-04 (Natural-language scheduling + template-override propagation + per-scope picker UX)
+**Last updated:** 2026-05-04 (Send-to-claim + NL reschedule/cancel + paginated provider dropdown — VERIFIED)
+
+## 5h. Send-to-claim + NL reschedule/cancel + paginated provider dropdown (2026-05-04, P1/P2)
+
+**User request:** "1) Wire accepted CPT/ICD suggestions directly into a draft claim line. 2) NL scheduling: support reschedule/cancel. 3) AITemplatesPage: paginate the provider dropdown."
+
+### Shipped
+
+**Backend** —
+- `services/scribe/router.py` — `POST /api/scribe/encounters/{note_type}/{note_id}/send-to-claim`. Admin/doctor-gated; validates payer + note; creates draft claim with one CPT line per suggestion.
+- `services/scheduling/nl_router.py` — `/parse` now returns `intent ∈ {create, reschedule, cancel}` + optional `target_appointment_id`; new `/reschedule` + `/cancel` endpoints route through canonical update/cancel so event hooks still fire.
+
+**Frontend** —
+- `pages/ai/ScribePanel.jsx` — "Create draft claim" block (payer Select + submit) appears after CPT **and** ICD are non-empty; success link → `/billing/claims/{id}`.
+- `pages/scheduling/NLBookCard.jsx` — confirm button label/icon switches on intent; conflict 409 surfaced inline.
+- `pages/settings/AITemplatesPage.jsx` — when tenant doctor count > 50, Provider scope shows a search box and caps the option list at 100 items.
+
+### Verification
+
+- Backend: `tests/test_third_wave_ai.py` 8 passed / 4 skipped (happy-path seeded-audio skips).
+- Frontend E2E (iteration_86): all three flows green on Riverbend seed. No regressions on context-aware docs, semantic search, or scribe transcription.
+
+### Files added/modified
+
+- `/app/backend/services/scribe/router.py`
+- `/app/backend/services/scheduling/nl_router.py`
+- `/app/backend/tests/test_third_wave_ai.py`
+- `/app/frontend/src/pages/ai/ScribePanel.jsx`
+- `/app/frontend/src/pages/scheduling/NLBookCard.jsx`
+- `/app/frontend/src/pages/settings/AITemplatesPage.jsx`
+
+### Known minor UX improvements (future)
+- ScribePanel send-to-claim defaults `units=1, billed_cents=0` — doctor must reopen the draft to set fees. Consider pulling payer fee schedule.
+- NLBookCard shows patient/provider/duration inputs even on reschedule/cancel where they're ignored by the API. Consider hiding non-applicable fields when `intent !== 'create'`.
+- AITemplatesPage pagination is client-side slice(0,100). Future: server-side `?q=` search once tenants cross ~500 providers.
+
+---
 
 ## 5g. NL scheduling + override propagation + picker (2026-05-04, P2)
 
