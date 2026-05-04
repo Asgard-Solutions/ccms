@@ -1,6 +1,72 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-02-16 (Patient Intake & Engagement — self check-in (portal + kiosk), request-only online booking, questionnaires with scoring, two-way Twilio SMS with log-only fallback, phone-first portal OTP auth)
+**Last updated:** 2026-02-17 (Wave-3 integrations — Resend email per-tenant, Emergent-managed Google OAuth for staff, two-way SMS staff inbox UI; bonus: backfilled `created_by` on booking-request appointments to clean up scheduling-API serialisation 500s)
+
+## 5b. Wave-3 integrations (2026-02-17)
+
+**User request:** "Now lets fully end-to-end implement these — Twilio SMS, Resend email, Google OAuth."
+
+### Choices recorded
+
+| Question | Choice |
+|---|---|
+| Google OAuth scope | Staff only (admin/doctor/staff). Patients stay on SMS OTP. |
+| Resend pattern | Mirror Twilio exactly (encrypted per-tenant creds, log-only fallback, admin Settings UI, test-send, outbound log). |
+| Twilio inbox UI | Build it now under `/communications/sms` (thread list + message panel + reply box). |
+
+### Shipped
+
+**Backend**
+- `services/email/{__init__,client,router}.py` — per-tenant Resend module. Encrypted AES-256 storage of `api_key`, `from_email`, `from_name`, `reply_to`. `send_email()` prefers tenant creds → env-var fallback → log-only fallback. `email_outbound_log` collection. Routes: `GET/PUT/DELETE /api/email/settings`, `POST /api/email/settings/test`, `POST /api/email/send` (staff outbound), `GET /api/email/outbound-log`.
+- `services/identity/google_auth.py` — Emergent-managed Google sign-in. Per-tenant enable toggle + `allowed_domains[]` (email-domain allowlist) + `default_role`. Routes: public `GET /api/auth/google/availability`, admin `GET/PUT /api/auth/google/settings`, public `POST /api/auth/google/exchange {session_id}`. Exchange calls `https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data` with `X-Session-ID`, then either matches an existing user by email or auto-provisions `role=default_role` if the domain is allowlisted (otherwise 403). Patients are blocked from Google sign-in (`role=patient` → 403). Mints our existing JWT access + refresh cookies and writes `audit_logs` rows on every success and every failure (with `reason: disabled | domain_not_allowed | patient_role_blocked`). Tracks the Emergent session token in `oauth_emergent_sessions` for forensic revocation.
+- `services/scheduling/booking_requests.py` — appointments materialised on approve now stamp `created_by` and `intake_status="not_started"`, eliminating the background 500s the testing agent surfaced from `/scheduling/appointments` serialisation.
+
+**Frontend**
+- `pages/settings/EmailSettings.jsx` — admin `/settings/email` mirroring `/settings/sms`: status banner, credentials form (api_key, from_email, from_name, reply_to, enable toggle), test-send card, recent outbound preview, log-only banner.
+- `pages/settings/GoogleAuthSettings.jsx` — admin `/settings/google`: enable toggle (calls `/api/auth/google/settings` PUT), allow-listed-domain CRUD with per-row `data-testid=google-domain-row-{domain}`, `default_role` select.
+- `pages/Login.jsx` — `<GoogleSignInButton>` rendered at top of the form when `/api/auth/google/availability` returns `enabled=true`. Click handler builds `redirect=window.location.origin+"/auth/google/callback"` and sets `window.location.href=https://auth.emergentagent.com/?redirect=…`. Verbatim "DO NOT HARDCODE THE URL" comment retained per the auth playbook.
+- `pages/GoogleAuthCallback.jsx` — `/auth/google/callback` route. Reads `#session_id=` synchronously, POSTs to `/api/auth/google/exchange`, calls `useAuth().refresh()`, navigates to `/`. Stable error UI with retry-back button on either failure path.
+- `contexts/AuthContext.jsx` — skips the boot-time `/auth/me` call when `window.location.hash` contains `session_id=`, so the boot probe doesn't race with `GoogleAuthCallback`.
+- `pages/communications/SmsInbox.jsx` — staff inbox at `/communications/sms`. Two-pane (thread list left, conversation right). Reply box uses `thread.peer` as the recipient. Mobile-responsive (single-pane stack with back button). Empty state for clinics with no SMS history yet.
+- `App.js` routes added: `/auth/google/callback`, `/settings/email`, `/settings/google`, `/communications/sms`.
+- `components/layout/navConfig.js` — three new sidebar items: Email (Resend), Google sign-in, SMS Inbox.
+- `api/integrations.js` — typed wrappers for the new endpoints.
+
+### Verification
+
+- 8/8 new pytest in `tests/test_integrations_wave3.py` (Resend settings round-trip + log-only test-send + delete; Google settings round-trip + domain normalisation + availability flip; Google exchange rejects unknown sessions; Google exchange unit-test 403 when disabled; SMS staff-send creates thread + outbound row).
+- 23/23 across the new bundle (`test_patient_intake_bundle` + `test_integrations_wave3`).
+- 118 across the full backend regression surface.
+- Testing agent iter 77 — `retest_needed: false`, `main_agent_can_self_test: true`. 7/7 frontend flows verified end-to-end (Email settings round-trip, Google settings round-trip, /login Google button rendered + click handler correct, /auth/google/callback both error paths, SMS inbox reply, /settings/sms regression).
+- Browser 500 the testing agent flagged on `/login` — root-caused to a missing `created_by` field on appointments materialised by booking-request approval. Fix landed + 10 stale appointments backfilled.
+
+### Files added (this iteration)
+
+- `/app/backend/services/email/{__init__,client,router}.py`
+- `/app/backend/services/identity/google_auth.py`
+- `/app/backend/tests/test_integrations_wave3.py`
+- `/app/auth_testing.md` — Emergent Google Auth testing playbook
+- `/app/frontend/src/api/integrations.js`
+- `/app/frontend/src/pages/settings/{EmailSettings,GoogleAuthSettings}.jsx`
+- `/app/frontend/src/pages/GoogleAuthCallback.jsx`
+- `/app/frontend/src/pages/communications/SmsInbox.jsx`
+
+### Files changed (this iteration)
+
+- `/app/backend/server.py` — include 2 new routers.
+- `/app/backend/services/scheduling/booking_requests.py` — stamp `created_by` + `intake_status` on approve.
+- `/app/frontend/src/App.js` — 4 new routes + imports.
+- `/app/frontend/src/pages/Login.jsx` — Google sign-in button.
+- `/app/frontend/src/contexts/AuthContext.jsx` — fragment-aware boot probe + `refresh()` exposed.
+- `/app/frontend/src/components/layout/navConfig.js` — 3 new sidebar entries.
+
+### Known follow-ups (backlog)
+
+- Real Twilio + Resend keys not yet pasted — UIs ready when the operator has them.
+- Real Google OAuth E2E test requires an external Google account; backend tests cover the failure paths thoroughly but the success path is only smoke-tested via the unit test.
+- The Helcim worker, scheduler tick, and email/sms outbound logs are now three separate collections that all need a periodic-purge job for compliance retention. Worth a single shared "retention sweeper" service before any production rollout.
+
+---
 
 ## 5a. Patient Intake & Engagement bundle (2026-02-16)
 

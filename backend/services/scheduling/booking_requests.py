@@ -222,6 +222,9 @@ async def staff_approve(
         "source": "booking_request",
         "booking_request_id": request_id,
         "notes": (payload.note_to_patient or doc.get("patient_notes")),
+        # Required by the appointments response model.
+        "created_by": user.get("id") or user.get("email"),
+        "intake_status": "not_started",
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
     }
