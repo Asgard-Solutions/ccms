@@ -24,6 +24,7 @@ import {
 import {
   listAITemplates, upsertAITemplate, deleteAITemplate,
 } from "../../api/ai";
+import { api } from "../../api/client";
 
 const SURFACES = [
   { value: "scribe_soap", label: "Scribe — SOAP draft" },
@@ -42,6 +43,8 @@ export default function AITemplatesPage() {
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [locations, setLocations] = useState([]);
+  const [providers, setProviders] = useState([]);
   const [draft, setDraft] = useState({
     scope_type: "tenant",
     scope_id: "",
@@ -62,7 +65,35 @@ export default function AITemplatesPage() {
     }
   }, []);
 
+  // Load lookup tables once so we can render friendly names instead
+  // of raw UUIDs in both the form picker and the list view.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      api.get("/locations").then((r) => r.data).catch(() => []),
+      api.get("/users", { params: { role: "doctor" } }).then((r) => r.data).catch(() => []),
+    ]).then(([locs, docs]) => {
+      if (cancelled) return;
+      setLocations(Array.isArray(locs) ? locs : []);
+      setProviders(Array.isArray(docs) ? docs : []);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   useEffect(() => { refresh(); }, [refresh]);
+
+  const labelForScope = useCallback((row) => {
+    if (row.scope_type === "tenant") return "(tenant default)";
+    if (row.scope_type === "location") {
+      const l = locations.find((x) => x.id === row.scope_id);
+      return l ? `${l.name}${l.code ? ` (${l.code})` : ""}` : row.scope_id;
+    }
+    if (row.scope_type === "provider") {
+      const p = providers.find((x) => x.id === row.scope_id);
+      return p ? (p.name || p.email || p.id) : row.scope_id;
+    }
+    return row.scope_id || "—";
+  }, [locations, providers]);
 
   const sortedRows = useMemo(
     () => [...rows].sort((a, b) =>
@@ -137,7 +168,9 @@ export default function AITemplatesPage() {
             </span>
             <Select
               value={draft.scope_type}
-              onValueChange={(v) => setDraft((d) => ({ ...d, scope_type: v }))}
+              onValueChange={(v) => setDraft((d) => ({
+                ...d, scope_type: v, scope_id: "",
+              }))}
             >
               <SelectTrigger data-testid="ai-templates-scope-select">
                 <SelectValue />
@@ -171,17 +204,48 @@ export default function AITemplatesPage() {
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
               Scope ID {draft.scope_type === "tenant" && "(auto)"}
             </span>
-            <Input
-              data-testid="ai-templates-scope-id-input"
-              value={draft.scope_id}
-              onChange={(e) => setDraft((d) => ({ ...d, scope_id: e.target.value }))}
-              disabled={draft.scope_type === "tenant"}
-              placeholder={
-                draft.scope_type === "location" ? "location id"
-                : draft.scope_type === "provider" ? "provider user id"
-                : "—"
-              }
-            />
+            {draft.scope_type === "tenant" ? (
+              <Input
+                data-testid="ai-templates-scope-id-input"
+                value=""
+                disabled
+                placeholder="—"
+              />
+            ) : (
+              <Select
+                value={draft.scope_id}
+                onValueChange={(v) => setDraft((d) => ({ ...d, scope_id: v }))}
+              >
+                <SelectTrigger data-testid="ai-templates-scope-id-select">
+                  <SelectValue placeholder={
+                    draft.scope_type === "location"
+                      ? "Select location…"
+                      : "Select provider…"
+                  } />
+                </SelectTrigger>
+                <SelectContent>
+                  {(draft.scope_type === "location" ? locations : providers).map((opt) => {
+                    const label = draft.scope_type === "location"
+                      ? `${opt.name}${opt.code ? ` (${opt.code})` : ""}`
+                      : `${(opt.name || opt.email || opt.id)}`;
+                    return (
+                      <SelectItem
+                        key={opt.id}
+                        value={opt.id}
+                        data-testid={`ai-templates-scope-option-${opt.id}`}
+                      >
+                        {label}
+                      </SelectItem>
+                    );
+                  })}
+                  {(draft.scope_type === "location" ? locations : providers).length === 0 && (
+                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                      None available
+                    </div>
+                  )}
+                </SelectContent>
+              </Select>
+            )}
           </label>
         </div>
         <label className="block space-y-1">
@@ -244,7 +308,7 @@ export default function AITemplatesPage() {
                       {SURFACES.find((s) => s.value === r.surface)?.label || r.surface}
                     </p>
                     <p className="font-mono text-[11px] text-muted-foreground">
-                      {r.scope_id}
+                      {labelForScope(r)}
                     </p>
                   </div>
                   <Button

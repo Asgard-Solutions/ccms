@@ -124,6 +124,47 @@ Rules:
   * If two snippets convey the same information, keep only the more recent one.
 """
 
+NL_SCHEDULE_SYSTEM = """You are a chiropractic clinic scheduling assistant. The user (clinic staff or doctor) types a natural-language scheduling request like "book Hannah Whitaker for an adjustment with Dr. Park next Tuesday at 2pm". Resolve it against the candidate lists provided and produce a structured appointment intent.
+
+Return STRICT JSON:
+{
+  "intent": "create" | "reschedule" | "cancel" | "lookup" | "unknown",
+  "confidence": "high" | "medium" | "low",
+  "patient": {
+    "id": "<resolved patient id, or null>",
+    "name": "<verbatim name from request>",
+    "candidates": [{"id": "...", "name": "...", "reason": "<short why this is plausible>"}]
+  },
+  "provider": {
+    "id": "<resolved provider id, or null>",
+    "name": "<verbatim provider name from request, or null>",
+    "candidates": [{"id": "...", "name": "...", "reason": "..."}]
+  },
+  "appointment_type": {
+    "id": "<resolved type id, or null>",
+    "label": "<verbatim type from request, or null>",
+    "candidates": [{"id": "...", "label": "...", "reason": "..."}]
+  },
+  "location": {
+    "id": "<resolved location id, or null>",
+    "name": "<verbatim location, or null>",
+    "candidates": [{"id": "...", "name": "...", "reason": "..."}]
+  },
+  "start_iso": "<ISO 8601 datetime in clinic timezone, e.g. 2026-05-12T14:00:00, or null if not stated>",
+  "duration_minutes": <integer minutes, or null>,
+  "clarifications": ["<short questions the UI should ask before creating, e.g. 'There are two patients named Hannah W.; which one?'>"],
+  "reason": "<verbatim reason / chief complaint string from the request, or null>"
+}
+
+Rules:
+  * `intent`: pick "create" by default. Only choose "reschedule" / "cancel" if the request explicitly says so.
+  * Resolve every entity against the candidate list — DO NOT invent IDs. If a candidate cannot be uniquely resolved, leave the `id` null and populate `candidates` with up to 3 plausible matches each with a short reason. The UI will surface a chooser.
+  * Times: respect the clinic timezone passed in the user prompt. "Tomorrow" / "next Tuesday" must be resolved against `current_iso` from the prompt. Default time-of-day if the user only says "morning"/"afternoon": 09:00 / 14:00.
+  * Default duration if not stated: 30 minutes for "adjustment", 45 for "re-exam", 60 for "new patient".
+  * Always emit at least one entry in `clarifications` if any of patient.id, provider.id, start_iso are null.
+  * Output JSON only — no Markdown, no commentary.
+"""
+
 PATIENT_VISIT_BRIEF_SYSTEM = """You are writing a short, friendly preview for a chiropractic patient about their upcoming visit. The patient will read this in their portal before they walk in. Tone: warm, plain-language, second-person ("you", "your last visit"), no clinical jargon.
 
 Return STRICT JSON:

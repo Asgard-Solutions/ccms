@@ -31,3 +31,9 @@ export const deleteAITemplate = (params) =>
 // Natural-language semantic search across patient charts
 export const aiSemanticSearch = (body) =>
   api.post("/ai/search", body).then((r) => r.data);
+
+// Natural-language scheduling
+export const nlSchedulingParse = (body) =>
+  api.post("/scheduling/nl/parse", body).then((r) => r.data);
+export const nlSchedulingCreate = (body) =>
+  api.post("/scheduling/nl/create", body).then((r) => r.data);

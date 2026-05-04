@@ -15,6 +15,7 @@ import {
   AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
 import SchedulingToolbar from "./SchedulingToolbar";
+import NLBookCard from "./NLBookCard";
 import DayView from "./DayView";
 import WeekView from "./WeekView";
 import MonthView from "./MonthView";
@@ -128,6 +129,9 @@ export default function SchedulingPage() {
 
   return (
     <div data-testid="scheduling-page" className="space-y-8 animate-in fade-in duration-300">
+      {canBook && (
+        <NLBookCard onBooked={() => invalidateAll()} />
+      )}
       <SchedulingToolbar
         view={view}
         date={date}

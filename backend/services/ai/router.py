@@ -27,6 +27,24 @@ from services.ai.prompts import (
 router = APIRouter(prefix="/ai", tags=["ai"])
 
 
+async def _augment_with_template(
+    *, tenant_id: str, surface: str, base_prompt: str,
+    location_id: str | None = None, provider_id: str | None = None,
+) -> str:
+    """Append per-tenant/location/provider override instructions onto a
+    base system prompt. Overrides resolve from least to most specific
+    (tenant → location → provider) so the most-specific scope wins.
+    Empty result ⇒ returns the base prompt untouched.
+    """
+    extra = await resolve_template_instructions(
+        tenant_id=tenant_id, surface=surface,
+        location_id=location_id, provider_id=provider_id,
+    )
+    if not extra:
+        return base_prompt
+    return base_prompt + "\n\n# Clinic-specific overrides\n" + extra
+
+
 async def _chart_brief(
     *, tenant_id: str, patient_id: str, actor: dict,
 ) -> dict:
@@ -34,9 +52,13 @@ async def _chart_brief(
         tenant_id=tenant_id, patient_id=patient_id,
     )
     prompt_text = format_context_for_prompt(ctx)
+    system_prompt = await _augment_with_template(
+        tenant_id=tenant_id, surface="chart_brief",
+        base_prompt=CHART_BRIEF_SYSTEM,
+    )
     result = await generate(
         tenant_id=tenant_id, actor=actor,
-        system_prompt=CHART_BRIEF_SYSTEM,
+        system_prompt=system_prompt,
         user_text=prompt_text,
         surface="chart_brief",
         response_format="text",
@@ -130,7 +152,10 @@ async def _note_to_patient(tenant_id: str, note_id: str) -> dict:
     db = tenant_db(tenant_id)
     note = await db[FOLLOW_UP_NOTES_COLL].find_one(
         {"tenant_id": tenant_id, "id": note_id},
-        {"_id": 0, "patient_id": 1, "id": 1, "date_of_service": 1},
+        {
+            "_id": 0, "patient_id": 1, "id": 1, "date_of_service": 1,
+            "location_id": 1, "provider_id": 1,
+        },
     )
     if not note:
         raise HTTPException(404, "Note not found")
@@ -166,9 +191,15 @@ async def get_prior_sections(
         return {"note_id": note_id, "patient_id": patient_id,
                 "prior_sections": cached["payload"],
                 "cached": True}
+    system_prompt = await _augment_with_template(
+        tenant_id=ctx.tenant_id, surface="prior_sections",
+        base_prompt=PRIOR_SECTIONS_SYSTEM,
+        location_id=note.get("location_id"),
+        provider_id=note.get("provider_id"),
+    )
     result = await generate(
         tenant_id=ctx.tenant_id, actor=user,
-        system_prompt=PRIOR_SECTIONS_SYSTEM,
+        system_prompt=system_prompt,
         user_text=format_context_for_prompt(context),
         surface="prior_sections", response_format="json",
     )
@@ -201,9 +232,15 @@ async def draft_sections(
         tenant_id=ctx.tenant_id, patient_id=patient_id,
         exclude_note_id=note_id,
     )
+    system_prompt = await _augment_with_template(
+        tenant_id=ctx.tenant_id, surface="draft_sections",
+        base_prompt=DRAFT_SECTIONS_SYSTEM,
+        location_id=note.get("location_id"),
+        provider_id=note.get("provider_id"),
+    )
     result = await generate(
         tenant_id=ctx.tenant_id, actor=user,
-        system_prompt=DRAFT_SECTIONS_SYSTEM,
+        system_prompt=system_prompt,
         user_text=format_context_for_prompt(context),
         surface="draft_sections", response_format="json",
     )
