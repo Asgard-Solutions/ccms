@@ -1,6 +1,34 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-05-04 (Patient-facing AI visit brief — wired the smart-cache pipeline into the patient portal so patients see a plain-language preview of their next visit, separate cache surface and prompt from the clinician chart-brief)
+**Last updated:** 2026-05-04 (AI scribe + SOAP generation — doctor-only; OpenAI Whisper voice-to-text + Claude Sonnet 4.5 SOAP structuring; encrypted object-storage audio retention until note sign with auto-cleanup hook on the three clinical sign endpoints)
+
+## 5e. AI scribe + SOAP generation (2026-05-04, P1)
+
+**User request:** ship "AI-powered SOAP note generation" and "AI scribe (voice-to-note)" together. User choices: doctor-only access on both Follow-Up Note editor AND Initial Exam editor; SOAP input is transcript + optional free-text addendum combined; audio retained encrypted until the host note is signed, then auto-deleted; click-to-start/stop recording with no hard cap; side-panel preview with both per-section Apply and Apply-all.
+
+### Shipped
+
+**Backend** — new `services/scribe/{router, transcribe, prompts, __init__}.py` exposing four endpoints under `/api/scribe`. Whisper integration via `emergentintegrations.llm.openai.OpenAISpeechToText` (model `whisper-1`). SOAP generation reuses `services/ai/client.py::generate` with the new `SCRIBE_SOAP_SYSTEM` prompt that strips invented findings and lets the addendum override transcript on conflicts. Audio rows live in collection `scribe_audio`, soft-delete on host-note sign via `delete_audio_for_note()` hooked into all three clinical sign endpoints (`notes_router`, `exams_router`, `reexams_router`).
+
+**Frontend** — new `pages/ai/ScribePanel.jsx` (recorder + chunk list + addendum + draft + apply). Mounted in `FollowUpNoteEditor.jsx` (right rail beneath EncounterAssistPanel) and `InitialExamEditor.jsx` (above section cards). Shared `applySectionFromAi` callback already used by EncounterAssistPanel is re-used for the scribe Apply flow. Panel is gated to `user.role === "doctor"` and hides on signed artifacts.
+
+### Verification (iteration_82)
+
+- Backend: 27/27 across `tests/test_scribe.py` (7), `tests/test_scribe_iter82.py` (2 — added by testing agent), `tests/test_ai_context_documentation.py` (13), `tests/test_portal_visit_brief.py` (5).
+- E2E: ScribePanel mounts and draft populates within ~8s; Apply-Subjective injects 492 chars; Apply-All cycles through all four sections; admin role correctly hides the panel.
+
+### Files added/modified (this iteration)
+
+- `/app/backend/services/scribe/{__init__, router, transcribe, prompts}.py`
+- `/app/backend/tests/test_scribe.py`
+- `/app/frontend/src/pages/ai/ScribePanel.jsx`
+- `/app/frontend/src/api/scribe.js`
+- `/app/frontend/src/pages/clinical/FollowUpNoteEditor.jsx` (mounts ScribePanel + extracts shared `applySectionFromAi`)
+- `/app/frontend/src/pages/clinical/InitialExamEditor.jsx` (mounts ScribePanel + adds `applySectionFromAi` mapping for the exam template)
+- `/app/backend/services/clinical/{notes_router, exams_router, reexams_router}.py` (auto-delete-on-sign hook)
+- `/app/backend/server.py` (registers `scribe_router`)
+
+---
 
 ## 5d. Patient-facing AI visit brief (2026-05-04)
 

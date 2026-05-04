@@ -4,6 +4,71 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-05-04 — AI scribe (voice-to-note) + AI-powered SOAP generation (P1)
+
+Doctor-only side panel that lets a clinician dictate the visit and have
+Claude Sonnet 4.5 turn it into a structured SOAP draft, with per-section
+or "apply all" buttons that push the text directly into the encounter
+editor. Audio is transcribed via OpenAI Whisper and held in encrypted
+object storage only until the host note is signed, then auto-soft-deleted.
+
+**Backend (`services/scribe/*`)**
+- `router.py` — four endpoints under `/api/scribe`:
+  - `POST /audio` — multipart upload + synchronous Whisper transcription
+    (≤25 MB per chunk, MIME-validated). Returns `{audio_id, transcript,
+    transcribe_status}`. Persisted in `scribe_audio` collection with
+    storage_path pointing at Emergent object storage.
+  - `GET /encounters/{note_type}/{note_id}/audio` — list chunks +
+    concatenated `full_transcript` for the host note.
+  - `DELETE /audio/{audio_id}` — explicit doctor soft-delete.
+  - `POST /encounters/{note_type}/{note_id}/soap/draft` — body
+    `{transcript?, addendum?}` → returns `{drafts:{subjective, objective,
+    assessment, plan}, rationale, model}`. Falls back to stored chunk
+    transcripts when `transcript` is empty.
+- `transcribe.py` — thin `OpenAISpeechToText` wrapper using
+  `emergentintegrations` with model `whisper-1` and `EMERGENT_LLM_KEY`.
+- `prompts.py` — `SCRIBE_SOAP_SYSTEM` strict-JSON prompt that forbids
+  inventing patient names, vitals, ICD codes, or imaging findings; lets
+  the doctor's free-text addendum override the transcript on conflicts.
+- `delete_audio_for_note()` helper — wired into `sign_follow_up_note`,
+  `sign_exam`, and `sign_reexam` so chunks soft-delete the moment the
+  host artifact is signed (HIPAA retention policy).
+- All endpoints gate on `require_role("doctor")` — admin/staff/patient
+  receive 403.
+
+**Frontend**
+- `pages/ai/ScribePanel.jsx` — recorder (`MediaRecorder`, click-to-start
+  + click-to-stop, no hard cap, picks webm/opus or mp4/m4a based on
+  browser), live MM:SS timer, chunk list with delete buttons, addendum
+  textarea, single Draft button, full SOAP preview with per-section
+  Apply + Apply-all. Self-hides outside the doctor role.
+- `pages/clinical/FollowUpNoteEditor.jsx` — line 55 imports ScribePanel,
+  line ~165 introduces a shared `applySectionFromAi` callback used by
+  both EncounterAssistPanel and ScribePanel. Panel mounts in the right
+  rail beneath the existing AI assist card, only when role=doctor and
+  status≠signed.
+- `pages/clinical/InitialExamEditor.jsx` — mounts ScribePanel above the
+  section cards (template doesn't have a SOAP-shaped sidebar). Maps
+  S→history.history_of_present_illness, O→examination.observation_inspection,
+  A→assessment.initial_clinical_impression, P→assessment.treatment_recommendations.
+- `api/scribe.js` — `uploadScribeAudio`, `listScribeAudio`,
+  `deleteScribeAudio`, `draftScribeSoap`.
+
+**Tests**
+- `tests/test_scribe.py` — 7/7: doctor-only role enforcement, SOAP
+  draft happy-path, 422 when both inputs empty, 404 for unknown note,
+  list-audio shape.
+- Testing-agent iteration_82 added `tests/test_scribe_iter82.py` (2/2):
+  multipart audio upload → list → soft-delete → list-omits-chunk; and
+  the auto-delete-on-sign flow (upload chunk → reauth → sign → list
+  returns `chunks=[]`).
+- Cross-suite AI regression: 27/27 across `test_ai_context_documentation`,
+  `test_portal_visit_brief`, and the two scribe test files.
+- E2E verified by testing agent: ScribePanel mounts, drafts populate
+  within ~8s, Apply-Subjective injects 492 chars into the editor's
+  interval_history, Apply-All cycles through all four sections, and
+  the admin role correctly hides the panel.
+
 ## 2026-05-04 — Patient-facing AI visit brief
 
 Wired the AI smart-cache pipeline into the patient portal. Patients
