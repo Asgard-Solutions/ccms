@@ -86,9 +86,31 @@ async def _gather_candidates(tenant_id: str, text: str) -> dict:
     ).limit(MAX_APPT_TYPES)
     types = [t async for t in type_cur]
 
+    # Upcoming appointments (next 14 days, status active) for the
+    # patients matched above. Reschedule/cancel intents need IDs to
+    # land on, but we also include them for `create` so the model can
+    # warn about double-booking.
+    upcoming: list[dict] = []
+    if patients:
+        pat_ids = [p["id"] for p in patients]
+        now_iso = datetime.now(timezone.utc).isoformat()
+        appt_cur = db.appointments.find(
+            {
+                **base, "patient_id": {"$in": pat_ids},
+                "status": {"$nin": ["cancelled", "no_show", "checked_out"]},
+                "start_time": {"$gte": now_iso},
+            },
+            {
+                "_id": 0, "id": 1, "patient_id": 1, "provider_id": 1,
+                "start_time": 1, "end_time": 1, "reason": 1, "status": 1,
+            },
+        ).sort("start_time", 1).limit(20)
+        upcoming = [a async for a in appt_cur]
+
     return {
         "patients": patients, "providers": providers,
         "locations": locations, "appointment_types": types,
+        "upcoming": upcoming,
     }
 
 
@@ -128,6 +150,19 @@ def _format_candidates_for_prompt(c: dict, current_iso: str, tz: str) -> str:
             f"- id={t['id']} | {t.get('name', '')} "
             f"(default {t.get('default_duration_minutes', 30)} min)"
         )
+    lines.append("")
+    lines.append("## Upcoming appointments for matched patients (reschedule/cancel targets)")
+    if c["upcoming"]:
+        for a in c["upcoming"]:
+            lines.append(
+                f"- id={a['id']} | patient={a.get('patient_id')} "
+                f"| provider={a.get('provider_id')} "
+                f"| {a.get('start_time')} → {a.get('end_time')} "
+                f"| status={a.get('status')} "
+                f"| reason={(a.get('reason') or '')[:40]}"
+            )
+    else:
+        lines.append("(none — reschedule/cancel needs a target id, surface a clarification)")
     return "\n".join(lines)
 
 
@@ -178,6 +213,14 @@ async def nl_parse(
             block["id"] = None  # silently strip hallucinated IDs
             block.setdefault("candidates", [])
             parsed[key] = block
+
+    # Strip hallucinated target_appointment_id.
+    upcoming_ids = {a["id"] for a in candidates["upcoming"]}
+    if parsed.get("target_appointment_id") and parsed["target_appointment_id"] not in upcoming_ids:
+        parsed["target_appointment_id"] = None
+        parsed.setdefault("clarifications", []).append(
+            "Couldn't pin down which existing appointment to act on — pick one from the list."
+        )
 
     await audit_success(
         user, "ai.nl_schedule.parsed", request,
@@ -263,3 +306,110 @@ async def nl_create(
         },
     )
     return appt
+
+
+
+# ---------------------------------------------------------------------------
+class _NLRescheduleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    appointment_id: str
+    start_iso: str
+    duration_minutes: int | None = Field(default=None, ge=5, le=240)
+
+
+@router.post("/reschedule")
+async def nl_reschedule(
+    request: Request,
+    body: _NLRescheduleRequest = Body(...),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    db = tenant_db(ctx.tenant_id)
+    appt = await db.appointments.find_one(
+        {"tenant_id": ctx.tenant_id, "id": body.appointment_id},
+        {"_id": 0, "id": 1, "status": 1, "start_time": 1, "end_time": 1},
+    )
+    if not appt:
+        raise HTTPException(404, "Appointment not found")
+    if appt.get("status") in ("cancelled", "no_show", "checked_out"):
+        raise HTTPException(409, f"Cannot reschedule a {appt['status']} appointment")
+
+    try:
+        start = datetime.fromisoformat(body.start_iso.replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(422, f"Invalid start_iso `{body.start_iso}`")
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    # Default duration: keep the same length as the original.
+    if body.duration_minutes:
+        end = start + timedelta(minutes=body.duration_minutes)
+    else:
+        try:
+            cur_start = datetime.fromisoformat(
+                appt["start_time"].replace("Z", "+00:00"),
+            )
+            cur_end = datetime.fromisoformat(
+                appt["end_time"].replace("Z", "+00:00"),
+            )
+            existing_minutes = max(
+                int((cur_end - cur_start).total_seconds() // 60), 5,
+            )
+        except Exception:  # noqa: BLE001
+            existing_minutes = 30
+        end = start + timedelta(minutes=existing_minutes)
+
+    from services.scheduling.router import (
+        update_appointment, AppointmentUpdate,
+    )
+    payload = AppointmentUpdate(start_time=start, end_time=end)
+    updated = await update_appointment(
+        appointment_id=body.appointment_id, payload=payload,
+        request=request, actor=user, ctx=ctx,
+    )
+    await audit_success(
+        user, "ai.nl_schedule.rescheduled", request,
+        entity_type="appointment", entity_id=body.appointment_id,
+        metadata={
+            "new_start_iso": _utc_iso(start),
+            "new_end_iso": _utc_iso(end),
+            "previous_start": appt.get("start_time"),
+        },
+    )
+    return updated
+
+
+# ---------------------------------------------------------------------------
+class _NLCancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    appointment_id: str
+    cancel_reason: str | None = Field(default=None, max_length=255)
+
+
+@router.post("/cancel")
+async def nl_cancel(
+    request: Request,
+    body: _NLCancelRequest = Body(...),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    db = tenant_db(ctx.tenant_id)
+    appt = await db.appointments.find_one(
+        {"tenant_id": ctx.tenant_id, "id": body.appointment_id},
+        {"_id": 0, "id": 1, "status": 1},
+    )
+    if not appt:
+        raise HTTPException(404, "Appointment not found")
+    if appt.get("status") == "cancelled":
+        raise HTTPException(409, "Appointment is already cancelled")
+
+    from services.scheduling.router import cancel_appointment
+    result = await cancel_appointment(
+        appointment_id=body.appointment_id, request=request,
+        user=user, ctx=ctx,
+    )
+    await audit_success(
+        user, "ai.nl_schedule.cancelled", request,
+        entity_type="appointment", entity_id=body.appointment_id,
+        metadata={"reason": body.cancel_reason or None},
+    )
+    return result

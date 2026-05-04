@@ -16,14 +16,18 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Mic, Square, Loader2, Sparkles, Trash2, ArrowDownToLine, FileText, Receipt, AlertTriangle } from "lucide-react";
+import { Mic, Square, Loader2, Sparkles, Trash2, ArrowDownToLine, FileText, Receipt, AlertTriangle, Send } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Textarea } from "../../components/ui/textarea";
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "../../components/ui/select";
+import {
   uploadScribeAudio, listScribeAudio, deleteScribeAudio, draftScribeSoap,
-  suggestScribeCodes,
+  suggestScribeCodes, sendScribeToClaim,
 } from "../../api/scribe";
+import { api } from "../../api/client";
 
 const SECTIONS = [
   { key: "subjective", label: "Subjective" },
@@ -57,6 +61,10 @@ export default function ScribePanel({
   const [addendum, setAddendum] = useState("");
   const [coding, setCoding] = useState(null);
   const [codingLoading, setCodingLoading] = useState(false);
+  const [payers, setPayers] = useState([]);
+  const [payerId, setPayerId] = useState("");
+  const [sendingToClaim, setSendingToClaim] = useState(false);
+  const [createdClaimId, setCreatedClaimId] = useState(null);
 
   const recorderRef = useRef(null);
   const streamRef = useRef(null);
@@ -196,10 +204,58 @@ export default function ScribePanel({
         drafts: d, addendum,
       });
       setCoding(res || null);
+      // Lazy-load payers the first time coding lands so Send-to-claim
+      // is one click away.
+      if ((res?.cpt_suggestions || []).length > 0 && payers.length === 0) {
+        try {
+          const ps = await api.get("/billing/payers").then((r) => r.data);
+          if (Array.isArray(ps)) {
+            setPayers(ps);
+            if (ps.length === 1) setPayerId(ps[0].id);
+          }
+        } catch {
+          /* soft-fail — Send-to-claim will surface its own error */
+        }
+      }
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Coding suggestion failed");
     } finally {
       setCodingLoading(false);
+    }
+  }
+
+  async function sendToClaim() {
+    if (!coding) return;
+    if (!payerId) {
+      toast.error("Pick a payer before sending the claim.");
+      return;
+    }
+    const cpt = (coding.cpt_suggestions || []).map((c) => ({
+      code: c.code,
+      units: 1,
+      modifiers: Array.isArray(c.modifier_suggestions) ? c.modifier_suggestions : [],
+      billed_cents: 0,
+    }));
+    const icd = (coding.icd_suggestions || []).map((c) => ({
+      code: c.code,
+      label: c.description || null,
+      is_primary: !!c.is_primary_candidate,
+    }));
+    if (!cpt.length || !icd.length) {
+      toast.error("Need at least one CPT and one ICD to create a claim.");
+      return;
+    }
+    setSendingToClaim(true);
+    try {
+      const res = await sendScribeToClaim(noteId, noteType, {
+        cpt, icd, payer_id: payerId, place_of_service: "11",
+      });
+      setCreatedClaimId(res?.claim_id || null);
+      toast.success("Draft claim created.");
+    } catch (err) {
+      toast.error(err?.response?.data?.detail || "Send-to-claim failed");
+    } finally {
+      setSendingToClaim(false);
     }
   }
 
@@ -520,6 +576,69 @@ export default function ScribePanel({
                         <span>{w}</span>
                       </div>
                     ))}
+                  </div>
+                )}
+
+                {/* Send-to-claim: closes documentation→billing loop */}
+                {(coding.cpt_suggestions?.length > 0 && coding.icd_suggestions?.length > 0) && (
+                  <div
+                    data-testid="scribe-send-to-claim"
+                    className="space-y-2 rounded-sm border border-primary/30 bg-primary/5 p-2"
+                  >
+                    {!createdClaimId ? (
+                      <>
+                        <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          Send to claim
+                        </div>
+                        <Select value={payerId} onValueChange={setPayerId}>
+                          <SelectTrigger
+                            data-testid="scribe-send-to-claim-payer-select"
+                            className="h-8 text-xs"
+                          >
+                            <SelectValue placeholder={
+                              payers.length === 0 ? "Loading payers…" : "Pick a payer"
+                            } />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {payers.map((p) => (
+                              <SelectItem
+                                key={p.id} value={p.id}
+                                data-testid={`scribe-send-to-claim-payer-${p.id}`}
+                              >
+                                {p.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <Button
+                          size="sm"
+                          className="w-full rounded-sm"
+                          onClick={sendToClaim}
+                          disabled={sendingToClaim || !payerId}
+                          data-testid="scribe-send-to-claim-btn"
+                        >
+                          {sendingToClaim ? (
+                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Send className="mr-1.5 h-3.5 w-3.5" />
+                          )}
+                          Create draft claim
+                        </Button>
+                      </>
+                    ) : (
+                      <div data-testid="scribe-send-to-claim-success" className="text-xs">
+                        <p className="text-foreground/85">
+                          Draft claim ready.
+                        </p>
+                        <a
+                          href={`/billing/claims/${createdClaimId}`}
+                          data-testid="scribe-send-to-claim-link"
+                          className="text-primary underline-offset-2 hover:underline"
+                        >
+                          Open claim →
+                        </a>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>

@@ -37,3 +37,7 @@ export const nlSchedulingParse = (body) =>
   api.post("/scheduling/nl/parse", body).then((r) => r.data);
 export const nlSchedulingCreate = (body) =>
   api.post("/scheduling/nl/create", body).then((r) => r.data);
+export const nlSchedulingReschedule = (body) =>
+  api.post("/scheduling/nl/reschedule", body).then((r) => r.data);
+export const nlSchedulingCancel = (body) =>
+  api.post("/scheduling/nl/cancel", body).then((r) => r.data);

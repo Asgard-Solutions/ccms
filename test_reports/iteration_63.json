@@ -1,5 +1,5 @@
 {
-  "summary": "Frontend-only verification of Phase-1/9 ClaimDetail UX additions: Follow-up row (flag/clear) and AssignmentRow self-assign/unassign buttons. All four UI flows worked end-to-end against the live admin tenant on https://ai-encounter-helper.preview.emergentagent.com using claim cce9389c-f2e7-42f1-8c17-01b30df7bcfa.",
+  "summary": "Frontend-only verification of Phase-1/9 ClaimDetail UX additions: Follow-up row (flag/clear) and AssignmentRow self-assign/unassign buttons. All four UI flows worked end-to-end against the live admin tenant on https://ccms-voice-notes.preview.emergentagent.com using claim cce9389c-f2e7-42f1-8c17-01b30df7bcfa.",
   "backend_issues": {"critical": [], "minor": []},
   "frontend_issues": {
     "ui_bugs": [],

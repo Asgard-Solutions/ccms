@@ -20,13 +20,16 @@
  */
 import { useState } from "react";
 import { toast } from "sonner";
-import { Loader2, Sparkles, CalendarPlus, AlertTriangle } from "lucide-react";
+import { Loader2, Sparkles, CalendarPlus, AlertTriangle, CalendarClock, CalendarX } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "../../components/ui/select";
-import { nlSchedulingParse, nlSchedulingCreate } from "../../api/ai";
+import {
+  nlSchedulingParse, nlSchedulingCreate,
+  nlSchedulingReschedule, nlSchedulingCancel,
+} from "../../api/ai";
 
 function formatLocalDateTimeForInput(iso) {
   if (!iso) return "";
@@ -78,27 +81,49 @@ export default function NLBookCard({ onBooked }) {
   }
 
   async function confirm() {
-    if (!patientId || !providerId || !startLocal) {
-      toast.error("Pick patient, provider, and a start time first.");
-      return;
-    }
+    const intent = parsed?.intent || "create";
     setCreating(true);
     try {
-      const start = new Date(startLocal).toISOString();
-      const appt = await nlSchedulingCreate({
-        patient_id: patientId,
-        provider_id: providerId,
-        start_iso: start,
-        duration_minutes: duration,
-        location_id: locationId || null,
-        appointment_type_id: apptTypeId || null,
-        reason: parsed?.reason || null,
-      });
-      toast.success("Appointment booked.");
+      if (intent === "cancel") {
+        if (!parsed?.target_appointment_id) {
+          toast.error("Pick which appointment to cancel.");
+          return;
+        }
+        await nlSchedulingCancel({
+          appointment_id: parsed.target_appointment_id,
+          cancel_reason: parsed.cancel_reason || null,
+        });
+        toast.success("Appointment cancelled.");
+      } else if (intent === "reschedule") {
+        if (!parsed?.target_appointment_id || !startLocal) {
+          toast.error("Pick the appointment + a new start time.");
+          return;
+        }
+        await nlSchedulingReschedule({
+          appointment_id: parsed.target_appointment_id,
+          start_iso: new Date(startLocal).toISOString(),
+          duration_minutes: duration || null,
+        });
+        toast.success("Appointment rescheduled.");
+      } else {
+        if (!patientId || !providerId || !startLocal) {
+          toast.error("Pick patient, provider, and a start time first.");
+          return;
+        }
+        const start = new Date(startLocal).toISOString();
+        await nlSchedulingCreate({
+          patient_id: patientId, provider_id: providerId,
+          start_iso: start, duration_minutes: duration,
+          location_id: locationId || null,
+          appointment_type_id: apptTypeId || null,
+          reason: parsed?.reason || null,
+        });
+        toast.success("Appointment booked.");
+      }
       setParsed(null); setText("");
-      if (onBooked) onBooked(appt);
+      if (onBooked) onBooked();
     } catch (err) {
-      toast.error(err?.response?.data?.detail || "Booking failed");
+      toast.error(err?.response?.data?.detail || "Action failed");
     } finally {
       setCreating(false);
     }
@@ -146,6 +171,26 @@ export default function NLBookCard({ onBooked }) {
 
       {parsed && (
         <div className="space-y-3 pt-1" data-testid="nl-book-parsed">
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider text-muted-foreground">
+            <span
+              data-testid="nl-book-intent-badge"
+              className={`rounded-sm px-1.5 py-0.5 font-semibold ${
+                parsed.intent === "cancel"
+                  ? "bg-destructive/10 text-destructive"
+                  : parsed.intent === "reschedule"
+                  ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                  : "bg-primary/10 text-primary"
+              }`}
+            >
+              {parsed.intent || "create"}
+            </span>
+            <span>confidence: {parsed.confidence || "—"}</span>
+            {parsed.target_appointment_id && (
+              <span data-testid="nl-book-target-id" className="font-mono text-[10px]">
+                target: {parsed.target_appointment_id.slice(0, 8)}…
+              </span>
+            )}
+          </div>
           {Array.isArray(parsed.clarifications) && parsed.clarifications.length > 0 && (
             <ul
               data-testid="nl-book-clarifications"
@@ -259,16 +304,31 @@ export default function NLBookCard({ onBooked }) {
           <Button
             size="sm"
             onClick={confirm}
-            disabled={creating || !patientId || !providerId || !startLocal}
+            disabled={
+              creating
+              || (parsed?.intent === "cancel"
+                  ? !parsed?.target_appointment_id
+                  : parsed?.intent === "reschedule"
+                  ? (!parsed?.target_appointment_id || !startLocal)
+                  : (!patientId || !providerId || !startLocal))
+            }
             data-testid="nl-book-confirm-btn"
             className="rounded-sm"
           >
             {creating ? (
               <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : parsed?.intent === "cancel" ? (
+              <CalendarX className="mr-1.5 h-3.5 w-3.5" />
+            ) : parsed?.intent === "reschedule" ? (
+              <CalendarClock className="mr-1.5 h-3.5 w-3.5" />
             ) : (
               <CalendarPlus className="mr-1.5 h-3.5 w-3.5" />
             )}
-            Create appointment
+            {parsed?.intent === "cancel"
+              ? "Cancel appointment"
+              : parsed?.intent === "reschedule"
+              ? "Reschedule"
+              : "Create appointment"}
           </Button>
         </div>
       )}

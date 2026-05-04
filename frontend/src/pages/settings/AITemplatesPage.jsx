@@ -82,6 +82,21 @@ export default function AITemplatesPage() {
 
   useEffect(() => { refresh(); }, [refresh]);
 
+  const [providerQuery, setProviderQuery] = useState("");
+
+  const visibleScopeOptions = useMemo(() => {
+    if (draft.scope_type === "location") return locations;
+    if (draft.scope_type !== "provider") return [];
+    const q = providerQuery.trim().toLowerCase();
+    if (!q) return providers;
+    return providers.filter((p) => {
+      const blob = [
+        p.first_name, p.last_name, p.name, p.display_name, p.email,
+      ].filter(Boolean).join(" ").toLowerCase();
+      return blob.includes(q);
+    });
+  }, [draft.scope_type, providers, locations, providerQuery]);
+
   const labelForScope = useCallback((row) => {
     if (row.scope_type === "tenant") return "(tenant default)";
     if (row.scope_type === "location") {
@@ -217,48 +232,67 @@ export default function AITemplatesPage() {
                 placeholder="—"
               />
             ) : (
-              <Select
-                value={draft.scope_id}
-                onValueChange={(v) => setDraft((d) => ({ ...d, scope_id: v }))}
-              >
-                <SelectTrigger data-testid="ai-templates-scope-id-select">
-                  <SelectValue placeholder={
-                    draft.scope_type === "location"
-                      ? "Select location…"
-                      : "Select provider…"
-                  } />
-                </SelectTrigger>
-                <SelectContent>
-                  {(draft.scope_type === "location" ? locations : providers).map((opt) => {
-                    const label = draft.scope_type === "location"
-                      ? `${opt.name}${opt.code ? ` (${opt.code})` : ""}`
-                      : (() => {
-                          const firstLast = [opt.first_name, opt.last_name]
-                            .filter(Boolean).join(" ");
-                          const display = opt.display_name
-                            || firstLast
-                            || (opt.name && opt.name !== "License doctor" ? opt.name : null);
-                          return display
-                            ? `${display}${opt.email ? ` · ${opt.email}` : ""}`
-                            : (opt.email || opt.id);
-                        })();
-                    return (
-                      <SelectItem
-                        key={opt.id}
-                        value={opt.id}
-                        data-testid={`ai-templates-scope-option-${opt.id}`}
+              <div className="space-y-1.5">
+                {draft.scope_type === "provider" && providers.length > 50 && (
+                  <Input
+                    data-testid="ai-templates-provider-search"
+                    value={providerQuery}
+                    onChange={(e) => setProviderQuery(e.target.value)}
+                    placeholder="Search by name or email…"
+                    className="h-8 text-xs"
+                  />
+                )}
+                <Select
+                  value={draft.scope_id}
+                  onValueChange={(v) => setDraft((d) => ({ ...d, scope_id: v }))}
+                >
+                  <SelectTrigger data-testid="ai-templates-scope-id-select">
+                    <SelectValue placeholder={
+                      draft.scope_type === "location"
+                        ? "Select location…"
+                        : "Select provider…"
+                    } />
+                  </SelectTrigger>
+                  <SelectContent className="max-h-[280px]">
+                    {visibleScopeOptions.slice(0, 100).map((opt) => {
+                      const label = draft.scope_type === "location"
+                        ? `${opt.name}${opt.code ? ` (${opt.code})` : ""}`
+                        : (() => {
+                            const firstLast = [opt.first_name, opt.last_name]
+                              .filter(Boolean).join(" ");
+                            const display = opt.display_name
+                              || firstLast
+                              || (opt.name && opt.name !== "License doctor" ? opt.name : null);
+                            return display
+                              ? `${display}${opt.email ? ` · ${opt.email}` : ""}`
+                              : (opt.email || opt.id);
+                          })();
+                      return (
+                        <SelectItem
+                          key={opt.id}
+                          value={opt.id}
+                          data-testid={`ai-templates-scope-option-${opt.id}`}
+                        >
+                          {label}
+                        </SelectItem>
+                      );
+                    })}
+                    {visibleScopeOptions.length === 0 && (
+                      <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                        No matches
+                      </div>
+                    )}
+                    {visibleScopeOptions.length > 100 && (
+                      <div
+                        data-testid="ai-templates-overflow-hint"
+                        className="border-t border-border/40 px-2 py-1.5 text-[10px] uppercase tracking-wider text-muted-foreground"
                       >
-                        {label}
-                      </SelectItem>
-                    );
-                  })}
-                  {(draft.scope_type === "location" ? locations : providers).length === 0 && (
-                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
-                      None available
-                    </div>
-                  )}
-                </SelectContent>
-              </Select>
+                        Showing first 100 of {visibleScopeOptions.length} — refine search
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
             )}
           </label>
         </div>

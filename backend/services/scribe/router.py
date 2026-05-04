@@ -478,3 +478,276 @@ async def delete_audio_for_note(
         }},
     )
     return res.modified_count
+
+
+
+# ---------------------------------------------------------------------------
+# POST /scribe/encounters/{note_type}/{note_id}/send-to-claim
+# Closes the documentation→billing loop. Takes the doctor-accepted
+# CPT/ICD suggestions and creates a `draft` claim. New ICD-10s are
+# materialised into `clinical_diagnoses` so downstream readiness +
+# scrubber + 837P emission see them. CPT codes flow straight onto
+# claim lines.
+# ---------------------------------------------------------------------------
+class _AcceptedCPT(BaseModel):
+    code: str
+    units: int = 1
+    modifiers: list[str] = []
+    billed_cents: int = 0
+
+
+class _AcceptedICD(BaseModel):
+    code: str
+    label: str | None = None
+    is_primary: bool = False
+
+
+class _SendToClaimRequest(BaseModel):
+    cpt: list[_AcceptedCPT]
+    icd: list[_AcceptedICD]
+    payer_id: str
+    policy_id: str | None = None
+    place_of_service: str = "11"
+
+
+@router.post("/encounters/{note_type}/{note_id}/send-to-claim")
+async def send_to_claim(
+    note_type: str,
+    note_id: str,
+    request: Request,
+    body: _SendToClaimRequest = Body(...),
+    user: dict = Depends(require_role("doctor")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Materialise a draft claim from doctor-accepted CPT/ICD suggestions.
+
+    Bypasses the normal readiness gate because the doctor is explicitly
+    authoring this claim from the AI scribe — readiness is about
+    *documentation* completeness, and we have a real SOAP draft sitting
+    on the host note. The claim still goes to `draft` status so the
+    billing scrubber + manual review run before submission.
+    """
+    if note_type not in NOTE_TYPE_TO_COLL:
+        raise HTTPException(400, f"Unsupported note_type `{note_type}`")
+    if not body.cpt:
+        raise HTTPException(422, "At least one accepted CPT code is required")
+    if not body.icd:
+        raise HTTPException(422, "At least one accepted ICD-10 code is required")
+
+    db = tenant_db(ctx.tenant_id)
+    coll = NOTE_TYPE_TO_COLL[note_type]
+    note = await db[coll].find_one(
+        {"tenant_id": ctx.tenant_id, "id": note_id},
+        {
+            "_id": 0, "id": 1, "patient_id": 1, "encounter_id": 1,
+            "episode_id": 1, "date_of_service": 1, "location_id": 1,
+            "provider_id": 1,
+        },
+    )
+    if not note:
+        raise HTTPException(404, f"{note_type} not found")
+
+    # Validate payer + optional policy in tenant.
+    payer = await db.billing_payers.find_one(
+        {"tenant_id": ctx.tenant_id, "id": body.payer_id}, {"_id": 0, "id": 1},
+    )
+    if not payer:
+        raise HTTPException(404, "Payer not found")
+    if body.policy_id:
+        pol = await db.patient_insurance_policies.find_one(
+            {
+                "tenant_id": ctx.tenant_id, "id": body.policy_id,
+                "patient_id": note["patient_id"],
+            },
+            {"_id": 0, "id": 1},
+        )
+        if not pol:
+            raise HTTPException(404, "Policy not found for this patient")
+
+    dos_full = note.get("date_of_service")
+    if not dos_full:
+        raise HTTPException(409, "Note has no date_of_service")
+    dos = dos_full[:10]  # YYYY-MM-DD
+
+    # Materialise any ICD-10 codes that don't already exist on the
+    # patient's active diagnosis list for this episode. We only insert
+    # what's missing — existing diagnoses stay untouched.
+    now_iso = datetime.now(timezone.utc).isoformat()
+    seen_dx: set[str] = set()
+    primary_seen = False
+    diagnoses_payload: list[dict] = []
+    for d in body.icd:
+        code = (d.code or "").strip().upper()
+        if not code or code in seen_dx:
+            continue
+        seen_dx.add(code)
+        is_primary = bool(d.is_primary and not primary_seen)
+        if is_primary:
+            primary_seen = True
+        # Upsert into clinical_diagnoses (so readiness + future claims see it).
+        existing = await db.clinical_diagnoses.find_one(
+            {
+                "tenant_id": ctx.tenant_id,
+                "patient_id": note["patient_id"],
+                "icd10_code": code, "status": "active",
+            },
+            {"_id": 0, "id": 1},
+        )
+        if not existing:
+            await db.clinical_diagnoses.insert_one({
+                "id": str(uuid.uuid4()),
+                "tenant_id": ctx.tenant_id,
+                "patient_id": note["patient_id"],
+                "episode_id": note.get("episode_id"),
+                "encounter_id": note.get("encounter_id"),
+                "icd10_code": code,
+                "label": d.label or code,
+                "is_primary": is_primary,
+                "status": "active",
+                "source": "ai_scribe",
+                "created_at": now_iso,
+                "created_by": user["id"],
+                "updated_at": now_iso,
+            })
+        diagnoses_payload.append({
+            "sequence": len(diagnoses_payload) + 1, "code": code,
+        })
+        if len(diagnoses_payload) >= 12:
+            break
+
+    # CPT lines.
+    lines_payload: list[dict] = []
+    billed_total = 0
+    seen_lines: set[tuple[str, tuple[str, ...]]] = set()
+    for c in body.cpt:
+        code = (c.code or "").strip().upper()
+        if not code:
+            continue
+        mods = tuple(sorted(m.strip().upper() for m in (c.modifiers or []) if m.strip()))
+        key = (code, mods)
+        if key in seen_lines:
+            continue
+        seen_lines.add(key)
+        units = max(int(c.units or 1), 1)
+        billed_cents = max(int(c.billed_cents or 0), 0)
+        billed_total += billed_cents * units
+        lines_payload.append({
+            "sequence": len(lines_payload) + 1,
+            "service_date": dos,
+            "code_type": "cpt",
+            "code": code,
+            "units": units,
+            "billed_cents": billed_cents,
+            "modifiers": list(mods),
+            "diagnosis_pointers": [1] if diagnoses_payload else [],
+        })
+        if len(lines_payload) >= 50:
+            break
+
+    # Persist claim + child rows directly. We mirror the schema used by
+    # /api/billing/claims/from-encounter so the scrubber and submission
+    # endpoints work the same.
+    claim_id = str(uuid.uuid4())
+    claim_doc = {
+        "id": claim_id,
+        "tenant_id": ctx.tenant_id,
+        "location_id": note.get("location_id"),
+        "patient_id": note["patient_id"],
+        "payer_id": body.payer_id,
+        "policy_id": body.policy_id,
+        "source_invoice_id": None,
+        "source_encounter_id": note.get("encounter_id"),
+        "claim_type": "professional",
+        "place_of_service": body.place_of_service,
+        "frequency_code": "1",
+        "billing_provider_id": None,
+        "rendering_provider_id": note.get("provider_id"),
+        "facility_id": None,
+        "authorization_number": None,
+        "referral_number": None,
+        "status": "draft",
+        "service_date_from": dos,
+        "service_date_to": dos,
+        "billed_cents": billed_total,
+        "paid_cents": 0,
+        "submitted_at": None,
+        "accepted_at": None,
+        "last_denial_code": None,
+        "notes": (
+            f"Auto-generated by AI scribe send-to-claim from "
+            f"{note_type} note {note_id}. CPT count={len(lines_payload)}, "
+            f"ICD count={len(diagnoses_payload)}."
+        ),
+        "validation_error_count": 0,
+        "validation_warning_count": 0,
+        "validation_last_run_at": None,
+        "created_at": now_iso,
+        "updated_at": now_iso,
+        "created_by": user["id"],
+        "updated_by": user["id"],
+        "history": [{
+            "at": now_iso, "by": user["id"],
+            "action": "created_from_scribe",
+            "metadata": {
+                "note_id": note_id, "note_type": note_type,
+                "lines": len(lines_payload),
+                "diagnoses": len(diagnoses_payload),
+            },
+        }],
+    }
+    diag_docs = [
+        {
+            "id": str(uuid.uuid4()),
+            "tenant_id": ctx.tenant_id,
+            "claim_id": claim_id,
+            "sequence": d["sequence"],
+            "code": d["code"],
+            "created_at": now_iso,
+        }
+        for d in diagnoses_payload
+    ]
+    line_docs = [
+        {
+            "id": str(uuid.uuid4()),
+            "tenant_id": ctx.tenant_id,
+            "claim_id": claim_id,
+            "sequence": ln["sequence"],
+            "invoice_line_id": None,
+            "service_date": ln["service_date"],
+            "code_type": ln["code_type"],
+            "code": ln["code"],
+            "units": ln["units"],
+            "billed_cents": ln["billed_cents"],
+            "diagnosis_pointers": ln["diagnosis_pointers"],
+            "modifiers": ln["modifiers"],
+            "created_at": now_iso,
+        }
+        for ln in lines_payload
+    ]
+
+    if diag_docs:
+        await db.claim_diagnoses.insert_many(diag_docs)
+    if line_docs:
+        await db.claim_lines.insert_many(line_docs)
+    await db.claims.insert_one(claim_doc)
+
+    await audit_success(
+        user, "scribe.claim.created_from_suggestions", request,
+        entity_type="claim", entity_id=claim_id,
+        phi_accessed=True,
+        metadata={
+            "note_id": note_id, "note_type": note_type,
+            "patient_id": note["patient_id"], "payer_id": body.payer_id,
+            "lines": len(line_docs), "diagnoses": len(diag_docs),
+            "billed_cents": billed_total,
+        },
+    )
+    return {
+        "claim_id": claim_id,
+        "status": "draft",
+        "billed_cents": billed_total,
+        "lines": len(line_docs),
+        "diagnoses": len(diag_docs),
+        "patient_id": note["patient_id"],
+        "encounter_id": note.get("encounter_id"),
+    }

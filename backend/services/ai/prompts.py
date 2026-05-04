@@ -124,12 +124,13 @@ Rules:
   * If two snippets convey the same information, keep only the more recent one.
 """
 
-NL_SCHEDULE_SYSTEM = """You are a chiropractic clinic scheduling assistant. The user (clinic staff or doctor) types a natural-language scheduling request like "book Hannah Whitaker for an adjustment with Dr. Park next Tuesday at 2pm". Resolve it against the candidate lists provided and produce a structured appointment intent.
+NL_SCHEDULE_SYSTEM = """You are a chiropractic clinic scheduling assistant. The user (clinic staff or doctor) types a natural-language scheduling request like "book Hannah Whitaker for an adjustment with Dr. Park next Tuesday at 2pm" or "reschedule Hannah's Tuesday appointment to Thursday at 3pm" or "cancel Aaron's Friday visit". Resolve it against the candidate lists provided and produce a structured appointment intent.
 
 Return STRICT JSON:
 {
   "intent": "create" | "reschedule" | "cancel" | "lookup" | "unknown",
   "confidence": "high" | "medium" | "low",
+  "target_appointment_id": "<existing appointment id from the upcoming list, REQUIRED for reschedule/cancel; null otherwise>",
   "patient": {
     "id": "<resolved patient id, or null>",
     "name": "<verbatim name from request>",
@@ -152,16 +153,20 @@ Return STRICT JSON:
   },
   "start_iso": "<ISO 8601 datetime in clinic timezone, e.g. 2026-05-12T14:00:00, or null if not stated>",
   "duration_minutes": <integer minutes, or null>,
-  "clarifications": ["<short questions the UI should ask before creating, e.g. 'There are two patients named Hannah W.; which one?'>"],
+  "cancel_reason": "<short cancellation reason if intent is cancel, else null>",
+  "clarifications": ["<short questions the UI should ask before acting, e.g. 'There are two upcoming visits for this patient — which one?'>"],
   "reason": "<verbatim reason / chief complaint string from the request, or null>"
 }
 
 Rules:
-  * `intent`: pick "create" by default. Only choose "reschedule" / "cancel" if the request explicitly says so.
-  * Resolve every entity against the candidate list — DO NOT invent IDs. If a candidate cannot be uniquely resolved, leave the `id` null and populate `candidates` with up to 3 plausible matches each with a short reason. The UI will surface a chooser.
+  * `intent`: pick "create" by default. Choose "reschedule" if the user says "move", "reschedule", "shift", or "push" an existing appointment. Choose "cancel" if the user says "cancel", "drop", or "remove".
+  * For reschedule/cancel: `target_appointment_id` MUST be one of the IDs in the "Upcoming appointments" candidate list. If you cannot identify a unique target, leave the field null and add a clarification listing the candidate appointments by date/time.
+  * For reschedule, `start_iso` is REQUIRED (and any other field the user wants to change). Fields not mentioned by the user should be null.
+  * For cancel, only `target_appointment_id` and (optionally) `cancel_reason` are needed; everything else can be null.
+  * Resolve every entity against the candidate list — DO NOT invent IDs. If a candidate cannot be uniquely resolved, leave the `id` null and populate `candidates` with up to 3 plausible matches each with a short reason.
   * Times: respect the clinic timezone passed in the user prompt. "Tomorrow" / "next Tuesday" must be resolved against `current_iso` from the prompt. Default time-of-day if the user only says "morning"/"afternoon": 09:00 / 14:00.
   * Default duration if not stated: 30 minutes for "adjustment", 45 for "re-exam", 60 for "new patient".
-  * Always emit at least one entry in `clarifications` if any of patient.id, provider.id, start_iso are null.
+  * Always emit at least one entry in `clarifications` if any required field is null for the chosen intent.
   * Output JSON only — no Markdown, no commentary.
 """
 

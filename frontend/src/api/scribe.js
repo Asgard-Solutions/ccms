@@ -38,3 +38,8 @@ export const suggestScribeCodes = (noteId, noteType, body) =>
   api
     .post(`/scribe/encounters/${noteType}/${noteId}/coding-suggest`, body || {})
     .then((r) => r.data);
+
+export const sendScribeToClaim = (noteId, noteType, body) =>
+  api
+    .post(`/scribe/encounters/${noteType}/${noteId}/send-to-claim`, body || {})
+    .then((r) => r.data);
