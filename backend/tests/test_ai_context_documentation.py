@@ -210,6 +210,37 @@ class TestRoutersStubbed:
             r = s.get(API + path, timeout=15)
             assert r.status_code == 404
 
+    def test_encounter_scoped_routes_200_for_real_signed_note(self):
+        """Happy-path: prior-sections + since-last-diff must hit 200 for
+        a real signed follow-up note. Guards against the
+        ``clinical_notes`` vs ``clinical_follow_up_notes`` collection
+        bug that previously made every encounter-scoped call 404 in
+        production."""
+        import asyncio
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from core.tenancy import reset_router_for_tests
+        s = _login(*DEFAULT_ADMIN)
+        me = s.get(f"{API}/auth/me", timeout=10).json()
+        tenant_id = me["tenant_id"]
+
+        async def find_note():
+            reset_router_for_tests()
+            c = AsyncIOMotorClient(os.environ["MONGO_URL"])
+            n = await c[os.environ["DB_NAME"]].clinical_follow_up_notes.find_one(
+                {"tenant_id": tenant_id, "status": {"$in": ["signed", "locked"]}},
+                {"_id": 0, "id": 1, "patient_id": 1},
+            )
+            c.close()
+            return n
+        note = asyncio.run(find_note())
+        if not note:
+            pytest.skip("No signed follow-up notes in admin tenant")
+        nid = note["id"]
+        r1 = s.get(f"{API}/ai/encounters/{nid}/prior-sections", timeout=60)
+        assert r1.status_code == 200, r1.text
+        r2 = s.get(f"{API}/ai/encounters/{nid}/since-last-diff", timeout=60)
+        assert r2.status_code == 200, r2.text
+
     def test_draft_sections_404_unknown_note(self):
         s = _login(*DEFAULT_ADMIN)
         r = s.post(f"{API}/ai/encounters/does-not-exist/draft-sections",

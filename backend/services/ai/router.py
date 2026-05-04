@@ -127,7 +127,7 @@ from core.tenancy import tenant_db  # noqa: E402 — kept near usage
 
 async def _note_to_patient(tenant_id: str, note_id: str) -> dict:
     db = tenant_db(tenant_id)
-    note = await db.clinical_notes.find_one(
+    note = await db.clinical_follow_up_notes.find_one(
         {"tenant_id": tenant_id, "id": note_id},
         {"_id": 0, "patient_id": 1, "id": 1, "date_of_service": 1},
     )

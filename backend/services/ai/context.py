@@ -55,7 +55,7 @@ async def load_patient_context(
     if exclude_note_id:
         notes_q["id"] = {"$ne": exclude_note_id}
     notes_cur = (
-        db.clinical_notes.find(notes_q, {"_id": 0})
+        db.clinical_follow_up_notes.find(notes_q, {"_id": 0})
         .sort("date_of_service", -1)
         .limit(MAX_ENCOUNTERS)
     )
