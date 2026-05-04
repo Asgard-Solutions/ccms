@@ -772,6 +772,15 @@ async def sign_exam(
         entity_type="clinical_initial_exam", entity_id=exam_id, phi_accessed=True,
         metadata={"patient_id": patient_id, "materialized_count": len(materialized_ids)},
     )
+    # Auto-delete scribe audio for this exam (kept until sign per HIPAA policy).
+    try:
+        from services.scribe.router import delete_audio_for_note
+        await delete_audio_for_note(
+            tenant_id=ctx.tenant_id, note_id=exam_id,
+            note_type="initial_exam", actor_id=user["id"],
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return await _hydrate(db, ctx.tenant_id, fresh)
 
 

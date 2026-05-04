@@ -682,6 +682,15 @@ async def sign_reexam(
             "emitted_outcome_entry_ids": emitted_outcome_ids,
         },
     )
+    # Auto-delete scribe audio (HIPAA retention: keep until signed).
+    try:
+        from services.scribe.router import delete_audio_for_note
+        await delete_audio_for_note(
+            tenant_id=ctx.tenant_id, note_id=rid,
+            note_type="reexam", actor_id=user["id"],
+        )
+    except Exception:  # noqa: BLE001
+        pass
     return await _hydrate(db, ctx.tenant_id, fresh)
 
 

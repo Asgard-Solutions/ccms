@@ -49,6 +49,7 @@ import {
 import { useAuth } from "../../contexts/AuthContext";
 import { useReauth } from "../../components/ReauthGate";
 import AddendumPanel from "./AddendumPanel";
+import ScribePanel from "../ai/ScribePanel";
 import { formatDateTime } from "../../utils/time";
 
 const ROM_REGIONS = ["cervical", "thoracic", "lumbar", "shoulders", "hips"];
@@ -583,6 +584,45 @@ export default function InitialExamEditor() {
 
   const readOnly = !canWrite || exam?.status === "signed";
 
+  // Map AI/scribe SOAP output into the Initial Exam's sub-document shape.
+  // Subjective -> history.history_of_present_illness
+  // Objective  -> examination.observation_inspection
+  // Assessment -> assessment.initial_clinical_impression
+  // Plan       -> assessment.treatment_recommendations
+  const applySectionFromAi = useCallback((section, text) => {
+    if (!text) return;
+    if (section === "subjective") {
+      setHistory((s) => ({
+        ...(s || {}),
+        history_of_present_illness: [
+          (s && s.history_of_present_illness) || "", text,
+        ].filter(Boolean).join("\n\n"),
+      }));
+    } else if (section === "objective") {
+      setExamination((s) => ({
+        ...(s || {}),
+        observation_inspection: [
+          (s && s.observation_inspection) || "", text,
+        ].filter(Boolean).join("\n\n"),
+      }));
+    } else if (section === "assessment") {
+      setAssessment((s) => ({
+        ...(s || {}),
+        initial_clinical_impression: [
+          (s && s.initial_clinical_impression) || "", text,
+        ].filter(Boolean).join("\n\n"),
+      }));
+    } else if (section === "plan") {
+      setAssessment((s) => ({
+        ...(s || {}),
+        treatment_recommendations: [
+          (s && s.treatment_recommendations) || "", text,
+        ].filter(Boolean).join("\n\n"),
+      }));
+    }
+    toast.success(`Pulled into ${section}.`);
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -848,6 +888,16 @@ export default function InitialExamEditor() {
             </Button>
           </div>
         </div>
+
+        {/* AI scribe — doctor-only, hidden on signed exams. */}
+        {user?.role === "doctor" && exam.status !== "signed" && (
+          <ScribePanel
+            noteId={eid}
+            noteType="initial_exam"
+            disabled={!canWrite}
+            onApplySection={applySectionFromAi}
+          />
+        )}
 
         {sections.map((section) => (
           <SectionCard
