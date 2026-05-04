@@ -12,12 +12,14 @@ submission workers) consume the canonical model through these routes.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Literal, get_args
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import Response
 
 from core.audit import audit_success, audit_failure
@@ -58,6 +60,7 @@ from services.billing.canonical_status import (
     raw_statuses_for_canonical,
 )
 from services.billing.events import emit_claim_event
+from services.billing.sandbox_ack_simulator import schedule_sandbox_simulation
 from services.billing.submission import (
     DEFAULT_FOLLOWUP_DAYS,
     build_json_payload,
@@ -3892,6 +3895,24 @@ async def _do_submit_claim(
     fresh = await db.claim_submissions.find_one(
         {"id": sub_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
     )
+    # Sandbox-mode submissions trigger a synthetic ack walker so the
+    # ClaimDetail timeline has something to show in the demo. Real
+    # production submissions are handled by ack_poller.py instead.
+    if fresh and fresh.get("sandbox") and fresh.get("adapter_status") == "queued":
+        try:
+            schedule_sandbox_simulation(
+                tenant_id=ctx.tenant_id,
+                location_id=claim.get("location_id"),
+                claim_id=claim_id,
+                submission_id=sub_id,
+                adapter_route=fresh.get("adapter_route") or "none",
+            )
+        except Exception:
+            import logging as _logging
+            _logging.getLogger("ccms.billing.sandbox_simulator").exception(
+                "billing.sandbox_simulator.schedule_failed",
+                extra={"claim_id": claim_id, "submission_id": sub_id},
+            )
     return fresh
 
 
@@ -6415,3 +6436,85 @@ async def update_service_facility(
     )
     return _public(fresh)
 
+
+
+
+# ---------------------------------------------------------------------------
+# WebSocket: live ClaimDetail timeline
+# ---------------------------------------------------------------------------
+# Pushes new `claim_events` rows to subscribed UIs as they are emitted.
+# Falls back to client polling on `/claims/{claim_id}/events` when the
+# socket is unavailable (older browsers, transient infra issues).
+#
+# Auth: cookie-based access_token, identical to HTTP routes. Tenant
+# isolation is enforced — a user can only subscribe to claims in
+# their own tenant.
+#
+# Heartbeat: 25 s server-side ping. Clients should treat 30 s of no
+# traffic as "stale" and reconnect.
+# ---------------------------------------------------------------------------
+from services.billing.timeline_pubsub import (  # noqa: E402
+    subscribe as _ws_subscribe,
+    unsubscribe as _ws_unsubscribe,
+)
+
+_WS_HEARTBEAT_SECONDS = 25
+
+
+@router.websocket("/ws/claims/{claim_id}/events")
+async def claim_events_ws(websocket: WebSocket, claim_id: str):
+    # Re-use the same cookie-based auth path. We can't call Depends
+    # in a websocket handler so we mock a Request-like wrapper.
+    class _ReqShim:
+        def __init__(self, ws):
+            self.cookies = ws.cookies
+            self.headers = ws.headers
+    try:
+        user = await get_current_user(_ReqShim(websocket))
+    except HTTPException:
+        await websocket.close(code=4401)
+        return
+
+    tenant_id = user.get("tenant_id")
+    if not tenant_id and not (
+        user.get("is_platform_admin") or user.get("role") == "platform_admin"
+    ):
+        await websocket.close(code=4403)
+        return
+
+    # Validate the claim exists in the user's tenant before opening
+    # the stream — keeps a tenant from peeking at sibling tenants by
+    # guessing claim ids.
+    db = tenant_db(tenant_id) if tenant_id else None
+    if db is not None:
+        claim = await db.claims.find_one(
+            {"id": claim_id, "tenant_id": tenant_id}, {"_id": 0, "id": 1},
+        )
+        if not claim:
+            await websocket.close(code=4404)
+            return
+
+    await websocket.accept()
+    queue = _ws_subscribe(claim_id)
+    try:
+        # Initial hello carries the subscriber count so the UI can
+        # show a "connected" indicator without polling.
+        await websocket.send_json({"type": "hello", "claim_id": claim_id})
+        while True:
+            try:
+                event = await asyncio.wait_for(
+                    queue.get(), timeout=_WS_HEARTBEAT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                # Heartbeat — keeps proxies from idling the socket.
+                await websocket.send_json({"type": "ping"})
+                continue
+            await websocket.send_json({"type": "event", "event": event})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        _log = logging.getLogger("ccms.billing.timeline.ws")
+        _log.exception("billing.timeline.ws_error",
+                       extra={"claim_id": claim_id, "user_id": user.get("id")})
+    finally:
+        _ws_unsubscribe(claim_id, queue)

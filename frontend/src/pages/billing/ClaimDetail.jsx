@@ -45,6 +45,7 @@ import {
   validateClaim,
 } from "./useClaims";
 import ClaimWorkflow from "./ClaimWorkflow";
+import ClaimTimeline from "./ClaimTimeline";
 
 const EDITABLE_STATUSES = new Set(["draft", "validation_failed", "rejected"]);
 
@@ -237,6 +238,9 @@ export default function ClaimDetail() {
 
       {/* Phase 4 workflow — submissions, outcomes, timeline, assignment */}
       <ClaimWorkflow claim={claim} refs={refs} onChanged={refresh} />
+
+      {/* Live submission timeline — polls + WebSocket */}
+      <ClaimTimeline claimId={claim.id} />
 
       {/* Header card */}
       <section

@@ -22,6 +22,7 @@ from typing import Any, get_args
 from core.tenancy import TenantContext
 from core.tenant_scope import stamp_for_write
 from services.billing.models import ClaimEventType
+from services.billing.timeline_pubsub import publish as _publish_timeline
 
 log = logging.getLogger("ccms.billing.events")
 
@@ -86,6 +87,16 @@ async def emit_claim_event(
         # block a mutation. We still log loud so ops sees it.
         log.exception(
             "billing.claim_event.write_failed",
+            extra={"claim_id": claim_id, "event_type": event_type},
+        )
+    # Best-effort fan-out to any open ClaimDetail timeline WebSockets.
+    # Pub/sub failures must never block the caller.
+    try:
+        clean = {k: v for k, v in doc.items() if k != "_id"}
+        _publish_timeline(claim_id, clean)
+    except Exception:
+        log.exception(
+            "billing.claim_event.timeline_publish_failed",
             extra={"claim_id": claim_id, "event_type": event_type},
         )
     return {k: v for k, v in doc.items() if k != "_id"}

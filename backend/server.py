@@ -261,6 +261,14 @@ async def on_startup():
         app.state.helcim_worker_task = asyncio.create_task(_helcim_worker())
     except Exception as exc:  # noqa: BLE001
         logger.warning("helcim scheduler worker failed to start: %s", exc)
+    # Start the production-mode clearinghouse ack poller (sandbox
+    # submissions are simulated separately by sandbox_ack_simulator
+    # so the timeline stays alive for demos).
+    try:
+        from services.billing.ack_poller import start_poller as _start_ack_poller
+        app.state.ack_poller_task = _start_ack_poller()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ack poller failed to start: %s", exc)
     logger.info(
         "CCMS startup complete (HIPAA-hardened, redis_alive=%s).", redis_alive
     )
@@ -273,6 +281,14 @@ async def on_shutdown():
         task.cancel()
         try:
             await task
+        except (asyncio.CancelledError, Exception):
+            pass
+    ack_task = getattr(app.state, "ack_poller_task", None)
+    if ack_task is not None:
+        try:
+            from services.billing.ack_poller import stop_poller as _stop_ack
+            _stop_ack()
+            await ack_task
         except (asyncio.CancelledError, Exception):
             pass
     await close_redis()
