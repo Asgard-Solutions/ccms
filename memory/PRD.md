@@ -1,6 +1,63 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-05-04 (UX nits + one-click Submit-to-Clearinghouse — VERIFIED)
+**Last updated:** 2026-05-04 (Demo PIN seeder + Live submission timeline — VERIFIED)
+
+## 5j. Demo PIN seeder + Live submission timeline (2026-05-04, P0/P1)
+
+**User request:** "(1) add the password and 6-digit PIN onto the login screen; if the user does not have one set, create it... actually NOT for login but in-app re-verification — we need to know the PIN for each user to test with it. (2) Wire the new 'Send to claim' action into a live submission timeline widget on ClaimDetail that polls 999/277CA acks and updates the status pill in real-time, choosing 1c (WebSocket push) + 2c (sandbox simulator AND real-pull poller)."
+
+### Shipped
+
+**Backend** —
+- `scripts/seed_demo_pins.py` (new) — idempotent 6-digit PIN seeder for every demo persona. Documented in `test_credentials.md`.
+- `services/billing/timeline_pubsub.py` (new) — in-process fan-out for ClaimDetail timeline subscribers; bounded per-queue.
+- `services/billing/events.py::emit_claim_event` — also best-effort publishes to the pub/sub.
+- `services/billing/sandbox_ack_simulator.py` (new) — schedules a fire-and-forget asyncio walker that emits `ack_999_accepted` → `ack_277ca_accepted` → `outcome_recorded` → `era_posted` over ~20 s for every sandbox submission. Updates `claim_submissions.outcome` and flips claim status to `paid`.
+- `services/billing/ack_poller.py` (new) — production-mode poller, started at app boot. Every 60 s, calls `adapter.fetch_ack_999/277ca` on every non-sandbox submission. Adapters return `None` today so this is a quiet no-op; scaffolding is ready for live HTTPS transport.
+- `WS /api/billing/ws/claims/{claim_id}/events` — cookie-authenticated WebSocket that streams `claim_events` as they emit, with 25-s heartbeat pings and tenant/claim ownership validation.
+
+**Frontend** —
+- `pages/billing/ClaimTimeline.jsx` (new) — mounts inside ClaimDetail. Connects to the WS, falls back to 30 s polling, dedupes by event id. Shows Live / Connecting / Polling pill, latest-event card, full history.
+
+### Verification
+
+- Backend: `tests/test_claim_timeline.py` 4/4 + `test_demo_pin_seed.py` 9/9 + `test_pin_security.py` 25/25 (no regressions on PIN flows) + `test_quick_submit.py` 3/3 + `test_third_wave_ai.py` 8/8 (iter_88).
+- Frontend E2E (iter_88): WebSocket pill went Polling → Live in ~2 s; the full simulator chain rendered within ~12 s; claim status pill flipped to PAID.
+
+### Files added/modified
+
+- `/app/backend/scripts/seed_demo_pins.py` (new)
+- `/app/backend/services/billing/timeline_pubsub.py` (new)
+- `/app/backend/services/billing/sandbox_ack_simulator.py` (new)
+- `/app/backend/services/billing/ack_poller.py` (new)
+- `/app/backend/services/billing/events.py`
+- `/app/backend/services/billing/router.py` (WS endpoint, simulator hook in `_do_submit_claim`)
+- `/app/backend/server.py` (ack_poller startup / shutdown)
+- `/app/backend/tests/test_claim_timeline.py` (new)
+- `/app/frontend/src/pages/billing/ClaimTimeline.jsx` (new)
+- `/app/frontend/src/pages/billing/ClaimDetail.jsx` (mounts timeline)
+- `/app/memory/test_credentials.md` (PIN reference + script note)
+
+### Demo PIN reference
+
+| Email | PIN |
+|---|---|
+| admin@ccms.app | 100001 |
+| doctor@ccms.app | 200002 |
+| staff@ccms.app | 300003 |
+| patient@ccms.app | 400004 |
+| platform-admin@ccms.app | 500005 |
+| group-admin@sunrise.ccms.app | 600006 |
+| downtown-doc@sunrise.ccms.app | 700007 |
+| floater-doc@sunrise.ccms.app | 800008 |
+| eastside-staff@sunrise.ccms.app | 900009 |
+
+### Future work
+- Redis-backed pub/sub for multi-worker deployments. Single-process uvicorn is fine for the current demo; horizontal scaling needs a shared bus.
+- Live 999/277CA fetchers in `ChangeHealthcareAdapter` so `ack_poller.py` actually moves production-mode timelines.
+- Optional: 30-second timeline replay slider for triaging stuck submissions.
+
+---
 
 ## 5i. UX nits + one-click Submit-to-Clearinghouse (2026-05-04, P0/P1/P2)
 

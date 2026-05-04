@@ -4,6 +4,76 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-05-04 — Demo PIN seeder + Live submission timeline (VERIFIED)
+
+**1. Demo PIN seeder (P1)**
+- New `scripts/seed_demo_pins.py` sets a known 6-digit PIN per demo
+  user. Idempotent — re-runs rotate to the same PIN. Safe to run on
+  any environment because every account in the map is fictional.
+- PINs documented in `/app/memory/test_credentials.md` (Admin
+  100001 / Doctor 200002 / Staff 300003 / Patient 400004 / Sunrise
+  600006-900009 / Platform 500005).
+- The PIN is for in-app re-verification (`POST /api/auth/me/pin/verify`),
+  not for sign-in. All existing PIN flows (lockout, change, reset)
+  unchanged — `test_pin_security.py` 25/25 still passing.
+
+**2. Live submission timeline (P0)**
+- Backend pub/sub at `services/billing/timeline_pubsub.py` (in-process
+  fan-out, bounded per-subscriber queue).
+- `services/billing/events.py::emit_claim_event` now best-effort
+  publishes to the pub/sub on every emission. Failures never block
+  the caller.
+- `services/billing/sandbox_ack_simulator.py` schedules a fire-and-
+  forget asyncio task on every sandbox `_do_submit_claim`. Walks the
+  submission through `ack_999_accepted` (+5 s) → `ack_277ca_accepted`
+  (+10 s) → `outcome_recorded` (+15 s) → `era_posted` (+20 s) and
+  flips the claim to `paid`.
+- `services/billing/ack_poller.py` (NEW) — background poller that
+  every 60 s queries production-mode submissions and asks the
+  resolved adapter for 999 / 277CA acks. Adapters return `None`
+  today so the poller is a quiet no-op until live-transport phase
+  ships; the scaffolding is there.
+- `WS /api/billing/ws/claims/{claim_id}/events` — cookie-authenticated
+  WebSocket. Validates tenant + claim ownership, subscribes to the
+  pub/sub, sends a 25 s heartbeat ping, and pushes JSON `{type:'event'}`
+  frames as new events land.
+- Frontend `pages/billing/ClaimTimeline.jsx` (NEW) mounts on
+  ClaimDetail. Polls `/events` every 30 s as a baseline AND opens
+  the WebSocket for real-time pushes (deduped by event id). Shows
+  Live / Connecting / Polling pill, latest-event card, full history.
+
+### Verification
+
+- Backend: `tests/test_claim_timeline.py` 4/4 + `test_demo_pin_seed.py`
+  9/9 + `test_pin_security.py` 25/25 + `test_quick_submit.py` 3/3 +
+  `test_third_wave_ai.py` 8/8 (testing-agent iter_88).
+- Frontend (iter_88): live Playwright run on a freshly quick-submitted
+  CHC sandbox claim — pill transitioned Polling → Live in ~2 s;
+  full simulator chain rendered within 12 s; claim flipped to `paid`.
+
+### Files added/modified
+
+- `/app/backend/scripts/seed_demo_pins.py` (new)
+- `/app/backend/services/billing/timeline_pubsub.py` (new)
+- `/app/backend/services/billing/sandbox_ack_simulator.py` (new)
+- `/app/backend/services/billing/ack_poller.py` (new)
+- `/app/backend/services/billing/events.py` (publishes to pub/sub)
+- `/app/backend/services/billing/router.py` (WS endpoint, simulator hook)
+- `/app/backend/server.py` (ack_poller startup/shutdown)
+- `/app/backend/tests/test_claim_timeline.py` (new)
+- `/app/frontend/src/pages/billing/ClaimTimeline.jsx` (new)
+- `/app/frontend/src/pages/billing/ClaimDetail.jsx` (mounts timeline)
+- `/app/memory/test_credentials.md` (PIN reference table)
+
+### Future work
+- Multi-worker pub/sub (Redis or NATS) — current implementation is
+  single-process. Single-worker uvicorn is fine for the demo; a
+  scaled deployment would need a shared bus.
+- Wire real 999/277CA fetchers in `ChangeHealthcareAdapter` to make
+  `ack_poller.py` actually move production-mode timelines.
+
+
+
 ## 2026-05-04 — UX nits + One-click Submit-to-Clearinghouse (VERIFIED)
 
 **1. Payer fee schedule on send-to-claim (P1)**
