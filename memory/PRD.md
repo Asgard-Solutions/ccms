@@ -1,6 +1,33 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-05-04 (AI Context-Aware Documentation — Claude Sonnet 4.5 chart-prep brief on patient charts + AI assist rail in the follow-up note editor with smart cache; bonus: hardened `AppointmentPublic.provider_id` to Optional and rebound motor clients in pytest fixtures)
+**Last updated:** 2026-05-04 (Patient-facing AI visit brief — wired the smart-cache pipeline into the patient portal so patients see a plain-language preview of their next visit, separate cache surface and prompt from the clinician chart-brief)
+
+## 5d. Patient-facing AI visit brief (2026-05-04)
+
+**User request:** "Yes proceed with your potential improvement" — wire the AI smart-cache pipeline into the patient-facing portal so patients see a plain-language summary before each visit.
+
+### Shipped
+
+**Backend** — new `services/portal/ai_brief_router.py` exposing `GET /api/portal/visit-brief` and `POST /api/portal/visit-brief/regenerate`. Patient-role only. Reuses `services/ai/context.py::load_patient_context` and `services/ai/cache.py` with a separate surface (`patient_visit_brief`) so patient regenerations don't invalidate clinician chart-brief caches. New prompt `PATIENT_VISIT_BRIEF_SYSTEM` returns strict JSON `{headline, last_visit, your_progress, this_visit, ask_about[], reminders[]}` with explicit prohibition on ICD codes, medication names, and clinical jargon. Soft-fails to a friendly empty brief when the LLM is unreachable.
+
+**Frontend** — new `portal/PortalVisitBriefCard.jsx` rendered at the top of `portal/PortalOverview.jsx`. Self-hides when the brief has no usable content. Skeleton, refresh button, cached badge, "You might want to ask" + "Before you arrive" sub-cards.
+
+### Verification (iteration_81)
+
+- `tests/test_portal_visit_brief.py` — 5/5 pass: admin-403, unauthenticated 401/403, happy-path + cached:true on 2nd call, regenerate breaks cache, ICD-code PHI-hygiene regex.
+- Testing agent confirmed real patient brief end-to-end with no regression on existing portal cards.
+
+### Files added (this iteration)
+
+- `/app/backend/services/portal/ai_brief_router.py`
+- `/app/backend/tests/test_portal_visit_brief.py`
+- `/app/frontend/src/portal/PortalVisitBriefCard.jsx`
+- `/app/backend/services/ai/prompts.py` (new `PATIENT_VISIT_BRIEF_SYSTEM`)
+- `/app/frontend/src/portal/PortalOverview.jsx` (mounts card)
+- `/app/frontend/src/api/portal.js` (`fetchPortalVisitBrief`, `regeneratePortalVisitBrief`)
+- `/app/backend/server.py` (registers `portal_ai_brief_router`)
+
+---
 
 ## 5c. AI Context-Aware Documentation (2026-05-04)
 

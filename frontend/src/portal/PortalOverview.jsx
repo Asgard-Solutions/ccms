@@ -88,8 +88,9 @@ export default function PortalOverview() {
 
   return (
     <div data-testid="portal-overview" className="space-y-6">
-      {/* AI visit brief — only when patient has at least one upcoming visit */}
-      {d.upcoming_appointments.length > 0 && <PortalVisitBriefCard />}
+      {/* AI visit brief — the card self-hides if the LLM has nothing
+          useful to say (e.g., a brand-new patient with no prior visit). */}
+      <PortalVisitBriefCard />
 
       {/* Upcoming appointments */}
       <Card testid="portal-upcoming-appointments">
