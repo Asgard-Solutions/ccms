@@ -4,6 +4,76 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-05-04 — AI Context-Aware Documentation (Claude Sonnet 4.5)
+
+End-to-end shipped. Doctors now see an AI chart-prep brief on every
+patient chart and an "AI assist" rail inside the follow-up note
+editor that surfaces last visit's S/O/A/P, since-last-visit outcome
+deltas (NPRS / questionnaires), and one-click "Draft Subjective + Plan"
+generation — all powered by Claude Sonnet 4.5 via Emergent LLM Key
+with a smart per-patient cache keyed on a content hash of the inputs.
+
+**Backend (`services/ai/*`)**
+- `router.py` — five endpoints under `/api/ai`:
+  - `GET/PUT /settings` (per-tenant model + provider, admin-only)
+  - `GET /chart-brief/{patient_id}` + `POST /chart-brief/{patient_id}/regenerate`
+  - `GET /encounters/{note_id}/prior-sections`
+  - `GET /encounters/{note_id}/since-last-diff`
+  - `POST /encounters/{note_id}/draft-sections`
+- `context.py` — `load_patient_context()` shapes demographics, last 5
+  signed follow-up notes, recent outcome trends, and questionnaire
+  scores into a token-efficient context dict + a stable 32-char
+  content hash for the smart cache.
+- `cache.py` — `ai_brief_cache` collection (tenant + patient + surface)
+  serves cached briefs whenever the context hash matches.
+- `client.py` — Claude Sonnet 4.5 via `emergentintegrations`. Writes
+  PHI-safe `ai_usage` audit rows (model, latency_ms, status only — no
+  prompt or response bodies are ever logged).
+- `prompts.py` — system prompts for chart-brief, prior-sections,
+  since-last-diff, and draft-sections surfaces.
+
+**Frontend**
+- `pages/ai/ChartBriefCard.jsx` — mounted in `PatientDetail.jsx`
+  (Billing tab area). Shows skeleton → brief body, regenerate button,
+  cached badge, model + generated_at footer.
+- `pages/ai/EncounterAssistPanel.jsx` — sticky sidebar inside
+  `FollowUpNoteEditor.jsx`. Three sub-cards: "Since last visit"
+  callouts, "AI draft" with Pull-in buttons that drop the generated
+  text directly into the editor's S/O/A/P fields, and "Last encounter"
+  prior-sections summary.
+
+**Bugs found and fixed during E2E verification (iteration 78–80)**
+1. *Critical collection-name mismatch.* Both `services/ai/context.py`
+   and `services/ai/router.py::_note_to_patient` queried
+   `db.clinical_notes` (0 docs); CCMS stores follow-up notes in
+   `db.clinical_follow_up_notes` (320 signed). Renamed both
+   references — chart-brief now ingests real prior-encounter SOAP
+   data and encounter-scoped routes return 200 for real notes.
+2. *Pre-existing /api/appointments 500.* `AppointmentPublic.provider_id`
+   was a required `str` but 24 production rows have `provider_id=None`.
+   Made it `str | None = None` — frontend pages that block on
+   appointments now render.
+3. *Missing import.* `FollowUpNoteEditor.jsx` rendered
+   `EncounterAssistPanel` without importing it; added the import at
+   line 55.
+4. *Asyncio test fixtures.* `tests/test_ai_context_documentation.py`
+   was leaking motor clients across `asyncio.run()` boundaries.
+   Calling `reset_router_for_tests()` at the start of each runner
+   rebinds clients to the fresh loop.
+
+**Tests**
+- `/app/backend/tests/test_ai_context_documentation.py` — 13 passed +
+  1 benign skip. Added a happy-path regression test
+  (`test_encounter_scoped_routes_200_for_real_signed_note`) that
+  fetches a real signed note from `clinical_follow_up_notes` and
+  asserts /prior-sections + /since-last-diff return 200.
+- E2E verified by testing agent (iteration_80): brief renders with
+  cached badge on second visit, regenerate cycles cache, Pull-in
+  populates SOAP fields, smoke regression on /communications/sms +
+  /settings/email + /portal still green.
+
+
+
 ## 2026-04-22 — Patient records: Edit-mode required-field fix
 
 Seeded Riverbend patients now **open cleanly in the Edit Patient

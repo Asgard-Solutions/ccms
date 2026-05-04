@@ -1,6 +1,50 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-02-17 (Wave-3 integrations — Resend email per-tenant, Emergent-managed Google OAuth for staff, two-way SMS staff inbox UI; bonus: backfilled `created_by` on booking-request appointments to clean up scheduling-API serialisation 500s)
+**Last updated:** 2026-05-04 (AI Context-Aware Documentation — Claude Sonnet 4.5 chart-prep brief on patient charts + AI assist rail in the follow-up note editor with smart cache; bonus: hardened `AppointmentPublic.provider_id` to Optional and rebound motor clients in pytest fixtures)
+
+## 5c. AI Context-Aware Documentation (2026-05-04)
+
+**User request:** "Now lets fully build out this feature — AI & Automation Context-aware documentation (pulls from prior encounters)."
+
+### Choices recorded
+
+| Question | Choice |
+|---|---|
+| LLM model | Claude Sonnet 4.5 via Emergent LLM Key (`emergentintegrations`) |
+| Surfaces | Chart-prep brief (patient chart) + Encounter assist rail (follow-up note editor) |
+| Smart cache | Yes — content-hash keyed per patient + surface |
+| Audit | `ai_usage` rows with model + latency + status only — no prompt or response bodies persisted |
+
+### Shipped
+
+**Backend (`services/ai/*`)** — `router.py`, `context.py`, `cache.py`, `client.py`, `prompts.py`. Endpoints: `GET/PUT /api/ai/settings`, `GET /api/ai/chart-brief/{patient_id}`, `POST /api/ai/chart-brief/{patient_id}/regenerate`, `GET /api/ai/encounters/{note_id}/prior-sections`, `GET /api/ai/encounters/{note_id}/since-last-diff`, `POST /api/ai/encounters/{note_id}/draft-sections`. Smart cache collection `ai_brief_cache` keyed on `(tenant_id, patient_id, surface)` with stable 32-char content hash from `load_patient_context()`.
+
+**Frontend** — `pages/ai/ChartBriefCard.jsx` mounted in `PatientDetail.jsx` (Billing tab, line 1487); `pages/ai/EncounterAssistPanel.jsx` mounted in `FollowUpNoteEditor.jsx` (sticky sidebar, line 858) with `onPullSection` callback that drops drafted text directly into the editor's S/O/A/P fields.
+
+### Verification (iteration_78–80)
+
+- Backend pytest: 13 passed + 1 skipped on `tests/test_ai_context_documentation.py` (added a happy-path regression test for `/encounters/{nid}/prior-sections` to guard against the collection-rename root cause).
+- E2E: ChartBriefCard renders with cached badge on second visit, regenerate cycles cache, EncounterAssistPanel shows real prior SOAP + NPRS callouts + Draft S+P, Pull-in subjective populates the interval-history textarea.
+- Smoke regression: `/communications/sms`, `/settings/email`, `/portal` still green.
+
+### Bugs fixed in this iteration
+
+1. *Critical collection mismatch.* `services/ai/{context,router}.py` queried `db.clinical_notes` (0 docs); CCMS stores follow-up notes in `db.clinical_follow_up_notes` (320 signed). Renamed both — chart brief now reflects real prior encounters and encounter-scoped routes return 200.
+2. *Pre-existing /api/appointments 500.* `AppointmentPublic.provider_id: str` rejected 24 production rows with `provider_id=None`. Made it `str | None = None`. Patient detail page now renders.
+3. *Missing import.* `FollowUpNoteEditor.jsx` rendered `EncounterAssistPanel` without importing it — added import at line 55.
+4. *Asyncio test fixtures.* Motor clients in `core/tenancy.py` and `core/db.py` got pinned to whichever loop ran first; subsequent `asyncio.run()` cases died with `RuntimeError: Event loop is closed`. Calling `reset_router_for_tests()` at the top of each async runner rebinds clients to the fresh loop.
+
+### Files added/modified (this iteration)
+
+- `/app/backend/services/ai/{__init__,router,context,cache,client,prompts}.py`
+- `/app/backend/tests/test_ai_context_documentation.py`
+- `/app/frontend/src/pages/ai/{ChartBriefCard,EncounterAssistPanel}.jsx`
+- `/app/frontend/src/api/ai.js`
+- `/app/frontend/src/pages/PatientDetail.jsx` (mounts ChartBriefCard)
+- `/app/frontend/src/pages/clinical/FollowUpNoteEditor.jsx` (mounts EncounterAssistPanel + onPullSection wiring)
+- `/app/backend/services/scheduling/models.py` (`AppointmentPublic.provider_id` → Optional)
+
+---
 
 ## 5b. Wave-3 integrations (2026-02-17)
 
