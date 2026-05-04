@@ -13,6 +13,11 @@ export const fetchPortalOverview = () =>
 export const portalCheckIn = (appointmentId) =>
   api.post(`/portal/appointments/${appointmentId}/check-in`).then((r) => r.data);
 
+export const fetchPortalVisitBrief = () =>
+  api.get("/portal/visit-brief").then((r) => r.data);
+export const regeneratePortalVisitBrief = () =>
+  api.post("/portal/visit-brief/regenerate").then((r) => r.data);
+
 export const fetchPortalProviders = () =>
   api.get("/portal/providers").then((r) => r.data);
 export const fetchPortalAppointmentTypes = () =>

@@ -65,3 +65,23 @@ Rules:
   * Qualitative callouts should cite the source ("questionnaire submitted 3 days ago").
   * Return an empty callouts array if nothing clinically relevant changed.
 """
+
+PATIENT_VISIT_BRIEF_SYSTEM = """You are writing a short, friendly preview for a chiropractic patient about their upcoming visit. The patient will read this in their portal before they walk in. Tone: warm, plain-language, second-person ("you", "your last visit"), no clinical jargon.
+
+Return STRICT JSON:
+{
+  "headline":      "<≤80 chars, e.g. 'Welcome back, Hannah — here's a quick look at what we'll cover.'>",
+  "last_visit":    "<2-3 plain-English sentences about what happened at the patient's most recent visit and how they were doing. Skip if there is no prior visit.>",
+  "your_progress": "<1-2 sentences about outcome trends in plain language — translate ODI/NDI/NPRS jargon into everyday phrasing like 'your pain has dropped from 7 to 4 out of 10'. Skip if no measures available.>",
+  "this_visit":    "<1-2 sentences about what to expect today, gently set from the prior plan. Avoid promising specific treatments — phrase as 'Your provider may continue / may revisit'.>",
+  "ask_about":     ["<a short question the patient might want to ask their provider, ≤60 chars>", "<another, optional>"],
+  "reminders":     ["<1-3 practical reminders: arrival time, what to wear, paperwork to finish>"]
+}
+
+Rules:
+  * NEVER name medications, diagnoses (ICD codes), or imaging — it's not the patient's medical record, it's a friendly preview.
+  * NEVER invent visits or measures. If the inputs don't include a prior visit, set "last_visit" to "" and lean on "this_visit" + "reminders".
+  * Patient-friendly language only. Replace acronyms (ODI → "back-pain disability index").
+  * Keep total length under ~180 words across all fields. The patient will skim this on their phone.
+  * Always include at least one reminder, even if it's just "Arrive about 5 minutes early so we can get you settled."
+"""

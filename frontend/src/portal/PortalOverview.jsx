@@ -14,6 +14,7 @@ import { Skeleton } from "../components/ui/skeleton";
 import {
   fetchPortalOverview, portalCheckIn,
 } from "../api/portal";
+import PortalVisitBriefCard from "./PortalVisitBriefCard";
 import { formatDateTime } from "../utils/time";
 
 function isToday(iso) {
@@ -87,6 +88,9 @@ export default function PortalOverview() {
 
   return (
     <div data-testid="portal-overview" className="space-y-6">
+      {/* AI visit brief — only when patient has at least one upcoming visit */}
+      {d.upcoming_appointments.length > 0 && <PortalVisitBriefCard />}
+
       {/* Upcoming appointments */}
       <Card testid="portal-upcoming-appointments">
         <header className="mb-4 flex items-center justify-between">

@@ -76,6 +76,7 @@ from services.portal.auth_router import router as portal_auth_router  # noqa: E4
 from services.portal.booking_router import router as portal_booking_router  # noqa: E402
 from services.portal.checkin_router import router as portal_checkin_router  # noqa: E402
 from services.portal.questionnaire_router import router as portal_questionnaire_router  # noqa: E402
+from services.portal.ai_brief_router import router as portal_ai_brief_router  # noqa: E402
 from services.kiosk.router import router as kiosk_router  # noqa: E402
 from services.questionnaires.router import router as questionnaires_router  # noqa: E402
 from services.scheduling.booking_requests import staff_router as booking_requests_router  # noqa: E402
@@ -148,6 +149,7 @@ api_router.include_router(portal_auth_router)
 api_router.include_router(portal_booking_router)
 api_router.include_router(portal_checkin_router)
 api_router.include_router(portal_questionnaire_router)
+api_router.include_router(portal_ai_brief_router)
 api_router.include_router(kiosk_router)
 api_router.include_router(questionnaires_router)
 api_router.include_router(booking_requests_router)
