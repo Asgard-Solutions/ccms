@@ -4,6 +4,70 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-05-04 — Post-scribe AI bundle (coding-suggest + semantic search + template overrides + collection-name refactor)
+
+Closed the documentation→billing loop and added a chart-search surface
+in one batch. All four pieces below shipped together and verified at
+iteration_83 (backend 36/36 + 1 skip; full E2E green).
+
+**1. Billing-readiness coding suggester (inline)**
+- `POST /api/scribe/encounters/{note_type}/{note_id}/coding-suggest`
+  (doctor-only). Body: `{drafts:{S,O,A,P}, addendum?}`. Pulls the
+  patient's active diagnoses from `clinical_diagnoses` so the model
+  can prefer existing ICD-10s. Returns `cpt_suggestions[]` (with
+  modifier hints like `25` on E/M codes), `icd_suggestions[]` (one
+  flagged `is_primary_candidate=true`), and
+  `documentation_warnings[]` (e.g. "97140 billed for 8 minutes:
+  CPT requires 15-minute units…").
+- Auto-fires from `ScribePanel.applyAll()` so the doctor sees CPT/ICD
+  hints inline the moment a SOAP draft is applied. Manual button
+  available too. Renders three sections: CPT cards, ICD cards,
+  amber-banner documentation warnings.
+
+**2. Natural-language semantic search across patient charts**
+- `services/ai/search_router.py` — `POST /api/ai/search` (admin /
+  doctor / staff). Pulls up to 30 candidate snippets (last 8 signed
+  follow-ups, 2 initial exams, 8 diagnoses, 3 treatment plans, 9
+  outcome entries), formats them with `[s#]` IDs, asks Claude
+  Sonnet 4.5 to rank with the new `SEMANTIC_SEARCH_SYSTEM` prompt,
+  and returns `{answer, results[]}` with citations + 0.4 score
+  floor. Cached per `(tenant_id, patient_id, query_hash)` for free
+  repeat queries. PHI-safe audit row written.
+- `pages/ai/PatientSemanticSearch.jsx` mounted on PatientDetail's
+  Billing tab. Asks "How is the patient's low back pain trending?"
+  and renders the answer with cited snippet cards.
+
+**3. SOAP-template overrides per location/provider**
+- `services/ai/router.py` — `GET / PUT / DELETE /api/ai/templates`.
+  Stored in `ai_template_overrides` collection keyed on
+  `(tenant_id, scope_type ∈ {tenant, location, provider}, scope_id,
+  surface ∈ {scribe_soap, chart_brief, prior_sections, draft_sections})`.
+  Resolution order at runtime: tenant → location → provider, with
+  later scopes appended to the system prompt.
+- `services/scribe/router.py::draft_soap_from_scribe` now resolves
+  the merged override and concatenates onto `SCRIBE_SOAP_SYSTEM`
+  before calling Claude.
+- `pages/settings/AITemplatesPage.jsx` — admin-only page at
+  `/settings/ai-templates` with editor + list + delete.
+
+**4. `FOLLOW_UP_NOTES_COLL` constant refactor**
+- New `core/clinical_collections.py` exporting `FOLLOW_UP_NOTES_COLL`,
+  `INITIAL_EXAMS_COLL`, `REEXAMS_COLL`, `DIAGNOSES_COLL`,
+  `TREATMENT_PLANS_COLL`, `OUTCOME_ENTRIES_COLL`, and `NOTE_TYPE_TO_COLL`.
+- Migrated `services/ai/{context,router}.py`, `services/scribe/router.py`,
+  and `services/ai/search_router.py` to import from the constant
+  module. Eliminates the iteration_78-class collection-name
+  drift bug at the source.
+
+**Tests**
+- `tests/test_post_scribe_ai.py` — 11 new tests covering
+  coding-suggest (role gate, 404, 422, happy path with CPT+ICD shape),
+  template-overrides round trip (admin-only + 404 on missing delete),
+  and semantic search (patient-403, 422 on short query, happy path,
+  cache hit on repeat).
+- Cross-suite: 36 passed + 1 skipped across all four AI test files.
+- Testing-agent iteration_83 verified all UI flows + caching.
+
 ## 2026-05-04 — AI scribe (voice-to-note) + AI-powered SOAP generation (P1)
 
 Doctor-only side panel that lets a clinician dictate the visit and have

@@ -1,6 +1,44 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-05-04 (AI scribe + SOAP generation — doctor-only; OpenAI Whisper voice-to-text + Claude Sonnet 4.5 SOAP structuring; encrypted object-storage audio retention until note sign with auto-cleanup hook on the three clinical sign endpoints)
+**Last updated:** 2026-05-04 (Post-scribe AI bundle — inline billing-readiness coding suggester, natural-language chart search, SOAP-template overrides per scope, and the FOLLOW_UP_NOTES_COLL constant refactor)
+
+## 5f. Post-scribe AI bundle (2026-05-04, P2)
+
+**User request:** "plug the same scribe-drafted SOAP straight into the billing-readiness checker so the CPT/ICD coding suggestions appear inline as soon as the draft is applied" + (1) Natural-language semantic search across patient charts (2) SOAP-template overrides per location/provider (3) Refactor: extract `FOLLOW_UP_NOTES_COLL` constant.
+
+### Shipped
+
+**Backend** —
+- `services/scribe/router.py` adds `POST /encounters/{note_type}/{note_id}/coding-suggest` (doctor-only) returning `cpt_suggestions[]`, `icd_suggestions[]`, `documentation_warnings[]`, and `active_diagnoses[]`. Wires merged template overrides into the SOAP-draft system prompt.
+- `services/ai/router.py` adds `GET/PUT/DELETE /api/ai/templates` and the `resolve_template_instructions()` helper. Storage: `ai_template_overrides` collection.
+- `services/ai/search_router.py` (new) exposes `POST /api/ai/search` with content-hash cached `(patient_id, query_hash)` answers + `[s#]`-cited snippets.
+- `services/ai/prompts.py` adds `CODING_SUGGEST_SYSTEM` and `SEMANTIC_SEARCH_SYSTEM` strict-JSON prompts.
+- `core/clinical_collections.py` (new) exports `FOLLOW_UP_NOTES_COLL`, `NOTE_TYPE_TO_COLL`, etc. — single source of truth for the AI + clinical layers.
+
+**Frontend** —
+- `pages/ai/ScribePanel.jsx` auto-fires coding-suggest on Apply-All; renders CPT, ICD, and amber documentation-warning cards inline.
+- `pages/ai/PatientSemanticSearch.jsx` (new) on PatientDetail Billing tab — "Ask the chart" input with answer + ranked snippet cards.
+- `pages/settings/AITemplatesPage.jsx` (new admin-only) at `/settings/ai-templates` for editing per-scope SOAP-prompt overrides.
+
+### Verification (iteration_83)
+
+- Backend: 36/36 + 1 benign skip across `test_ai_context_documentation`, `test_portal_visit_brief`, `test_scribe`, and the new `test_post_scribe_ai` (11 tests covering coding-suggest, templates, semantic search).
+- E2E by testing agent: ChartBriefCard + PatientSemanticSearch render on Billing tab; semantic search returns 6 ranked snippets + cached badge on repeat; coding-suggest auto-fires from Apply-All, shows 2 CPT (98940 high, 97140 medium) + 2 ICD (M99.03 primary, M54.5) + 8-minute warning; template page round-trips save/list/delete.
+
+### Files added/modified
+
+- `/app/backend/core/clinical_collections.py` (new)
+- `/app/backend/services/ai/{prompts.py, router.py, search_router.py (new), context.py}`
+- `/app/backend/services/scribe/router.py`
+- `/app/backend/server.py`
+- `/app/backend/tests/test_post_scribe_ai.py` (new)
+- `/app/frontend/src/api/{scribe.js, ai.js}`
+- `/app/frontend/src/pages/ai/{ScribePanel.jsx, PatientSemanticSearch.jsx (new)}`
+- `/app/frontend/src/pages/settings/AITemplatesPage.jsx` (new)
+- `/app/frontend/src/pages/PatientDetail.jsx`
+- `/app/frontend/src/App.js`
+
+---
 
 ## 5e. AI scribe + SOAP generation (2026-05-04, P1)
 
