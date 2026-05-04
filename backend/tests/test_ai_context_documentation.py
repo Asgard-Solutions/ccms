@@ -88,11 +88,13 @@ class TestContextLoader:
 
     def test_exclude_note_produces_different_hash(self):
         import asyncio
+        from core.tenancy import reset_router_for_tests
         from services.ai.context import load_patient_context
         from core.db import get_db
         pid, _ = _pick_patient()
 
         async def run():
+            reset_router_for_tests()
             tenant_id = (await get_db().tenants.find_one(
                 {"slug": "default"}, {"_id": 0, "id": 1}))["id"]
             ctx, h = await load_patient_context(
@@ -105,7 +107,7 @@ class TestContextLoader:
                 tenant_id=tenant_id, patient_id=pid, exclude_note_id=nid,
             )
             return h, h2
-        h, h2 = asyncio.new_event_loop().run_until_complete(run())
+        h, h2 = asyncio.run(run())
         assert h != h2
 
 
@@ -113,10 +115,12 @@ class TestCache:
     def test_upsert_and_invalidate(self):
         import asyncio
         from motor.motor_asyncio import AsyncIOMotorClient
+        from core.tenancy import reset_router_for_tests
         from services.ai.cache import get_cached, invalidate, upsert
         pid, _ = _pick_patient()
 
         async def run():
+            reset_router_for_tests()
             c = AsyncIOMotorClient(os.environ["MONGO_URL"])
             tenant_id = (await c[os.environ["DB_NAME"]].tenants.find_one(
                 {"slug": "default"}, {"_id": 0, "id": 1}))["id"]
@@ -171,8 +175,10 @@ class TestRoutersStubbed:
         pid, s = _pick_patient()
         import asyncio
         from motor.motor_asyncio import AsyncIOMotorClient
+        from core.tenancy import reset_router_for_tests
         from services.ai import cache as ai_cache
         async def wipe():
+            reset_router_for_tests()
             c = AsyncIOMotorClient(os.environ["MONGO_URL"])
             tenant_id = (await c[os.environ["DB_NAME"]].tenants.find_one(
                 {"slug": "default"}, {"_id": 0, "id": 1}))["id"]
