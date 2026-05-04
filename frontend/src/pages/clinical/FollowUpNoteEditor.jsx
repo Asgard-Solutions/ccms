@@ -52,6 +52,7 @@ import {
 import { useAuth } from "../../contexts/AuthContext";
 import { useReauth } from "../../components/ReauthGate";
 import AddendumPanel from "./AddendumPanel";
+import EncounterAssistPanel from "../ai/EncounterAssistPanel";
 import { formatDateTime } from "../../utils/time";
 
 const PAIN_CHANGE = [

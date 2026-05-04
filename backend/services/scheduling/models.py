@@ -138,7 +138,7 @@ class AppointmentPublic(BaseModel):
     patient_id: str
     patient_name: str | None = None
     patient_phone: str | None = None
-    provider_id: str
+    provider_id: str | None = None
     provider_name: str | None = None
     start_time: str
     end_time: str

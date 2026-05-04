@@ -1,0 +1,42 @@
+{
+  "summary": "AI Context-Aware Documentation re-verified end-to-end via UI after backend appointments fix. /api/appointments?patient_id=dea68339-... now returns HTTP 200 with 19 rows (provider_id Optional fix confirmed via curl). PatientDetail.jsx now fully renders all 8 tabs. ChartBriefCard verified: body length 1806 chars on initial load with cached badge already visible (warm cache from previous iteration); regenerate-btn click cleared cache, triggered fresh Claude call (~20s) producing a new 1727-char brief; reload re-confirmed cached-badge appears on second visit (cache hit). FollowUpNoteEditor: discovered NEW bug — `EncounterAssistPanel` was used at line 858 but never imported, causing 'EncounterAssistPanel is not defined' ReferenceError that blanked the entire editor. Added one-line import (../ai/EncounterAssistPanel) — fix is trivial and unblocks AI assist rail. Post-fix: encounter-assist-panel renders, assist-prior-sections (542 chars: prior SOAP from 2026-04-27 with Pain 4/10 baseline / lumbar+pelvis hypertonicity / IASTM plan), assist-since-last (NPRS 4→6 worsened callout), Draft S+P click produced drafts in ~5s, Pull-in subjective populated note-interval-history textarea with 'Pain 4/10 (down from 7/10 baseline); steady improvement; good HEP adherence; tolerating desk work better.' and toast 'Pulled into subjective' shown. Smoke regression: /communications/sms, /settings/email, /portal load HTTP 200 with no runtime errors / no console errors. /settings/google-auth returns 200 but renders only 18 chars body text (empty page, possibly missing route). Backend was not retested in this iteration (already 100% green in iteration_79).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "FollowUpNoteEditor.jsx", "issue": "EncounterAssistPanel was rendered at line 858 but missing from imports list. Page crashed with 'ReferenceError: EncounterAssistPanel is not defined' shown in dev runtime overlay. FIXED by testing agent (added `import EncounterAssistPanel from \"../ai/EncounterAssistPanel\";`). Main agent should review and keep.", "selector": "[data-testid='encounter-assist-panel']", "priority": "HIGH"},
+      {"component": "/settings/google-auth", "issue": "Route returns HTTP 200 but renders only 18 chars of body text — likely missing component or unmatched route. Other settings pages render normally.", "selector": "/settings/google-auth", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_ai_context_documentation.py",
+    "/app/test_reports/iteration_79.json"
+  ],
+  "action_items": [
+    "Review my one-line import fix in /app/frontend/src/pages/clinical/FollowUpNoteEditor.jsx (line 55: added `import EncounterAssistPanel from \"../ai/EncounterAssistPanel\";`). Without it, the entire follow-up note editor crashed.",
+    "Investigate /settings/google-auth — route returns only 18 chars of body, likely missing component or routing config (LOW priority).",
+    "Optional: rename data-testid 'note-interval-history' to 'follow-up-interval-history' for naming consistency, or document the canonical names in playbook for next agent. Pull-in subjective targets the textarea by index/role currently rather than testid in its handler — works but brittle.",
+    "Optional: previous iteration suggested introducing a Mongo collection-name constant FOLLOW_UP_NOTES_COLL shared by ai/* and clinical/* modules to prevent future regressions of the iteration_78 collection-rename root cause. Still worth doing."
+  ],
+  "critical_code_review_comments": [
+    "FollowUpNoteEditor.jsx had a render-time ReferenceError because EncounterAssistPanel was used without being imported. This would have caught any sanity smoke test of the note editor — recommend a CI lint rule (no-undef / react/jsx-no-undef) and/or an automated smoke test of /patients/:id/clinical/follow-up/:id route in the frontend test suite.",
+    "Pull-in Subjective handler appears to rely on textarea identity rather than the documented data-testid. Verified empirically that it does populate note-interval-history; consider explicit data-testid wiring so playbook agents can assert the field directly.",
+    "ChartBriefCard regenerate flow works end-to-end (cache clear → re-fetch → new brief in ~20s → cached badge re-appears on next reload). Smart-cache contract is correct.",
+    "EncounterAssistPanel since-last callout correctly surfaces NPRS 4→6 worsened delta — context loader pulling from clinical_follow_up_notes collection confirmed working in UI."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/clinical/FollowUpNoteEditor.jsx (added EncounterAssistPanel import)",
+    "/app/test_reports/iteration_80.json"
+  ],
+  "success_rate": {"backend": "100% (curl /api/appointments?patient_id=... = 200 with 19 rows; no other backend tests rerun this iteration)", "frontend": "100% of in-scope AI flows verified after one-line import fix; minor /settings/google-auth empty-render flagged"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (from /app/memory/test_credentials.md). Patient dea68339-3951-45b5-8d47-19700c5ffcc8, follow-up note 9c3156b4-aa79-4046-8816-401ea4d95596.",
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All AI Context-Aware Documentation flows are now functional end-to-end (ChartBriefCard render + cached badge + regenerate + EncounterAssistPanel prior-sections + since-last + Draft S+P + Pull-in subjective). The blocking /api/appointments 500 from iteration_79 is resolved. The only fix applied in this iteration was a missing import in FollowUpNoteEditor.jsx (EncounterAssistPanel). If revisiting: (1) Verify no regression around the import I added at line 55. (2) /settings/google-auth empty-render is still open. (3) note-interval-history vs follow-up-interval-history testid naming inconsistency is still open.",
+  "rca of the issue": "Two issues touched this iteration. (A) Iteration_79 backend blocker (/api/appointments 500 due to provider_id: str required when 24 rows have provider_id=None) — main agent fixed by changing AppointmentPublic.provider_id to Optional[str] (services/scheduling/models.py:141). Verified: GET returns 200 with 19 rows including null-provider rows. (B) New frontend blocker discovered this iteration: FollowUpNoteEditor.jsx referenced `EncounterAssistPanel` JSX without importing the component, throwing ReferenceError on every render of the note editor. Reproduction: navigate to /patients/{id}/clinical/follow-up/{nid} → React dev overlay shows 'EncounterAssistPanel is not defined'. Mitigation: added `import EncounterAssistPanel from \"../ai/EncounterAssistPanel\";` after the AddendumPanel import. After fix, all assist-panel testids render and the Pull-in flow populates note-interval-history correctly. Root cause is a developer omission; recommend ESLint react/jsx-no-undef + a smoke test of the note editor route to prevent recurrence."
+}
