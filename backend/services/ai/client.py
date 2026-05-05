@@ -35,8 +35,96 @@ DEFAULT_MODEL = os.environ.get("ANTHROPIC_TEXT_MODEL") or "claude-sonnet-4-5-202
 AI_USAGE_COLLECTION = "ai_usage"
 AI_SETTINGS_COLLECTION = "ai_settings"
 
+# Per-surface model recommendations. The user-facing Settings → AI page
+# uses these as the "Reset to recommended" target. Each surface picks
+# the smallest model that still meets the quality bar for that flow.
+#
+# Opus  — highest quality, used for the doctor-facing SOAP draft where
+#         a hallucination is expensive (rewrites, malpractice exposure).
+# Sonnet — default balance; safe pick for any flow.
+# Haiku — fastest + cheapest; good for high-volume structured outputs
+#         (semantic search ranking, NL scheduling parser, prior sections).
+SURFACE_RECOMMENDED_MODEL: dict[str, str] = {
+    "scribe_soap_draft":      "claude-opus-4-5-20251101",
+    "scribe_coding_suggest":  "claude-sonnet-4-5-20250929",
+    "prior_sections":         "claude-haiku-4-5-20251001",
+    "draft_sections":         "claude-sonnet-4-5-20250929",
+    "since_last_diff":        "claude-haiku-4-5-20251001",
+    "chart_brief":            "claude-sonnet-4-5-20250929",
+    "semantic_search":        "claude-haiku-4-5-20251001",
+    "nl_schedule_parse":      "claude-haiku-4-5-20251001",
+    "patient_visit_brief":    "claude-sonnet-4-5-20250929",
+}
 
-async def get_model_choice(tenant_id: str) -> tuple[str, str]:
+# Friendly metadata for the Settings → AI picker UI. Order = display
+# order; "intent" is rendered as a one-liner help text below the
+# dropdown. Cost values are Anthropic's published per-million-token
+# rates as of Feb 2026 — informational only, not used for billing.
+AI_SURFACES: list[dict] = [
+    {"key": "scribe_soap_draft",
+     "label": "AI Scribe — SOAP draft",
+     "intent": "Generates the full SOAP from voice + addendum. Doctor-facing; highest quality wins."},
+    {"key": "scribe_coding_suggest",
+     "label": "AI Scribe — CPT/ICD suggestions",
+     "intent": "Codes the encounter from the SOAP. Factual, structured output; balanced model is fine."},
+    {"key": "prior_sections",
+     "label": "Prior-section pull",
+     "intent": "Lifts last-visit narrative into the current note. Lots of calls, low risk per call."},
+    {"key": "draft_sections",
+     "label": "Draft-from-bullet sections",
+     "intent": "Expands a doctor's bullet list into prose. Modest quality bar."},
+    {"key": "since_last_diff",
+     "label": "Since-last-visit diff summary",
+     "intent": "Highlights what's changed since the prior encounter. Concise; cheap model is fine."},
+    {"key": "chart_brief",
+     "label": "Clinical chart brief (admin)",
+     "intent": "Patient overview for new providers. Mid-volume, decent quality bar."},
+    {"key": "semantic_search",
+     "label": "Semantic search ranking",
+     "intent": "Ranks chart snippets against a doctor's question. Latency-sensitive; Haiku recommended."},
+    {"key": "nl_schedule_parse",
+     "label": "Natural-language scheduling parser",
+     "intent": "Resolves intent + entities from free text. Structured output; Haiku is plenty."},
+    {"key": "patient_visit_brief",
+     "label": "Patient-facing visit brief",
+     "intent": "Plain-language summary the patient reads. Quality matters; Sonnet recommended."},
+]
+
+# Models we expose in the picker. Each entry tags the canonical
+# Anthropic id, a short alias users see, and indicative pricing.
+AI_AVAILABLE_MODELS: list[dict] = [
+    {"id": "claude-opus-4-5-20251101",
+     "alias": "claude-opus-4-5",
+     "label": "Claude Opus 4.5",
+     "tier": "premium",
+     "input_per_mtok_usd": 15.0, "output_per_mtok_usd": 75.0,
+     "blurb": "Highest quality. Use for SOAP drafts where a re-write costs minutes."},
+    {"id": "claude-sonnet-4-5-20250929",
+     "alias": "claude-sonnet-4-5",
+     "label": "Claude Sonnet 4.5",
+     "tier": "balanced",
+     "input_per_mtok_usd": 3.0, "output_per_mtok_usd": 15.0,
+     "blurb": "Recommended default. Strong quality at 1/5 the Opus cost."},
+    {"id": "claude-haiku-4-5-20251001",
+     "alias": "claude-haiku-4-5",
+     "label": "Claude Haiku 4.5",
+     "tier": "fast",
+     "input_per_mtok_usd": 1.0, "output_per_mtok_usd": 5.0,
+     "blurb": "Fast + cheap. Use for high-volume structured outputs."},
+]
+
+
+async def get_model_choice(
+    tenant_id: str, surface: str | None = None,
+) -> tuple[str, str]:
+    """Resolve the (provider, model) tuple for one Anthropic call.
+
+    Lookup precedence:
+      1. ``ai_settings.surface_models[surface]`` — per-surface override
+         set in Settings → AI.
+      2. ``ai_settings.model_name`` — tenant-wide default.
+      3. ``ANTHROPIC_TEXT_MODEL`` env / module default.
+    """
     db = get_db()
     doc = await db[AI_SETTINGS_COLLECTION].find_one(
         {"tenant_id": tenant_id}, {"_id": 0},
@@ -51,6 +139,12 @@ async def get_model_choice(tenant_id: str) -> tuple[str, str]:
             tenant_id, provider,
         )
         return DEFAULT_PROVIDER, DEFAULT_MODEL
+    # Per-surface override wins when present.
+    if surface:
+        surface_models = doc.get("surface_models") or {}
+        per_surface = (surface_models.get(surface) or "").strip()
+        if per_surface:
+            return provider, per_surface
     return provider, (doc.get("model_name") or DEFAULT_MODEL)
 
 
@@ -94,7 +188,7 @@ async def generate(
         raise RuntimeError(
             "ANTHROPIC_API_KEY is not configured — set it in /app/backend/.env"
         )
-    provider, model = await get_model_choice(tenant_id)
+    provider, model = await get_model_choice(tenant_id, surface=surface)
     request_id = str(uuid.uuid4())
     started = time.monotonic()
     try:

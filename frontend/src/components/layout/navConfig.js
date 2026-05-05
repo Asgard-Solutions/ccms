@@ -1,6 +1,7 @@
 import {
   BellRing,
   BookOpen,
+  Brain,
   Building2,
   Cable,
   CalendarDays,
@@ -22,6 +23,7 @@ import {
   Shield,
   ShieldAlert,
   ShieldCheck,
+  Sparkles,
   Stethoscope,
   Table2,
   TrendingDown,
@@ -251,6 +253,20 @@ export const NAV_GROUPS = [
         label: "Google sign-in",
         testId: "nav-google-auth",
         icon: ShieldCheck,
+        roles: ["admin"],
+      },
+      {
+        to: "/settings/ai-templates",
+        label: "AI templates",
+        testId: "nav-ai-templates",
+        icon: Sparkles,
+        roles: ["admin"],
+      },
+      {
+        to: "/settings/ai-models",
+        label: "AI models",
+        testId: "nav-ai-models",
+        icon: Brain,
         roles: ["admin"],
       },
       {

@@ -15,7 +15,8 @@ from core.deps import require_role
 from core.tenancy import TenantContext, get_tenant_context
 from services.ai import cache as ai_cache
 from services.ai.client import (
-    AI_SETTINGS_COLLECTION, DEFAULT_MODEL, DEFAULT_PROVIDER,
+    AI_AVAILABLE_MODELS, AI_SETTINGS_COLLECTION, AI_SURFACES,
+    DEFAULT_MODEL, DEFAULT_PROVIDER, SURFACE_RECOMMENDED_MODEL,
     generate, parse_json_safely,
 )
 from services.ai.context import format_context_for_prompt, load_patient_context
@@ -316,6 +317,36 @@ class _AISettings(BaseModel):
                                 pattern=r"^(anthropic|openai|gemini)$")
     model_name: str = Field(default=DEFAULT_MODEL, max_length=120)
     enabled: bool = True
+    # Per-surface override map. Keys must be valid surface ids (see
+    # AI_SURFACES); values are Anthropic model ids. Empty / missing
+    # entries fall back to ``model_name``. Validated below.
+    surface_models: dict[str, str] = Field(default_factory=dict)
+
+
+_VALID_SURFACES = {s["key"] for s in AI_SURFACES}
+_VALID_MODEL_IDS = {m["id"] for m in AI_AVAILABLE_MODELS}
+
+
+def _validate_surface_models(payload: dict[str, str]) -> dict[str, str]:
+    """Drop unknown surfaces silently (forward-compat) and reject
+    unknown model ids loudly. Returns the cleaned map."""
+    cleaned: dict[str, str] = {}
+    for k, v in (payload or {}).items():
+        if k not in _VALID_SURFACES:
+            continue  # forward-compat; future versions may add surfaces
+        if not v:
+            continue  # empty == use tenant default
+        if v not in _VALID_MODEL_IDS:
+            raise HTTPException(
+                422,
+                detail={
+                    "code": "UNKNOWN_MODEL",
+                    "surface": k, "model": v,
+                    "allowed": sorted(_VALID_MODEL_IDS),
+                },
+            )
+        cleaned[k] = v
+    return cleaned
 
 
 @router.get("/settings")
@@ -327,14 +358,27 @@ async def settings_get(
     doc = await get_db()[AI_SETTINGS_COLLECTION].find_one(
         {"tenant_id": ctx.tenant_id}, {"_id": 0},
     )
-    if not doc:
-        return {
-            "tenant_id": ctx.tenant_id,
-            "model_provider": DEFAULT_PROVIDER,
-            "model_name": DEFAULT_MODEL,
-            "enabled": True, "configured": False,
-        }
-    return {**doc, "configured": True}
+    base = {
+        "tenant_id": ctx.tenant_id,
+        "model_provider": DEFAULT_PROVIDER,
+        "model_name": DEFAULT_MODEL,
+        "enabled": True,
+        "surface_models": {},
+        "configured": False,
+    }
+    if doc:
+        base.update(doc)
+        base["surface_models"] = doc.get("surface_models") or {}
+        base["configured"] = True
+    # Picker metadata: surfaces (in display order, with intent +
+    # recommendation) and available models (with cost hints). The UI
+    # uses this to render dropdowns without hardcoding anything.
+    base["surfaces"] = [
+        {**s, "recommended_model": SURFACE_RECOMMENDED_MODEL.get(s["key"])}
+        for s in AI_SURFACES
+    ]
+    base["available_models"] = AI_AVAILABLE_MODELS
+    return base
 
 
 @router.put("/settings")
@@ -347,11 +391,13 @@ async def settings_put(
     from core.db import get_db
     db = get_db()
     from services.ai import now_iso as _now
+    surface_models = _validate_surface_models(payload.surface_models)
     doc = {
         "tenant_id": ctx.tenant_id,
         "model_provider": payload.model_provider,
         "model_name": payload.model_name,
         "enabled": payload.enabled,
+        "surface_models": surface_models,
         "updated_at": _now(),
         "updated_by": user.get("email") or user.get("id"),
     }
@@ -361,7 +407,10 @@ async def settings_put(
     await audit_success(
         user, "ai.settings.updated", request,
         entity_type="ai_settings", entity_id=ctx.tenant_id,
-        metadata={"model": f"{payload.model_provider}/{payload.model_name}"},
+        metadata={
+            "model": f"{payload.model_provider}/{payload.model_name}",
+            "surface_overrides": len(surface_models),
+        },
     )
     return {**doc, "configured": True}
 

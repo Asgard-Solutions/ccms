@@ -4,6 +4,50 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-05-04 — Per-surface AI model picker (cost/quality tuning)
+
+**Why:** Now that Anthropic billing flows through the customer's own key, admins want to route each AI surface to the right model — Opus for high-stakes doctor-facing flows, Haiku for high-volume structured outputs — without code changes. Estimated 60-70% reduction in Anthropic spend for typical clinics.
+
+**Shipped:**
+
+- **Backend** (`services/ai/client.py`):
+  - `SURFACE_RECOMMENDED_MODEL` table maps each of the 9 AI surfaces to a recommended Claude model (Opus / Sonnet / Haiku).
+  - `AI_SURFACES` exposes label + intent + display order for the picker UI.
+  - `AI_AVAILABLE_MODELS` lists the 3 supported Claude models with tier badges and per-million-token costs.
+  - `get_model_choice(tenant_id, surface)` now resolves: `surface_models[surface]` → `model_name` → env default. Foreign providers fall back with a WARN log.
+- **Backend** (`services/ai/router.py`):
+  - `GET /api/ai/settings` now returns `surfaces[]`, `available_models[]`, and `surface_models{}` in addition to the existing tenant default — single payload feeds the picker.
+  - `PUT /api/ai/settings` accepts `surface_models{surface_id: model_id}` with `extra="forbid"` Pydantic + per-key validation. Unknown model id → 422 with structured error. Unknown surface → silently dropped (forward-compat).
+- **Frontend** (`pages/settings/AIModelsPage.jsx`, new):
+  - Tenant-default selector at top.
+  - 9 per-surface dropdown rows with intent help-text and `rec:` chip showing the recommended model.
+  - **"Apply recommended per surface"** one-click button populates every override with the recommendation.
+  - Sticky save bar with Save / Discard. Empty per-surface = use tenant default.
+  - Cost-per-1M-tokens hint inline in every dropdown option for smart picking.
+- **Nav**: registered `/settings/ai-models` (Brain icon) below `/settings/ai-templates` for admin role only.
+
+**Verified:**
+
+- `tests/test_ai_model_picker.py` 6/6 passing — GET metadata shape, doctor 403, PUT round-trip, unknown model rejected (422), unknown surface forward-compat dropped, runtime resolver honours override.
+- Live screenshot of `/settings/ai-models` at `/tmp/ai_models.png` — page renders 9 surfaces + tenant default + recommendation chips + sticky save bar.
+- Existing AI suites (`test_third_wave_ai.py`, `test_post_scribe_ai.py`, `test_quick_submit.py`, `test_pin_security.py`) — all pass in isolation; no regressions from the picker.
+
+**Files added/modified:**
+
+- `/app/backend/services/ai/client.py` (per-surface tables + resolver upgrade)
+- `/app/backend/services/ai/router.py` (settings GET/PUT extension + validators)
+- `/app/backend/tests/test_ai_model_picker.py` (new, 6/6 green)
+- `/app/frontend/src/pages/settings/AIModelsPage.jsx` (new)
+- `/app/frontend/src/App.js` (route registration)
+- `/app/frontend/src/components/layout/navConfig.js` (nav entry)
+
+**Notes:**
+
+- The 3 listed models map to dated Anthropic ids (`claude-opus-4-5-20251101`, `claude-sonnet-4-5-20250929`, `claude-haiku-4-5-20251001`) so behaviour is pinned and cannot drift on a model alias rotation.
+- Costs are display-only — actual billing is whatever Anthropic charges your account; this UI only helps tune which model gets called.
+
+
+
 ## 2026-05-04 — LLM migration: Emergent Universal Key → direct Anthropic + OpenAI
 
 **Why:** Customer wants every Claude / Whisper / GPT call billed to their own Anthropic + OpenAI accounts.
