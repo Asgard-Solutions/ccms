@@ -1,11 +1,19 @@
-"""Thin wrapper around `emergentintegrations.LlmChat` for Claude Sonnet 4.5.
+"""Direct Anthropic client wrapper used by every Claude flow in CCMS.
 
-Uses `EMERGENT_LLM_KEY` from the environment. Callers pass a system
-prompt + user text and we return the raw text and a small usage record
-(token counts + latency) suitable for auditing without logging PHI.
+Migrated 2026-05-04 off the Emergent Universal Key + `emergentintegrations`
+shim onto the official `anthropic` SDK so the customer's own
+`ANTHROPIC_API_KEY` powers AI Scribe SOAP drafts, coding suggestions,
+semantic search, the patient visit brief, NL scheduling, and SOAP
+template overrides.
+
+Public surface (`generate`, `parse_json_safely`) is unchanged so router
+and prompt code don't have to be rewritten.
 
 Per-tenant model override is read from `ai_settings.model_provider /
-ai_settings.model_name` — if unset we default to Claude Sonnet 4.5.
+ai_settings.model_name`. When `model_provider == "anthropic"` we honour
+the requested model; any other provider value is logged + falls back
+to the env-default model so a misconfigured tenant cannot break AI
+across the platform.
 """
 from __future__ import annotations
 
@@ -23,7 +31,7 @@ from services.ai import now_iso
 logger = logging.getLogger("ccms.ai.client")
 
 DEFAULT_PROVIDER = "anthropic"
-DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
+DEFAULT_MODEL = os.environ.get("ANTHROPIC_TEXT_MODEL") or "claude-sonnet-4-5-20250929"
 AI_USAGE_COLLECTION = "ai_usage"
 AI_SETTINGS_COLLECTION = "ai_settings"
 
@@ -35,10 +43,15 @@ async def get_model_choice(tenant_id: str) -> tuple[str, str]:
     )
     if not doc:
         return DEFAULT_PROVIDER, DEFAULT_MODEL
-    return (
-        doc.get("model_provider") or DEFAULT_PROVIDER,
-        doc.get("model_name") or DEFAULT_MODEL,
-    )
+    provider = (doc.get("model_provider") or DEFAULT_PROVIDER).strip().lower()
+    if provider != DEFAULT_PROVIDER:
+        # Foreign provider stored on the tenant — log loud + fall back.
+        logger.warning(
+            "ai.client.unsupported_provider tenant=%s provider=%s; using anthropic default",
+            tenant_id, provider,
+        )
+        return DEFAULT_PROVIDER, DEFAULT_MODEL
+    return provider, (doc.get("model_name") or DEFAULT_MODEL)
 
 
 async def _log_usage(
@@ -68,37 +81,59 @@ async def generate(
     response_format: str = "text",  # "text" | "json"
     max_tokens: int = 1200,
 ) -> dict:
-    """Run a single-turn LLM request. Returns
+    """Run a single-turn Anthropic Messages call. Returns
     ``{text, request_id, provider, model}`` or raises on hard failure.
+
+    Uses the customer's ``ANTHROPIC_API_KEY``. The default model comes
+    from ``ANTHROPIC_TEXT_MODEL`` (env) and can be overridden per-tenant
+    via the ``ai_settings`` collection — useful when one clinic wants
+    Opus for SOAP drafts and Haiku for cheap classification flows.
     """
-    key = os.environ.get("EMERGENT_LLM_KEY")
+    key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
-        raise RuntimeError("EMERGENT_LLM_KEY is not configured")
+        raise RuntimeError(
+            "ANTHROPIC_API_KEY is not configured — set it in /app/backend/.env"
+        )
     provider, model = await get_model_choice(tenant_id)
     request_id = str(uuid.uuid4())
     started = time.monotonic()
     try:
-        from emergentintegrations.llm.chat import LlmChat, UserMessage
-        chat = LlmChat(
-            api_key=key,
-            session_id=f"{surface}-{request_id}",
-            system_message=system_prompt,
-        ).with_model(provider, model)
-        # Ask for JSON by enforcing it in the user turn when needed.
+        # Lazy import keeps startup fast and lets unit tests run without
+        # the SDK installed.
+        from anthropic import AsyncAnthropic
+
+        client = AsyncAnthropic(api_key=key)
         user_turn = user_text
         if response_format == "json":
+            # Force a clean JSON shape; Anthropic returns text even in
+            # JSON mode so we still hand back through parse_json_safely.
             user_turn = (
                 user_text
                 + "\n\nReply with ONLY a JSON object, no prose, no Markdown fence."
             )
-        resp = await chat.send_message(UserMessage(text=user_turn))
+
+        msg = await client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_turn}],
+        )
+        # Anthropic returns a list of content blocks. We only request
+        # text, so concatenating the text-block payloads is safe.
+        text_chunks = [
+            block.text for block in msg.content
+            if getattr(block, "type", None) == "text"
+            and getattr(block, "text", None) is not None
+        ]
+        text = "".join(text_chunks).strip()
+
         await _log_usage(
             tenant_id=tenant_id, actor=actor, request_id=request_id,
             surface=surface, provider=provider, model=model,
             started_at=started, status="ok", error=None,
         )
         return {
-            "text": resp,
+            "text": text,
             "request_id": request_id,
             "provider": provider, "model": model,
         }

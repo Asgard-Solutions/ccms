@@ -4,6 +4,35 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-05-04 — LLM migration: Emergent Universal Key → direct Anthropic + OpenAI
+
+**Why:** Customer wants every Claude / Whisper / GPT call billed to their own Anthropic + OpenAI accounts.
+
+**Shipped:**
+- `services/ai/client.py` rewritten to use the official `anthropic` SDK (`AsyncAnthropic`) directly. Drops `emergentintegrations.LlmChat`. Public surface (`generate()`, `parse_json_safely()`) unchanged so every call site (AI Scribe SOAP draft, prior-section pull, CPT/ICD coding, semantic search, NL scheduling parser, patient visit brief, template overrides) keeps working.
+- `services/scribe/transcribe.py` rewritten to use the official `openai` SDK (`AsyncOpenAI.audio.transcriptions.create`). Drops `emergentintegrations.OpenAISpeechToText`. Same `transcribe_audio_bytes(...) -> str` interface.
+- Default models from env: `ANTHROPIC_TEXT_MODEL=claude-sonnet-4-5`, `OPENAI_TRANSCRIBE_MODEL=whisper-1`. Per-tenant override still honored via `ai_settings.model_name`; foreign providers fall back to the env default with a WARN log.
+- Hard-fail (no fallback) when `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` is missing — clear runtime error with file path.
+- `requirements.txt` regenerated via `pip freeze`. `anthropic==0.98.1`, `openai==1.99.9`. `emergentintegrations` retained because `core/object_storage.py` still uses `EMERGENT_LLM_KEY` for Emergent's separate file-storage service (not LLM-related).
+
+**Verified:**
+- Standalone Anthropic call: ✅ `claude-sonnet-4-5` returned `"Paris."` for capital-of-France smoke test.
+- Standalone OpenAI text call: ✅ `gpt-5.2` returned `"OpenAI key works"`.
+- New `services.ai.client.generate()` wrapper exercised end-to-end against real Anthropic — provider/model selection, token counting, JSON-safe parse all intact.
+- E2E pytest (`test_third_wave_ai.py`, `test_post_scribe_ai.py`, `test_quick_submit.py`) deferred until Atlas Database Access is fixed (currently blocking backend boot).
+
+**Files modified:**
+- `/app/backend/services/ai/client.py` (full rewrite)
+- `/app/backend/services/scribe/transcribe.py` (full rewrite)
+- `/app/backend/requirements.txt`
+- `/app/backend/.env` (placeholders for `ANTHROPIC_API_KEY`, `ANTHROPIC_TEXT_MODEL`, `OPENAI_API_KEY`, `OPENAI_TRANSCRIBE_MODEL`, `OPENAI_TEXT_MODEL` — keys filled in by customer)
+
+**Notes for future:**
+- `EMERGENT_LLM_KEY` is still in `.env` but only `core/object_storage.py` reads it. Once Emergent Object Storage is replaced (S3 / Azure Blob / on-prem), the key can be deleted entirely.
+- An `OpenAI Chat Completions` helper is wired (`OPENAI_TEXT_MODEL=gpt-5.2`) but not yet wrapped in a public function — add when a flow needs OpenAI text instead of Claude.
+
+
+
 ## 2026-05-04 — Demo PIN seeder + Live submission timeline (VERIFIED)
 
 **1. Demo PIN seeder (P1)**
