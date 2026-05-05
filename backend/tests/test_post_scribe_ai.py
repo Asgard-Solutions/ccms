@@ -201,7 +201,51 @@ class TestTemplateOverrides:
 
 # ---------------------------------------------------------------------------
 class TestSemanticSearch:
-    PATIENT_ID = "dea68339-3951-45b5-8d47-19700c5ffcc8"
+    @classmethod
+    def _patient_id(cls):
+        """Resolve a patient that actually has clinical history. Hardcoding a
+        UUID was brittle across reseeds — this discovers a viable subject in
+        the live tenant DB so tests survive a fresh-Atlas seed."""
+        if hasattr(cls, "_resolved_pid"):
+            return cls._resolved_pid
+        from motor.motor_asyncio import AsyncIOMotorClient
+        from core.tenancy import reset_router_for_tests
+
+        async def find():
+            reset_router_for_tests()
+            c = AsyncIOMotorClient(os.environ["MONGO_URL"])
+            db = c[os.environ["DB_NAME"]]
+            u = await db.users.find_one(
+                {"email": "doctor@ccms.app"},
+                {"_id": 0, "tenant_id": 1},
+            )
+            tid = u["tenant_id"]
+            # Prefer a patient with at least one signed clinical artifact
+            # so the snippet gather actually returns something.
+            for coll in (
+                "clinical_follow_up_notes",
+                "clinical_initial_exams",
+                "clinical_diagnoses",
+            ):
+                doc = await db[coll].find_one(
+                    {"tenant_id": tid, "patient_id": {"$exists": True}},
+                    {"_id": 0, "patient_id": 1},
+                )
+                if doc and doc.get("patient_id"):
+                    c.close()
+                    return doc["patient_id"]
+            # Fallback: any patient in the tenant.
+            p = await db.patients.find_one(
+                {"tenant_id": tid}, {"_id": 0, "id": 1},
+            )
+            c.close()
+            return p["id"] if p else None
+        cls._resolved_pid = asyncio.run(find())
+        return cls._resolved_pid
+
+    @property
+    def PATIENT_ID(self):
+        return self._patient_id()
 
     def test_patient_role_rejected(self):
         s = _login(*PATIENT)
