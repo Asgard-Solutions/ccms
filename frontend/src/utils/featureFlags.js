@@ -21,11 +21,13 @@ const STORAGE_PREFIX = "ccms.flags.";
 // Fallback used when neither env nor storage has an opinion.
 const FLAG_DEFAULTS = {
   clinicalRedesign: "on",
+  clinicalRedesignPhase2WaveA: "on",
 };
 
 // Explicit env-var mapping so grep/CI can find the strings.
 const ENV_VAR_MAP = {
   clinicalRedesign: "REACT_APP_CLINICAL_REDESIGN",
+  clinicalRedesignPhase2WaveA: "REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_A",
 };
 
 function normalise(raw) {

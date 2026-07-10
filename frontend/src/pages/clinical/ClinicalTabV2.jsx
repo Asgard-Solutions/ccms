@@ -33,6 +33,10 @@ import PatientContextHeader from "./PatientContextHeader";
 import SectionNav from "./SectionNav";
 import CurrentCareStatusPanel from "./CurrentCareStatusPanel";
 import SummaryTiles from "./SummaryTiles";
+import ActiveEpisodeCard from "./ActiveEpisodeCard";
+import GroupedEncountersCard from "./GroupedEncountersCard";
+import GroupedTimelineCard from "./GroupedTimelineCard";
+import { useFeatureFlag } from "../../utils/featureFlags";
 import {
   NAV_ITEMS,
   computeAge,
@@ -69,6 +73,7 @@ export default function ClinicalTabV2({
   onReauthNeeded,
 }) {
   const navigate = useNavigate();
+  const [phase2WaveA] = useFeatureFlag("clinicalRedesignPhase2WaveA");
   const [summary, setSummary] = useState(null);
   const [episodes, setEpisodes] = useState(null);
   const [diagnoses, setDiagnoses] = useState(null);
@@ -382,6 +387,22 @@ export default function ClinicalTabV2({
 
         <SummaryTiles summary={summary} onJumpTo={jumpTo} />
 
+        {phase2WaveA && (
+          <ActiveEpisodeCard
+            patientId={patientId}
+            episode={activeEpisode}
+            activePlan={activePlan}
+            primaryDx={primaryDx}
+            nextAppt={nextAppt}
+            reExamDue={reExamDue}
+            canWrite={canWrite}
+            onJumpTo={jumpTo}
+            onReauthNeeded={onReauthNeeded}
+            onNewEpisode={() => jumpTo("summary")}
+            onEpisodeClosed={() => load()}
+          />
+        )}
+
         <EpisodesSection
           patientId={patientId}
           providers={providers}
@@ -415,14 +436,20 @@ export default function ClinicalTabV2({
         ref={registerSection("encounters")}
         className="scroll-mt-40 space-y-8"
       >
-        <EncountersCard
-          patientId={patientId}
-          canWrite={canWrite}
-          currentUser={currentUser}
-          onReauthNeeded={onReauthNeeded}
-        />
-        <InitialExamsCard patientId={patientId} canWrite={canWrite} />
-        <FollowUpNotesCard patientId={patientId} />
+        {phase2WaveA ? (
+          <GroupedEncountersCard patientId={patientId} />
+        ) : (
+          <>
+            <EncountersCard
+              patientId={patientId}
+              canWrite={canWrite}
+              currentUser={currentUser}
+              onReauthNeeded={onReauthNeeded}
+            />
+            <InitialExamsCard patientId={patientId} canWrite={canWrite} />
+            <FollowUpNotesCard patientId={patientId} />
+          </>
+        )}
       </section>
 
       <section
@@ -440,7 +467,11 @@ export default function ClinicalTabV2({
       </section>
 
       <section id="timeline" ref={registerSection("timeline")} className="scroll-mt-40">
-        <CareTimelineCard patientId={patientId} />
+        {phase2WaveA ? (
+          <GroupedTimelineCard patientId={patientId} />
+        ) : (
+          <CareTimelineCard patientId={patientId} />
+        )}
       </section>
 
       <section id="imaging" ref={registerSection("imaging")} className="scroll-mt-40">

@@ -1,6 +1,44 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+## Phase 2 Wave A — Grouping & orientation (2026-07-10)
+
+Nested feature flag `clinicalRedesignPhase2WaveA` (env `REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_A`, default `on`) with per-user localStorage override. Parent `clinicalRedesign` still required for any redesign surface to render.
+
+### Shipped
+- **§1 Active episode card** — new `ActiveEpisodeCard.jsx` becomes primary object below Care Status. Displays name/status/opened/provider/chief complaint/primary Dx/plan status/visits/re-exam/next appt/latest response. Primary (Open episode) · Secondary (Edit / Add note / Care plan) · Overflow (Close episode / New episode). Confirmation dialog on close preserves permission + audit + reauth flow.
+- **§5 Unified encounter card** — new `GroupedEncountersCard.jsx` + `GET /api/patients/{id}/clinical/encounters/grouped`. Backend joins appointment ↔ encounter (`appointment_id`) ↔ notes (`encounter_id`) ↔ billing readiness (`encounter_id`). Never groups by timestamp. Orphan records surface with `orphaned: true` — never dropped. `schema_version: "1.0"`.
+- **§6 Action-oriented filters** — Needs action (default when unresolved) · In progress · Completed · Missing note · Billing issues · Cancelled · All. Counts on each pill. Filter persistence stored in `localStorage.ccms.clinical.groupedEncountersFilter` (global user preference — **no patient IDs**).
+- **§7 Status vocabulary** — new `pages/clinical/status/StatusBadge.jsx` with 5 dimensions (Workflow / Documentation / Clinical response / Billing / Record state). Sentence-case labels, `role="status"`, `aria-label` includes dimension + label so status is never colour-only.
+- **§10 + §11 Grouped care timeline** — `GroupedTimelineCard.jsx` + `GET /api/patients/{id}/clinical/timeline/grouped?kinds=…`. Visit-linked artefacts merged into a single event; non-visit artefacts (initial exam, treatment plan, media, outcome) remain standalone. Kind chips + search (title/provider/kind) + date range + Clear filters.
+- **§12 Visual repetition cleanup** — episodes, encounters, and timeline sections now use row dividers + one wrapping card instead of nested cards.
+
+### Guardrails honoured
+- `schema_version: "1.0"` on both grouped responses.
+- Every group carries authoritative source ids: `appointment_id`, `encounter_id`, `note_ids[]`, `billing_readiness_id`.
+- Grouping keyed on existing relationships only. Bare timestamps never join records.
+- Orphaned records surface as their own groups with `orphaned: true`.
+- Legacy `EncountersCard` + `InitialExamsCard` + `FollowUpNotesCard` + `CareTimelineCard` remain the fallback when the Wave A flag is off.
+- Nested flag: parent `clinicalRedesign` must be on for the redesign to render; Wave A adds the new grouped sections when its own flag is also on.
+- Filter persistence is a global user preference — no patient-scoped values stored in localStorage.
+
+### Contract tests — `backend/tests/test_clinical_grouped_endpoints.py`
+- `schema_version` present and equal to `"1.0"`.
+- Every group carries `source_ids` with at least one authoritative id.
+- All 4 status dimensions present per group.
+- **Non-mutation proof**: `updated_at` on every appointment / encounter / note is byte-identical before and after the grouped read.
+- **Non-omission proof**: every source appointment_id and every source encounter_id appears in at least one group's `source_ids`.
+- Timeline endpoint: schema + kind filter narrows + source_ids present + 401 unauth.
+
+### Files
+- **new**: `services/clinical/grouped_router.py`, `tests/test_clinical_grouped_endpoints.py`, `pages/clinical/ActiveEpisodeCard.jsx`, `pages/clinical/GroupedEncountersCard.jsx`, `pages/clinical/GroupedTimelineCard.jsx`, `pages/clinical/status/StatusBadge.jsx`
+- **modified**: `server.py` (registered `clinical_grouped_router`), `utils/featureFlags.js` (added nested flag), `frontend/.env` (added `REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_A=on`), `pages/clinical/ClinicalTabV2.jsx` (conditionally swaps sections; adds ActiveEpisodeCard between summary tiles and episodes list)
+
+### Wave B still on deck
+- §2 progressive-disclosure intake, §3 safety summary, §4 diagnosis rows, §8 treatment plan segmented progress, §9 re-exam states.
+
+
+
 ## Component extraction + CTA telemetry (2026-07-10)
 
 Followed the user's order: **UAT & hardening → component extraction → chart-wide billing → dashboard preview → Phase 2**. This entry closes item 2 of that list; chart-wide billing intentionally deferred to keep refactor and new data behaviour in separate risk envelopes.

@@ -84,6 +84,7 @@ from services.kiosk.router import router as kiosk_router  # noqa: E402
 from services.questionnaires.router import router as questionnaires_router  # noqa: E402
 from services.scheduling.booking_requests import staff_router as booking_requests_router  # noqa: E402
 from services.telemetry.router import router as telemetry_router  # noqa: E402
+from services.clinical.grouped_router import router as clinical_grouped_router  # noqa: E402
 
 
 logging.basicConfig(
@@ -122,6 +123,7 @@ api_router.include_router(privacy_router)
 api_router.include_router(audit_router)
 api_router.include_router(perf_router)
 api_router.include_router(telemetry_router)
+api_router.include_router(clinical_grouped_router)
 api_router.include_router(reports_denial_class_router)
 api_router.include_router(reports_router)
 api_router.include_router(exports_router)
