@@ -341,7 +341,7 @@ function DiagnosisRow({ dx, episodes, canWrite, onEdit, onResolve, onReactivate 
               className="rounded-sm"
             >
               <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
-              Resolve
+              Mark resolved
             </Button>
           ) : (
             <Button
@@ -370,7 +370,11 @@ function ResolveDialog({ open, onOpenChange, dx, onSubmit, submitting }) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="dx-resolve-dialog" className="max-w-md rounded-sm">
         <DialogHeader>
-          <DialogTitle className="font-display">Resolve diagnosis</DialogTitle>
+          <DialogTitle className="font-display">Mark diagnosis resolved</DialogTitle>
+          <p className="text-xs text-muted-foreground">
+            This may affect billing linkage, active treatment plans, and open claims tied to this
+            diagnosis. The change is audited and reversible only by an authorized user.
+          </p>
         </DialogHeader>
         {dx && (
           <div className="space-y-3">
@@ -399,7 +403,7 @@ function ResolveDialog({ open, onOpenChange, dx, onSubmit, submitting }) {
             data-testid="dx-resolve-submit-btn"
             className="rounded-sm"
           >
-            {submitting ? "Resolving…" : "Resolve"}
+            {submitting ? "Marking…" : "Mark resolved"}
           </Button>
         </DialogFooter>
       </DialogContent>

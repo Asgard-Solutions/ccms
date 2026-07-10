@@ -1,6 +1,40 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+## Phase 2 Wave B — History, diagnoses, plans, re-exam (2026-07-10)
+
+New independent nested flag `clinicalRedesignPhase2WaveB` (env `REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_B`, default `on`). Parent `clinicalRedesign` still required. Independent rollback from Wave A verified.
+
+### Shipped
+- **§3 Safety summary** — `SafetySummary.jsx` sits above the intake history. Neutral tone for normal findings (`NKDA`, `None reported`); warning tone only on positive red-flags or documented allergies. Rendered above IntakeHistory in the History section.
+- **§2 Progressive-disclosure intake** — `IntakeHistoryProgressive.jsx` shows an 8-field compact two-column definition list by default, with a `View complete intake history` toggle (`aria-expanded`, `aria-controls`, keyboard operable) that inline-expands the *existing* `IntakeHistoryCard` — every intake field + Edit + Re-import from intake actions retained.
+- **§9 Re-exam states** — `ReExamSection.jsx` derives from active plan's `next_reexam_due_date` / `reexam_due_date`. Three states: none-set / approaching (≤14 days) / overdue (n days overdue with destructive tone). Actions: `Schedule re-exam`, `Start re-exam`. Historical re-exam rows still surfaced via the original `ReExamsCard` embedded below the state banner.
+- **§4 partial** — `DiagnosesCard.jsx`: renamed vague `Resolve` → `Mark resolved` (button label + dialog title + submitting label). Confirmation copy now warns of billing / plan / claim impact and audit reversibility. New `data-testid="dx-<id>-mark-resolved"`. Fully structured diagnosis rows already carried ICD-10 + primary/secondary + region + chronicity + episode from Phase 1.
+- **§8 partial** — new `TreatmentPlanProgress.jsx` component ready to drop into `TreatmentPlansCard` in a follow-up: `role="progressbar"` with `aria-valuenow/max`, three colour-coded segments (completed / scheduled / remaining) with numeric legend labels so status is never colour-only.
+
+### Guardrails honoured
+- Independent flag `clinicalRedesignPhase2WaveB`; can be turned off without affecting Wave A. Runtime E2E confirmed: legacy `IntakeHistoryCard` returns when Wave B flag = off.
+- Every intake field remains accessible — the expanded state renders the untouched `IntakeHistoryCard` component.
+- Historical re-exams still visible under the new banner.
+- No backend changes.
+- No source records mutated; no signed-record behaviour touched.
+
+### Files
+- **new**: `pages/clinical/SafetySummary.jsx`, `pages/clinical/IntakeHistoryProgressive.jsx`, `pages/clinical/ReExamSection.jsx`, `pages/clinical/TreatmentPlanProgress.jsx`
+- **modified**: `utils/featureFlags.js` (added Wave B flag), `frontend/.env` (added env var), `pages/clinical/ClinicalTabV2.jsx` (Wave B swaps History + Re-exam sections), `pages/clinical/DiagnosesCard.jsx` ("Resolve" → "Mark resolved" + impact confirmation copy)
+
+### Deferred (not blocking Wave B UAT)
+- **§4 completion** — full structured diagnosis row redesign with clinical-vs-billing badge and additional "Set inactive" / "View history" actions. Current DiagnosesCard already shows the structured metadata; a full re-skin would touch >600 lines and land better as its own PR.
+- **§8 completion** — swap the existing thin progress bar in `TreatmentPlansCard` for the new `TreatmentPlanProgress` component. The component is shipped and tested visually; the swap is a one-liner import + JSX replace in `TreatmentPlansCard.jsx`.
+
+### Next Action Items
+- Wave B UAT (10 scenarios from the spec — same style as Phase 1 UAT).
+- Wave B rollback verification with both parent + Wave A flags on / off / independent toggles.
+- Finish §4 and §8 in-place edits (small PR).
+- Then: billing digest design, backfill/reconciliation, dashboard Today's Chart Preview.
+
+
+
 ## Chart-wide billing-readiness aggregate (2026-07-10)
 
 Narrowly scoped follow-up to Wave A — closes the last no-op stub on Current Care Status without opening the Wave B risk envelope.

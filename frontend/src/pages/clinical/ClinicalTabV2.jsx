@@ -36,6 +36,9 @@ import SummaryTiles from "./SummaryTiles";
 import ActiveEpisodeCard from "./ActiveEpisodeCard";
 import GroupedEncountersCard from "./GroupedEncountersCard";
 import GroupedTimelineCard from "./GroupedTimelineCard";
+import SafetySummary from "./SafetySummary";
+import IntakeHistoryProgressive from "./IntakeHistoryProgressive";
+import ReExamSection from "./ReExamSection";
 import { useFeatureFlag } from "../../utils/featureFlags";
 import {
   NAV_ITEMS,
@@ -74,6 +77,7 @@ export default function ClinicalTabV2({
 }) {
   const navigate = useNavigate();
   const [phase2WaveA] = useFeatureFlag("clinicalRedesignPhase2WaveA");
+  const [phase2WaveB] = useFeatureFlag("clinicalRedesignPhase2WaveB");
   const [summary, setSummary] = useState(null);
   const [episodes, setEpisodes] = useState(null);
   const [diagnoses, setDiagnoses] = useState(null);
@@ -433,12 +437,24 @@ export default function ClinicalTabV2({
         />
       </section>
 
-      <section id="history" ref={registerSection("history")} className="scroll-mt-40">
-        <IntakeHistoryCard
-          patientId={patientId}
-          canWrite={canWrite}
-          onReauthNeeded={onReauthNeeded}
-        />
+      <section id="history" ref={registerSection("history")} className="scroll-mt-40 space-y-4">
+        {phase2WaveB ? (
+          <>
+            <SafetySummary history={history} />
+            <IntakeHistoryProgressive
+              history={history}
+              patientId={patientId}
+              canWrite={canWrite}
+              onReauthNeeded={onReauthNeeded}
+            />
+          </>
+        ) : (
+          <IntakeHistoryCard
+            patientId={patientId}
+            canWrite={canWrite}
+            onReauthNeeded={onReauthNeeded}
+          />
+        )}
       </section>
 
       <section id="diagnoses" ref={registerSection("diagnoses")} className="scroll-mt-40">
@@ -482,7 +498,16 @@ export default function ClinicalTabV2({
           episodes={episodes || []}
           onReauthNeeded={onReauthNeeded}
         />
-        <ReExamsCard patientId={patientId} />
+        {phase2WaveB ? (
+          <ReExamSection
+            patientId={patientId}
+            activePlan={activePlan}
+            canWrite={canWrite}
+            onJumpTo={jumpTo}
+          />
+        ) : (
+          <ReExamsCard patientId={patientId} />
+        )}
       </section>
 
       <section id="timeline" ref={registerSection("timeline")} className="scroll-mt-40">

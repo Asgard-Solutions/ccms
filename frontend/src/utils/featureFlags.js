@@ -22,12 +22,14 @@ const STORAGE_PREFIX = "ccms.flags.";
 const FLAG_DEFAULTS = {
   clinicalRedesign: "on",
   clinicalRedesignPhase2WaveA: "on",
+  clinicalRedesignPhase2WaveB: "on",
 };
 
 // Explicit env-var mapping so grep/CI can find the strings.
 const ENV_VAR_MAP = {
   clinicalRedesign: "REACT_APP_CLINICAL_REDESIGN",
   clinicalRedesignPhase2WaveA: "REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_A",
+  clinicalRedesignPhase2WaveB: "REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_B",
 };
 
 function normalise(raw) {
