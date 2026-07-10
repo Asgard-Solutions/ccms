@@ -1,6 +1,63 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+## Component extraction + CTA telemetry (2026-07-10)
+
+Followed the user's order: **UAT & hardening → component extraction → chart-wide billing → dashboard preview → Phase 2**. This entry closes item 2 of that list; chart-wide billing intentionally deferred to keep refactor and new data behaviour in separate risk envelopes.
+
+### Component extraction
+
+`ClinicalTabV2.jsx` shell dropped from **1095 → 465 lines** by extracting four sibling components + a helpers module:
+
+| File | Lines | Purpose |
+|---|---|---|
+| `pages/clinical/clinicalHelpers.js` | 84 | `NAV_ITEMS`, `getInitials`, `computeAge`, `pickNextAppointment`, `pickActiveEpisode`, `pickPrimaryDiagnosis`, `extractRedFlagFindings` |
+| `pages/clinical/PatientContextHeader.jsx` | 100 | Sticky orientation strip |
+| `pages/clinical/SectionNav.jsx` | 56 | Sticky in-page nav (uses `NAV_ITEMS` from helpers) |
+| `pages/clinical/SummaryTiles.jsx` | 63 | Six interactive count tiles |
+| `pages/clinical/CurrentCareStatusPanel.jsx` | 374 | Row builder + CTA emission |
+
+All extracted components are pure UI (no data fetching, no navigation logic). The shell keeps ownership of load, scroll behaviour, telemetry wiring, and section composition.
+
+### CTA telemetry — `clinical_care_status_action_selected`
+
+Locked, allow-list-only event:
+
+```json
+{
+  "event_name":     "clinical_care_status_action_selected",
+  "section_slug":   "current-care-status",
+  "action_slug":    "schedule-reexam",
+  "source_surface": "patient-clinical",
+  "layout_version": "v2"
+}
+```
+
+- **Backend**: new `POST /api/telemetry/ui-action` in `services/telemetry/router.py`. Pydantic `model_config={"extra":"forbid"}` plus every field enum-restricted. Persists to `ui_telemetry_actions`.
+- **Frontend**: `trackCareStatusAction(slug)` in `utils/telemetry.js` with a `Set` mirror of the backend enum. Any slug not in the client allow-list is dropped before hitting the wire. Called from every CTA button in `CurrentCareStatusPanel.jsx` via a `withTelemetry(slug, fn)` wrapper — impossible to add a new CTA without also declaring its slug.
+- **Contract document**: `services/telemetry/SCHEMA.md` (documents both `/ui-event` and `/ui-action`; lists explicitly NOT-tracked fields; process for expanding the vocabulary).
+
+Action-slug allow-list (7 values): `open-encounter`, `add-note`, `record-outcome`, `schedule-visit`, `schedule-reexam`, `review-billing-issues`, `edit-missing-information`.
+
+**Never tracked** (PHI safety): patient/encounter/appointment/claim IDs, DOBs, dates, counts, diagnoses, free-form strings, URLs. Success events omitted per user note — we track intent, not clinical completion.
+
+### Tests
+
+`/app/backend/tests/test_telemetry_ui_action.py` — 5 test classes, 26 test cases:
+
+1. **Happy path** — every allow-listed action_slug returns 204; `layout_version` v1 and v2 both accepted.
+2. **Rejects unknown vocabulary** — arbitrary action_slug, section_slug, source_surface, layout_version, event_name → 422.
+3. **PHI-leak parametrised guard** — 7 leak fields (`patient_id`, `patient_name`, `encounter_id`, `diagnosis_code`, `dob`, `free_text`, `url`) all rejected with `extra_forbidden`.
+4. **Incomplete payload** — missing any of the 5 required fields → 422; empty body → 422.
+5. **Requires auth** — anonymous request → 401.
+
+### Files touched
+- **new**: `clinicalHelpers.js`, `PatientContextHeader.jsx`, `SectionNav.jsx`, `SummaryTiles.jsx`, `CurrentCareStatusPanel.jsx`, `services/telemetry/SCHEMA.md`, `tests/test_telemetry_ui_action.py`
+- **overwritten**: `ClinicalTabV2.jsx` (1095 → 465), `services/telemetry/router.py` (added `/ui-action` + `UIActionPayload`)
+- **modified**: `utils/telemetry.js` (added `trackCareStatusAction` + `CARE_STATUS_ACTION_SLUGS`)
+
+
+
 ## Phase 1 Clinical Redesign — Release hardening (2026-07-10)
 
 Follow-up to the Phase 1 UX ship. All 5 items requested by the user closed out.

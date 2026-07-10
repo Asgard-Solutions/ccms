@@ -1,10 +1,10 @@
 /**
  * ClinicalTabV2 — Phase 1 redesign of Patient Profile > Clinical.
  *
- * Wraps every existing clinical sub-card (business logic unchanged)
- * with a new orientation shell: sticky patient-context header, sticky
- * in-page section nav, and a "Current Care Status" panel that surfaces
- * the actionable state of the chart before the user scrolls.
+ * This file is the *shell*: data load, scroll behaviour, telemetry
+ * hooks, and section composition. The rendered pieces (patient context
+ * header, section nav, care-status panel, summary tiles) live in
+ * sibling files under `pages/clinical/`.
  *
  * All permissions, masking, audit, signed-record rules, and API
  * contracts flow through the wrapped sub-cards untouched.
@@ -12,20 +12,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import {
-  AlertTriangle,
-  ArrowUp,
-  CalendarPlus,
-  ClipboardList,
-  FileWarning,
-  PlayCircle,
-  PlusCircle,
-  Stethoscope,
-} from "lucide-react";
+import { ArrowUp } from "lucide-react";
 import { api, formatApiError } from "../../api/client";
-import { Button } from "../../components/ui/button";
-import { Skeleton } from "../../components/ui/skeleton";
-import { formatDate, formatDateTime } from "../../utils/time";
+import { formatDateTime } from "../../utils/time";
 import { trackUiEvent } from "../../utils/telemetry";
 
 import IntakeHistoryCard from "./IntakeHistoryCard";
@@ -40,229 +29,19 @@ import MediaCard from "./MediaCard";
 import OutcomesCard from "./OutcomesCard";
 import EpisodesSection from "./EpisodesSection";
 
-const NAV_ITEMS = [
-  { id: "summary", label: "Summary" },
-  { id: "history", label: "History" },
-  { id: "diagnoses", label: "Diagnoses" },
-  { id: "encounters", label: "Encounters" },
-  { id: "care-plan", label: "Care plan" },
-  { id: "timeline", label: "Timeline" },
-  { id: "imaging", label: "Imaging" },
-  { id: "outcomes", label: "Outcomes" },
-];
-
-// -------- helpers --------------------------------------------------
-
-function getInitials(patient) {
-  if (!patient) return "??";
-  if (patient.unmasked) {
-    const f = (patient.first_name || "").trim();
-    const l = (patient.last_name || "").trim();
-    const i = `${f.charAt(0)}${l.charAt(0)}`.toUpperCase();
-    return i || "??";
-  }
-  // display_name_masked usually looks like "A. B." or "John D." — take the
-  // first character of each token.
-  const src = patient.display_name_masked || "";
-  const parts = src.replace(/\./g, "").split(/\s+/).filter(Boolean);
-  return (parts.map((p) => p.charAt(0)).join("").slice(0, 2) || "??").toUpperCase();
-}
-
-function computeAge(dobIso) {
-  if (!dobIso) return null;
-  const dob = new Date(dobIso);
-  if (Number.isNaN(dob.getTime())) return null;
-  const now = new Date();
-  let age = now.getFullYear() - dob.getFullYear();
-  const m = now.getMonth() - dob.getMonth();
-  if (m < 0 || (m === 0 && now.getDate() < dob.getDate())) age -= 1;
-  return age >= 0 && age < 130 ? age : null;
-}
-
-function pickNextAppointment(appointments) {
-  if (!Array.isArray(appointments)) return null;
-  const now = Date.now();
-  return appointments
-    .filter(
-      (a) =>
-        a?.start_time &&
-        new Date(a.start_time).getTime() > now &&
-        !["cancelled", "canceled", "no_show"].includes(a.status),
-    )
-    .sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0];
-}
-
-function pickActiveEpisode(episodes) {
-  if (!Array.isArray(episodes)) return null;
-  return (
-    episodes.find((e) => e.status === "active") ||
-    episodes.find((e) => e.status === "on_hold") ||
-    null
-  );
-}
-
-function pickPrimaryDiagnosis(diagnoses) {
-  if (!Array.isArray(diagnoses)) return null;
-  return (
-    diagnoses.find((d) => d.is_primary && d.status === "active") ||
-    diagnoses.find((d) => d.status === "active") ||
-    null
-  );
-}
-
-function extractRedFlagFindings(history) {
-  const rf = history?.red_flag_screening;
-  if (!rf || typeof rf !== "object") return { positives: [], hasScreening: false };
-  const positives = [];
-  for (const [k, v] of Object.entries(rf)) {
-    if (v === true) positives.push(k.replace(/_/g, " "));
-  }
-  return { positives, hasScreening: Object.keys(rf).length > 0 };
-}
-
-// -------- header / nav sub-components ------------------------------
-
-function PatientContextHeader({
-  patient,
-  age,
-  initials,
-  activeEpisode,
-  primaryDx,
-  currentProviderName,
-  nextAppt,
-  reExamDue,
-  alerts,
-}) {
-  const nameOrMask = patient.unmasked
-    ? `${patient.first_name || ""} ${patient.last_name || ""}`.trim() || "—"
-    : patient.display_name_masked || "Masked patient";
-
-  return (
-    <div
-      data-testid="clinical-patient-context-header"
-      className="border-b border-border bg-background/95 px-4 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80"
-    >
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-        <div className="flex items-center gap-3">
-          <span
-            aria-hidden="true"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/15 text-sm font-semibold text-primary"
-          >
-            {initials}
-          </span>
-          <div className="min-w-0">
-            <div
-              className="truncate font-display text-base font-semibold text-foreground"
-              data-testid="clinical-context-patient-name"
-            >
-              {nameOrMask}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {[
-                age != null ? `Age ${age}` : null,
-                patient.gender || null,
-                patient.status === "deleted" ? "Archived" : null,
-              ]
-                .filter(Boolean)
-                .join(" · ") || "Patient profile"}
-            </div>
-          </div>
-        </div>
-
-        <ContextChip label="Episode" testId="clinical-context-episode">
-          {activeEpisode ? activeEpisode.title : "No active episode"}
-        </ContextChip>
-
-        <ContextChip label="Primary diagnosis" testId="clinical-context-primary-dx">
-          {primaryDx ? primaryDx.label || primaryDx.icd10_code : "Not documented"}
-        </ContextChip>
-
-        <ContextChip label="Provider" testId="clinical-context-provider">
-          {currentProviderName || "Unassigned"}
-        </ContextChip>
-
-        <ContextChip label="Next appointment" testId="clinical-context-next-appt">
-          {nextAppt ? formatDateTime(nextAppt.start_time) : "Not scheduled"}
-        </ContextChip>
-
-        <ContextChip label="Re-exam due" testId="clinical-context-reexam-due">
-          {reExamDue ? formatDate(reExamDue) : "Not scheduled"}
-        </ContextChip>
-
-        {alerts && alerts.length > 0 && (
-          <span
-            data-testid="clinical-context-alerts"
-            className="inline-flex items-center gap-1.5 rounded-full border border-warning/40 bg-warning-soft px-2.5 py-1 text-xs font-medium text-warning"
-            role="status"
-          >
-            <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-            {alerts.length === 1
-              ? alerts[0]
-              : `${alerts.length} clinical alerts`}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ContextChip({ label, children, testId }) {
-  return (
-    <div className="min-w-0" data-testid={testId}>
-      <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-        {label}
-      </div>
-      <div className="truncate text-sm text-foreground">{children}</div>
-    </div>
-  );
-}
-
-function SectionNav({ activeId, onJump, counts }) {
-  return (
-    <nav
-      aria-label="Clinical sections"
-      data-testid="clinical-section-nav"
-      className="border-b border-border bg-background/90 px-2 backdrop-blur supports-[backdrop-filter]:bg-background/70"
-    >
-      <ul className="flex flex-wrap items-center gap-1 overflow-x-auto py-1.5">
-        {NAV_ITEMS.map((item) => {
-          const isActive = activeId === item.id;
-          const count = counts?.[item.id];
-          return (
-            <li key={item.id}>
-              <button
-                type="button"
-                onClick={() => onJump(item.id)}
-                data-testid={`clinical-nav-${item.id}`}
-                aria-current={isActive ? "location" : undefined}
-                className={[
-                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition-colors",
-                  "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                  isActive
-                    ? "bg-primary text-primary-foreground font-medium"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                ].join(" ")}
-              >
-                {item.label}
-                {count != null && count > 0 && (
-                  <span
-                    className={[
-                      "rounded-full px-1.5 text-[10px]",
-                      isActive ? "bg-primary-foreground/20" : "bg-muted-foreground/15",
-                    ].join(" ")}
-                    aria-label={`${count} items`}
-                  >
-                    {count}
-                  </span>
-                )}
-              </button>
-            </li>
-          );
-        })}
-      </ul>
-    </nav>
-  );
-}
+import PatientContextHeader from "./PatientContextHeader";
+import SectionNav from "./SectionNav";
+import CurrentCareStatusPanel from "./CurrentCareStatusPanel";
+import SummaryTiles from "./SummaryTiles";
+import {
+  NAV_ITEMS,
+  computeAge,
+  extractRedFlagFindings,
+  getInitials,
+  pickActiveEpisode,
+  pickNextAppointment,
+  pickPrimaryDiagnosis,
+} from "./clinicalHelpers";
 
 function BackToTopButton({ visible, onClick }) {
   if (!visible) return null;
@@ -272,8 +51,6 @@ function BackToTopButton({ visible, onClick }) {
       onClick={onClick}
       data-testid="clinical-back-to-top"
       aria-label="Back to top"
-      // z-50 places us above the preview 'Made with Emergent' watermark
-      // (z-40) so the click target is reachable in every environment.
       className="fixed bottom-6 right-6 z-50 inline-flex items-center gap-1.5 rounded-full border border-border bg-card/95 px-3 py-2 text-xs font-medium text-foreground shadow-lg backdrop-blur transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 motion-reduce:transition-none motion-reduce:hover:transform-none"
     >
       <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
@@ -281,360 +58,6 @@ function BackToTopButton({ visible, onClick }) {
     </button>
   );
 }
-
-// -------- Current Care Status panel --------------------------------
-
-function CurrentCareStatusPanel({
-  activeEpisode,
-  primaryDx,
-  activePlan,
-  nextAppt,
-  reExamDue,
-  unsignedCount,
-  billingWarnings,
-  redFlag,
-  missingIntakeCount,
-  onJumpTo,
-  onOpenEncounter,
-  canWrite,
-  navigate,
-  patientId,
-}) {
-  const rows = [];
-
-  // Active episode
-  rows.push({
-    key: "episode",
-    label: "Active episode",
-    value: activeEpisode ? activeEpisode.title : "No current episode",
-    tone: activeEpisode ? "default" : "muted",
-  });
-
-  // Primary diagnosis
-  rows.push({
-    key: "primary-dx",
-    label: "Primary diagnosis",
-    value: primaryDx
-      ? [primaryDx.icd10_code, primaryDx.label].filter(Boolean).join(" · ")
-      : "Not documented",
-    tone: primaryDx ? "default" : "muted",
-    cta: primaryDx
-      ? null
-      : canWrite
-        ? { label: "Add diagnosis", onClick: () => onJumpTo("diagnoses") }
-        : null,
-  });
-
-  // Plan progress
-  if (activePlan) {
-    const completed = activePlan.visits_completed ?? 0;
-    const planned = activePlan.total_visits_planned ?? activePlan.visits_planned ?? null;
-    const scheduled = activePlan.visits_scheduled ?? null;
-    if (planned != null) {
-      rows.push({
-        key: "plan-progress",
-        label: "Visits progress",
-        value: `${completed} of ${planned} planned visits completed`,
-        tone: "default",
-      });
-    }
-    if (scheduled != null && scheduled > 0) {
-      rows.push({
-        key: "plan-scheduled",
-        label: "Scheduled",
-        value: `${scheduled} visit${scheduled === 1 ? "" : "s"} scheduled`,
-        tone: "default",
-      });
-    }
-    if (planned != null && scheduled != null) {
-      const remaining = Math.max(planned - completed - scheduled, 0);
-      if (remaining > 0) {
-        rows.push({
-          key: "plan-remaining",
-          label: "Unscheduled",
-          value: `${remaining} visit${remaining === 1 ? "" : "s"} remain unscheduled`,
-          tone: "warning",
-          cta: canWrite
-            ? {
-                label: "Schedule visit",
-                onClick: () => navigate(`/scheduling?patient=${patientId}`),
-              }
-            : null,
-        });
-      }
-    }
-  } else {
-    rows.push({
-      key: "plan-progress",
-      label: "Treatment plan",
-      value: "No active plan",
-      tone: "muted",
-      cta: canWrite
-        ? { label: "Open care plan", onClick: () => onJumpTo("care-plan") }
-        : null,
-    });
-  }
-
-  // Next appointment
-  rows.push({
-    key: "next-appt",
-    label: "Next appointment",
-    value: nextAppt
-      ? `${formatDateTime(nextAppt.start_time)}${
-          nextAppt.provider_name ? ` with ${nextAppt.provider_name}` : ""
-        }`
-      : "Not scheduled",
-    tone: nextAppt ? "default" : "warning",
-    cta:
-      !nextAppt && canWrite
-        ? {
-            label: "Schedule visit",
-            onClick: () => navigate(`/scheduling?patient=${patientId}`),
-          }
-        : null,
-  });
-
-  // Re-exam due
-  if (reExamDue) {
-    rows.push({
-      key: "reexam-due",
-      label: "Re-exam due",
-      value: formatDate(reExamDue),
-      tone: "warning",
-      cta: canWrite
-        ? { label: "Schedule re-exam", onClick: () => onJumpTo("care-plan") }
-        : null,
-    });
-  }
-
-  // Unsigned documentation
-  if (unsignedCount > 0) {
-    rows.push({
-      key: "unsigned",
-      label: "Documentation",
-      value: `${unsignedCount} unsigned or incomplete document${
-        unsignedCount === 1 ? "" : "s"
-      }`,
-      tone: "warning",
-      cta: canWrite
-        ? { label: "Open encounters", onClick: () => onJumpTo("encounters") }
-        : null,
-    });
-  }
-
-  // Billing warnings
-  if (billingWarnings && billingWarnings.count > 0) {
-    rows.push({
-      key: "billing",
-      label: "Billing",
-      value: `${billingWarnings.count} billing warning${
-        billingWarnings.count === 1 ? "" : "s"
-      } require review`,
-      tone: "warning",
-      cta: { label: "Review billing issues", onClick: () => onJumpTo("encounters") },
-    });
-  }
-
-  // Red-flag / safety
-  if (redFlag && redFlag.positives.length > 0) {
-    rows.push({
-      key: "red-flag",
-      label: "Safety",
-      value: `Positive red-flag findings: ${redFlag.positives.join(", ")}`,
-      tone: "destructive",
-      cta: { label: "Review history", onClick: () => onJumpTo("history") },
-    });
-  }
-
-  // Missing required intake
-  if (missingIntakeCount > 0) {
-    rows.push({
-      key: "missing-intake",
-      label: "Intake",
-      value: `Missing required information (${missingIntakeCount} field${
-        missingIntakeCount === 1 ? "" : "s"
-      })`,
-      tone: "warning",
-      cta: canWrite
-        ? { label: "Open history", onClick: () => onJumpTo("history") }
-        : null,
-    });
-  }
-
-  return (
-    <section
-      data-testid="clinical-care-status-panel"
-      aria-labelledby="clinical-care-status-title"
-      className="rounded-xl border border-border bg-card/60 p-5"
-    >
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h3
-            id="clinical-care-status-title"
-            className="font-display text-lg font-semibold text-foreground"
-          >
-            Current care status
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            A snapshot of what needs attention today, drawn from the chart.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {canWrite && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={onOpenEncounter}
-              data-testid="care-status-open-encounter"
-              className="rounded-full"
-            >
-              <PlayCircle className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              Open current encounter
-            </Button>
-          )}
-          {canWrite && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onJumpTo("encounters")}
-              data-testid="care-status-add-note"
-              className="rounded-full"
-            >
-              <PlusCircle className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              Add note
-            </Button>
-          )}
-          {canWrite && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onJumpTo("outcomes")}
-              data-testid="care-status-record-outcome"
-              className="rounded-full"
-            >
-              <ClipboardList className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              Record outcome
-            </Button>
-          )}
-          {canWrite && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => navigate(`/scheduling?patient=${patientId}`)}
-              data-testid="care-status-schedule-visit"
-              className="rounded-full"
-            >
-              <CalendarPlus className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
-              Schedule visit
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <ul
-        data-testid="clinical-care-status-rows"
-        className="divide-y divide-border/60"
-      >
-        {rows.map((r) => (
-          <li
-            key={r.key}
-            data-testid={`care-status-row-${r.key}`}
-            className="flex flex-wrap items-center justify-between gap-3 py-2.5"
-          >
-            <div className="min-w-0 flex-1">
-              <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                {r.label}
-              </div>
-              <div
-                className={[
-                  "mt-0.5 text-sm",
-                  r.tone === "warning"
-                    ? "text-warning"
-                    : r.tone === "destructive"
-                      ? "text-destructive"
-                      : r.tone === "muted"
-                        ? "text-muted-foreground"
-                        : "text-foreground",
-                ].join(" ")}
-              >
-                {r.value}
-              </div>
-            </div>
-            {r.cta && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={r.cta.onClick}
-                data-testid={`care-status-cta-${r.key}`}
-                className="rounded-full text-primary hover:bg-primary/10"
-              >
-                {r.cta.label}
-              </Button>
-            )}
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-// -------- Summary tiles (interactive) ------------------------------
-
-function SummaryTiles({ summary, onJumpTo }) {
-  if (summary === null) {
-    return (
-      <div
-        data-testid="clinical-summary-tiles-loading"
-        className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6"
-      >
-        {Array.from({ length: 6 }).map((_, i) => (
-          <Skeleton key={i} className="h-20 rounded-lg" />
-        ))}
-      </div>
-    );
-  }
-  const tiles = [
-    { key: "encounters",      label: "Visits",     jump: "encounters", data: summary.encounters },
-    { key: "initial_exams",   label: "Exams",      jump: "encounters", data: summary.initial_exams },
-    { key: "treatment_plans", label: "Plans",      jump: "care-plan",  data: summary.treatment_plans },
-    { key: "re_exams",        label: "Re-exams",   jump: "care-plan",  data: summary.re_exams },
-    { key: "notes",           label: "Notes",      jump: "encounters", data: summary.notes },
-    { key: "diagnoses",       label: "Diagnoses",  jump: "diagnoses",  data: summary.diagnoses },
-  ];
-  return (
-    <div
-      data-testid="clinical-summary-tiles"
-      className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6"
-    >
-      {tiles.map((t) => {
-        const total = t.data?.total ?? 0;
-        const open = t.data?.open ?? 0;
-        return (
-          <button
-            key={t.key}
-            type="button"
-            onClick={() => onJumpTo(t.jump)}
-            data-testid={`clinical-tile-${t.key}`}
-            aria-label={`${t.label}: ${total} total, ${open} open. Go to section.`}
-            className="group rounded-lg border border-border bg-card p-4 text-left transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-reduce:transition-none motion-reduce:hover:transform-none"
-          >
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground group-hover:text-foreground">
-              {t.label}
-            </div>
-            <div className="mt-1 font-display text-2xl font-medium tracking-tight text-foreground">
-              {total}
-            </div>
-            <div className="mt-0.5 text-xs text-muted-foreground">
-              {open > 0 ? `${open} open` : "None open"}
-            </div>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-// -------- main component -------------------------------------------
 
 export default function ClinicalTabV2({
   patientId,
@@ -657,8 +80,9 @@ export default function ClinicalTabV2({
   const [activeId, setActiveId] = useState("summary");
   const [showBackToTop, setShowBackToTop] = useState(false);
   const sectionRefs = useRef({});
+  const suppressObserverUntil = useRef(0);
 
-  // ---- data load ------------------------------------------------
+  // ---- data load ----------------------------------------------------
   const load = useCallback(async () => {
     setErr(null);
     try {
@@ -669,7 +93,6 @@ export default function ClinicalTabV2({
         api.get(`/patients/${patientId}/clinical/history`),
         api.get(`/patients/${patientId}/clinical/treatment-plans`),
       ]);
-      // Report per-section load failures (no PHI, only section slug).
       const sectionMap = [
         [sumRes, "summary"],
         [epRes, "summary"],
@@ -699,7 +122,6 @@ export default function ClinicalTabV2({
     }
   }, [patientId]);
 
-  // Fire layout-activated exactly once per patient mount.
   useEffect(() => {
     trackUiEvent("clinical.layout.activated", { layout: "v2" });
   }, [patientId]);
@@ -708,7 +130,6 @@ export default function ClinicalTabV2({
     load();
   }, [load]);
 
-  // Fetch encounters count separately for badge on "encounters" nav item.
   useEffect(() => {
     let cancelled = false;
     api
@@ -717,7 +138,10 @@ export default function ClinicalTabV2({
         if (!cancelled) {
           const rows = r.data || [];
           const open = rows.filter(
-            (e) => e.status === "in_progress" || e.sign_status === "draft" || e.sign_status === "sign_ready",
+            (e) =>
+              e.status === "in_progress" ||
+              e.sign_status === "draft" ||
+              e.sign_status === "sign_ready",
           ).length;
           setEncountersOpenCount(open);
         }
@@ -730,7 +154,7 @@ export default function ClinicalTabV2({
     };
   }, [patientId]);
 
-  // ---- derived --------------------------------------------------
+  // ---- derived ------------------------------------------------------
   const initials = useMemo(() => getInitials(patient), [patient]);
   const age = useMemo(
     () => (patient?.unmasked ? computeAge(patient?.date_of_birth) : null),
@@ -745,21 +169,16 @@ export default function ClinicalTabV2({
     return null;
   }, [activeEpisode, nextAppt]);
   const redFlag = useMemo(() => extractRedFlagFindings(history), [history]);
-  const reExamDue = useMemo(() => {
-    // Derive from active plan if it exposes a due date; otherwise leave null.
-    return (
-      activePlan?.next_reexam_due_date ||
-      activePlan?.reexam_due_date ||
-      null
-    );
-  }, [activePlan]);
+  const reExamDue = useMemo(
+    () => activePlan?.next_reexam_due_date || activePlan?.reexam_due_date || null,
+    [activePlan],
+  );
   const missingIntakeCount = useMemo(() => {
-    // Count required-ish narrative fields that are blank on the chart-level
-    // history doc. Conservative — only flag the always-expected clinical
-    // narratives, not optional demographics.
     if (!history || Object.keys(history).length === 0) return 0;
     const requiredKeys = ["chief_complaint", "history_of_present_illness"];
-    return requiredKeys.filter((k) => !history[k] || String(history[k]).trim() === "").length;
+    return requiredKeys.filter(
+      (k) => !history[k] || String(history[k]).trim() === "",
+    ).length;
   }, [history]);
 
   const alerts = useMemo(() => {
@@ -785,22 +204,13 @@ export default function ClinicalTabV2({
     [summary, encountersOpenCount],
   );
 
-  // Compute a mocked billing summary from any available data — Phase 1
-  // just needs to surface count-level warnings; the actual per-encounter
-  // details still live inside BillingReadinessPanel.
-  const billingWarnings = useMemo(() => {
-    // We don't have a chart-wide readiness endpoint; leave count 0 so
-    // the row is hidden unless we later wire an aggregate. This keeps
-    // us honest — no invented data.
-    return { count: 0 };
-  }, []);
+  // Chart-wide billing warnings aggregation is intentionally deferred —
+  // per-encounter warnings still live inside BillingReadinessPanel.
+  // Populated as its own separate change (not bundled with this
+  // refactor's risk envelope).
+  const billingWarnings = useMemo(() => ({ count: 0 }), []);
 
-  // ---- scroll behaviour ----------------------------------------
-  // When jumpTo is triggered by a user click we want the URL entry to go
-  // through pushState so browser back/forward walks the section history.
-  // Programmatic jumps (deep-link on mount) still use replaceState so we
-  // don't pollute history on load.
-  const suppressObserverUntil = useRef(0);
+  // ---- scroll behaviour --------------------------------------------
   const jumpTo = useCallback((id, opts = {}) => {
     const el = sectionRefs.current[id];
     if (!el) return;
@@ -820,7 +230,6 @@ export default function ClinicalTabV2({
     setActiveId(id);
   }, []);
 
-  // Sync active section with browser back/forward navigation.
   useEffect(() => {
     const onPop = () => {
       const hash = window.location.hash.replace("#", "");
@@ -833,10 +242,8 @@ export default function ClinicalTabV2({
   }, [jumpTo]);
 
   useEffect(() => {
-    // Deep-link: honour any #hash on first mount once refs exist.
     const hash = typeof window !== "undefined" ? window.location.hash.replace("#", "") : "";
     if (hash && sectionRefs.current[hash]) {
-      // small delay so layout has settled before scrolling
       const t = setTimeout(() => jumpTo(hash), 60);
       return () => clearTimeout(t);
     }
@@ -847,11 +254,7 @@ export default function ClinicalTabV2({
     if (typeof IntersectionObserver === "undefined") return undefined;
     const io = new IntersectionObserver(
       (entries) => {
-        // Ignore observer callbacks while a programmatic jump is settling.
         if (Date.now() < suppressObserverUntil.current) return;
-        // Bottom-of-page guard: when the viewport can't scroll any further,
-        // the last section may never enter the activation band. Force it
-        // active so the nav pill matches what the user actually sees.
         const nearBottom =
           window.innerHeight + window.scrollY >=
           document.documentElement.scrollHeight - 8;
@@ -861,7 +264,9 @@ export default function ClinicalTabV2({
         }
         const visible = entries
           .filter((e) => e.isIntersecting)
-          .sort((a, b) => a.target.getBoundingClientRect().top - b.target.getBoundingClientRect().top);
+          .sort(
+            (a, b) => a.target.getBoundingClientRect().top - b.target.getBoundingClientRect().top,
+          );
         if (visible[0]) {
           setActiveId(visible[0].target.id);
         }
@@ -875,8 +280,6 @@ export default function ClinicalTabV2({
   useEffect(() => {
     const onScroll = () => {
       setShowBackToTop(window.scrollY > 400);
-      // Same bottom-of-page guard for plain scroll events (fires even when
-      // the observer entries don't change).
       if (Date.now() < suppressObserverUntil.current) return;
       const nearBottom =
         window.innerHeight + window.scrollY >=
@@ -894,8 +297,6 @@ export default function ClinicalTabV2({
   };
 
   const handleOpenCurrentEncounter = useCallback(() => {
-    // Delegate to encounters section — the encounter list has its own
-    // "Continue" affordance for in-progress rows.
     jumpTo("encounters");
     toast.message("Open the encounter you want to continue below.");
   }, [jumpTo]);
@@ -905,10 +306,9 @@ export default function ClinicalTabV2({
     setActiveId("summary");
   }, []);
 
-  // ---- render --------------------------------------------------
+  // ---- render -------------------------------------------------------
   return (
     <div data-testid="patient-clinical-tab-v2" className="space-y-8">
-      {/* Sticky context header + section nav */}
       <div className="sticky top-0 z-30 -mx-4 sm:-mx-6 lg:-mx-8">
         <PatientContextHeader
           patient={patient || {}}
@@ -934,7 +334,6 @@ export default function ClinicalTabV2({
         </div>
       )}
 
-      {/* Summary section */}
       <section
         id="summary"
         ref={registerSection("summary")}
@@ -983,7 +382,6 @@ export default function ClinicalTabV2({
 
         <SummaryTiles summary={summary} onJumpTo={jumpTo} />
 
-        {/* Episodes list (inline, since the summary anchors chart context) */}
         <EpisodesSection
           patientId={patientId}
           providers={providers}
@@ -995,12 +393,7 @@ export default function ClinicalTabV2({
         />
       </section>
 
-      {/* History */}
-      <section
-        id="history"
-        ref={registerSection("history")}
-        className="scroll-mt-40"
-      >
+      <section id="history" ref={registerSection("history")} className="scroll-mt-40">
         <IntakeHistoryCard
           patientId={patientId}
           canWrite={canWrite}
@@ -1008,12 +401,7 @@ export default function ClinicalTabV2({
         />
       </section>
 
-      {/* Diagnoses */}
-      <section
-        id="diagnoses"
-        ref={registerSection("diagnoses")}
-        className="scroll-mt-40"
-      >
+      <section id="diagnoses" ref={registerSection("diagnoses")} className="scroll-mt-40">
         <DiagnosesCard
           patientId={patientId}
           episodes={episodes || []}
@@ -1022,7 +410,6 @@ export default function ClinicalTabV2({
         />
       </section>
 
-      {/* Encounters (incl. exams + notes for grouping) */}
       <section
         id="encounters"
         ref={registerSection("encounters")}
@@ -1038,7 +425,6 @@ export default function ClinicalTabV2({
         <FollowUpNotesCard patientId={patientId} />
       </section>
 
-      {/* Care plan */}
       <section
         id="care-plan"
         ref={registerSection("care-plan")}
@@ -1053,21 +439,11 @@ export default function ClinicalTabV2({
         <ReExamsCard patientId={patientId} />
       </section>
 
-      {/* Timeline */}
-      <section
-        id="timeline"
-        ref={registerSection("timeline")}
-        className="scroll-mt-40"
-      >
+      <section id="timeline" ref={registerSection("timeline")} className="scroll-mt-40">
         <CareTimelineCard patientId={patientId} />
       </section>
 
-      {/* Imaging */}
-      <section
-        id="imaging"
-        ref={registerSection("imaging")}
-        className="scroll-mt-40"
-      >
+      <section id="imaging" ref={registerSection("imaging")} className="scroll-mt-40">
         <MediaCard
           patientId={patientId}
           canWrite={canWrite}
@@ -1075,12 +451,7 @@ export default function ClinicalTabV2({
         />
       </section>
 
-      {/* Outcomes */}
-      <section
-        id="outcomes"
-        ref={registerSection("outcomes")}
-        className="scroll-mt-40"
-      >
+      <section id="outcomes" ref={registerSection("outcomes")} className="scroll-mt-40">
         <OutcomesCard
           patientId={patientId}
           canWrite={canWrite}

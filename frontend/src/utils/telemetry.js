@@ -14,27 +14,75 @@ import { api } from "../api/client";
 const inflight = new Map(); // key -> timestamp
 const DEDUPE_MS = 500;
 
-export function trackUiEvent(event, props = {}) {
-  if (!event) return;
-  const key = `${event}:${JSON.stringify(props)}`;
+/**
+ * Client-side allow-list mirror of the backend enum. Kept in sync with
+ * `services/telemetry/router.py::ActionSlug` and
+ * `services/telemetry/SCHEMA.md`. Any slug NOT in this list is dropped
+ * before the request leaves the browser so we can never widen the
+ * schema by accident.
+ */
+export const CARE_STATUS_ACTION_SLUGS = new Set([
+  "open-encounter",
+  "add-note",
+  "record-outcome",
+  "schedule-visit",
+  "schedule-reexam",
+  "review-billing-issues",
+  "edit-missing-information",
+]);
+
+function firePost(url, body) {
+  try {
+    api
+      .post(url, body)
+      .catch(() => {
+        /* telemetry outages never affect the clinician */
+      });
+  } catch {
+    /* ignore */
+  }
+}
+
+function dedupe(key, fn) {
   const now = Date.now();
   const last = inflight.get(key);
   if (last && now - last < DEDUPE_MS) return;
   inflight.set(key, now);
-
-  const body = { event, ...props };
   try {
-    // We deliberately do NOT await this. The catch swallows all failures
-    // so telemetry outages never affect the clinician.
-    api
-      .post("/telemetry/ui-event", body)
-      .catch(() => {
-        /* ignore */
-      })
-      .finally(() => {
-        setTimeout(() => inflight.delete(key), DEDUPE_MS);
-      });
-  } catch {
-    inflight.delete(key);
+    fn();
+  } finally {
+    setTimeout(() => inflight.delete(key), DEDUPE_MS);
   }
+}
+
+export function trackUiEvent(event, props = {}) {
+  if (!event) return;
+  const key = `${event}:${JSON.stringify(props)}`;
+  dedupe(key, () => firePost("/telemetry/ui-event", { event, ...props }));
+}
+
+/**
+ * Fire the strictly-scoped `clinical_care_status_action_selected`
+ * event. Payload shape is locked here — no callers can widen the
+ * vocabulary.
+ *
+ *   {
+ *     event_name:     "clinical_care_status_action_selected",
+ *     section_slug:   "current-care-status",
+ *     action_slug:    <allow-listed slug>,
+ *     source_surface: "patient-clinical",
+ *     layout_version: "v2"
+ *   }
+ */
+export function trackCareStatusAction(actionSlug) {
+  if (!CARE_STATUS_ACTION_SLUGS.has(actionSlug)) return;
+  const body = {
+    event_name: "clinical_care_status_action_selected",
+    section_slug: "current-care-status",
+    action_slug: actionSlug,
+    source_surface: "patient-clinical",
+    layout_version: "v2",
+  };
+  const key = `care-status:${actionSlug}`;
+  dedupe(key, () => firePost("/telemetry/ui-action", body));
 }
