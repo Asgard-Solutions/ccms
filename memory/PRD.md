@@ -1,6 +1,44 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+## Chart-wide billing-readiness aggregate (2026-07-10)
+
+Narrowly scoped follow-up to Wave A — closes the last no-op stub on Current Care Status without opening the Wave B risk envelope.
+
+### Shipped
+- **Backend**: new `GET /api/patients/{id}/clinical/billing-readiness/aggregate` in the existing `services/clinical/grouped_router.py`. Reuses the same `clinical_billing_readiness` persistence + tenant scope + `_load_patient` from Wave A — no duplicate rule engine.
+- **Response shape** (pinned `schema_version: "1.0"`):
+  ```json
+  {"schema_version":"1.0","warning_count":2,"blocked_count":0,"top_message":"Diagnosis linkage incomplete","status":"warning"}
+  ```
+- **Top-message allow-list** — two ordered dicts in `grouped_router.py` (`_FAIL_KEYS_PRIORITY`, `_WARN_KEYS_PRIORITY`) map ReadinessCheck `key`s to a fixed vocabulary. Insertion order == deterministic priority. Free-form `check.detail` strings are never returned. When no allow-listed key wins, `top_message: null`.
+- **Permissions** — `require_role("admin","doctor","biller")`. Staff denied 403; the frontend uses that to keep the row hidden.
+- **Orphan readiness** — rows whose `encounter_id` is no longer visible to the caller are still counted (recorded in the audit metadata as `orphan_count`).
+- **Non-mutation** — only `find(…, {"_id": 0})`. No writes.
+
+### Frontend
+- `ClinicalTabV2.jsx` fetches the aggregate once per patient; on 403 / 5xx / network error the state stays `null` so the Care Status row remains hidden — no misleading zeros ever displayed.
+- `CurrentCareStatusPanel.jsx` billing row:
+  - `null` aggregate or `warning_count + blocked_count === 0` → row omitted (matches existing panel convention).
+  - `blocked_count > 0` → destructive tone, blocked count prioritised (with warning count as suffix), top message appended when present.
+  - Warning-only → warning tone, count + top message + "Review billing issues" CTA (fires `review-billing-issues` telemetry).
+
+### Contract tests — `backend/tests/test_billing_readiness_aggregate.py`
+- Pinned `schema_version` + exact key set + non-negative counts + valid status enum.
+- `top_message` is either `null` or a value from the 15-entry approved vocabulary.
+- `status` matches the count semantics (blocked → "blocked", warnings-only → "warning", none → "ready" + `top_message=null`).
+- **Non-mutation**: `source_ids` from `encounters/grouped` byte-identical before and after the aggregate read.
+- **Permission**: staff → 403; anonymous → 401.
+- **Tenant isolation**: unknown patient → 404 (never fake zeros).
+
+### Files
+- **modified**: `services/clinical/grouped_router.py` (endpoint + allow-list constants), `pages/clinical/ClinicalTabV2.jsx` (fetch), `pages/clinical/CurrentCareStatusPanel.jsx` (row semantics)
+- **new**: `backend/tests/test_billing_readiness_aggregate.py`
+
+This is now frozen. Wave B is next.
+
+
+
 ## Phase 2 Wave A — Grouping & orientation (2026-07-10)
 
 Nested feature flag `clinicalRedesignPhase2WaveA` (env `REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_A`, default `on`) with per-user localStorage override. Parent `clinicalRedesign` still required for any redesign surface to render.

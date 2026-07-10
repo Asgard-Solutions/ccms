@@ -193,14 +193,35 @@ function buildRows({
     });
   }
 
-  if (billingWarnings && billingWarnings.count > 0) {
+  // Billing row.
+  //  * null aggregate → caller lacks billing permission OR fetch failed:
+  //    keep the row hidden entirely to avoid a misleading zero.
+  //  * warning_count === 0 && blocked_count === 0 → nothing to review:
+  //    omit the row (matches the panel convention that surfaces
+  //    actionable state only).
+  //  * blocked_count > 0 → show blocked, deprioritise warnings.
+  //  * warning_count > 0 → show warning.
+  if (billingWarnings && (billingWarnings.blocked_count > 0 || billingWarnings.warning_count > 0)) {
+    const blocked = billingWarnings.blocked_count || 0;
+    const warnings = billingWarnings.warning_count || 0;
+    const topMessage = billingWarnings.top_message || null;
+    let value;
+    let tone;
+    if (blocked > 0) {
+      const warnSuffix = warnings > 0
+        ? ` and ${warnings} warning${warnings === 1 ? "" : "s"}`
+        : "";
+      value = `${blocked} blocked visit${blocked === 1 ? "" : "s"}${warnSuffix}${topMessage ? ` · ${topMessage}` : ""}`;
+      tone = "destructive";
+    } else {
+      value = `${warnings} billing warning${warnings === 1 ? "" : "s"} require review${topMessage ? ` · ${topMessage}` : ""}`;
+      tone = "warning";
+    }
     rows.push({
       key: "billing",
       label: "Billing",
-      value: `${billingWarnings.count} billing warning${
-        billingWarnings.count === 1 ? "" : "s"
-      } require review`,
-      tone: "warning",
+      value,
+      tone,
       cta: {
         label: "Review billing issues",
         slug: "review-billing-issues",

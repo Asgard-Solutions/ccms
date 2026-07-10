@@ -209,11 +209,30 @@ export default function ClinicalTabV2({
     [summary, encountersOpenCount],
   );
 
-  // Chart-wide billing warnings aggregation is intentionally deferred —
-  // per-encounter warnings still live inside BillingReadinessPanel.
-  // Populated as its own separate change (not bundled with this
-  // refactor's risk envelope).
-  const billingWarnings = useMemo(() => ({ count: 0 }), []);
+  // Chart-wide billing readiness. Reused from the aggregate endpoint;
+  // permission-scoped server-side, so a 403 / 5xx cleanly collapses to
+  // the hidden state below (no misleading "0 warnings" flash).
+  const [billingAggregate, setBillingAggregate] = useState(null); // null = unknown/hidden
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get(`/patients/${patientId}/clinical/billing-readiness/aggregate`)
+      .then((r) => {
+        if (!cancelled) setBillingAggregate(r.data);
+      })
+      .catch(() => {
+        // 403 (no billing permission), 5xx, or network — leave the
+        // aggregate as null so the panel omits the row instead of
+        // showing a misleading zero.
+        if (!cancelled) setBillingAggregate(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId]);
+
+  const billingWarnings = useMemo(() => billingAggregate, [billingAggregate]);
 
   // ---- scroll behaviour --------------------------------------------
   const jumpTo = useCallback((id, opts = {}) => {

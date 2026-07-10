@@ -32,6 +32,38 @@ router = APIRouter(prefix="/patients", tags=["clinical"])
 
 SCHEMA_VERSION = "1.0"
 
+# Approved (allow-listed) billing-readiness messages surfaced on the
+# chart-wide aggregate. Any check key not in this map is COUNTED (for
+# warning_count / blocked_count) but never contributes a human-readable
+# `top_message`. This gives ops a controlled vocabulary for the Current
+# Care Status row and prevents free-form check details from leaking.
+#
+# The listing order below IS the deterministic priority used to pick
+# `top_message` — blocked (fail) keys win over warning keys, and within
+# each severity band the first matching key in this iteration order is
+# chosen. Keep this list in lockstep with billing_readiness_router.py.
+_FAIL_KEYS_PRIORITY: dict[str, str] = {
+    "eligibility_verified":  "Insurance eligibility not verified",
+    "diagnosis_linked":      "Diagnosis linkage incomplete",
+    "note_signed":           "Note not signed",
+    "signature_present":     "Provider signature missing",
+    "note_exists":           "Chart note missing",
+    "treatment_documented":  "Treatment not documented",
+    "provider_present":      "Provider missing on encounter",
+    "patient_present":       "Patient missing on encounter",
+    "dos_present":           "Date of service missing",
+    "plan_linkage":          "Treatment plan linkage incomplete",
+}
+_WARN_KEYS_PRIORITY: dict[str, str] = {
+    "objective_findings":    "Objective findings not captured",
+    "response_documented":   "Response to care not documented",
+    "encounter_completed":   "Encounter not marked completed",
+    "appointment_linked":    "Appointment not linked",
+    "reexam_not_overdue":    "Re-exam overdue",
+    "eligibility_verified":  "Insurance eligibility not verified",
+}
+
+
 # ----- helpers ------------------------------------------------------
 
 def _encounter_workflow(enc: dict) -> str:
@@ -364,3 +396,127 @@ async def list_grouped_timeline(
         },
     )
     return {"schema_version": SCHEMA_VERSION, "events": events}
+
+
+# ----- /clinical/billing-readiness/aggregate -----------------------
+
+@router.get("/{patient_id}/clinical/billing-readiness/aggregate")
+async def get_billing_readiness_aggregate(
+    patient_id: str,
+    request: Request,
+    # Only roles that can already see billing readiness may pull the
+    # chart-wide count. Staff explicitly excluded — this mirrors the
+    # per-encounter endpoint's permission model in billing_readiness_router.
+    user: dict = Depends(require_role("admin", "doctor", "biller")),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Chart-wide billing-readiness aggregate.
+
+    Reuses the same tenant-scoped join keys as `encounters/grouped` —
+    never duplicates the readiness rule engine. Counts only rows the
+    caller is permitted to view. Free-form `detail` strings from
+    ReadinessCheck are NEVER returned; only allow-listed messages via
+    `_FAIL_KEYS_PRIORITY` / `_WARN_KEYS_PRIORITY`.
+    """
+    db = get_db_write()
+    await _load_patient(db, patient_id, ctx)
+
+    scope = scoped_filter({"patient_id": patient_id}, ctx, location_scoped=False)
+    if scope.get("__deny__"):
+        return {
+            "schema_version": SCHEMA_VERSION,
+            "warning_count": 0,
+            "blocked_count": 0,
+            "top_message": None,
+            "status": "ready",
+        }
+
+    # Pull encounter ids first so we can associate readiness rows and
+    # surface orphans (readiness that references an encounter the caller
+    # can no longer read).
+    encounters = [d async for d in db.clinical_encounters.find(scope, {"_id": 0, "id": 1})]
+    visible_enc_ids = {e["id"] for e in encounters}
+
+    readiness_rows: list[dict] = [
+        d async for d in db.clinical_billing_readiness.find(scope, {"_id": 0})
+    ]
+
+    warning_count = 0
+    blocked_count = 0
+    # Track first-seen (highest priority) allow-listed key per severity band.
+    top_fail_key: Optional[str] = None
+    top_warn_key: Optional[str] = None
+    orphan_count = 0
+
+    for row in readiness_rows:
+        # Orphaned readiness: encounter no longer visible / linked.
+        if row.get("encounter_id") and row["encounter_id"] not in visible_enc_ids:
+            orphan_count += 1
+        checks = row.get("checks") or []
+        row_has_fail = False
+        row_has_warn = False
+        for c in checks:
+            if c.get("passed"):
+                continue
+            sev = c.get("severity")
+            key = c.get("key")
+            if sev == "fail":
+                row_has_fail = True
+                if key in _FAIL_KEYS_PRIORITY:
+                    # Priority: keep the first key we see in the FAIL
+                    # dict iteration order (Python 3.7+ preserves insert
+                    # order — that IS the priority).
+                    if top_fail_key is None:
+                        top_fail_key = key
+                    else:
+                        # Replace only if the current key has a lower
+                        # (i.e. later) position in the priority list.
+                        keys = list(_FAIL_KEYS_PRIORITY.keys())
+                        if keys.index(key) < keys.index(top_fail_key):
+                            top_fail_key = key
+            elif sev == "warn":
+                row_has_warn = True
+                if key in _WARN_KEYS_PRIORITY:
+                    if top_warn_key is None:
+                        top_warn_key = key
+                    else:
+                        keys = list(_WARN_KEYS_PRIORITY.keys())
+                        if keys.index(key) < keys.index(top_warn_key):
+                            top_warn_key = key
+        if row_has_fail:
+            blocked_count += 1
+        elif row_has_warn:
+            warning_count += 1
+
+    if blocked_count > 0:
+        overall_status = "blocked"
+    elif warning_count > 0:
+        overall_status = "warning"
+    else:
+        overall_status = "ready"
+
+    if top_fail_key:
+        top_message = _FAIL_KEYS_PRIORITY[top_fail_key]
+    elif top_warn_key:
+        top_message = _WARN_KEYS_PRIORITY[top_warn_key]
+    else:
+        top_message = None
+
+    await audit_success(
+        user, "clinical.billing_readiness.aggregate_viewed", request,
+        entity_type="patient", entity_id=patient_id, phi_accessed=False,
+        metadata={
+            "schema_version": SCHEMA_VERSION,
+            "warning_count": warning_count,
+            "blocked_count": blocked_count,
+            "orphan_count": orphan_count,
+            "status": overall_status,
+        },
+    )
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "warning_count": warning_count,
+        "blocked_count": blocked_count,
+        "top_message": top_message,
+        "status": overall_status,
+    }
