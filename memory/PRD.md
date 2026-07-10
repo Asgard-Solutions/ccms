@@ -1,6 +1,40 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+## Phase 2 close-out — baseline frozen (2026-07-10)
+
+Two remaining Wave B items completed. Phase 2 is now **frozen**; Phase 3 Slice 1 starts in the next session.
+
+### §4 Diagnosis-row redesign (complete)
+`pages/clinical/DiagnosesCard.jsx`:
+- Row now uses `StatusBadge` (`record_state` dim) to display **Active** or **Resolved** — never colour-only.
+- New classification strip surfaces up to three badges: **Clinical** (always), **Billing** (when `billable !== false`), **Problem list** (when `status=active` and `is_primary=true`). Test ids `dx-<id>-classifications`, `dx-<id>-billing`, `dx-<id>-problem-list`.
+- New **View history** action (`dx-<id>-history`) opens `DiagnosisHistoryDialog` showing deterministic state changes captured on the record itself (created / updated / resolved) — no invented data, no new endpoint.
+- **Edit**, **Mark resolved**, **Reactivate** retained with their existing confirmation + audit paths (Mark-resolved dialog already warns of billing / plan / claim impact from the earlier Wave B pass).
+- **Set inactive** intentionally omitted (not disabled/greyed) per your direction — mapping it to `resolved` would create misleading clinical/audit semantics.
+
+### §8 Treatment-plan segmented progress (complete)
+`pages/clinical/TreatmentPlansCard.jsx`:
+- Removed the thin `bg-primary` progress bar entirely.
+- Rendered `TreatmentPlanProgress` (built in Wave B) with `role="progressbar"`, three-segment bar, and numeric legend for completed / scheduled / remaining. Test id `plan-row-<id>-segmented`.
+- Existing plan actions, permissions, and business rules unchanged.
+
+### Flag matrix (verified via Playwright screenshot pass)
+All five combinations render as documented in `/app/memory/PHASE2_WAVE_B_UAT.md`.
+
+### Documented follow-up (backend status-model decision required)
+- **`inactive` diagnosis status** — the app currently supports only `active` / `resolved`. Adding a first-class `inactive` state needs:
+  1. Backend model + endpoint change on `diagnoses`.
+  2. Migration plan for existing rows.
+  3. UI action wiring + confirmation.
+  4. Audit + billing linkage impact review.
+  Deferred until that backend decision lands.
+
+### Baseline
+Phase 2 (Wave A + Wave B + billing-readiness aggregate + Phase 2 close-out) is FROZEN. Phase 3 Slice 1 (cross-record linking + return-state + Next Actions) is next session.
+
+
+
 ## Phase 2 Wave B — History, diagnoses, plans, re-exam (2026-07-10)
 
 New independent nested flag `clinicalRedesignPhase2WaveB` (env `REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_B`, default `on`). Parent `clinicalRedesign` still required. Independent rollback from Wave A verified.

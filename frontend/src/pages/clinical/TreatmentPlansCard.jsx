@@ -10,6 +10,7 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Loader2, PlusCircle, Target, Activity } from "lucide-react";
 import { api, formatApiError } from "../../api/client";
+import TreatmentPlanProgress from "./TreatmentPlanProgress";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -209,14 +210,17 @@ export default function TreatmentPlansCard({ patientId, canWrite, episodes = [],
                     </div>
                   </div>
                 </div>
-                {pg.percent != null && (
-                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                    <div
-                      className="h-full rounded-full bg-primary transition-all"
-                      style={{ width: `${pg.percent}%` }}
-                    />
-                  </div>
-                )}
+                {/* Legacy thin bar replaced by segmented progress below. */}
+                <div className="mt-3">
+                  <TreatmentPlanProgress
+                    plan={{
+                      visits_completed: pg.visits_completed,
+                      visits_scheduled: pg.visits_scheduled,
+                      total_visits_planned: pg.total_visits,
+                    }}
+                    testId={`plan-row-${p.id}-segmented`}
+                  />
+                </div>
               </button>
             );
           })}
