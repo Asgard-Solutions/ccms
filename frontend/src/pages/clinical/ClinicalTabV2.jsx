@@ -26,6 +26,7 @@ import { api, formatApiError } from "../../api/client";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
 import { formatDate, formatDateTime } from "../../utils/time";
+import { trackUiEvent } from "../../utils/telemetry";
 
 import IntakeHistoryCard from "./IntakeHistoryCard";
 import DiagnosesCard from "./DiagnosesCard";
@@ -668,6 +669,22 @@ export default function ClinicalTabV2({
         api.get(`/patients/${patientId}/clinical/history`),
         api.get(`/patients/${patientId}/clinical/treatment-plans`),
       ]);
+      // Report per-section load failures (no PHI, only section slug).
+      const sectionMap = [
+        [sumRes, "summary"],
+        [epRes, "summary"],
+        [dxRes, "diagnoses"],
+        [histRes, "history"],
+        [planRes, "care-plan"],
+      ];
+      for (const [res, section] of sectionMap) {
+        if (res.status === "rejected") {
+          const code = res.reason?.response?.status
+            ? String(res.reason.response.status)
+            : "network_error";
+          trackUiEvent("clinical.section.load_failed", { section, error_code: code });
+        }
+      }
       setSummary(sumRes.status === "fulfilled" ? sumRes.value.data : {});
       setEpisodes(epRes.status === "fulfilled" ? epRes.value.data : []);
       setDiagnoses(dxRes.status === "fulfilled" ? dxRes.value.data : []);
@@ -678,7 +695,13 @@ export default function ClinicalTabV2({
       }
     } catch (e) {
       setErr(formatApiError(e));
+      trackUiEvent("clinical.section.load_failed", { section: "summary", error_code: "load_exception" });
     }
+  }, [patientId]);
+
+  // Fire layout-activated exactly once per patient mount.
+  useEffect(() => {
+    trackUiEvent("clinical.layout.activated", { layout: "v2" });
   }, [patientId]);
 
   useEffect(() => {
@@ -789,9 +812,9 @@ export default function ClinicalTabV2({
         window.history.replaceState(null, "", hash);
       }
     }
-    // Suspend the scrollspy observer briefly so the user's intent isn't
-    // reverted by the section that happens to sit inside the activation
-    // band as the smooth-scroll passes through.
+    if (opts.userInitiated) {
+      trackUiEvent("clinical.nav.jump", { section: id });
+    }
     suppressObserverUntil.current = Date.now() + 600;
     el.scrollIntoView({ behavior: "smooth", block: "start" });
     setActiveId(id);

@@ -1,14 +1,14 @@
 /**
  * Node 20 built-in test runner:
- *   node --test src/pages/patientWizardLogic.test.js
+ *   node --test src/pages/patientWizardLogic.test.mjs
  *
  * Covers Phase 3 business logic — conditional visibility + validation
  * rules + chiropractic option lists + payload shaping.
  */
-const test = require("node:test");
-const assert = require("node:assert/strict");
+import test from "node:test";
+import assert from "node:assert/strict";
 
-const {
+import {
   PAIN_AREA_OPTIONS,
   SYMPTOM_OPTIONS,
   ONSET_TYPE_OPTIONS,
@@ -25,7 +25,12 @@ const {
   deriveCaseType,
   mergeList,
   splitName,
-} = require("./patientWizardLogic");
+  EMPTY_FORM,
+  payloadToForm,
+  draftStorageKey,
+  isDraftFresh,
+  formHasAnyInput,
+} from "./patientWizardLogic.js";
 
 // Deterministic "today" for age & future-date logic.
 const TODAY = new Date(Date.UTC(2026, 1, 20)); // 2026-02-20
@@ -560,14 +565,7 @@ test("validateAll + buildPayload together gate a realistic minor + PI intake", (
 // ---------------------------------------------------------------------------
 // Phase 5 — payloadToForm round-trip + autosave draft helpers
 // ---------------------------------------------------------------------------
-
-const {
-  EMPTY_FORM,
-  payloadToForm,
-  draftStorageKey,
-  isDraftFresh,
-  formHasAnyInput,
-} = require("./patientWizardLogic");
+// (imports for these live in the file-level `import` block at the top)
 
 test("payloadToForm — undefined / null input returns the empty form", () => {
   assert.deepEqual(payloadToForm(undefined), { ...EMPTY_FORM });

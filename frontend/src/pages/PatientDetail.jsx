@@ -7,6 +7,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useProviders } from "../contexts/ProvidersContext";
 import { formatDate, formatDateTime, relativeFromNow } from "../utils/time";
 import { useFeatureFlag } from "../utils/featureFlags";
+import { trackUiEvent } from "../utils/telemetry";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -987,6 +988,15 @@ export default function PatientDetail() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(() => searchParams.get("tab") || "overview");
   const [clinicalRedesignOn] = useFeatureFlag("clinicalRedesign");
+
+  // Fire legacy-layout activation once whenever this patient's Clinical tab
+  // resolves to the v1 experience. v2 activation is tracked inside
+  // ClinicalTabV2 itself so the two events stay symmetric.
+  useEffect(() => {
+    if (tab === "clinical" && !clinicalRedesignOn) {
+      trackUiEvent("clinical.layout.activated", { layout: "v1" });
+    }
+  }, [tab, clinicalRedesignOn, id]);
   useEffect(() => {
     const urlTab = searchParams.get("tab");
     if (urlTab && urlTab !== tab) setTab(urlTab);

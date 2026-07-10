@@ -1,6 +1,59 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+## Phase 1 Clinical Redesign — Release hardening (2026-07-10)
+
+Follow-up to the Phase 1 UX ship. All 5 items requested by the user closed out.
+
+### 1. Non-passing tests dispositioned
+`/app/memory/PHASE1_TEST_DISPOSITION.md`
+- (a) back-to-top blocked by preview watermark → **accepted limitation** (preview-env only). Mitigated by raising `clinical-back-to-top` to `z-50`.
+- (b) `aria-current` on Outcomes did not stick → **defect, FIXED** with scroll-end guard + `suppressObserverUntil` window on programmatic jumps.
+- Retest expectation: 64/64 direct assertions.
+
+### 2. 10-scenario UAT matrix authored
+`/app/memory/PHASE1_UAT.md` — signable checklist for:
+1. Active episode + plan · 2. No active episode · 3. Missing intake · 4. Positive red-flags · 5. Negative red-flags · 6. Billing warnings · 7. No imaging · 8. No outcomes · 9. No scheduled re-exam · 10. Restricted permissions · 11. Masked vs unmasked · plus keyboard, deep-link, reduced-motion checks. Includes tester sign-off table.
+
+### 3. Feature-flag rollback validated in production-like build
+- Compiled `frontend/build/` with `REACT_APP_CLINICAL_REDESIGN=off` → **success, 16.1 s** (fixed a pre-existing CJS-vs-ESM regression in `patientWizardLogic.js` blocking prod builds — converted `module.exports` to `export {}` and updated the `node --test` file accordingly).
+- Compiled again with `REACT_APP_CLINICAL_REDESIGN=on` → **success**.
+- Bundle grep shows both `patient-clinical-tab` and `patient-clinical-tab-v2` test IDs present → the flag-gated switch is in the shipped bundle.
+- Node test suite (`patientWizardLogic.test.mjs`) — **39/39 tests pass** after ESM conversion.
+- Runtime override test: `localStorage.setItem('ccms.flags.clinicalRedesign','off')` + reload → legacy v1 renders. Remove key → v2 renders again. End-to-end matrix (env=on / override=off / override cleared) verified in one Playwright pass.
+
+### 4. Archive wording validated against backend + policy docs
+`/app/memory/ARCHIVE_POLICY_VALIDATION.md`
+- UI says: "Archive this patient? … retained according to the 7-year record-retention policy. This action is audited and can only be reversed by an authorized user."
+- Backend truth (`services/patient/router.py`): `RETENTION_YEARS = 7`, sets `status='deleted'`, `deleted_at`, `deleted_by`, `retention_until = now + 7 y`. Requires `admin` + reauth + ≥8-char reason + no legal-hold. Emits `audit_success("patient.soft_deleted", …, phi_accessed=True)`.
+- Cross-checked against `PRIVACY_AND_RETENTION.md`, `HIPAA_COMPLIANCE.md`, `COMPLIANCE_BASELINE.md`, `authz/permission_catalog.py`, `privacy/inventory.py` — all match.
+- Caveat filed: `RETENTION_YEARS` is hard-coded; must be env-driven before jurisdiction rollouts (per `PRIVACY_AND_RETENTION.md:99`).
+
+### 5. Basic PHI-free telemetry added
+Backend: `POST /api/telemetry/ui-event` (new `services/telemetry/router.py`).
+- Pydantic `model_config = {"extra": "forbid"}` **rejects any unknown key** — verified with a `patient_id: "leak"` probe returning **422 `extra_forbidden`**.
+- Allowed events: `clinical.layout.activated` · `clinical.nav.jump` · `clinical.section.load_failed`.
+- Allowed sections: enum of the 8 Clinical section slugs. No free-form strings, no IDs.
+- Writes to `ui_telemetry_events` with `tenant_id`, `actor_id`, `actor_role`, `event`, `layout`, `section`, `error_code`, `ts`, `ua`.
+
+Frontend: `/app/frontend/src/utils/telemetry.js` — fire-and-forget client with 500 ms dedupe. Wired into:
+- `ClinicalTabV2` on mount → `layout.activated { layout: "v2" }`
+- `ClinicalTabV2.jumpTo` when `userInitiated` → `nav.jump { section }`
+- `ClinicalTabV2.load` Promise.allSettled rejects → `section.load_failed { section, error_code }`
+- `PatientDetail` when `tab === 'clinical' && flag off` → `layout.activated { layout: "v1" }`
+
+### Files added / modified
+- **new**: `/app/backend/services/telemetry/__init__.py`, `/app/backend/services/telemetry/router.py`, `/app/frontend/src/utils/telemetry.js`, `/app/memory/PHASE1_TEST_DISPOSITION.md`, `/app/memory/PHASE1_UAT.md`, `/app/memory/ARCHIVE_POLICY_VALIDATION.md`
+- **modified**: `/app/backend/server.py`, `/app/frontend/src/pages/clinical/ClinicalTabV2.jsx`, `/app/frontend/src/pages/PatientDetail.jsx`, `/app/frontend/src/pages/patientWizardLogic.js` (ESM), `/app/frontend/src/pages/patientWizardLogic.test.mjs` (renamed + ESM)
+
+### Not started (next in the user's recommended order)
+1. Component extraction from `ClinicalTabV2.jsx` (split into `PatientContextHeader`, `SectionNav`, `CurrentCareStatusPanel`, `SummaryTiles`).
+2. Chart-wide billing aggregation → populate the currently-hidden care-status "billing warnings" row.
+3. Today's Chart Preview dashboard widget (deferred until Phase 2 groundwork).
+4. Phase 2 proper.
+
+
+
 ## Phase 1 — Clinical Tab redesign (2026-07-10, P1)
 
 **User request:** Redesign Phase 1 of Patient Profile > Clinical to improve orientation, reduce noise, make missing info understandable, and surface actionable issues. Keep existing legacy Clinical page as feature-flagged fallback.
