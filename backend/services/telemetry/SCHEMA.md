@@ -38,7 +38,9 @@ Auto-attached server-side: `tenant_id`, `actor_id`, `actor_role`, `ts`,
 
 Persisted in `ui_telemetry_actions`.
 
-The one currently supported event:
+Two coexisting event shapes are validated on the same endpoint. Cross-field mixes (e.g., `action_slug` on a `next-action` event) are rejected **422**.
+
+### 1. Care-status CTA — legacy shape
 
 ```json
 {
@@ -58,9 +60,31 @@ The one currently supported event:
 | `layout_version` | `v1` · `v2` |
 | `action_slug` | `open-encounter` · `add-note` · `record-outcome` · `schedule-visit` · `schedule-reexam` · `review-billing-issues` · `edit-missing-information` |
 
-All five fields are **required**. Any extra field returns
-**422 `extra_forbidden`**. Any unknown enum value returns
-**422 `literal_error`**.
+### 2. Next-action interaction — Phase 3 Slice 1
+
+```json
+{
+  "event_name":     "clinical_next_action_interaction",
+  "section_slug":   "next-actions",
+  "source_surface": "patient-clinical",
+  "layout_version": "v2",
+  "action_id":      "sign-unsigned-note",
+  "interaction":    "opened"
+}
+```
+
+| Field | Enum values |
+|---|---|
+| `event_name` | `clinical_next_action_interaction` |
+| `section_slug` | `next-actions` |
+| `source_surface` | `patient-clinical` |
+| `layout_version` | `v1` · `v2` |
+| `action_id` | `sign-unsigned-note` · `complete-missing-documentation` · `attach-or-link-diagnosis` · `open-blocked-billing-readiness` · `review-billing-warning` · `schedule-due-or-overdue-reexam` · `schedule-remaining-planned-visits` · `review-missing-required-intake` · `record-configured-outcome-measure` |
+| `interaction` | `opened` · `dismissed` |
+
+Only attempt-level interactions are tracked — downstream workflow success is inferred from the existing audit trail, never from UX telemetry.
+
+All required fields (per shape) must be present; any extra field returns **422 `extra_forbidden`**.
 
 Auto-attached server-side: `tenant_id`, `actor_id`, `actor_role`, `ts`,
 `ua` (first 200 chars). Response: **204**.

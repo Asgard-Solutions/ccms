@@ -37,6 +37,16 @@ export function PermissionsProvider({ children }) {
     refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    // Effective permissions change → wipe any transient patient state.
+    // Guarded so we only fire when the identity of the permission set
+    // materially changes (role_keys join, tenant switch), not just
+    // when the reference object churns.
+    if (typeof window === "undefined") return;
+    if (!effective) return;
+    window.dispatchEvent(new CustomEvent("ccms-session-reset"));
+  }, [effective?.role_keys?.join("|"), effective?.tenant_id]);
+
   const byKey = useMemo(() => {
     const m = new Map();
     (effective?.permissions || []).forEach((p) => m.set(p.key, p));

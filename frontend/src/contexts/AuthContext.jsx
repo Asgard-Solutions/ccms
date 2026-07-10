@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { api, formatApiError } from "../api/client";
 import { useTheme } from "./ThemeContext";
+import { emitSessionReset } from "../pages/clinical/useClinicalReturnState";
 
 const AuthContext = createContext(null);
 
@@ -20,7 +21,6 @@ export function AuthProvider({ children }) {
   // trigger a false re-sync that rolls us back to the persisted value.
   useEffect(() => {
     if (user) syncFromUser(user);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.theme, syncFromUser]);
 
   const fetchMe = useCallback(async () => {
@@ -54,6 +54,10 @@ export function AuthProvider({ children }) {
     }
     setUser(null);
     setMfaContext(null);
+    // Wipe any patient-specific transient UI state (return-state hook,
+    // dismissed next actions, expanded rows, etc.). Durable
+    // preferences on the server side stay untouched.
+    emitSessionReset();
   }, []);
 
   /** Idle timeout — only active while authenticated. */

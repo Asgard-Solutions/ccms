@@ -680,6 +680,7 @@ export default function DiagnosesCard({ patientId, episodes = [], canWrite, onRe
               onEdit={setEditing}
               onResolve={setResolving}
               onReactivate={handleReactivate}
+              onViewHistory={setViewHistoryDx}
             />
           ))}
         </div>

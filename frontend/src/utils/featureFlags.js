@@ -23,6 +23,7 @@ const FLAG_DEFAULTS = {
   clinicalRedesign: "on",
   clinicalRedesignPhase2WaveA: "on",
   clinicalRedesignPhase2WaveB: "on",
+  clinicalRedesignPhase3: "on",
 };
 
 // Explicit env-var mapping so grep/CI can find the strings.
@@ -30,6 +31,16 @@ const ENV_VAR_MAP = {
   clinicalRedesign: "REACT_APP_CLINICAL_REDESIGN",
   clinicalRedesignPhase2WaveA: "REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_A",
   clinicalRedesignPhase2WaveB: "REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_B",
+  clinicalRedesignPhase3: "REACT_APP_CLINICAL_REDESIGN_PHASE3",
+};
+
+// Nested-flag dependency: a child flag is only "on" if its parent chain is on.
+// This keeps the surface tiny (no context) while still guaranteeing a rollback
+// of the parent instantly disables every dependent slice.
+const FLAG_PARENTS = {
+  clinicalRedesignPhase2WaveA: "clinicalRedesign",
+  clinicalRedesignPhase2WaveB: "clinicalRedesign",
+  clinicalRedesignPhase3: "clinicalRedesign",
 };
 
 function normalise(raw) {
@@ -55,12 +66,24 @@ function readEnv(key) {
   return normalise(process.env[envKey]);
 }
 
-export function getFlag(key) {
+function ownFlag(key) {
   const storage = readStorage(key);
   if (storage) return storage;
   const env = readEnv(key);
   if (env) return env;
   return FLAG_DEFAULTS[key] || "off";
+}
+
+export function getFlag(key) {
+  const own = ownFlag(key);
+  if (own !== "on") return own;
+  // Walk parent chain — a child flag can never be "on" if any ancestor is off.
+  let parent = FLAG_PARENTS[key];
+  while (parent) {
+    if (ownFlag(parent) !== "on") return "off";
+    parent = FLAG_PARENTS[parent];
+  }
+  return "on";
 }
 
 export function isFlagOn(key) {

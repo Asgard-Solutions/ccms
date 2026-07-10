@@ -86,3 +86,40 @@ export function trackCareStatusAction(actionSlug) {
   const key = `care-status:${actionSlug}`;
   dedupe(key, () => firePost("/telemetry/ui-action", body));
 }
+
+/**
+ * Next-actions telemetry — Phase 3 Slice 1.
+ *
+ * Mirrors the backend `NextActionId` + `NextActionInteraction` literals
+ * in `services/telemetry/router.py`. Only attempt-level interaction is
+ * tracked — success/failure of the downstream workflow is inferred
+ * from the existing audit trail, never from UX telemetry.
+ */
+export const NEXT_ACTION_IDS = new Set([
+  "sign-unsigned-note",
+  "complete-missing-documentation",
+  "attach-or-link-diagnosis",
+  "open-blocked-billing-readiness",
+  "review-billing-warning",
+  "schedule-due-or-overdue-reexam",
+  "schedule-remaining-planned-visits",
+  "review-missing-required-intake",
+  "record-configured-outcome-measure",
+]);
+
+const NEXT_ACTION_INTERACTIONS = new Set(["opened", "dismissed"]);
+
+export function trackNextActionInteraction({ action_id, interaction }) {
+  if (!NEXT_ACTION_IDS.has(action_id)) return;
+  if (!NEXT_ACTION_INTERACTIONS.has(interaction)) return;
+  const body = {
+    event_name: "clinical_next_action_interaction",
+    section_slug: "next-actions",
+    source_surface: "patient-clinical",
+    layout_version: "v2",
+    action_id,
+    interaction,
+  };
+  const key = `next-action:${action_id}:${interaction}`;
+  dedupe(key, () => firePost("/telemetry/ui-action", body));
+}

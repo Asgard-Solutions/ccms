@@ -39,6 +39,8 @@ import GroupedTimelineCard from "./GroupedTimelineCard";
 import SafetySummary from "./SafetySummary";
 import IntakeHistoryProgressive from "./IntakeHistoryProgressive";
 import ReExamSection from "./ReExamSection";
+import NextActionsPanel from "./NextActionsPanel";
+import { getOrCreateRouteInstanceToken } from "./useClinicalReturnState";
 import { useFeatureFlag } from "../../utils/featureFlags";
 import {
   NAV_ITEMS,
@@ -78,13 +80,22 @@ export default function ClinicalTabV2({
   const navigate = useNavigate();
   const [phase2WaveA] = useFeatureFlag("clinicalRedesignPhase2WaveA");
   const [phase2WaveB] = useFeatureFlag("clinicalRedesignPhase2WaveB");
+  const [phase3] = useFeatureFlag("clinicalRedesignPhase3");
   const [summary, setSummary] = useState(null);
   const [episodes, setEpisodes] = useState(null);
   const [diagnoses, setDiagnoses] = useState(null);
   const [history, setHistory] = useState(null);
   const [activePlan, setActivePlan] = useState(null);
+  const [encounterGroups, setEncounterGroups] = useState([]);
   const [encountersOpenCount, setEncountersOpenCount] = useState(0);
   const [err, setErr] = useState(null);
+
+  // Route-instance token. Generated once on chart mount and mirrored
+  // into `history.state.ccms_route_token` so browser back/forward and
+  // in-tab navigation preserve return state without ever exposing a
+  // patient identifier. Direct URL entry starts from a fresh token
+  // and empty state — no cross-chart bleed-through.
+  const [routeInstanceToken] = useState(() => getOrCreateRouteInstanceToken());
 
   const [activeId, setActiveId] = useState("summary");
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -162,6 +173,27 @@ export default function ClinicalTabV2({
       cancelled = true;
     };
   }, [patientId]);
+
+  // Grouped encounters power Phase 3 next-action rules that depend on
+  // per-visit documentation / billing status. When Wave A is off, the
+  // grouped endpoint is still safe to call — it's presentation-layer
+  // and does not mutate source records — but we skip it to keep the
+  // legacy layout's network footprint unchanged.
+  useEffect(() => {
+    if (!phase3) return undefined;
+    let cancelled = false;
+    api
+      .get(`/patients/${patientId}/clinical/encounters/grouped`)
+      .then((r) => {
+        if (!cancelled) setEncounterGroups(r.data?.groups || []);
+      })
+      .catch(() => {
+        if (!cancelled) setEncounterGroups([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [patientId, phase3]);
 
   // ---- derived ------------------------------------------------------
   const initials = useMemo(() => getInitials(patient), [patient]);
@@ -409,6 +441,21 @@ export default function ClinicalTabV2({
         />
 
         <SummaryTiles summary={summary} onJumpTo={jumpTo} />
+
+        {phase3 && (
+          <NextActionsPanel
+            canWrite={canWrite}
+            summary={summary}
+            activePlan={activePlan}
+            primaryDx={primaryDx}
+            missingIntakeCount={missingIntakeCount}
+            reExamDue={reExamDue}
+            billingAggregate={billingAggregate}
+            encounterGroups={encounterGroups}
+            routeInstanceToken={routeInstanceToken}
+            onJumpTo={jumpTo}
+          />
+        )}
 
         {phase2WaveA && (
           <ActiveEpisodeCard

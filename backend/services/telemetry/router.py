@@ -111,6 +111,7 @@ ActionSlug = Literal[
 # tracked CTAs).
 ActionSectionSlug = Literal[
     "current-care-status",
+    "next-actions",
 ]
 
 SourceSurface = Literal[
@@ -119,17 +120,71 @@ SourceSurface = Literal[
 
 ActionEventName = Literal[
     "clinical_care_status_action_selected",
+    "clinical_next_action_interaction",
 ]
+
+# Phase 3 Slice 1 — deterministic next-action rule ids. Every id here
+# maps 1:1 to a rule in `frontend/src/pages/clinical/nextActionsEngine.js`.
+# Widening the list requires updating BOTH files + SCHEMA.md +
+# test_next_action_telemetry.py in the same change.
+NextActionId = Literal[
+    "sign-unsigned-note",
+    "complete-missing-documentation",
+    "attach-or-link-diagnosis",
+    "open-blocked-billing-readiness",
+    "review-billing-warning",
+    "schedule-due-or-overdue-reexam",
+    "schedule-remaining-planned-visits",
+    "review-missing-required-intake",
+    "record-configured-outcome-measure",
+]
+
+NextActionInteraction = Literal["opened", "dismissed"]
 
 
 class UIActionPayload(BaseModel):
+    """Union payload for the `/telemetry/ui-action` endpoint. Two shapes:
+
+    * Care-status action — legacy shape (`action_slug` required, no
+      next-action fields).
+    * Next-action interaction — Phase 3 shape (`action_id` + `interaction`
+      required, no `action_slug`).
+
+    We keep the two shapes on one endpoint with `extra="forbid"` and
+    validate cross-field consistency in the validator below so a payload
+    that mixes fields (e.g., action_slug + action_id) is 422.
+    """
+
     model_config = {"extra": "forbid"}
 
     event_name: ActionEventName
     section_slug: ActionSectionSlug
-    action_slug: ActionSlug
     source_surface: SourceSurface
     layout_version: LayoutVersion
+
+    # Care-status shape:
+    action_slug: Optional[ActionSlug] = None
+
+    # Next-action shape:
+    action_id: Optional[NextActionId] = None
+    interaction: Optional[NextActionInteraction] = None
+
+    def model_post_init(self, __context) -> None:  # type: ignore[override]
+        # Enforce shape ↔ event_name coupling. Reject cross-field mixes.
+        if self.event_name == "clinical_care_status_action_selected":
+            if self.action_slug is None:
+                raise ValueError("action_slug is required for care-status events")
+            if self.action_id is not None or self.interaction is not None:
+                raise ValueError("next-action fields not allowed for care-status events")
+            if self.section_slug != "current-care-status":
+                raise ValueError("section_slug must be 'current-care-status' for care-status events")
+        elif self.event_name == "clinical_next_action_interaction":
+            if self.action_id is None or self.interaction is None:
+                raise ValueError("action_id and interaction are required for next-action events")
+            if self.action_slug is not None:
+                raise ValueError("action_slug not allowed for next-action events")
+            if self.section_slug != "next-actions":
+                raise ValueError("section_slug must be 'next-actions' for next-action events")
 
 
 @router.post("/ui-action", status_code=status.HTTP_204_NO_CONTENT)
@@ -145,11 +200,16 @@ async def record_ui_action(
         "actor_role": user.get("role"),
         "event_name": payload.event_name,
         "section_slug": payload.section_slug,
-        "action_slug": payload.action_slug,
         "source_surface": payload.source_surface,
         "layout_version": payload.layout_version,
         "ts": datetime.now(timezone.utc).isoformat(),
         "ua": (request.headers.get("user-agent") or "")[:200] or None,
     }
+    if payload.action_slug is not None:
+        doc["action_slug"] = payload.action_slug
+    if payload.action_id is not None:
+        doc["action_id"] = payload.action_id
+    if payload.interaction is not None:
+        doc["interaction"] = payload.interaction
     await db.ui_telemetry_actions.insert_one(doc)
     return None
