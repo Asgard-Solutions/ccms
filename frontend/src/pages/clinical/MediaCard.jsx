@@ -162,15 +162,30 @@ export default function MediaCard({ patientId, canWrite, onReauthNeeded }) {
       ) : filtered.length === 0 ? (
         <div
           data-testid="media-empty"
-          className="rounded-lg border border-dashed border-border bg-card p-8 text-center"
+          className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-dashed border-border bg-card/60 px-5 py-4"
         >
-          <ImageIcon className="mx-auto h-8 w-8 text-muted-foreground" />
-          <p className="mt-3 font-display text-base font-semibold text-foreground">
-            No media uploaded
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Upload x-rays, MRI/CT reports, ultrasound or clinical photos here.
-          </p>
+          <div className="flex items-center gap-3">
+            <ImageIcon className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+            <div>
+              <p className="text-sm font-medium text-foreground">
+                No imaging uploaded
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Upload x-rays, MRI or CT reports, ultrasound, clinical photos, or outside records.
+              </p>
+            </div>
+          </div>
+          {canWrite && (
+            <Button
+              size="sm"
+              onClick={() => setUploadOpen(true)}
+              data-testid="media-empty-upload"
+              className="rounded-full"
+            >
+              <PlusCircle className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              Upload
+            </Button>
+          )}
         </div>
       ) : (
         <div data-testid="media-grid" className="grid grid-cols-2 gap-3 sm:grid-cols-4">

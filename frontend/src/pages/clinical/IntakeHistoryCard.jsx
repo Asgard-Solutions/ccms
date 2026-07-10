@@ -57,35 +57,39 @@ const DICT_PREVIEW = [
 ];
 
 function SourceBadge({ meta }) {
-  if (!meta || !meta.source) {
+  // Phase 1 redesign: field-level "From intake" badges are too noisy. Only
+  // surface a badge when the value has been touched by a clinician (that's
+  // useful, positive provenance). Intake origin lives on the section header.
+  if (meta?.source === "provider_edit") {
     return (
-      <Badge variant="outline" className="text-[10px] uppercase tracking-wider">
-        Not set
+      <Badge variant="default" className="text-[10px] font-medium capitalize">
+        Provider edit
       </Badge>
     );
   }
-  return (
-    <Badge
-      variant={meta.source === "provider_edit" ? "default" : "outline"}
-      className="text-[10px] uppercase tracking-wider"
-    >
-      {meta.source === "provider_edit" ? "Provider edit" : "From intake"}
-    </Badge>
-  );
+  return null;
 }
 
-function renderReadValue(value) {
+function renderReadValue(value, opts = {}) {
+  const emptyLabel = opts.required ? "Missing required information" : "Not documented";
+  const emptyTone = opts.required
+    ? "text-warning italic"
+    : "text-muted-foreground italic";
   if (value === null || value === undefined || value === "") {
-    return <span className="text-muted-foreground">—</span>;
+    return <span className={emptyTone}>{emptyLabel}</span>;
   }
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (Array.isArray(value)) {
-    if (!value.length) return <span className="text-muted-foreground">—</span>;
+    if (!value.length) return <span className={emptyTone}>{emptyLabel}</span>;
     return value.join(", ");
   }
   if (typeof value === "object") {
+    // Special case: red-flag screening renders as a clinical sentence.
+    if (opts.dictKey === "red_flag_screening") {
+      return renderRedFlagScreening(value);
+    }
     const pairs = Object.entries(value).filter(([, v]) => v !== null && v !== undefined && v !== "");
-    if (!pairs.length) return <span className="text-muted-foreground">—</span>;
+    if (!pairs.length) return <span className={emptyTone}>{emptyLabel}</span>;
     return (
       <ul className="list-disc pl-5 text-sm">
         {pairs.map(([k, v]) => (
@@ -100,7 +104,33 @@ function renderReadValue(value) {
   return String(value);
 }
 
-function FieldRow({ label, meta, value, editing, children, testId }) {
+function renderRedFlagScreening(rf) {
+  const entries = Object.entries(rf || {}).filter(
+    ([, v]) => typeof v === "boolean",
+  );
+  if (entries.length === 0) {
+    return <span className="text-muted-foreground italic">Not documented</span>;
+  }
+  const positives = entries.filter(([, v]) => v === true).map(([k]) => k.replace(/_/g, " "));
+  const negatives = entries.filter(([, v]) => v === false).map(([k]) => k.replace(/_/g, " "));
+  return (
+    <div className="space-y-1 text-sm">
+      {positives.length > 0 ? (
+        <div className="rounded-sm border border-destructive/30 bg-destructive-soft px-2 py-1 text-destructive">
+          <span className="font-medium">Positive findings:</span>{" "}
+          {positives.join(", ")}
+        </div>
+      ) : (
+        <div className="text-foreground">
+          No {negatives.slice(0, 3).join(", ")}
+          {negatives.length > 3 ? ", or other flags" : ""} reported.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FieldRow({ label, meta, value, editing, children, testId, required, dictKey }) {
   return (
     <div
       data-testid={testId}
@@ -110,7 +140,11 @@ function FieldRow({ label, meta, value, editing, children, testId }) {
         <Label className="font-semibold">{label}</Label>
         <SourceBadge meta={meta} />
       </div>
-      {editing ? children : <div className="text-sm">{renderReadValue(value)}</div>}
+      {editing ? children : (
+        <div className="text-sm">
+          {renderReadValue(value, { required, dictKey })}
+        </div>
+      )}
     </div>
   );
 }
@@ -282,9 +316,9 @@ export default function IntakeHistoryCard({ patientId, canWrite, onReauthNeeded 
           {lastImported && (
             <p
               data-testid="history-last-imported"
-              className="mt-1 text-xs text-muted-foreground"
+              className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-border bg-muted/40 px-2.5 py-0.5 text-xs text-muted-foreground"
             >
-              Last imported {lastImported}
+              Imported from patient intake on {lastImported}
             </p>
           )}
         </div>
@@ -422,6 +456,7 @@ export default function IntakeHistoryCard({ patientId, canWrite, onReauthNeeded 
             value={history[key]}
             editing={editing}
             testId={`history-field-${key}`}
+            required={key === "chief_complaint" || key === "history_of_present_illness"}
           >
             <Textarea
               rows={rows}
@@ -443,6 +478,7 @@ export default function IntakeHistoryCard({ patientId, canWrite, onReauthNeeded 
             value={history[key]}
             editing={editing}
             testId={`history-field-${key}`}
+            dictKey={key}
           >
             <Textarea
               rows={6}

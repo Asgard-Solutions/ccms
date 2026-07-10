@@ -1,11 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Download, Eye, EyeOff, FileText, Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Archive, Download, Eye, EyeOff, FileText, MoreHorizontal, Pencil, Plus, ShieldAlert, Trash2 } from "lucide-react";
 import { api, formatApiError } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { useProviders } from "../contexts/ProvidersContext";
 import { formatDate, formatDateTime, relativeFromNow } from "../utils/time";
+import { useFeatureFlag } from "../utils/featureFlags";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
 import { formatPhoneDisplay } from "../utils/phone";
 import { PatientWizardDialog } from "../components/patient-wizard/PatientWizardDialog";
 import { payloadToForm } from "./patientWizardLogic";
@@ -57,6 +66,7 @@ import PatientInsuranceManager from "./billing/PatientInsuranceManager";
 import { PatientEligibilityCard } from "./billing/PatientEligibilityCard";
 import ChargeCaptureDialog from "./billing/ChargeCaptureDialog";
 import ClinicalTab from "./clinical/ClinicalTab";
+import ClinicalTabV2 from "./clinical/ClinicalTabV2";
 
 // ---------------------------------------------------------------------------
 // Expanded-intake section renderers (Phase 4).
@@ -976,11 +986,11 @@ export default function PatientDetail() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(() => searchParams.get("tab") || "overview");
+  const [clinicalRedesignOn] = useFeatureFlag("clinicalRedesign");
   useEffect(() => {
     const urlTab = searchParams.get("tab");
     if (urlTab && urlTab !== tab) setTab(urlTab);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [searchParams, tab]);
   const canAddRecord = user.role === "admin" || user.role === "doctor";
   const canDelete = user.role === "admin";
   const canEditIntake = ["admin", "doctor", "staff"].includes(user.role);
@@ -1181,6 +1191,7 @@ export default function PatientDetail() {
     );
   }
 
+  const hasMoreActions = canUnmask || canExport || canDelete;
   return (
     <div data-testid="patient-detail-page" className="space-y-10 animate-in fade-in duration-300">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1189,43 +1200,62 @@ export default function PatientDetail() {
             <ArrowLeft className="mr-2 h-4 w-4" /> All patients
           </Link>
         </Button>
-        <div className="flex items-center gap-2">
-          {canUnmask && (
-            <Button
-              variant="outline"
-              onClick={() => {
-                const next = !unmask;
-                setUnmask(next);
-                load({ withUnmask: next, breakGlassReason: reason });
-              }}
-              data-testid="patient-unmask-toggle"
-              className="rounded-sm"
-            >
-              {unmask ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
-              {unmask ? "Mask" : "Unmask (audited)"}
-            </Button>
-          )}
-          {canExport && (
-            <Button
-              variant="outline"
-              onClick={exportPatient}
-              data-testid="patient-export-btn"
-              className="rounded-sm"
-            >
-              <Download className="mr-2 h-4 w-4" /> Export JSON
-            </Button>
-          )}
-          {canDelete && (
-            <Button
-              variant="outline"
-              onClick={() => setDeleteConfirm(true)}
-              data-testid="patient-delete-btn"
-              className="rounded-sm border-destructive text-destructive hover:bg-destructive-soft"
-            >
-              <Trash2 className="mr-2 h-4 w-4" /> Soft-delete
-            </Button>
-          )}
-        </div>
+        {hasMoreActions && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                data-testid="patient-more-actions-trigger"
+                className="rounded-full"
+              >
+                <MoreHorizontal className="mr-2 h-4 w-4" aria-hidden="true" />
+                More actions
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[260px]">
+              <DropdownMenuLabel>Patient record</DropdownMenuLabel>
+              {canUnmask && (
+                <DropdownMenuItem
+                  data-testid="patient-menu-toggle-unmask"
+                  onSelect={() => {
+                    const next = !unmask;
+                    setUnmask(next);
+                    load({ withUnmask: next, breakGlassReason: reason });
+                  }}
+                >
+                  {unmask ? (
+                    <EyeOff className="mr-2 h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <Eye className="mr-2 h-4 w-4" aria-hidden="true" />
+                  )}
+                  {unmask ? "Hide protected information" : "Reveal protected information"}
+                </DropdownMenuItem>
+              )}
+              {canExport && (
+                <DropdownMenuItem
+                  data-testid="patient-menu-export"
+                  onSelect={exportPatient}
+                >
+                  <Download className="mr-2 h-4 w-4" aria-hidden="true" />
+                  Export patient data
+                </DropdownMenuItem>
+              )}
+              {canDelete && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    data-testid="patient-menu-archive"
+                    onSelect={() => setDeleteConfirm(true)}
+                    className="text-destructive focus:bg-destructive-soft focus:text-destructive"
+                  >
+                    <Archive className="mr-2 h-4 w-4" aria-hidden="true" />
+                    Archive patient
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       <header className="flex flex-wrap items-start justify-between gap-6">
@@ -1307,16 +1337,31 @@ export default function PatientDetail() {
         </TabsContent>
 
         <TabsContent value="clinical" className="mt-6">
-          <ClinicalTab
-            patientId={id}
-            providers={providers}
-            canWrite={canAddRecord}
-            currentUser={user}
-            onReauthNeeded={() => {
-              setReauthIntent("clinical");
-              setReauthOpen(true);
-            }}
-          />
+          {clinicalRedesignOn ? (
+            <ClinicalTabV2
+              patientId={id}
+              patient={patient}
+              appointments={appointments}
+              providers={providers}
+              canWrite={canAddRecord}
+              currentUser={user}
+              onReauthNeeded={() => {
+                setReauthIntent("clinical");
+                setReauthOpen(true);
+              }}
+            />
+          ) : (
+            <ClinicalTab
+              patientId={id}
+              providers={providers}
+              canWrite={canAddRecord}
+              currentUser={user}
+              onReauthNeeded={() => {
+                setReauthIntent("clinical");
+                setReauthOpen(true);
+              }}
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="records" className="mt-6">
@@ -1532,31 +1577,35 @@ export default function PatientDetail() {
       <AlertDialog open={deleteConfirm} onOpenChange={(v) => !v && setDeleteConfirm(false)}>
         <AlertDialogContent data-testid="patient-delete-confirm" className="rounded-sm">
           <AlertDialogHeader>
-            <AlertDialogTitle className="font-display">Soft-delete patient?</AlertDialogTitle>
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-destructive" aria-hidden="true" />
+              <AlertDialogTitle className="font-display">Archive this patient?</AlertDialogTitle>
+            </div>
             <AlertDialogDescription>
-              The record will be archived and retained for 7 years, per our retention policy. It will
-              disappear from the active list but stay recoverable for compliance.
+              The patient will be removed from active workflows but retained according to the 7-year
+              record-retention policy. This action is audited and can only be reversed by an authorized user.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-1">
-            <Label>Reason (8+ characters)</Label>
+            <Label>Reason for archiving (8+ characters)</Label>
             <Textarea
               data-testid="patient-delete-reason"
               value={deleteReason}
               onChange={(e) => setDeleteReason(e.target.value)}
               rows={3}
               className="rounded-sm"
+              placeholder="e.g. Patient transferred care to another clinic on Jul 3."
             />
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel className="rounded-sm">Keep it</AlertDialogCancel>
+            <AlertDialogCancel className="rounded-sm">Keep active</AlertDialogCancel>
             <AlertDialogAction
               data-testid="patient-delete-confirm-btn"
               disabled={deleteReason.trim().length < 8}
               onClick={softDelete}
               className="rounded-sm bg-destructive hover:brightness-95"
             >
-              Soft-delete
+              Archive patient
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
