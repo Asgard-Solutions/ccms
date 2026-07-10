@@ -1109,11 +1109,17 @@ ClaimEventType = Literal[
     "ack_277ca_rejected",
     "outcome_recorded",
     "era_posted",
+    "accepted",
+    "paid",
+    "partially_paid",
+    "rejected",
     "denied",
     "appeal_filed",
     "assigned",
     "voided",
     "closed",
+    "followup_flagged",
+    "followup_cleared",
 ]
 
 
@@ -1138,7 +1144,10 @@ class ClaimEventPublic(BaseModel):
     # so the timeline can render "draft → ready" without re-joining.
     from_status: str | None = None
     to_status: str | None = None
-    occurred_at: str
+    # `occurred_at` is optional for legacy/demo-seeded rows where only
+    # `created_at` was persisted; callers should fall back to created_at
+    # in the UI when this is null.
+    occurred_at: str | None = None
     recorded_by: str | None = None
     created_at: str
 

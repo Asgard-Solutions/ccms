@@ -1,5 +1,22 @@
 # CCMS — Product Requirements & Architecture Notes
 
+
+## HOTFIX 2026-07-10 — Cloudflare 502 on login (recurring libmagic + ClaimEvent Literal)
+
+**User report:** Login attempts returned Cloudflare "origin returned invalid or incomplete response" (502).
+
+**Root cause (two issues stacked):**
+1. Container rebuild wiped the runtime apt install; `libmagic1`/`libmagic-dev` missing → `import magic` in `services/clinical/media_router.py` raised `ImportError` at boot → backend never started → Cloudflare 502 on every request including `/api/auth/login`.
+2. After libmagic was reinstalled and login worked, the ClaimDetail timeline crashed with `ResponseValidationError` because demo seed writes event_types (`accepted`, `paid`, `partially_paid`, `rejected`, `followup_flagged`) not present in `ClaimEventType` Literal, and seeded rows lacked required `occurred_at`.
+
+**Fix:**
+- Reinstalled `libmagic1 libmagic-dev libmagic-mgc` (persistent fix requires adding to base image; if it recurs, run `sudo apt-get install -y libmagic1 libmagic-dev libmagic-mgc` and restart backend).
+- Extended `ClaimEventType` Literal in `/app/backend/services/billing/models.py` to include `accepted`, `paid`, `partially_paid`, `rejected`, `followup_flagged`, `followup_cleared`.
+- Made `ClaimEventPublic.occurred_at` optional (fall back to `created_at` in UI).
+
+**Verified:** Local + external `/api/health` = 200; external login = 200; UI screenshot confirms dashboard loads with "Welcome back" toast; PIN reauth dialog behaves normally.
+
+
 **Last updated:** 2026-05-04 (Demo PIN seeder + Live submission timeline — VERIFIED)
 
 ## 5j. Demo PIN seeder + Live submission timeline (2026-05-04, P0/P1)
