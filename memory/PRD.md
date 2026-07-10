@@ -1,6 +1,43 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+## Phase 3 Slice 1 — Cross-record linking & Deterministic Next Actions (2026-02-15)
+
+**Status:** ✅ Shipped. Backend `pytest` 50/50 green (13 new next-action contract tests). Frontend `jest` 25/25 green (13 rule-engine + 12 hook contract). Testing-agent E2E (iteration_90) PASS with dismiss flow acknowledged out-of-scope for demo seed data.
+
+**Feature flag:** `clinicalRedesignPhase3` (default `on`, nested child of `clinicalRedesign`; parent off → child off).
+
+### Deliverables
+
+1. **`useClinicalReturnState()` hook** (`frontend/src/pages/clinical/useClinicalReturnState.js`) — session-scope transient state primitive.
+   - Opaque route-instance token stored on `history.state.ccms_route_token` (never patient/record IDs, never `localStorage`).
+   - 30-min TTL, mirrored to `sessionStorage` (`ccms.clinical.returnState.v1`).
+   - Cleared on `ccms-session-reset` event (dispatched by `AuthContext.logout` and `PermissionsContext` when role/tenant changes).
+   - Cross-chart isolation, direct-entry fresh state, refresh preservation all contract-tested.
+2. **`nextActionsEngine.deriveNextActions()`** — pure, deterministic, structured-data-only rule engine. Nine rules, fixed priority, deduplicated (blocked billing suppresses warning-only billing), permission-aware. "Order imaging" deliberately excluded to keep the surface non-clinical.
+3. **`NextActionsPanel`** — UI component with `next-action-<id>[-label|-why|-open|-dismiss]` testids. Dismiss only on optional rules (`schedule-remaining-planned-visits`, `record-configured-outcome-measure`); mandatory rules cannot be dismissed.
+4. **Telemetry union** — `POST /api/telemetry/ui-action` accepts a new `clinical_next_action_interaction` shape alongside the legacy care-status shape. Cross-field mixes 422. Nine allow-listed `action_id`s × two `interaction`s (`opened`/`dismissed`).
+
+### Constraints locked-in per user's brief
+
+- Patient-specific state stays in memory/session only.
+- Route-instance tokens are opaque; no patient or record IDs anywhere in durable browser storage.
+- `/me/preferences` reserved for global defaults only (no new fields added this slice; wiring lands in Slice 5).
+- Rules deterministic, non-clinical, one-sentence explanation, permission-aware, deduplicated, stable priority, dismissible only when optional.
+- Telemetry allow-lists strict; PHI attempts (patient_id, encounter_id, ICD codes, free_text, URL) 422.
+
+### Next up (Slice 2)
+
+- Advanced timeline filters + saved presets.
+- Long-timeline performance passes.
+- Introduces the first durable `/me/preferences.clinical_ui_defaults` field so global filter presets can be persisted across sessions (patient-specific state remains transient).
+
+### Deferred
+
+- Diagnosis "Set inactive" state (needs backend status-model decision — do NOT alias to "resolved").
+- Demo seed enrichment: add at least one patient with `total_visits_planned > completed + scheduled` and one with stale `configured_outcome_measures` so browser regressions can exercise the dismissible Next-Action paths.
+
+
 ## Phase 2 close-out — baseline frozen (2026-07-10)
 
 Two remaining Wave B items completed. Phase 2 is now **frozen**; Phase 3 Slice 1 starts in the next session.

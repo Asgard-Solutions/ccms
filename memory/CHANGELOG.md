@@ -4,6 +4,46 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-02-15 — Clinical redesign Phase 3 Slice 1 (Cross-record linking & deterministic Next Actions)
+
+**Why:** Chart users lacked a system-generated worklist of the specific structural gaps on a chart (unsigned notes, missing docs, unlinked diagnoses, blocked billing, overdue re-exams, unscheduled plan visits, missing intake, un-recorded outcomes). Users had to eyeball the chart to figure out what to do next. Slice 1 turns that inference into a deterministic, structured, permission-aware panel — while laying the transient-state primitive (`useClinicalReturnState`) that Slice 2-6 will build on top of.
+
+**Shipped:**
+
+- **`useClinicalReturnState()` hook** (`frontend/src/pages/clinical/useClinicalReturnState.js`, new)
+  - Session/in-memory scope; mirrored to `sessionStorage` for cross-page-hop persistence in the same tab.
+  - Keyed by an **opaque route-instance token** stored on `history.state.ccms_route_token`. Never patient IDs, never record IDs, never `localStorage`.
+  - 30-min TTL; auto-drops expired entries on hydrate.
+  - Cleared on `ccms-session-reset` custom event (logout via `AuthContext`, permission-set change via `PermissionsContext`, tenant switch).
+  - Browser back/forward and refresh preserve state via `history.state`; direct URL entry starts empty.
+- **`nextActionsEngine.deriveNextActions()`** (`frontend/src/pages/clinical/nextActionsEngine.js`, new) — pure function returning at most 9 rules, in fixed priority order:
+  1. `sign-unsigned-note` (mandatory)
+  2. `complete-missing-documentation` (mandatory)
+  3. `attach-or-link-diagnosis` (mandatory)
+  4. `open-blocked-billing-readiness` (mandatory)
+  5. `review-billing-warning` (mandatory; deduplicated against blocked rule)
+  6. `schedule-due-or-overdue-reexam` (mandatory)
+  7. `schedule-remaining-planned-visits` (**dismissible**)
+  8. `review-missing-required-intake` (mandatory)
+  9. `record-configured-outcome-measure` (**dismissible**)
+  - Deterministic (same input → same output), structured-data only, one-sentence explanation, non-clinical language, permission-aware, deduplicated, stable priority.
+  - "Order imaging" deliberately **excluded** to keep the surface non-clinical.
+- **`NextActionsPanel`** (`frontend/src/pages/clinical/NextActionsPanel.jsx`, new) — renders the engine output above `Active episode`. Dismiss button only on dismissible rules. Every row exposes `next-action-<id>[-label|-why|-open|-dismiss]` testids.
+- **Nested feature flag** `clinicalRedesignPhase3` (default on, child of `clinicalRedesign`). Parent off → child off, regardless of local override.
+- **Telemetry union** — `POST /api/telemetry/ui-action` now accepts both `clinical_care_status_action_selected` and `clinical_next_action_interaction` shapes on the same endpoint. Cross-field mixes rejected 422. Nine `NextActionId` + two `NextActionInteraction` values allow-listed.
+- **`ClinicalTabV2`** now mounts the panel and provisions the route-instance token on chart mount.
+- **`DiagnosesCard`** — wired the missing `onViewHistory` prop on `DiagnosisRow` (was previously dead state).
+
+**Verified:**
+
+- Backend `pytest`: 50/50 (13 new `test_next_action_telemetry.py`, 21 legacy `test_telemetry_ui_action.py`, 9 clinical grouped, 7 billing aggregate).
+- Frontend `jest`: 25/25 (13 rule-engine, 12 hook/token contract).
+- Frontend testing agent E2E (iteration_90): panel rendering, Open click + telemetry, feature-flag guardrails (both child and nested parent), route-instance token opacity, staff read-only filtering all PASS. Dismiss flow blocked by seed data (no demo patient triggers a dismissible rule) but covered by jest unit tests.
+
+**Files:** `frontend/src/utils/featureFlags.js`, `frontend/src/pages/clinical/{useClinicalReturnState,nextActionsEngine,NextActionsPanel}.{js,jsx}` + tests, `frontend/src/pages/clinical/ClinicalTabV2.jsx`, `frontend/src/pages/clinical/DiagnosesCard.jsx`, `frontend/src/utils/telemetry.js`, `frontend/src/contexts/{AuthContext,PermissionsContext}.jsx`, `backend/services/telemetry/router.py`, `backend/services/telemetry/SCHEMA.md`, `backend/tests/test_next_action_telemetry.py`.
+
+---
+
 ## 2026-05-04 — Per-surface AI model picker (cost/quality tuning)
 
 **Why:** Now that Anthropic billing flows through the customer's own key, admins want to route each AI surface to the right model — Opus for high-stakes doctor-facing flows, Haiku for high-volume structured outputs — without code changes. Estimated 60-70% reduction in Anthropic spend for typical clinics.

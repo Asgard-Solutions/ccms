@@ -2,6 +2,24 @@
 
 Prioritized backlog for remaining P0/P1/P2 work. Most-recent updates on top.
 
+## 2026-02-15 — Clinical redesign Phase 3 (in progress)
+
+**Nested feature flag:** `clinicalRedesignPhase3` (child of `clinicalRedesign`).
+
+| Slice | Status | Scope |
+|-------|--------|-------|
+| 1 — Cross-record linking & Deterministic Next Actions | ✅ Done | `useClinicalReturnState` hook, `nextActionsEngine`, `NextActionsPanel`, telemetry union, 50 backend + 25 frontend tests. |
+| 2 — Advanced timeline filters, saved presets, long-timeline perf | ⏳ Next | Layer filter-aware deep links on top of return-state hook. Introduce durable `/me/preferences.clinical_ui_defaults` for global filter presets. |
+| 3 — Outcome snapshot, trend, optional suggestions | ⏳ Planned | Read-only outcome trend widget; deterministic (non-clinical) suggestions. |
+| 4 — Imaging metadata + filters, Data-quality indicators | ⏳ Planned | Uses grouped-encounter enrichments. |
+| 5 — Role-aware views, configurable summary, preference persistence | ⏳ Planned | Wires durable global prefs across the whole Clinical tab. |
+| 6 — Telemetry, partial-failure handling, a11y hardening, UAT, rollback verification | ⏳ Planned | Final hardening; verifies parent flag disables every child cleanly. |
+
+### Deferred / Blocked
+
+- Diagnosis "Set inactive" state — awaiting backend status-model decision. Do not map to "resolved".
+- Seed a demo patient with `total_visits_planned > completed + scheduled` **or** stale `configured_outcome_measures` so browser regressions can exercise the dismissible Next-Action flows end-to-end.
+
 
 ## 2026-04-22 — Billing / Claims / Change-Optum accepted status
 
