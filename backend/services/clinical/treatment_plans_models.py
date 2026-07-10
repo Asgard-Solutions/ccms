@@ -120,6 +120,7 @@ class TreatmentPlanUpdate(BaseModel):
     activity_work_recommendations: str | None = Field(default=None, max_length=3000)
     discharge_criteria: str | None = Field(default=None, max_length=2000)
     maintenance_transition_notes: str | None = Field(default=None, max_length=2000)
+    configured_outcome_measures: list[str] | None = Field(default=None, max_length=20)
 
 
 class TreatmentPlanSetStatus(BaseModel):
@@ -131,6 +132,7 @@ class TreatmentPlanSetStatus(BaseModel):
 class TreatmentPlanProgress(BaseModel):
     model_config = ConfigDict(extra="ignore")
     visits_completed: int = 0
+    visits_scheduled: int = 0
     total_visits: int | None = None
     percent: int | None = None
 
@@ -164,6 +166,7 @@ class TreatmentPlanPublic(BaseModel):
     discharge_reason: str | None = None
     discharged_at: str | None = None
     progress: TreatmentPlanProgress | None = None
+    configured_outcome_measures: list[str] = Field(default_factory=list)
     created_at: str
     updated_at: str
     created_by: str | None = None

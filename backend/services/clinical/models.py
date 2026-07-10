@@ -168,6 +168,12 @@ class ClinicalSectionCount(BaseModel):
     model_config = ConfigDict(extra="forbid")
     total: int = 0
     open: int = 0
+    # Phase 3 Slice 1 — nullable ISO timestamp of the most recent
+    # write in this section. Used by NextActionsPanel to decide whether
+    # an optional outcome-recording follow-up is due. Only populated
+    # for surfaces where the notion is well-defined (currently
+    # `outcomes`).
+    last_recorded_at: str | None = None
 
 
 class ClinicalSummary(BaseModel):

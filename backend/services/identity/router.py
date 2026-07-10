@@ -144,6 +144,7 @@ def _to_public(user: dict) -> dict:
         "npi_number": user.get("npi_number"),
         "dea_number": user.get("dea_number"),
         "dea_expires_at": user.get("dea_expires_at"),
+        "clinical_ui_defaults": user.get("clinical_ui_defaults"),
         "created_at": user["created_at"],
     }
 
@@ -536,11 +537,13 @@ async def update_preferences(
 ):
     """Persist lightweight per-user UI preferences (theme today; locale + density
     later). Auth-only; no reauth required — these are non-sensitive settings."""
-    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    updates = payload.model_dump(exclude_unset=True)
+    updates = {k: v for k, v in updates.items() if v is not None}
     if not updates:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "No preference fields supplied."
         )
+    # Nested Pydantic models serialize to dicts; that's what we store.
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
     db = get_db_write()
     updated = await db.users.find_one_and_update(

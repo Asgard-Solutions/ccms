@@ -4,6 +4,40 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-02-15 — Clinical redesign Phase 3 Slice 2 (Timeline filters, saved presets, long-history perf guard)
+
+**Why:** Providers reviewing a long chart couldn't slice the timeline by kind, source, provider, episode, or date without losing scroll position, and every filter combination died on tab close. Slice 2 gives them durable, reusable presets while keeping patient-specific choices strictly transient.
+
+**Shipped:**
+
+- **Backend filter surface** (`services/clinical/grouped_router.py`)
+  - `/api/patients/{id}/clinical/timeline/grouped` now accepts `event_kinds`, `sources`, `provider_ids`, `episode_ids`, `date_window`, `date_from`, `date_to`, `q` (all optional).
+  - New `TIMELINE_SCHEMA_VERSION = "1.1"` returned when any filter is *attempted*; unfiltered calls still ship the legacy `"1.0"` shape (backward-compatible).
+  - Response `filter_meta` echoes `applied`, `ignored_slugs`, `ignored_provider_ids`, `ignored_episode_ids`, `total_before_filter`, `total_after_filter` — enough for the UI to detect stale presets and prompt for repair.
+  - Permission-aware provider filter: dead provider ids drop into `ignored_provider_ids` rather than 403-ing.
+  - Cross-patient episode ids are silently dropped (echoed in `ignored_episode_ids`).
+  - Server-side `q` length ≤ 80 chars enforced (**422** on overflow).
+- **Durable prefs** (`services/identity/models.py`, `router.py`)
+  - New nested `ClinicalUIDefaults` on `PATCH /api/auth/me/preferences` with `default_section`, `timeline_presets[]`, `default_timeline_preset_id`.
+  - `TimelinePresetFilters` = `event_kinds`, `sources`, `provider_ids`, `date_window` only. Every other field (`patient_id`, `encounter_id`, `icd10_codes`, `q`, `date_of_service`, `date_from`, `date_to`, `episode_ids`) is `extra="forbid"` — 422.
+  - Preset id pattern `^p_[a-z0-9]{8,32}$`, ids + names unique per user, `default_timeline_preset_id` must reference an existing preset.
+- **Frontend**
+  - `TimelineFilterBar.jsx` — kind chips + free-text search + date window + provider/episode multi-select with per-chip stale flagging.
+  - `SavedPresetsMenu.jsx` — durable presets with client-side sanitizer (`sanitizePresetFilters`), stale-preset toast on apply, "+ Save current filters" flow.
+  - `timelinePresetsSchema.js` — allow-listed vocabularies + sanitizer + stale-detector shared with the tests.
+  - `GroupedTimelineCard.jsx` — rewrite to server-side filter, `useClinicalReturnState` for scroll + expanded + filters, perf instrumentation + incremental render (`INITIAL_RENDER_CAP=100`, `VIRTUALIZE_THRESHOLD=200`), no-results / partial-failure / stale-preset states.
+- **`clinical_ui_defaults` flows through `_to_public`** and `UserPublic` so `GET /auth/me` echoes it back to the client.
+
+**Verified:**
+
+- Backend `pytest`: 19/19 new Slice 2 tests (`test_grouped_timeline_filters.py`, `test_clinical_ui_defaults.py`) plus the 50 pre-existing telemetry + grouped + billing tests.
+- Frontend `jest`: 46/46 clinical unit tests (13 rule engine + 12 hook + 21 preset sanitizer/detector).
+- Backward compatibility: unfiltered timeline still returns `schema_version: "1.0"` — no client redeploy required.
+
+**Files:** `backend/services/clinical/grouped_router.py`, `backend/services/identity/{models,router}.py`, `backend/tests/{test_grouped_timeline_filters,test_clinical_ui_defaults}.py`, `frontend/src/pages/clinical/{timelinePresetsSchema.js,TimelineFilterBar.jsx,SavedPresetsMenu.jsx,GroupedTimelineCard.jsx}` + tests, `frontend/src/pages/clinical/ClinicalTabV2.jsx`.
+
+---
+
 ## 2026-02-15 — Clinical redesign Phase 3 Slice 1 (Cross-record linking & deterministic Next Actions)
 
 **Why:** Chart users lacked a system-generated worklist of the specific structural gaps on a chart (unsigned notes, missing docs, unlinked diagnoses, blocked billing, overdue re-exams, unscheduled plan visits, missing intake, un-recorded outcomes). Users had to eyeball the chart to figure out what to do next. Slice 1 turns that inference into a deterministic, structured, permission-aware panel — while laying the transient-state primitive (`useClinicalReturnState`) that Slice 2-6 will build on top of.

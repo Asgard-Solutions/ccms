@@ -559,7 +559,13 @@ export default function ClinicalTabV2({
 
       <section id="timeline" ref={registerSection("timeline")} className="scroll-mt-40">
         {phase2WaveA ? (
-          <GroupedTimelineCard patientId={patientId} />
+          <GroupedTimelineCard
+            patientId={patientId}
+            providers={providers}
+            episodes={episodes || []}
+            clinicalUiDefaults={currentUser?.clinical_ui_defaults}
+            routeInstanceToken={routeInstanceToken}
+          />
         ) : (
           <CareTimelineCard patientId={patientId} />
         )}

@@ -31,6 +31,28 @@ from services.clinical.router import _load_patient
 router = APIRouter(prefix="/patients", tags=["clinical"])
 
 SCHEMA_VERSION = "1.0"
+# Phase 3 Slice 2 — timeline filter surface. Bumped independently from
+# the encounters grouping so encounters clients don't need to redeploy
+# when timeline filters change.
+TIMELINE_SCHEMA_VERSION = "1.1"
+
+# Allow-listed filter vocabularies. MUST match backend `identity/models.py`
+# `TimelineEventKind` / `TimelineSource` and frontend
+# `pages/clinical/timelinePresetsSchema.js`.
+_TIMELINE_KINDS: set[str] = {
+    "visit", "initial_exam", "treatment_plan", "clinical_media", "outcome_entry",
+}
+_TIMELINE_SOURCES: set[str] = {
+    "appointment", "encounter", "note", "initial_exam", "reexam", "outcome", "media",
+}
+_TIMELINE_DATE_WINDOWS: dict[str, int] = {
+    "last_7d": 7,
+    "last_30d": 30,
+    "last_90d": 90,
+    "last_180d": 180,
+    "last_365d": 365,
+    "all": 0,
+}
 
 # Approved (allow-listed) billing-readiness messages surfaced on the
 # chart-wide aggregate. Any check key not in this map is COUNTED (for
@@ -296,14 +318,47 @@ async def list_grouped_encounters(
 async def list_grouped_timeline(
     patient_id: str,
     request: Request,
-    kinds: Optional[str] = Query(default=None, description="csv of kinds to include"),
+    kinds: Optional[str] = Query(default=None, description="csv of kinds to include (legacy alias for event_kinds)"),
+    event_kinds: Optional[str] = Query(
+        default=None,
+        description="csv of TimelineEventKind slugs; unknown values dropped and echoed in filter_meta.ignored_slugs",
+    ),
+    sources: Optional[str] = Query(
+        default=None,
+        description="csv of TimelineSource slugs; unknown values dropped and echoed in filter_meta.ignored_slugs",
+    ),
+    provider_ids: Optional[str] = Query(
+        default=None,
+        description="csv of provider ids; ids the caller cannot see are dropped and echoed in filter_meta.ignored_provider_ids",
+    ),
+    episode_ids: Optional[str] = Query(
+        default=None,
+        description="csv of episode ids; ids not on this patient are dropped and echoed in filter_meta.ignored_episode_ids",
+    ),
+    date_window: Optional[str] = Query(default=None, description="allow-listed relative window (last_7d, last_30d, …)"),
+    date_from: Optional[str] = Query(default=None, description="ISO date; overrides date_window"),
+    date_to: Optional[str] = Query(default=None, description="ISO date; overrides date_window"),
+    q: Optional[str] = Query(
+        default=None, max_length=80,
+        description="Transient free-text search — NEVER persisted server-side; matched against titles + provider names.",
+    ),
     user: dict = Depends(require_role("admin", "doctor", "staff")),
     ctx: TenantContext = Depends(get_tenant_context),
 ):
     """Groups related timeline artefacts (appointment + encounter + note +
     initial-exam) into one event per visit. Non-visit-linked artefacts
     (imaging, outcomes, addenda, diagnosis changes, intake) are emitted
-    as their own standalone events so nothing is dropped."""
+    as their own standalone events so nothing is dropped.
+
+    Phase 3 Slice 2: adds a filter surface. All params are optional and
+    a caller passing none receives the exact response the pre-Slice-2
+    endpoint returned (schema_version 1.0). When any filter is supplied
+    the response bumps to `TIMELINE_SCHEMA_VERSION` ('1.1') and includes
+    a `filter_meta` object echoing what was applied and what was
+    ignored (stale preset detection).
+    """
+    from datetime import datetime, timedelta, timezone
+
     db = get_db_write()
     await _load_patient(db, patient_id, ctx)
 
@@ -316,6 +371,7 @@ async def list_grouped_timeline(
             "kind": "visit",
             "visit_at": g["visit_at"],
             "title": g.get("appointment_type") or "Visit",
+            "provider_id": g.get("provider_id"),
             "provider_name": g.get("provider_name"),
             "episode_id": g.get("episode_id"),
             "status": g["status"],
@@ -329,18 +385,13 @@ async def list_grouped_timeline(
     if scope.get("__deny__"):
         return {"schema_version": SCHEMA_VERSION, "events": []}
 
-    kinds_filter = None
-    if kinds:
-        kinds_filter = {k.strip() for k in kinds.split(",") if k.strip()}
-
     non_visit_events: list[dict] = []
-
-    # Initial exams — link back to encounter/appt if possible; otherwise emit standalone.
     async for d in db.clinical_initial_exams.find(scope, {"_id": 0}):
         non_visit_events.append({
             "kind": "initial_exam",
             "visit_at": d.get("date_of_service") or d.get("created_at"),
             "title": "Initial exam",
+            "provider_id": d.get("provider_id"),
             "provider_name": d.get("provider_name"),
             "episode_id": d.get("episode_id"),
             "status": {"documentation": d.get("sign_status") or "draft"},
@@ -352,6 +403,7 @@ async def list_grouped_timeline(
             "kind": "treatment_plan",
             "visit_at": d.get("created_at"),
             "title": d.get("plan_name") or "Treatment plan",
+            "provider_id": d.get("responsible_provider_id"),
             "provider_name": d.get("provider_name"),
             "episode_id": d.get("episode_id"),
             "status": {"record_state": d.get("plan_status") or "active"},
@@ -363,6 +415,7 @@ async def list_grouped_timeline(
             "kind": "clinical_media",
             "visit_at": d.get("created_at"),
             "title": d.get("kind") or "Imaging",
+            "provider_id": d.get("uploaded_by"),
             "provider_name": d.get("uploaded_by_name"),
             "episode_id": d.get("episode_id"),
             "status": {"record_state": "active"},
@@ -374,6 +427,7 @@ async def list_grouped_timeline(
             "kind": "outcome_entry",
             "visit_at": d.get("recorded_at") or d.get("created_at"),
             "title": d.get("measure_name") or "Outcome",
+            "provider_id": d.get("recorded_by"),
             "provider_name": d.get("recorded_by_name"),
             "episode_id": d.get("episode_id"),
             "status": {"record_state": "active"},
@@ -382,20 +436,176 @@ async def list_grouped_timeline(
         })
 
     events = visit_events + non_visit_events
-    if kinds_filter:
-        events = [e for e in events if e["kind"] in kinds_filter]
-    events.sort(key=lambda e: e.get("visit_at") or "", reverse=True)
+    total_before = len(events)
+
+    # ---- Parse + validate filter inputs ----
+    def _csv(v: Optional[str]) -> list[str]:
+        return [x.strip() for x in (v or "").split(",") if x.strip()] if v else []
+
+    requested_kinds = _csv(event_kinds) or _csv(kinds)  # legacy alias
+    requested_sources = _csv(sources)
+    requested_providers = _csv(provider_ids)
+    requested_episodes = _csv(episode_ids)
+
+    ignored_slugs: list[str] = []
+    kinds_filter: set[str] = set()
+    for k in requested_kinds:
+        if k in _TIMELINE_KINDS:
+            kinds_filter.add(k)
+        else:
+            ignored_slugs.append(k)
+    sources_filter: set[str] = set()
+    for s in requested_sources:
+        if s in _TIMELINE_SOURCES:
+            sources_filter.add(s)
+        else:
+            ignored_slugs.append(s)
+
+    # Permission-aware provider filtering. Only tenant-visible providers
+    # are honored; the rest fall into ignored_provider_ids (stale-preset
+    # detection so the UI can prompt the user to update the preset).
+    provider_filter: set[str] = set()
+    ignored_provider_ids: list[str] = []
+    if requested_providers:
+        visible = set()
+        async for p in db.users.find(
+            {"tenant_id": ctx.tenant_id, "id": {"$in": requested_providers}},
+            {"_id": 0, "id": 1},
+        ):
+            visible.add(p["id"])
+        for pid in requested_providers:
+            if pid in visible:
+                provider_filter.add(pid)
+            else:
+                ignored_provider_ids.append(pid)
+
+    # Episode filter — transient, patient-scoped. Drop any episode id
+    # that doesn't belong to this patient (stale after episode delete).
+    episode_filter: set[str] = set()
+    ignored_episode_ids: list[str] = []
+    if requested_episodes:
+        visible_eps = set()
+        async for ep in db.clinical_episode_cases.find(
+            {"tenant_id": ctx.tenant_id, "patient_id": patient_id,
+             "id": {"$in": requested_episodes}},
+            {"_id": 0, "id": 1},
+        ):
+            visible_eps.add(ep["id"])
+        for eid in requested_episodes:
+            if eid in visible_eps:
+                episode_filter.add(eid)
+            else:
+                ignored_episode_ids.append(eid)
+
+    # Date window resolution.
+    now = datetime.now(timezone.utc)
+    resolved_from: Optional[str] = None
+    resolved_to: Optional[str] = None
+    if date_from:
+        resolved_from = date_from
+    if date_to:
+        resolved_to = date_to
+    date_window_applied: Optional[str] = None
+    if date_window and date_window in _TIMELINE_DATE_WINDOWS:
+        days = _TIMELINE_DATE_WINDOWS[date_window]
+        date_window_applied = date_window
+        if days > 0 and not (date_from or date_to):
+            resolved_from = (now - timedelta(days=days)).date().isoformat()
+    elif date_window and date_window not in _TIMELINE_DATE_WINDOWS:
+        ignored_slugs.append(date_window)
+
+    # ---- Source→kind mapping (a "source" is a data collection, a
+    # "kind" is the timeline row's shape). Applying `sources` translates
+    # into the kinds the row *carries*. Backward-compatible superset.
+    SOURCE_TO_KIND = {
+        "appointment": "visit",
+        "encounter": "visit",
+        "note": "visit",
+        "initial_exam": "initial_exam",
+        "reexam": "visit",  # emits under the visit row it was authored on
+        "outcome": "outcome_entry",
+        "media": "clinical_media",
+    }
+    source_kinds = {SOURCE_TO_KIND[s] for s in sources_filter} if sources_filter else None
+
+    # ---- Free-text search — TRANSIENT ONLY. This value MUST NOT be
+    # persisted in any saved preset (durable prefs disallow it via
+    # Pydantic `extra="forbid"`). It's matched against title +
+    # provider_name only; no PHI substrings surface through this path.
+    q_lower = q.strip().lower() if q else None
+
+    def _keep(e: dict) -> bool:
+        if kinds_filter and e["kind"] not in kinds_filter:
+            return False
+        if source_kinds and e["kind"] not in source_kinds:
+            return False
+        if provider_filter and e.get("provider_id") not in provider_filter:
+            return False
+        if episode_filter and e.get("episode_id") not in episode_filter:
+            return False
+        if resolved_from and (not e.get("visit_at") or e["visit_at"] < resolved_from):
+            return False
+        if resolved_to and (not e.get("visit_at") or e["visit_at"] > f"{resolved_to}T23:59:59Z"):
+            return False
+        if q_lower:
+            hay = " ".join(
+                [str(e.get(k) or "") for k in ("title", "provider_name", "kind")]
+            ).lower()
+            if q_lower not in hay:
+                return False
+        return True
+
+    any_filter_applied = bool(
+        kinds_filter or sources_filter or provider_filter or episode_filter
+        or resolved_from or resolved_to or q_lower or date_window_applied
+    )
+    # Also surface filter_meta whenever the caller *attempted* to filter
+    # — even if every value ended up in `ignored_*`. This lets the UI
+    # detect stale presets and prompt the user to repair them.
+    filter_attempted = bool(
+        any_filter_applied
+        or requested_kinds or requested_sources or requested_providers
+        or requested_episodes or date_window or date_from or date_to
+    )
+    filtered = [e for e in events if _keep(e)] if any_filter_applied else events
+    filtered.sort(key=lambda e: e.get("visit_at") or "", reverse=True)
 
     await audit_success(
         user, "clinical.timeline.grouped_viewed", request,
         entity_type="patient", entity_id=patient_id, phi_accessed=True,
         metadata={
-            "schema_version": SCHEMA_VERSION,
-            "event_count": len(events),
+            "schema_version": TIMELINE_SCHEMA_VERSION if filter_attempted else SCHEMA_VERSION,
+            "event_count": len(filtered),
             "visit_count": len(visit_events),
+            "filters_applied": bool(any_filter_applied),
         },
     )
-    return {"schema_version": SCHEMA_VERSION, "events": events}
+
+    if not filter_attempted:
+        # Pre-Slice-2 backward-compatible response shape.
+        return {"schema_version": SCHEMA_VERSION, "events": filtered}
+
+    return {
+        "schema_version": TIMELINE_SCHEMA_VERSION,
+        "events": filtered,
+        "filter_meta": {
+            "applied": {
+                "event_kinds": sorted(kinds_filter),
+                "sources": sorted(sources_filter),
+                "provider_ids": sorted(provider_filter),
+                "episode_ids": sorted(episode_filter),
+                "date_window": date_window_applied,
+                "date_from": resolved_from,
+                "date_to": resolved_to,
+                "q_present": bool(q_lower),
+            },
+            "ignored_slugs": sorted(set(ignored_slugs)),
+            "ignored_provider_ids": ignored_provider_ids,
+            "ignored_episode_ids": ignored_episode_ids,
+            "total_before_filter": total_before,
+            "total_after_filter": len(filtered),
+        },
+    }
 
 
 # ----- /clinical/billing-readiness/aggregate -----------------------

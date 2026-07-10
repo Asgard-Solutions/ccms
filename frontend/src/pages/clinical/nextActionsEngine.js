@@ -162,9 +162,24 @@ const RULES = {
     if (!input.canWrite) return null;
     const plan = input.activePlan;
     if (!plan) return null;
-    const planned = plan.total_visits_planned ?? plan.visits_planned ?? null;
-    const completed = plan.visits_completed ?? 0;
-    const scheduled = plan.visits_scheduled ?? 0;
+    // Field priority: canonical backend shape (`frequency_total_visits`
+    // + `progress.visits_completed` + `progress.visits_scheduled`)
+    // wins; legacy names (`total_visits_planned`, `visits_planned`,
+    // `visits_completed`, `visits_scheduled`) remain accepted for
+    // callers that pre-compute a flat plan blob.
+    const planned =
+      plan.frequency_total_visits ??
+      plan.total_visits_planned ??
+      plan.visits_planned ??
+      null;
+    const completed =
+      plan.progress?.visits_completed ??
+      plan.visits_completed ??
+      0;
+    const scheduled =
+      plan.progress?.visits_scheduled ??
+      plan.visits_scheduled ??
+      0;
     if (planned == null) return null;
     const remaining = planned - completed - scheduled;
     if (remaining <= 0) return null;

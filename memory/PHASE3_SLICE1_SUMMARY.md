@@ -52,6 +52,19 @@ Delivered under nested feature flag `clinicalRedesignPhase3` (child of `clinical
 * "Set inactive" diagnosis state still deferred pending backend status-model decision.
 * "Order imaging" is deliberately **NOT** an emitted next-action rule — clinical recommendation is out of scope for workflow guidance.
 
+## Route-token TTL & reset triggers
+
+| Concern | Value |
+|---|---|
+| Storage key | `sessionStorage["ccms.clinical.returnState.v1"]` |
+| Token location | `history.state.ccms_route_token` (opaque `r_<random>` string) |
+| TTL | **30 minutes** (`TTL_MS = 30 * 60 * 1000`) |
+| Cleared on | `emitSessionReset()` custom event `ccms-session-reset` |
+| Reset triggers | `AuthContext.logout()` · `PermissionsContext` when `role_keys`/`tenant_id` change · explicit `.clear()` from consumers · TTL expiry |
+| Never touches | `localStorage` — no durable device-scoped persistence for patient-specific UI state |
+
+See `PHASE3_SLICE1_CONTRACTS.md` §3–§4 for the full contract.
+
 ## Files touched
 
 | File | Change |

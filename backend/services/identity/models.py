@@ -36,6 +36,9 @@ class UserPublic(BaseModel):
     password_changed_at: str | None = None
     pin_configured: bool = False
     theme: Theme = "system"
+    # Phase 3 Slice 2 — durable, global Clinical UI defaults (nested).
+    # Never contains patient / record ids or free-text search strings.
+    clinical_ui_defaults: "ClinicalUIDefaults | None" = None
     # Self-service profile fields (editable via PATCH /auth/me/profile).
     first_name: str | None = None
     last_name: str | None = None
@@ -182,6 +185,105 @@ class PreferencesUpdate(BaseModel):
     All fields optional; only keys that are present are written."""
     model_config = ConfigDict(extra="forbid")
     theme: Theme | None = None
+    # Phase 3 Slice 2 — durable, global-scope Clinical UI preferences.
+    # Structured slugs only; no patient/record ids, no free-text search
+    # strings. Patient-specific active filters live in transient session
+    # scope via `useClinicalReturnState`, not here.
+    clinical_ui_defaults: "ClinicalUIDefaults | None" = None
+
+
+# ---------------------------------------------------------------------------
+# Clinical UI durable defaults (Phase 3 Slice 2)
+# ---------------------------------------------------------------------------
+# Allow-lists MUST stay in lockstep with the corresponding frontend
+# schema at `frontend/src/pages/clinical/timelinePresetsSchema.js` and
+# with the backend filter enum in `grouped_router.py`. A new value here
+# requires touching all three files in the same PR.
+TimelineEventKind = Literal[
+    "visit",
+    "initial_exam",
+    "treatment_plan",
+    "clinical_media",
+    "outcome_entry",
+]
+TimelineSource = Literal[
+    "appointment",
+    "encounter",
+    "note",
+    "initial_exam",
+    "reexam",
+    "outcome",
+    "media",
+]
+TimelineDateWindow = Literal[
+    "last_7d",
+    "last_30d",
+    "last_90d",
+    "last_180d",
+    "last_365d",
+    "all",
+]
+ClinicalSectionSlug = Literal[
+    "summary", "history", "diagnoses", "encounters",
+    "care-plan", "timeline", "imaging", "outcomes",
+]
+
+
+class TimelinePresetFilters(BaseModel):
+    """Filter dimensions that generalize across patient charts.
+
+    Deliberately excludes: patient ids, record ids (diagnosis, episode,
+    encounter, note), provider *names*, dates of service, and free-text
+    search strings. Every filter value below is a structured slug or a
+    tenant-scoped entity id (providers only)."""
+    model_config = ConfigDict(extra="forbid")
+    event_kinds: list[TimelineEventKind] = Field(default_factory=list, max_length=10)
+    sources: list[TimelineSource] = Field(default_factory=list, max_length=6)
+    provider_ids: list[str] = Field(default_factory=list, max_length=20)
+    date_window: TimelineDateWindow | None = None
+
+
+class TimelinePresetDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^p_[a-z0-9]{8,32}$")
+    name: str = Field(min_length=1, max_length=40)
+    filters: TimelinePresetFilters
+
+
+class ClinicalUIDefaults(BaseModel):
+    """Durable, global-scope Clinical UI preferences."""
+    model_config = ConfigDict(extra="forbid")
+    default_section: ClinicalSectionSlug | None = None
+    timeline_presets: list[TimelinePresetDefinition] = Field(
+        default_factory=list, max_length=20,
+    )
+    default_timeline_preset_id: str | None = Field(
+        default=None, pattern=r"^p_[a-z0-9]{8,32}$",
+    )
+
+    @model_validator(mode="after")
+    def _default_preset_must_exist(self):
+        if self.default_timeline_preset_id and self.timeline_presets:
+            ids = {p.id for p in self.timeline_presets}
+            if self.default_timeline_preset_id not in ids:
+                raise ValueError(
+                    "default_timeline_preset_id must reference one of timeline_presets",
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _preset_ids_unique(self):
+        ids = [p.id for p in self.timeline_presets]
+        if len(ids) != len(set(ids)):
+            raise ValueError("timeline_presets ids must be unique")
+        names = [p.name for p in self.timeline_presets]
+        if len(names) != len(set(names)):
+            raise ValueError("timeline_presets names must be unique")
+        return self
+
+
+PreferencesUpdate.model_rebuild()
+UserPublic.model_rebuild()
 
 
 _PIN_FIELD = Field(

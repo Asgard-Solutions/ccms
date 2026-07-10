@@ -317,6 +317,14 @@ CHART_BLUEPRINT: dict[tuple[str, str], dict] = {
             "home_care_recommendations": "Apply ice 15 min 3x/day first week; moist heat after. Gentle ROM drills daily.",
             "activity_work_recommendations": "Modified yoga only for first 3 weeks; no lifting > 10 lb.",
             "discharge_criteria": "NDI ≤ 10%, full pain-free ROM, return to yoga.",
+            # Phase 3 Slice 1 dismissible-rule seed coverage:
+            #  - `record-configured-outcome-measure` fires because this
+            #    plan configures instruments and Isabella's outcome
+            #    entry (below) is > 14 days old.
+            #  - `schedule-remaining-planned-visits` fires because the
+            #    24-visit plan currently has 3 completed follow-up
+            #    notes and 0 future-booked appointments.
+            "configured_outcome_measures": ["ndi", "bournemouth_neck"],
         },
         "history": {
             "chief_complaint": "Neck and upper-back pain, right-arm tingling since MVA.",
@@ -363,7 +371,10 @@ CHART_BLUEPRINT: dict[tuple[str, str], dict] = {
             {"measure": "Numeric Pain Rating Scale", "score": 6, "max_score": 10,
              "recorded_offset_days": -21, "notes": "Baseline."},
             {"measure": "Numeric Pain Rating Scale", "score": 3, "max_score": 10,
-             "recorded_offset_days": -7, "notes": "3-week progress."},
+             # Slice 1 dismissible-rule coverage: keep this ≥ 15 days
+             # in the past so `record-configured-outcome-measure` fires
+             # (rule suppresses itself when the last entry is < 14 d).
+             "recorded_offset_days": -18, "notes": "2-week progress check."},
         ],
         "patient_intake": {
             "chief_complaint": "Post-MVA neck and upper back pain with arm tingling.",
@@ -987,6 +998,7 @@ async def _upsert_treatment_plans(
             "activity_work_recommendations": tp.get("activity_work_recommendations"),
             "discharge_criteria": tp.get("discharge_criteria"),
             "maintenance_transition_notes": tp.get("maintenance_transition_notes"),
+            "configured_outcome_measures": tp.get("configured_outcome_measures", []),
             "discharge_reason": tp.get("discharge_reason"),
             "discharged_at": (
                 _iso(start_dt + timedelta(weeks=tp.get("expected_duration_weeks", 12)))
@@ -1135,40 +1147,64 @@ async def _upsert_outcomes(
         if not pid:
             continue
         ep_id = episode_ids.get(name_key)
+        # Deterministic id per (patient, label, offset) so a reseed
+        # overwrites the timestamp instead of creating a new row (the
+        # legacy key included `captured_at` which changes every run).
+        # After upserting the seeded rows we prune legacy random-uuid
+        # rows that share (patient, label) but a different id, so the
+        # collection converges to exactly the specs in the blueprint.
+        seeded_ids: set[str] = set()
         for spec in bp.get("outcomes", []):
             captured_dt = datetime.now(timezone.utc) + timedelta(
                 days=spec["recorded_offset_days"],
             )
             captured_at = _iso(captured_dt)
             label = spec["measure"]
-            key = {
-                "tenant_id": tenant_id, "patient_id": pid,
-                "label": label, "captured_at": captured_at,
-            }
-            existing = await db.clinical_outcome_entries.find_one(
-                key, {"_id": 0, "id": 1},
-            )
-            out_id = existing["id"] if existing else str(uuid.uuid4())
+            out_id = str(uuid.uuid5(
+                uuid.NAMESPACE_DNS,
+                f"demo-outcome::{tenant_id}::{pid}::{label}::{spec['recorded_offset_days']}",
+            ))
+            seeded_ids.add(out_id)
             doc = {
-                **key, "id": out_id,
+                "tenant_id": tenant_id,
+                "patient_id": pid,
+                "label": label,
+                "captured_at": captured_at,
+                "id": out_id,
                 "episode_id": ep_id,
                 "measure_type": _infer_type(label),
                 "score": spec["score"],
                 "max_score": spec.get("max_score"),
                 "unit": spec.get("unit"),
+                "location_id": location_id,
                 "source": "provider_charted",
                 "note": spec.get("notes"),
                 "updated_at": _now(),
                 "updated_by": lead_doc_id,
             }
+            existing = await db.clinical_outcome_entries.find_one(
+                {"id": out_id, "tenant_id": tenant_id},
+                {"_id": 0, "id": 1},
+            )
             if existing:
                 await db.clinical_outcome_entries.update_one(
-                    {"id": out_id}, {"$set": doc},
+                    {"id": out_id, "tenant_id": tenant_id},
+                    {"$set": doc},
                 )
             else:
                 doc["created_at"] = _now()
                 doc["created_by"] = lead_doc_id
                 await db.clinical_outcome_entries.insert_one(doc)
+
+        if seeded_ids:
+            # Delete legacy/duplicate rows for this patient whose id is
+            # not in the freshly-seeded set. This makes the seeder
+            # self-healing after historical churn.
+            await db.clinical_outcome_entries.delete_many({
+                "tenant_id": tenant_id,
+                "patient_id": pid,
+                "id": {"$nin": list(seeded_ids)},
+            })
 
 
 async def _write_patient_intake_fields(

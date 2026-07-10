@@ -1,6 +1,30 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+## Phase 3 Slice 2 — Advanced timeline filters, saved presets, long-history perf (2026-02-15)
+
+**Status:** ✅ Shipped. Backend `pytest` 19/19 new (9 timeline-filter + 10 durable-prefs) + all 50 legacy tests green. Frontend `jest` 37/37 (13 rule-engine + 12 hook + 21 preset sanitizer + stale detector). Smoke-tested on Isabella Cho's chart.
+
+**Feature flag:** Inherits `clinicalRedesignPhase3` — no new flag; Slice 1 + Slice 2 roll back as a unit.
+
+### Constraints locked-in per user's Slice 2 brief
+
+- Durable prefs store ONLY global preset definitions + default selections.
+- Patient-specific filters (`episode_ids`, `q`) remain strictly transient (`useClinicalReturnState`).
+- Saved presets carry no patient/record ids, names, diagnoses, dates of service, or free text — Pydantic `extra="forbid"` at every level; frontend `sanitizePresetFilters` is the last-line-of-defence.
+- Grouped-timeline response is backward-compatible (`schema_version: "1.0"`) when no filter is applied; any filter attempt bumps to `"1.1"` with `filter_meta`.
+- Permission-aware providers + episodes surface stale ids in `ignored_provider_ids` / `ignored_episode_ids` instead of 403-ing, so the UI can prompt for stale-preset repair.
+- Slice 1 return state preserved (filters + expanded rows keyed to opaque route token).
+- Virtualization deferred to post-measurement — currently paged via `Load more` at `INITIAL_RENDER_CAP=100` with a `perf: long timeline` hint at 200+ events.
+- Explicit empty / no-results / partial-failure / stale-preset / deleted-provider states.
+- **`My worklist` widget deferred** — revisit after all Phase 3 patient-level rules stabilize.
+
+### Deferred / Backlog
+
+- Real windowing library once perf logs justify it.
+- Diagnosis "Set inactive" (Slice 1 carry-over).
+
+
 ## Phase 3 Slice 1 — Cross-record linking & Deterministic Next Actions (2026-02-15)
 
 **Status:** ✅ Shipped. Backend `pytest` 50/50 green (13 new next-action contract tests). Frontend `jest` 25/25 green (13 rule-engine + 12 hook contract). Testing-agent E2E (iteration_90) PASS with dismiss flow acknowledged out-of-scope for demo seed data.
