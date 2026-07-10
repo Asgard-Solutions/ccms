@@ -30,7 +30,7 @@
   "seed_data_creation": "TestSmsInbox.test_send_creates_thread_and_log left one outbound message in a synthetic 503555XXXX thread; UI test added one more outbound bubble to whichever thread sorted first. EmailSettings PUT/DELETE round-trip was cleaned up at the end. Google OAuth left enabled=true with domain='ccms.app' (carry-over from backend test).",
   "retest_needed": false,
   "main_agent_can_self_test": true,
-  "context_for_next_testing_agent": "Wave-3 fully shipped and tested end-to-end. The browser console 500s on /login (unauthenticated) are pre-existing and not caused by this iteration — investigate separately if they recur. Frontend public URL is https://ccms-voice-notes.preview.emergentagent.com (per frontend/.env REACT_APP_BACKEND_URL).",
+  "context_for_next_testing_agent": "Wave-3 fully shipped and tested end-to-end. The browser console 500s on /login (unauthenticated) are pre-existing and not caused by this iteration — investigate separately if they recur. Frontend public URL is https://chirohipaa-ai.preview.emergentagent.com (per frontend/.env REACT_APP_BACKEND_URL).",
   "rca of the issue": "N/A — no failures.",
   "verified_flows": [
     "/api/auth/google/availability returns 200 unauthenticated and reflects toggle.",
