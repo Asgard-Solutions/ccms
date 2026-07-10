@@ -271,7 +271,9 @@ function BackToTopButton({ visible, onClick }) {
       onClick={onClick}
       data-testid="clinical-back-to-top"
       aria-label="Back to top"
-      className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-1.5 rounded-full border border-border bg-card/95 px-3 py-2 text-xs font-medium text-foreground shadow-lg backdrop-blur transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 motion-reduce:transition-none motion-reduce:hover:transform-none"
+      // z-50 places us above the preview 'Made with Emergent' watermark
+      // (z-40) so the click target is reachable in every environment.
+      className="fixed bottom-6 right-6 z-50 inline-flex items-center gap-1.5 rounded-full border border-border bg-card/95 px-3 py-2 text-xs font-medium text-foreground shadow-lg backdrop-blur transition-transform hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 motion-reduce:transition-none motion-reduce:hover:transform-none"
     >
       <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
       Back to top
@@ -771,16 +773,41 @@ export default function ClinicalTabV2({
   }, []);
 
   // ---- scroll behaviour ----------------------------------------
-  const jumpTo = useCallback((id) => {
+  // When jumpTo is triggered by a user click we want the URL entry to go
+  // through pushState so browser back/forward walks the section history.
+  // Programmatic jumps (deep-link on mount) still use replaceState so we
+  // don't pollute history on load.
+  const suppressObserverUntil = useRef(0);
+  const jumpTo = useCallback((id, opts = {}) => {
     const el = sectionRefs.current[id];
     if (!el) return;
-    // Update the hash so refresh/deep-link keeps the section anchor.
-    if (typeof window !== "undefined" && window.history?.replaceState) {
-      window.history.replaceState(null, "", `#${id}`);
+    if (typeof window !== "undefined" && window.history) {
+      const hash = `#${id}`;
+      if (opts.userInitiated && window.history.pushState && window.location.hash !== hash) {
+        window.history.pushState(null, "", hash);
+      } else if (window.history.replaceState) {
+        window.history.replaceState(null, "", hash);
+      }
     }
+    // Suspend the scrollspy observer briefly so the user's intent isn't
+    // reverted by the section that happens to sit inside the activation
+    // band as the smooth-scroll passes through.
+    suppressObserverUntil.current = Date.now() + 600;
     el.scrollIntoView({ behavior: "smooth", block: "start" });
     setActiveId(id);
   }, []);
+
+  // Sync active section with browser back/forward navigation.
+  useEffect(() => {
+    const onPop = () => {
+      const hash = window.location.hash.replace("#", "");
+      if (hash && sectionRefs.current[hash]) {
+        jumpTo(hash);
+      }
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [jumpTo]);
 
   useEffect(() => {
     // Deep-link: honour any #hash on first mount once refs exist.
@@ -797,7 +824,18 @@ export default function ClinicalTabV2({
     if (typeof IntersectionObserver === "undefined") return undefined;
     const io = new IntersectionObserver(
       (entries) => {
-        // Choose the topmost visible section
+        // Ignore observer callbacks while a programmatic jump is settling.
+        if (Date.now() < suppressObserverUntil.current) return;
+        // Bottom-of-page guard: when the viewport can't scroll any further,
+        // the last section may never enter the activation band. Force it
+        // active so the nav pill matches what the user actually sees.
+        const nearBottom =
+          window.innerHeight + window.scrollY >=
+          document.documentElement.scrollHeight - 8;
+        if (nearBottom) {
+          setActiveId(NAV_ITEMS[NAV_ITEMS.length - 1].id);
+          return;
+        }
         const visible = entries
           .filter((e) => e.isIntersecting)
           .sort((a, b) => a.target.getBoundingClientRect().top - b.target.getBoundingClientRect().top);
@@ -814,6 +852,15 @@ export default function ClinicalTabV2({
   useEffect(() => {
     const onScroll = () => {
       setShowBackToTop(window.scrollY > 400);
+      // Same bottom-of-page guard for plain scroll events (fires even when
+      // the observer entries don't change).
+      if (Date.now() < suppressObserverUntil.current) return;
+      const nearBottom =
+        window.innerHeight + window.scrollY >=
+        document.documentElement.scrollHeight - 8;
+      if (nearBottom) {
+        setActiveId(NAV_ITEMS[NAV_ITEMS.length - 1].id);
+      }
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);

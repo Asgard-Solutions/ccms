@@ -1,6 +1,50 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+## Phase 1 — Clinical Tab redesign (2026-07-10, P1)
+
+**User request:** Redesign Phase 1 of Patient Profile > Clinical to improve orientation, reduce noise, make missing info understandable, and surface actionable issues. Keep existing legacy Clinical page as feature-flagged fallback.
+
+### Shipped
+- **Feature flag** `clinicalRedesign` (`/app/frontend/src/utils/featureFlags.js`): env-var default (`REACT_APP_CLINICAL_REDESIGN=on`), per-user localStorage override, `useFeatureFlag()` hook.
+- **New `ClinicalTabV2.jsx`** wrapping all existing sub-cards. Includes:
+  - Sticky patient context header (initials, name/mask, age, active episode, primary Dx, provider, next appt, re-exam due, red-flag alerts) — mask-aware.
+  - Sticky in-page section nav (Summary, History, Diagnoses, Encounters, Care plan, Timeline, Imaging, Outcomes) with scrollspy (IntersectionObserver), keyboard access, deep-link via `#hash`, count badges.
+  - Current Care Status panel — episode, primary Dx, plan progress, scheduled/unscheduled visits, next appt, re-exam due, unsigned docs, billing warnings, red-flag findings, missing required intake. Contextual CTAs.
+  - Interactive summary tiles as buttons that jump to sections; hover / focus / aria-label states.
+  - Extracted `EpisodesSection` + `episodeDialogs.js` for reuse.
+  - "Back to top" pill appears after scroll > 400 px.
+- **PatientDetail.jsx** — replaced inline Unmask / Export JSON / Soft-delete buttons with a single **"More actions"** DropdownMenu:
+  - "Reveal protected information" (was "Unmask (audited)")
+  - "Export patient data" (was "Export JSON")
+  - "Archive patient" (was "Soft-delete") — destructive-toned menu item.
+  - Confirmation dialog reworded per user spec ("Archive this patient? … retained according to the 7-year record-retention policy … This action is audited and can only be reversed by an authorized user.").
+- **IntakeHistoryCard.jsx** — per-field "From intake" badges removed (only "Provider edit" tag retained as positive provenance); single header pill "Imported from patient intake on <date>"; `renderReadValue` shows "Not documented" / "Missing required information" instead of `—`; new `renderRedFlagScreening` renders positive findings with destructive styling and negatives as a plain sentence ("No fever, recent trauma, or night pain reported.").
+- **BillingReadinessPanel.jsx** — collapsed header now shows count + top non-passing check message + "Review billing issues" hint; sentence-case label; visible focus ring.
+- **ReExamsCard / MediaCard / OutcomesCard** — replaced tall dashed empty states with compact row cards + primary CTA.
+
+### Files added / modified
+- `/app/frontend/.env` — added `REACT_APP_CLINICAL_REDESIGN=on`
+- `/app/frontend/src/utils/featureFlags.js` (new)
+- `/app/frontend/src/pages/clinical/ClinicalTabV2.jsx` (new)
+- `/app/frontend/src/pages/clinical/EpisodesSection.jsx` (new)
+- `/app/frontend/src/pages/clinical/episodeDialogs.js` (new)
+- `/app/frontend/src/pages/PatientDetail.jsx`
+- `/app/frontend/src/pages/clinical/IntakeHistoryCard.jsx`
+- `/app/frontend/src/pages/clinical/BillingReadinessPanel.jsx`
+- `/app/frontend/src/pages/clinical/ReExamsCard.jsx`
+- `/app/frontend/src/pages/clinical/MediaCard.jsx`
+- `/app/frontend/src/pages/clinical/OutcomesCard.jsx`
+
+### Not changed (per Phase 1 constraints)
+- No backend / API / data-model changes. No changes to sub-card business logic, permissions, masking, audit, signed-record rules, or route behavior. Legacy `ClinicalTab.jsx` retained and rendered when flag is off.
+
+### Verification
+- Lint: all edited files clean.
+- Manual UI screenshot (admin@ccms.app on masked patient M. R.): sticky header, sticky nav, care-status panel, tiles, More actions dropdown, section jump, compact imaging empty state all rendered correctly.
+
+
+
 ## HOTFIX 2026-07-10 — Cloudflare 502 on login (recurring libmagic + ClaimEvent Literal)
 
 **User report:** Login attempts returned Cloudflare "origin returned invalid or incomplete response" (502).
