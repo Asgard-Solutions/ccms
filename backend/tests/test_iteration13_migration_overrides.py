@@ -21,7 +21,7 @@ import uuid
 
 import requests
 
-API = os.environ.get("CCMS_BASE_URL", "https://imaging-data-quality.preview.emergentagent.com/api")
+API = os.environ.get("CCMS_BASE_URL", "https://phi-safe-clinical-ui.preview.emergentagent.com/api")
 
 ADMIN = ("admin@ccms.app", "Admin@ComplianceClinic1")
 DOCTOR = ("doctor@ccms.app", "Doctor@ComplianceClinic1")
