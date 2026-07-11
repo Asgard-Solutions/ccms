@@ -1349,6 +1349,10 @@ export default function PatientDetail() {
             onEdit={openIntakeWizard}
             refreshKey={intakeRefreshKey}
           />
+          {/* Questionnaires are patient-reported intake forms — they
+              belong on the Intake tab, not Billing. Moved here as part
+              of the 2026-02-15 placement-defect fix. */}
+          <PatientQuestionnairesCard patientId={id} />
         </TabsContent>
 
         <TabsContent value="documents" className="mt-6 space-y-6">
@@ -1549,9 +1553,6 @@ export default function PatientDetail() {
           <div className="space-y-6">
             <PatientLedgerCard patientId={id} title="Activity" />
             <PatientStatementsCard patientId={id} />
-            <PatientQuestionnairesCard patientId={id} />
-            <ChartBriefCard patientId={id} />
-            <PatientSemanticSearch patientId={id} />
           </div>
         </TabsContent>
       </Tabs>
