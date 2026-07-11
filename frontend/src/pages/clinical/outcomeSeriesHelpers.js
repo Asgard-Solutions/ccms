@@ -298,6 +298,12 @@ export function buildMilestones({ activePlan } = {}) {
 /**
  * Deterministic optional-suggestion list.
  *
+ * Item 31 (context-aware onboarding): When the caller passes `context`
+ * — with any of `primary_dx_body_region`, `patient_age`, `episode_case_type`
+ * — we may recommend a *narrower* subset from `configured_outcome_measures`
+ * matching the clinical context. All picks still come from the product's
+ * configured list; we never invent instruments.
+ *
  * Rules (all AND):
  *   - Instrument key MUST be in `SUPPORTED_INSTRUMENTS`.
  *   - Instrument MUST be in `configured_outcome_measures` on the
@@ -310,6 +316,25 @@ export function buildMilestones({ activePlan } = {}) {
  * Never triggers a workflow — the UI only offers a link to the
  * "Record outcome" dialog. No auto-start / auto-populate / auto-submit.
  */
+// Instrument → clinical-context relevance map. Used only to add a
+// context-aware "recommended for this episode" hint; does NOT filter out
+// instruments that a plan already configured.
+const INSTRUMENT_CONTEXT = {
+  ndi:      { regions: ["cervical", "neck"], min_age: 12, note: "Neck disability index" },
+  oswestry: { regions: ["lumbar", "low back", "lower back"], min_age: 14, note: "Low back disability" },
+  vas:      { regions: null, min_age: null, note: "Pain rating (any region)" },
+  psfs:     { regions: null, min_age: null, note: "Patient-specific functional scale" },
+};
+
+function contextMatches(key, context) {
+  const spec = INSTRUMENT_CONTEXT[key];
+  if (!spec || !context) return false;
+  const region = (context.primary_dx_body_region || "").toLowerCase();
+  if (spec.regions && !spec.regions.some((r) => region.includes(r))) return false;
+  if (spec.min_age && context.patient_age != null && context.patient_age < spec.min_age) return false;
+  return true;
+}
+
 export function deriveOutcomeSuggestions({
   activePlan,
   entries,
@@ -317,6 +342,7 @@ export function deriveOutcomeSuggestions({
   dismissed = new Set(),
   now = Date.now(),
   staleAfterDays = 30,
+  context = null,
 } = {}) {
   if (!canWrite) return [];
   const configured = activePlan?.configured_outcome_measures || [];
@@ -349,18 +375,23 @@ export function deriveOutcomeSuggestions({
       reason = "stale_record";
     }
     const inst = SUPPORTED_INSTRUMENTS[key];
+    const isContextMatch = contextMatches(key, context);
     suggestions.push({
       instrument_key: key,
       label: inst.label,
       short_label: inst.short_label,
       reason,
+      context_match: isContextMatch,
       why:
         reason === "no_record_on_file"
-          ? `${inst.short_label} is configured on the active plan and has no entry on file.`
-          : `${inst.short_label} is configured on the active plan; the last entry is more than ${staleAfterDays} days old.`,
+          ? `${inst.short_label} is configured on the active plan and has no entry on file.${isContextMatch ? " Recommended for this episode." : ""}`
+          : `${inst.short_label} is configured on the active plan; the last entry is more than ${staleAfterDays} days old.${isContextMatch ? " Recommended for this episode." : ""}`,
       dismissible: true,
     });
     seen.add(key);
   }
+  // Item 31: When context is provided, surface context-matching suggestions
+  // first so recommended-for-this-episode measures rise to the top.
+  suggestions.sort((a, b) => (b.context_match === true ? 1 : 0) - (a.context_match === true ? 1 : 0));
   return suggestions;
 }

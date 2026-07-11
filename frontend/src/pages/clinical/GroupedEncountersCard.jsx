@@ -51,6 +51,20 @@ export default function GroupedEncountersCard({ patientId }) {
   const [err, setErr] = useState(null);
   const [expanded, setExpanded] = useState(() => new Set());
   const [filter, setFilter] = useState(() => {
+    // Item 8: honor a filter hint from a Summary tile click ("Notes" tile
+    // deep-links here with filter=missing_note).
+    try {
+      const hintRaw = window.sessionStorage.getItem("ccms.clinical.filterHint.encounters");
+      if (hintRaw) {
+        window.sessionStorage.removeItem("ccms.clinical.filterHint.encounters");
+        const h = JSON.parse(hintRaw);
+        if (h?.hint && ["missing_note", "billing", "in_progress", "completed", "cancelled", "needs_action"].includes(h.hint)) {
+          return h.hint;
+        }
+      }
+    } catch {
+      /* ignore */
+    }
     try {
       return window.localStorage.getItem(FILTER_PREF_KEY) || "needs_action";
     } catch {
@@ -133,7 +147,7 @@ export default function GroupedEncountersCard({ patientId }) {
         </div>
       </div>
 
-      <div role="tablist" aria-label="Encounter filters" className="flex flex-wrap gap-1" data-testid="grouped-encounters-filters">
+      <div role="tablist" aria-label="Encounter filters" className="flex flex-wrap gap-1.5" data-testid="grouped-encounters-filters">
         {FILTERS.map((f) => {
           const active = effectiveFilter === f.id;
           return (
@@ -145,16 +159,16 @@ export default function GroupedEncountersCard({ patientId }) {
               data-testid={`grouped-encounters-filter-${f.id}`}
               onClick={() => setFilter(f.id)}
               className={[
-                "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors",
+                "inline-flex min-h-11 items-center gap-1.5 rounded-full px-4 py-2 text-sm transition-colors",
                 "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
                 active
-                  ? "bg-primary text-primary-foreground font-medium"
+                  ? "bg-primary text-primary-foreground font-semibold"
                   : "border border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground",
               ].join(" ")}
             >
               {f.label}
               {counts[f.id] > 0 && (
-                <span className={`rounded-full px-1.5 text-[10px] ${active ? "bg-primary-foreground/25" : "bg-muted-foreground/15"}`}>
+                <span className={`rounded-full px-1.5 text-xs font-medium ${active ? "bg-primary-foreground/25" : "bg-muted-foreground/15"}`}>
                   {counts[f.id]}
                 </span>
               )}
@@ -209,9 +223,17 @@ export default function GroupedEncountersCard({ patientId }) {
                       <StatusBadge dim="clinical_response" value={s.clinical_response} testId={`grouped-status-response-${g.group_key}`} />
                       <StatusBadge dim="billing" value={s.billing} testId={`grouped-status-billing-${g.group_key}`} />
                       {g.provider_name && (
-                        <span className="text-[11px] text-muted-foreground">· {g.provider_name}</span>
+                        <span className="text-xs text-muted-foreground">· {g.provider_name}</span>
                       )}
                     </div>
+                    {(s.billing === "warning" || s.billing === "blocked") && (g.billing_top_message || g.billing_message) && (
+                      <div
+                        data-testid={`grouped-billing-message-${g.group_key}`}
+                        className={`mt-1.5 text-sm ${s.billing === "blocked" ? "text-destructive" : "text-warning"}`}
+                      >
+                        {g.billing_top_message || g.billing_message}
+                      </div>
+                    )}
                   </div>
                   {isOpen ? <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" /> : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />}
                 </button>

@@ -1,6 +1,34 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+## 2026-02-15 — Clinical redesign audit follow-through (42-item pass)
+
+**Follow-up to the audit conducted 2026-02-15 after Slice 4 was moved to backlog.** Completed the concrete UI-level items that don't require Slice 5's role-aware framework or backend contract changes.
+
+**Shipped:**
+- ✅ Item 6 — Tab bar grouping (Clinical | Administrative), stronger active state, `min-h-11` targets
+- ✅ Item 9 — Timestamp renamed to "Chart data last refreshed …"
+- ✅ Item 13/39 — HPI capped at `max-w-prose leading-relaxed`
+- ✅ Item 17 — Diagnosis row multi-line stacked layout
+- ✅ Item 20 — Per-encounter billing message inline (`billing_top_message`)
+- ✅ Item 26 — Timeline grouped by calendar date with count summary
+- ✅ Item 28 — "View details" hover cue on timeline rows
+- ✅ Item 30 — Imaging filters split into Modality / Source groups
+- ✅ Item 31 — Context-aware outcome suggestions via `INSTRUMENT_CONTEXT` (age / body region gates); "Recommended for this episode" hint
+- ✅ Item 37 — Metadata text bumped to `text-sm`/`text-base`
+- ✅ Item 40 — Skip-to-summary link on ClinicalTabV2
+- ✅ Item 41 — Interactive controls raised to `min-h-11`
+- ✅ Item 42 — `uppercase tracking-wider` micro-labels converted to sentence case across 8 components
+- ✅ Item 4 — Missing-info vocabulary expanded (Not documented / Missing required information / Not applicable / Needs review)
+- ✅ Item 8 — Summary tiles carry a filter hint to destination (`sessionStorage`), consumed by `GroupedEncountersCard`
+
+**Deferred (documented in ROADMAP):**
+- 🅱️ Item 35 — Deeper layered surface tokens (theme restructure)
+- 🅱️ Item 18 — Diagnosis "Set inactive" state (blocked on backend status-model decision)
+- 🅱️ Phase 3 workflow — Role-aware views + configurable chart summary (Slice 5)
+
+---
+
 ## Phase 3 Slice 4 — Imaging metadata + Data-quality indicators (2026-02-15)
 
 **Status:** 🅱️ **BACKLOG (integration deferred).** Standalone files (`dataQualityEngine.js`, `DataQualityPanel.jsx`, `ImagingCard.jsx`) remain in-tree and jest-green (88/88), but per user direction the integration into `ClinicalTabV2.jsx` — imports, `clinicalRedesignPhase3Slice4` flag reference, and JSX slot — was removed on 2026-02-15 (same day) to keep the shell clean. Backend unchanged. Resume by re-wiring the imports + flag gate + JSX slot when work restarts.

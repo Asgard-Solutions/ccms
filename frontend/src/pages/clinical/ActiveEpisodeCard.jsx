@@ -36,11 +36,11 @@ import StatusBadge from "./status/StatusBadge";
 
 function DefRow({ label, children, testId }) {
   return (
-    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-1.5" data-testid={testId}>
-      <div className="min-w-[140px] text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-2" data-testid={testId}>
+      <div className="min-w-[150px] text-sm font-medium text-muted-foreground">
         {label}
       </div>
-      <div className="min-w-0 flex-1 text-sm text-foreground">{children ?? <span className="text-muted-foreground italic">Not documented</span>}</div>
+      <div className="min-w-0 flex-1 text-base text-foreground">{children ?? <span className="text-muted-foreground italic">Not documented</span>}</div>
     </div>
   );
 }

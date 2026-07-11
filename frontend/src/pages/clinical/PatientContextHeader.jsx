@@ -8,10 +8,10 @@ import { formatDate, formatDateTime } from "../../utils/time";
 function ContextChip({ label, children, testId }) {
   return (
     <div className="min-w-0" data-testid={testId}>
-      <div className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+      <div className="text-xs font-medium text-muted-foreground">
         {label}
       </div>
-      <div className="truncate text-sm text-foreground">{children}</div>
+      <div className="truncate text-sm font-medium text-foreground">{children}</div>
     </div>
   );
 }

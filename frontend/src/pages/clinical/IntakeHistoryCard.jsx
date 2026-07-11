@@ -71,16 +71,27 @@ function SourceBadge({ meta }) {
 }
 
 function renderReadValue(value, opts = {}) {
-  const emptyLabel = opts.required ? "Missing required information" : "Not documented";
-  const emptyTone = opts.required
+  // Item 4: Missing-info vocabulary
+  //   * required  → "Missing required information" (warning tone)
+  //   * na        → "Not applicable"              (muted, no action)
+  //   * review    → "Needs review"                (warning tone)
+  //   * default   → "Not documented"              (muted italic)
+  const label = opts.required
+    ? "Missing required information"
+    : opts.na
+      ? "Not applicable"
+      : opts.review
+        ? "Needs review"
+        : "Not documented";
+  const tone = opts.required || opts.review
     ? "text-warning italic"
     : "text-muted-foreground italic";
   if (value === null || value === undefined || value === "") {
-    return <span className={emptyTone}>{emptyLabel}</span>;
+    return <span className={tone}>{label}</span>;
   }
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (Array.isArray(value)) {
-    if (!value.length) return <span className={emptyTone}>{emptyLabel}</span>;
+    if (!value.length) return <span className={tone}>{label}</span>;
     return value.join(", ");
   }
   if (typeof value === "object") {
@@ -89,7 +100,7 @@ function renderReadValue(value, opts = {}) {
       return renderRedFlagScreening(value);
     }
     const pairs = Object.entries(value).filter(([, v]) => v !== null && v !== undefined && v !== "");
-    if (!pairs.length) return <span className={emptyTone}>{emptyLabel}</span>;
+    if (!pairs.length) return <span className={tone}>{label}</span>;
     return (
       <ul className="list-disc pl-5 text-sm">
         {pairs.map(([k, v]) => (
@@ -130,7 +141,7 @@ function renderRedFlagScreening(rf) {
   );
 }
 
-function FieldRow({ label, meta, value, editing, children, testId, required, dictKey }) {
+function FieldRow({ label, meta, value, editing, children, testId, required, dictKey, longText, na, review }) {
   return (
     <div
       data-testid={testId}
@@ -141,8 +152,8 @@ function FieldRow({ label, meta, value, editing, children, testId, required, dic
         <SourceBadge meta={meta} />
       </div>
       {editing ? children : (
-        <div className="text-sm">
-          {renderReadValue(value, { required, dictKey })}
+        <div className={longText ? "max-w-prose text-base leading-relaxed" : "text-base"}>
+          {renderReadValue(value, { required, dictKey, na, review })}
         </div>
       )}
     </div>
@@ -456,6 +467,7 @@ export default function IntakeHistoryCard({ patientId, canWrite, onReauthNeeded 
             value={history[key]}
             editing={editing}
             testId={`history-field-${key}`}
+            longText
             required={key === "chief_complaint" || key === "history_of_present_illness"}
           >
             <Textarea

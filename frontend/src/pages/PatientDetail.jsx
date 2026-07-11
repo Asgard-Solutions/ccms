@@ -1306,16 +1306,26 @@ export default function PatientDetail() {
       >
         <TabsList
           data-testid="patient-detail-tablist"
-          className="flex h-auto w-full flex-wrap justify-start gap-1 rounded-sm bg-muted/60 p-1"
+          className="flex h-auto w-full flex-wrap items-center justify-start gap-1 rounded-lg bg-muted/60 p-1.5"
         >
-          <TabsTrigger value="overview" data-testid="tab-overview" className="rounded-sm">Overview</TabsTrigger>
-          <TabsTrigger value="intake" data-testid="tab-intake" className="rounded-sm">Intake</TabsTrigger>
-          <TabsTrigger value="clinical" data-testid="tab-clinical" className="rounded-sm">Clinical</TabsTrigger>
-          <TabsTrigger value="documents" data-testid="tab-documents" className="rounded-sm">Documents &amp; Attachments</TabsTrigger>
-          <TabsTrigger value="records" data-testid="tab-records" className="rounded-sm">Medical Records</TabsTrigger>
-          <TabsTrigger value="appointments" data-testid="tab-appointments" className="rounded-sm">Appointments</TabsTrigger>
-          <TabsTrigger value="insurance" data-testid="tab-insurance" className="rounded-sm">Insurance</TabsTrigger>
-          <TabsTrigger value="billing" data-testid="tab-billing" className="rounded-sm">Billing &amp; Ledger</TabsTrigger>
+          <span className="ml-1 mr-1 hidden text-xs font-medium text-muted-foreground md:inline" aria-hidden="true">
+            Clinical
+          </span>
+          <TabsTrigger value="overview" data-testid="tab-overview" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Overview</TabsTrigger>
+          <TabsTrigger value="clinical" data-testid="tab-clinical" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Clinical</TabsTrigger>
+          <TabsTrigger value="intake" data-testid="tab-intake" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Intake</TabsTrigger>
+          <TabsTrigger value="records" data-testid="tab-records" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Records</TabsTrigger>
+          <TabsTrigger value="documents" data-testid="tab-documents" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Documents</TabsTrigger>
+          <span
+            aria-hidden="true"
+            className="mx-2 hidden h-6 w-px bg-border md:inline-block"
+          />
+          <span className="mr-1 hidden text-xs font-medium text-muted-foreground md:inline" aria-hidden="true">
+            Administrative
+          </span>
+          <TabsTrigger value="appointments" data-testid="tab-appointments" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Appointments</TabsTrigger>
+          <TabsTrigger value="insurance" data-testid="tab-insurance" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Insurance</TabsTrigger>
+          <TabsTrigger value="billing" data-testid="tab-billing" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Billing</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-6">

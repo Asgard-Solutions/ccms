@@ -265,6 +265,9 @@ function buildRows({
   return rows;
 }
 
+// Note: row labels are rendered in sentence case (item 42) with slightly
+// larger text (item 37) for readability. The uppercase micro-label pattern
+// was removed after the redesign audit.
 const TONE_TO_CLASS = {
   warning: "text-warning",
   destructive: "text-destructive",
@@ -366,13 +369,13 @@ export default function CurrentCareStatusPanel(props) {
           <li
             key={r.key}
             data-testid={`care-status-row-${r.key}`}
-            className="flex flex-wrap items-center justify-between gap-3 py-2.5"
+            className="flex flex-wrap items-center justify-between gap-3 py-3"
           >
             <div className="min-w-0 flex-1">
-              <div className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              <div className="text-sm font-medium text-muted-foreground">
                 {r.label}
               </div>
-              <div className={`mt-0.5 text-sm ${TONE_TO_CLASS[r.tone] || TONE_TO_CLASS.default}`}>
+              <div className={`mt-1 text-base ${TONE_TO_CLASS[r.tone] || TONE_TO_CLASS.default}`}>
                 {r.value}
               </div>
             </div>

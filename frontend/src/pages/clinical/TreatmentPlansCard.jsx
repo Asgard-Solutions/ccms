@@ -178,12 +178,12 @@ export default function TreatmentPlansCard({ patientId, canWrite, episodes = [],
                       <Badge
                         variant="outline"
                         data-testid={`plan-row-${p.id}-status`}
-                        className={`text-[10px] uppercase tracking-wider ${tone}`}
+                        className={`text-xs font-medium ${tone}`}
                       >
                         {STATUS_LABEL[p.plan_status] || p.plan_status}
                       </Badge>
                     </div>
-                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
                       {p.episode_title && <span>Episode · {p.episode_title}</span>}
                       {p.responsible_provider_name && (
                         <span>Provider · {p.responsible_provider_name}</span>
@@ -202,10 +202,10 @@ export default function TreatmentPlansCard({ patientId, canWrite, episodes = [],
                     data-testid={`plan-row-${p.id}-progress`}
                     className="shrink-0 text-right"
                   >
-                    <div className="font-display text-sm font-semibold text-foreground">
+                    <div className="font-display text-base font-semibold text-foreground">
                       {pg.visits_completed}/{pg.total_visits ?? "—"}
                     </div>
-                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <div className="text-xs font-medium text-muted-foreground">
                       {pg.percent != null ? `${pg.percent}%` : "—"} · visits
                     </div>
                   </div>

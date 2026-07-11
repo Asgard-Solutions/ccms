@@ -23,14 +23,17 @@ import { Skeleton } from "../../components/ui/skeleton";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import { formatDateTime } from "../../utils/time";
 
-const CATEGORIES = [
+const MODALITY_CATEGORIES = [
   { value: "xray", label: "X-ray" },
   { value: "mri_ct_report", label: "MRI / CT" },
   { value: "ultrasound", label: "Ultrasound" },
   { value: "clinical_photo", label: "Clinical photo" },
-  { value: "outside_record", label: "Outside record" },
-  { value: "other_pdf", label: "Other PDF" },
 ];
+const DOCUMENT_CATEGORIES = [
+  { value: "outside_record", label: "Outside record" },
+  { value: "other_pdf", label: "Document / PDF" },
+];
+const CATEGORIES = [...MODALITY_CATEGORIES, ...DOCUMENT_CATEGORIES];
 const SOURCES = [
   { value: "in_clinic", label: "In-clinic" },
   { value: "outside_imaging_center", label: "Outside imaging center" },
@@ -128,30 +131,53 @@ export default function MediaCard({ patientId, canWrite, onReauthNeeded }) {
         )}
       </div>
 
-      <div data-testid="media-filter-chips" className="flex flex-wrap gap-1.5">
-        <button
-          type="button"
-          onClick={() => setFilter("all")}
-          data-testid="media-filter-all"
-          className={`rounded-sm border px-2.5 py-1 text-xs transition-colors ${
-            filter === "all" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted/40"
-          }`}
-        >
-          All
-        </button>
-        {CATEGORIES.map((c) => (
-          <button
-            key={c.value}
-            type="button"
-            onClick={() => setFilter(c.value)}
-            data-testid={`media-filter-${c.value}`}
-            className={`rounded-sm border px-2.5 py-1 text-xs transition-colors ${
-              filter === c.value ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-muted/40"
-            }`}
-          >
-            {c.label}
-          </button>
-        ))}
+      <div data-testid="media-filter-groups" className="space-y-3">
+        <div>
+          <div className="mb-1.5 text-xs font-medium text-muted-foreground">Modality</div>
+          <div data-testid="media-filter-modality" className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => setFilter("all")}
+              data-testid="media-filter-all"
+              className={`inline-flex min-h-11 items-center rounded-full border px-4 py-2 text-sm transition-colors ${
+                filter === "all" ? "border-primary bg-primary/10 text-primary font-medium" : "border-border text-muted-foreground hover:bg-muted/40"
+              }`}
+            >
+              All
+            </button>
+            {MODALITY_CATEGORIES.map((c) => (
+              <button
+                key={c.value}
+                type="button"
+                onClick={() => setFilter(c.value)}
+                data-testid={`media-filter-${c.value}`}
+                className={`inline-flex min-h-11 items-center rounded-full border px-4 py-2 text-sm transition-colors ${
+                  filter === c.value ? "border-primary bg-primary/10 text-primary font-medium" : "border-border text-muted-foreground hover:bg-muted/40"
+                }`}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div>
+          <div className="mb-1.5 text-xs font-medium text-muted-foreground">Source</div>
+          <div data-testid="media-filter-source" className="flex flex-wrap gap-1.5">
+            {DOCUMENT_CATEGORIES.map((c) => (
+              <button
+                key={c.value}
+                type="button"
+                onClick={() => setFilter(c.value)}
+                data-testid={`media-filter-${c.value}`}
+                className={`inline-flex min-h-11 items-center rounded-full border px-4 py-2 text-sm transition-colors ${
+                  filter === c.value ? "border-primary bg-primary/10 text-primary font-medium" : "border-border text-muted-foreground hover:bg-muted/40"
+                }`}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {filtered === null ? (

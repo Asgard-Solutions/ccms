@@ -4,6 +4,52 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-02-15 — Clinical Redesign Audit Follow-through (42-item pass)
+
+**Why:** After the Patient Profile > Clinical audit, ~15 items were flagged as not-done or partial. This slice completes the concrete UI improvements that don't require new backend contracts or the deferred Slice 5 role-aware framework.
+
+**Shipped in this pass:**
+- **Tab bar (item 6):** `PatientDetail.jsx` now groups tabs into "Clinical" (Overview / Clinical / Intake / Records / Documents) and "Administrative" (Appointments / Insurance / Billing) with a visible divider, stronger active-state (primary background + shadow + font-semibold), min-h-11 targets, and shorter labels.
+- **Timestamp copy (item 9):** `Synced …` → `Chart data last refreshed …` with `title` tooltip explaining semantics.
+- **Skip link (item 40):** `ClinicalTabV2.jsx` adds a `sr-only`/focus-visible skip-to-summary anchor.
+- **HPI readable width (items 13/39):** `IntakeHistoryProgressive` and `IntakeHistoryCard` cap long-form text with `max-w-prose leading-relaxed`. HPI now takes full-row width and wraps at ~65ch.
+- **Imaging taxonomy (item 30):** `MediaCard` filters split into two labelled groups — **Modality** (X-ray, MRI/CT, Ultrasound, Clinical photo) and **Source** (Outside record, Document/PDF).
+- **Click targets (item 41):** `SectionNav`, encounter filter tabs, imaging filter chips, diagnosis Status/Episode selects, timeline rows — all bumped to `min-h-11` and `text-sm`.
+- **Sentence-case labels (item 42):** Removed `uppercase tracking-wider` from `PatientContextHeader`, `CurrentCareStatusPanel`, `ActiveEpisodeCard`, `SafetySummary`, `IntakeHistoryProgressive`, `TreatmentPlansCard`, `DiagnosesCard`, `GroupedTimelineCard`.
+- **Text size (item 37):** Field labels rise from `text-[10px]/[11px]` to `text-sm`; values rise from `text-sm` to `text-base` in Care Status rows, DefRow, safety summary, compact intake.
+- **Per-encounter billing (item 20):** `GroupedEncountersCard` reads `g.billing_top_message` and inline-displays the reason (missing modifier / linkage) under warning/blocked rows.
+- **Timeline group-by-date (item 26):** `GroupedTimelineCard` now buckets events by calendar day with a date-header + record count, and each row shows a "View details" hover cue.
+- **Diagnosis multi-line (item 17):** `DiagnosisRow` restructured — line 1: ICD-10 + label; line 2: primacy + record-state pills; line 3: Clinical/Billing/Problem-list; line 4: region/laterality/chronicity/onset; line 5: episode + audit. Notes and resolution get `max-w-prose leading-relaxed`.
+- **Missing-info vocabulary (item 4):** `renderReadValue` in `IntakeHistoryCard` now supports four vocabulary states — `Missing required information` (warning), `Not applicable`, `Needs review` (warning), `Not documented` (default) — via `required` / `na` / `review` opts on `FieldRow`.
+- **Summary tiles as filters (item 8):** `SummaryTiles` now carries a `filterHint` per tile and writes it to `sessionStorage`; `GroupedEncountersCard` reads and clears the hint on mount (`missing_note` from Notes tile, `initial_exams` etc.).
+- **Context-aware outcome suggestions (item 31):** `deriveOutcomeSuggestions` accepts `context = { patient_age, primary_dx_body_region, episode_case_type }`; `INSTRUMENT_CONTEXT` maps NDI→cervical/neck, Oswestry→lumbar/low-back (with min-age gate), VAS/PSFS→always; context-matching suggestions surface first with a "Recommended for this episode" hint. Wired through `OutcomesSection.suggestionContext` in `ClinicalTabV2`.
+
+**Deferred (not in this pass):**
+- Layered surface tokens beyond existing `--surface`/`--surface-2`/`--surface-3` (item 35 — theme-level restructure).
+- Full role-based views + configurable chart summary (Slice 5 — separate roadmap item).
+- "Set inactive" diagnosis state (item 18 second bullet — blocked on backend status-model decision).
+
+**Files touched:**
+- `frontend/src/pages/PatientDetail.jsx`
+- `frontend/src/pages/clinical/ClinicalTabV2.jsx`
+- `frontend/src/pages/clinical/SectionNav.jsx`
+- `frontend/src/pages/clinical/SummaryTiles.jsx`
+- `frontend/src/pages/clinical/PatientContextHeader.jsx`
+- `frontend/src/pages/clinical/CurrentCareStatusPanel.jsx`
+- `frontend/src/pages/clinical/ActiveEpisodeCard.jsx`
+- `frontend/src/pages/clinical/SafetySummary.jsx`
+- `frontend/src/pages/clinical/IntakeHistoryProgressive.jsx`
+- `frontend/src/pages/clinical/IntakeHistoryCard.jsx`
+- `frontend/src/pages/clinical/MediaCard.jsx`
+- `frontend/src/pages/clinical/GroupedEncountersCard.jsx`
+- `frontend/src/pages/clinical/GroupedTimelineCard.jsx`
+- `frontend/src/pages/clinical/DiagnosesCard.jsx`
+- `frontend/src/pages/clinical/TreatmentPlansCard.jsx`
+- `frontend/src/pages/clinical/OutcomesSection.jsx`
+- `frontend/src/pages/clinical/outcomeSeriesHelpers.js`
+
+---
+
 ## 2026-02-15 — Clinical redesign Phase 3 Slice 4 (Imaging metadata + Data-quality indicators) — **STANDALONE FILES ONLY, INTEGRATION DEFERRED**
 
 **Status update (2026-02-15, later same day):** Per user direction, Slice 4 has been **moved back to the backlog**. The engine, panel, and imaging card files remain in-tree and jest-green, but the integration into `ClinicalTabV2.jsx` (imports, `clinicalRedesignPhase3Slice4` flag reference, and JSX slot) has been removed to keep the shell clean. Pick this up by re-wiring the imports + flag gate when work resumes.

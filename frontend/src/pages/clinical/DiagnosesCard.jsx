@@ -274,12 +274,6 @@ function DiagnosisDialog({ open, onOpenChange, initial, episodes, onSubmit, subm
 function DiagnosisRow({ dx, episodes, canWrite, onEdit, onResolve, onReactivate, onViewHistory }) {
   const linkedEpisode = episodes.find((ep) => ep.id === dx.episode_id);
   const stateValue = dx.status === "resolved" ? "resolved" : "active";
-  // Show clinical / billing / problem-list classifications as small, honest
-  // badges so users can see how the diagnosis is being used across the chart.
-  //   * Clinical  — every diagnosis on this list is clinical.
-  //   * Billing   — surfaces only when explicitly excluded (`billable === false`).
-  //   * Problem   — active + primary flags a diagnosis as belonging to the
-  //                 running problem list.
   const isBillable = dx.billable !== false;
   const onProblemList = dx.status === "active" && !!dx.is_primary;
   return (
@@ -288,16 +282,20 @@ function DiagnosisRow({ dx, episodes, canWrite, onEdit, onResolve, onReactivate,
       className="rounded-lg border border-border bg-card p-4"
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-sm font-semibold text-foreground" data-testid={`dx-${dx.id}-icd10`}>
+        <div className="min-w-0 flex-1 space-y-2">
+          {/* Line 1: ICD-10 + label — the primary object identifier. */}
+          <div className="flex flex-wrap items-baseline gap-2">
+            <span className="font-mono text-base font-semibold text-foreground" data-testid={`dx-${dx.id}-icd10`}>
               {dx.icd10_code}
             </span>
-            <span className="text-sm text-foreground">{dx.label}</span>
+            <span className="text-base text-foreground">— {dx.label}</span>
+          </div>
+          {/* Line 2: primacy + record state — status pills on their own row. */}
+          <div className="flex flex-wrap items-center gap-1.5">
             {dx.is_primary && (
               <Badge
                 variant="outline"
-                className="border-warning/40 bg-warning-soft text-warning text-[10px]"
+                className="border-warning/40 bg-warning-soft text-warning text-xs"
                 data-testid={`dx-primary-${dx.id}`}
               >
                 <Star className="mr-1 h-3 w-3" aria-hidden="true" />
@@ -306,33 +304,38 @@ function DiagnosisRow({ dx, episodes, canWrite, onEdit, onResolve, onReactivate,
             )}
             <StatusBadge dim="record_state" value={stateValue} testId={`dx-${dx.id}-state`} />
           </div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-1.5" data-testid={`dx-${dx.id}-classifications`}>
-            <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary text-[10px]">
+          {/* Line 3: classifications — how this diagnosis is used across the chart. */}
+          <div className="flex flex-wrap items-center gap-1.5" data-testid={`dx-${dx.id}-classifications`}>
+            <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary text-xs">
               Clinical
             </Badge>
             {isBillable && (
-              <Badge variant="outline" className="border-success/30 bg-success-soft text-success text-[10px]" data-testid={`dx-${dx.id}-billing`}>
+              <Badge variant="outline" className="border-success/30 bg-success-soft text-success text-xs" data-testid={`dx-${dx.id}-billing`}>
                 Billing
               </Badge>
             )}
             {onProblemList && (
-              <Badge variant="outline" className="border-warning/30 bg-warning-soft text-warning text-[10px]" data-testid={`dx-${dx.id}-problem-list`}>
+              <Badge variant="outline" className="border-warning/30 bg-warning-soft text-warning text-xs" data-testid={`dx-${dx.id}-problem-list`}>
                 Problem list
               </Badge>
             )}
           </div>
-          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            {dx.body_region && <span>Region · {dx.body_region}</span>}
-            {dx.laterality && <span>Laterality · {dx.laterality}</span>}
-            {dx.chronicity && <span>Chronicity · {dx.chronicity}</span>}
-            {dx.onset_date && <span>Onset · {formatDate(dx.onset_date)}</span>}
-            {dx.resolved_date && <span>Resolved · {formatDate(dx.resolved_date)}</span>}
+          {/* Line 4: clinical descriptors. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+            {dx.body_region && <span>Region · <span className="text-foreground">{dx.body_region}</span></span>}
+            {dx.laterality && <span>Laterality · <span className="text-foreground">{dx.laterality}</span></span>}
+            {dx.chronicity && <span>Chronicity · <span className="text-foreground">{dx.chronicity}</span></span>}
+            {dx.onset_date && <span>Onset · <span className="text-foreground">{formatDate(dx.onset_date)}</span></span>}
+            {dx.resolved_date && <span>Resolved · <span className="text-foreground">{formatDate(dx.resolved_date)}</span></span>}
+          </div>
+          {/* Line 5: episode + audit meta. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
             {linkedEpisode && <span>Episode · {linkedEpisode.title}</span>}
             {dx.updated_at && <span>Updated · {formatDate(dx.updated_at)}</span>}
           </div>
-          {dx.notes && <p className="mt-2 text-sm text-muted-foreground">{dx.notes}</p>}
+          {dx.notes && <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">{dx.notes}</p>}
           {dx.resolution_notes && (
-            <p className="mt-1 text-xs italic text-muted-foreground">
+            <p className="max-w-prose text-xs italic leading-relaxed text-muted-foreground">
               Resolution: {dx.resolution_notes}
             </p>
           )}
@@ -341,7 +344,7 @@ function DiagnosisRow({ dx, episodes, canWrite, onEdit, onResolve, onReactivate,
         <div className="flex shrink-0 flex-wrap gap-2">
           <Button
             size="sm"
-            variant="outline"
+            variant="ghost"
             onClick={() => onViewHistory(dx)}
             data-testid={`dx-${dx.id}-history`}
             className="rounded-sm"
@@ -353,7 +356,7 @@ function DiagnosisRow({ dx, episodes, canWrite, onEdit, onResolve, onReactivate,
             <>
               <Button
                 size="sm"
-                variant="outline"
+                variant="ghost"
                 onClick={() => onEdit(dx)}
                 data-testid={`dx-edit-${dx.id}`}
                 className="rounded-sm"
@@ -623,9 +626,9 @@ export default function DiagnosesCard({ patientId, episodes = [], canWrite, onRe
 
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1">
-          <Label className="text-xs uppercase tracking-wider text-muted-foreground">Status</Label>
+          <Label className="text-sm font-medium text-muted-foreground">Status</Label>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger data-testid="dx-filter-status" className="h-9 w-40 rounded-sm">
+            <SelectTrigger data-testid="dx-filter-status" className="h-11 w-40 rounded-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -637,12 +640,12 @@ export default function DiagnosesCard({ patientId, episodes = [], canWrite, onRe
         </div>
         {episodes.length > 0 && (
           <div className="space-y-1">
-            <Label className="text-xs uppercase tracking-wider text-muted-foreground">Episode</Label>
+            <Label className="text-sm font-medium text-muted-foreground">Episode</Label>
             <Select
               value={episodeFilter}
               onValueChange={(v) => setEpisodeFilter(v === "__orphan" ? "all" : v)}
             >
-              <SelectTrigger data-testid="dx-filter-episode" className="h-9 w-72 rounded-sm">
+              <SelectTrigger data-testid="dx-filter-episode" className="h-11 w-72 rounded-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

@@ -371,6 +371,17 @@ export default function ClinicalTabV2({
   // ---- render -------------------------------------------------------
   return (
     <div data-testid="patient-clinical-tab-v2" className="space-y-8">
+      <a
+        href="#summary"
+        data-testid="clinical-skip-link"
+        onClick={(e) => {
+          e.preventDefault();
+          jumpTo("summary", { userInitiated: true });
+        }}
+        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-full focus:border focus:border-primary focus:bg-background focus:px-4 focus:py-2 focus:text-sm focus:text-primary focus:shadow-lg"
+      >
+        Skip to clinical summary
+      </a>
       <div className="sticky top-0 z-30 -mx-4 sm:-mx-6 lg:-mx-8">
         <PatientContextHeader
           patient={patient || {}}
@@ -415,8 +426,12 @@ export default function ClinicalTabV2({
             </p>
           </div>
           {summary?.generated_at && (
-            <span className="text-xs text-muted-foreground">
-              Synced {formatDateTime(summary.generated_at)}
+            <span
+              data-testid="clinical-refresh-timestamp"
+              className="text-sm text-muted-foreground"
+              title="This chart's summary payload was last refreshed at this time."
+            >
+              Chart data last refreshed {formatDateTime(summary.generated_at)}
             </span>
           )}
         </div>
@@ -587,6 +602,11 @@ export default function ClinicalTabV2({
             canWrite={canWrite}
             activePlan={activePlan}
             routeInstanceToken={routeInstanceToken}
+            suggestionContext={{
+              patient_age: age,
+              primary_dx_body_region: primaryDx?.body_region || null,
+              episode_case_type: activeEpisode?.case_type || null,
+            }}
             onRecordOutcome={() => {
               // Delegate to the legacy card for the actual capture UI —
               // Slice 3 is intentionally read-only. Scroll the legacy

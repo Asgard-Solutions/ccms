@@ -53,10 +53,10 @@ export default function SafetySummary({ history }) {
           Safety summary
         </h3>
       </div>
-      <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-sm md:grid-cols-2">
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-1 text-base md:grid-cols-2">
         {rows.map((r) => (
-          <div key={r.key} data-testid={`safety-summary-${r.key}`} className="flex flex-wrap items-baseline gap-x-2 py-1">
-            <dt className="min-w-[160px] text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+          <div key={r.key} data-testid={`safety-summary-${r.key}`} className="flex flex-wrap items-baseline gap-x-2 py-1.5">
+            <dt className="min-w-[170px] text-sm font-medium text-muted-foreground">
               {r.label}
             </dt>
             <dd className={r.concern ? "text-warning" : "text-foreground"}>

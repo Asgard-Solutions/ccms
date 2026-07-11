@@ -27,10 +27,10 @@ export default function SectionNav({ activeId, onJump, counts }) {
                 data-testid={`clinical-nav-${item.id}`}
                 aria-current={isActive ? "location" : undefined}
                 className={[
-                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm transition-colors",
+                  "inline-flex min-h-11 items-center gap-1.5 rounded-full px-4 py-2 text-sm transition-colors",
                   "focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                   isActive
-                    ? "bg-primary text-primary-foreground font-medium"
+                    ? "bg-primary text-primary-foreground font-semibold shadow-sm"
                     : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 ].join(" ")}
               >
@@ -38,8 +38,8 @@ export default function SectionNav({ activeId, onJump, counts }) {
                 {count != null && count > 0 && (
                   <span
                     className={[
-                      "rounded-full px-1.5 text-[10px]",
-                      isActive ? "bg-primary-foreground/20" : "bg-muted-foreground/15",
+                      "rounded-full px-1.5 text-xs font-medium",
+                      isActive ? "bg-primary-foreground/25" : "bg-muted-foreground/15",
                     ].join(" ")}
                     aria-label={`${count} items`}
                   >

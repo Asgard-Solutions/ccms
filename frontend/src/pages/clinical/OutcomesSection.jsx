@@ -37,6 +37,7 @@ export default function OutcomesSection({
   activePlan,
   onRecordOutcome,
   routeInstanceToken,
+  suggestionContext = null,
 }) {
   const { state, saveState } = useClinicalReturnState({
     section: "outcomes",
@@ -102,8 +103,9 @@ export default function OutcomesSection({
         activePlan,
         entries: entries || [],
         dismissed: dismissedSet,
+        context: suggestionContext,
       }),
-    [canWrite, activePlan, entries, dismissedSet],
+    [canWrite, activePlan, entries, dismissedSet, suggestionContext],
   );
 
   const setView = useCallback(

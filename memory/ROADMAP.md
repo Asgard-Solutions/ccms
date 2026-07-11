@@ -19,6 +19,9 @@ Prioritized backlog for remaining P0/P1/P2 work. Most-recent updates on top.
 ### Deferred / Blocked
 
 - Diagnosis "Set inactive" state — awaiting backend status-model decision. Do not map to "resolved".
+- Layered surface token restructure (audit item 35) — deeper 5-level surface system beyond existing `--surface`, `--surface-2`, `--surface-3`. Requires theme redesign.
+- Slice 5 — Role-aware views + configurable chart summary + preference persistence (still Next).
+- Slice 6 — Telemetry, partial-failure handling, a11y hardening, UAT, rollback verification (still Planned).
 - Seed a demo patient with `total_visits_planned > completed + scheduled` **or** stale `configured_outcome_measures` so browser regressions can exercise the dismissible Next-Action flows end-to-end.
 
 

@@ -206,63 +206,99 @@ export default function GroupedTimelineCard({
         </div>
       ) : (
         <>
-          <ol className="space-y-2" data-testid="grouped-timeline-list">
-            {capped.map((e, idx) => {
-              const key = `${e.kind}:${idx}:${e.visit_at || ""}`;
-              const isOpen = expanded.has(key);
-              const Icon = KIND_ICON[e.kind] || FileText;
-              return (
-                <li
-                  key={key}
-                  className="rounded-lg border border-border bg-card"
-                  data-testid={`grouped-timeline-row-${e.kind}-${idx}`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => toggle(key)}
-                    aria-expanded={isOpen}
-                    className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-                  >
-                    <div className="flex min-w-0 items-center gap-3">
-                      <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-foreground">
-                          {e.visit_at ? formatDateTime(e.visit_at) : "Undated"} — {e.title}
-                        </div>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
-                          {e.status?.workflow && <StatusBadge dim="workflow" value={e.status.workflow} />}
-                          {e.status?.documentation && <StatusBadge dim="documentation" value={e.status.documentation} />}
-                          {e.status?.clinical_response && <StatusBadge dim="clinical_response" value={e.status.clinical_response} />}
-                          {e.status?.billing && <StatusBadge dim="billing" value={e.status.billing} />}
-                          {e.status?.record_state && <StatusBadge dim="record_state" value={e.status.record_state} />}
-                          {e.provider_name && <span className="text-[11px] text-muted-foreground">· {e.provider_name}</span>}
-                        </div>
-                      </div>
+          <ol className="space-y-3" data-testid="grouped-timeline-list">
+            {(() => {
+              // Item 26: group timeline events by calendar date so the same
+              // visit's related records (appointment, note, response, billing)
+              // stack under one date header instead of scattering as siblings.
+              const buckets = new Map();
+              capped.forEach((e, idx) => {
+                const key = (e.visit_at || "").slice(0, 10) || "undated";
+                if (!buckets.has(key)) buckets.set(key, []);
+                buckets.get(key).push({ e, idx });
+              });
+              const dateKeys = Array.from(buckets.keys());
+              return dateKeys.map((dateKey) => {
+                const items = buckets.get(dateKey);
+                const first = items[0].e;
+                return (
+                  <li key={dateKey} data-testid={`grouped-timeline-date-${dateKey}`} className="space-y-1">
+                    <div className="pl-1 text-sm font-semibold text-muted-foreground">
+                      {dateKey === "undated" ? "Undated" : formatDateTime(first.visit_at).replace(/,.*$/, "")}
+                      <span className="ml-2 text-xs font-normal text-muted-foreground/70">
+                        · {items.length} record{items.length === 1 ? "" : "s"}
+                      </span>
                     </div>
-                    {isOpen ? <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden="true" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />}
-                  </button>
-                  {isOpen && (
-                    <div
-                      className="border-t border-border bg-background/40 px-4 py-2 text-xs text-muted-foreground"
-                      data-testid={`grouped-timeline-detail-${e.kind}-${idx}`}
-                    >
-                      <div className="grid grid-cols-2 gap-2">
-                        {Object.entries(e.source_ids || {}).map(([k, v]) =>
-                          v && (
-                            <div key={k}>
-                              <span className="uppercase tracking-wider text-[10px]">{k.replace(/_/g, " ")}: </span>
-                              <span className="text-foreground/80">
-                                {Array.isArray(v) ? v.join(", ") : String(v)}
-                              </span>
-                            </div>
-                          ),
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </li>
-              );
-            })}
+                    <ul className="space-y-1.5">
+                      {items.map(({ e, idx }) => {
+                        const key = `${e.kind}:${idx}:${e.visit_at || ""}`;
+                        const isOpen = expanded.has(key);
+                        const Icon = KIND_ICON[e.kind] || FileText;
+                        return (
+                          <li
+                            key={key}
+                            className="group/row rounded-lg border border-border bg-card"
+                            data-testid={`grouped-timeline-row-${e.kind}-${idx}`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => toggle(key)}
+                              aria-expanded={isOpen}
+                              className="flex min-h-11 w-full items-center justify-between gap-3 px-4 py-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                            >
+                              <div className="flex min-w-0 items-center gap-3">
+                                <Icon className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                                <div className="min-w-0">
+                                  <div className="text-base font-semibold text-foreground">
+                                    {e.title}
+                                  </div>
+                                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                                    {e.status?.workflow && <StatusBadge dim="workflow" value={e.status.workflow} />}
+                                    {e.status?.documentation && <StatusBadge dim="documentation" value={e.status.documentation} />}
+                                    {e.status?.clinical_response && <StatusBadge dim="clinical_response" value={e.status.clinical_response} />}
+                                    {e.status?.billing && <StatusBadge dim="billing" value={e.status.billing} />}
+                                    {e.status?.record_state && <StatusBadge dim="record_state" value={e.status.record_state} />}
+                                    {e.provider_name && <span className="text-xs text-muted-foreground">· {e.provider_name}</span>}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span
+                                  aria-hidden="true"
+                                  className="hidden text-xs text-primary opacity-0 transition-opacity group-hover/row:opacity-100 sm:inline"
+                                >
+                                  View details
+                                </span>
+                                {isOpen ? <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden="true" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />}
+                              </div>
+                            </button>
+                            {isOpen && (
+                              <div
+                                className="border-t border-border bg-background/40 px-4 py-2 text-xs text-muted-foreground"
+                                data-testid={`grouped-timeline-detail-${e.kind}-${idx}`}
+                              >
+                                <div className="grid grid-cols-2 gap-2">
+                                  {Object.entries(e.source_ids || {}).map(([k, v]) =>
+                                    v && (
+                                      <div key={k}>
+                                        <span className="text-xs font-medium text-muted-foreground">{k.replace(/_/g, " ")}: </span>
+                                        <span className="text-foreground/80">
+                                          {Array.isArray(v) ? v.join(", ") : String(v)}
+                                        </span>
+                                      </div>
+                                    ),
+                                  )}
+                                </div>
+                              </div>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </li>
+                );
+              });
+            })()}
           </ol>
           {hasMore && (
             <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">

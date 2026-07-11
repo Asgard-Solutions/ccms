@@ -48,12 +48,13 @@ export default function IntakeHistoryProgressive({ history, patientId, canWrite,
       >
         {COMPACT_FIELDS.map((f, idx) => {
           const v = displayValue(history?.[f.key]);
+          const isLong = f.key === "history_of_present_illness";
           return (
-            <div key={f.key} data-testid={`intake-compact-${f.key}`} className={`flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-2 ${idx >= 2 ? "md:border-t md:border-border" : ""}`}>
-              <dt className="min-w-[150px] text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            <div key={f.key} data-testid={`intake-compact-${f.key}`} className={`flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3 ${idx >= 2 ? "md:border-t md:border-border" : ""} ${isLong ? "md:col-span-2" : ""}`}>
+              <dt className="min-w-[160px] text-sm font-medium text-muted-foreground">
                 {f.label}
               </dt>
-              <dd className="min-w-0 flex-1 text-sm text-foreground">
+              <dd className={`min-w-0 flex-1 text-base text-foreground ${isLong ? "max-w-prose leading-relaxed" : ""}`}>
                 {v ?? <span className="text-muted-foreground italic">Not documented</span>}
               </dd>
             </div>
