@@ -10,6 +10,18 @@
 
 ---
 
+## Interim control (during freeze — code review only)
+
+While this ticket is blocked, the compatibility layer is **intentionally preserved**. To keep it from growing without adding another executable governance surface, the following rule is enforced **at code-review time only** — no pre-commit hook, no CI check, no lint rule is added during the freeze:
+
+- **No new consumers** (scripts, tests, tooling, or docs) may import shared governance helpers from `scripts.run_clinical_perf`. New code must import them directly from `scripts._perf_gov_lib`.
+- Existing imports from `scripts.run_clinical_perf` for shared helpers are grandfathered until this ticket executes; they are **not** to be expanded.
+- Reviewers should reject any diff that adds a new `from scripts.run_clinical_perf import <shared-helper>` line.
+
+When the freeze is lifted, this ticket removes the re-exports **and** migrates every remaining consumer in the **same isolated commit** (see Acceptance criteria below). Only after that cleanup lands should a CI check for forbidden legacy imports be considered — and only if the old path is empirically likely to reappear.
+
+---
+
 ## Context
 
 `scripts/_perf_gov_lib.py` was extracted (behavior-preserving) as the single home
