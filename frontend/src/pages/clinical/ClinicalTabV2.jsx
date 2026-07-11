@@ -41,6 +41,11 @@ import IntakeHistoryProgressive from "./IntakeHistoryProgressive";
 import ReExamSection from "./ReExamSection";
 import NextActionsPanel from "./NextActionsPanel";
 import OutcomesSection from "./OutcomesSection";
+import ImagingCard from "./ImagingCard";
+import DataQualityPanel from "./DataQualityPanel";
+import WorkspaceModeSwitcher from "./WorkspaceModeSwitcher";
+import SummaryConfigDrawer from "./SummaryConfigDrawer";
+import { effectiveMode, resolveSummaryOrder, sectionOrderForMode } from "./workspaceModes";
 import { getOrCreateRouteInstanceToken } from "./useClinicalReturnState";
 import { useFeatureFlag } from "../../utils/featureFlags";
 import {
@@ -83,6 +88,8 @@ export default function ClinicalTabV2({
   const [phase2WaveB] = useFeatureFlag("clinicalRedesignPhase2WaveB");
   const [phase3] = useFeatureFlag("clinicalRedesignPhase3");
   const [phase3Slice3] = useFeatureFlag("clinicalRedesignPhase3Slice3");
+  const [phase3Slice4] = useFeatureFlag("clinicalRedesignPhase3Slice4");
+  const [phase3Slice5] = useFeatureFlag("clinicalRedesignPhase3Slice5");
   const [summary, setSummary] = useState(null);
   const [episodes, setEpisodes] = useState(null);
   const [diagnoses, setDiagnoses] = useState(null);
@@ -103,6 +110,41 @@ export default function ClinicalTabV2({
   const [showBackToTop, setShowBackToTop] = useState(false);
   const sectionRefs = useRef({});
   const suppressObserverUntil = useRef(0);
+
+  // ---- Slice 5A/5B — workspace mode + summary rail order --------
+  const [workspaceMode, setWorkspaceMode] = useState(() =>
+    effectiveMode({
+      role: currentUser?.role,
+      requested: currentUser?.clinical_ui_defaults?.default_workspace_mode || null,
+    }),
+  );
+  const [summaryConfigOpen, setSummaryConfigOpen] = useState(false);
+  const summaryOrder = useMemo(
+    () => resolveSummaryOrder({
+      mode: workspaceMode,
+      stored: currentUser?.clinical_ui_defaults?.summary_module_order || null,
+    }),
+    [workspaceMode, currentUser],
+  );
+  const [savedSummaryOrder, setSavedSummaryOrder] = useState(summaryOrder);
+  useEffect(() => setSavedSummaryOrder(summaryOrder), [summaryOrder]);
+
+  // Slice 5A: reorder NAV_ITEMS according to workspace mode (only
+  // section positions change — the section content itself is unchanged).
+  const modeSectionOrder = useMemo(
+    () => (phase3Slice5 ? sectionOrderForMode(workspaceMode) : NAV_ITEMS.map((n) => n.id)),
+    [phase3Slice5, workspaceMode],
+  );
+  const navCountsWithMode = useMemo(() => {
+    const base = {
+      diagnoses: summary?.diagnoses?.open || 0,
+      encounters: encountersOpenCount,
+      "care-plan": summary?.treatment_plans?.open || 0,
+      outcomes: summary?.outcomes?.total || 0,
+      imaging: summary?.media?.total || 0,
+    };
+    return base;
+  }, [summary, encountersOpenCount]);
 
   // ---- data load ----------------------------------------------------
   const load = useCallback(async () => {
@@ -457,6 +499,41 @@ export default function ClinicalTabV2({
           patientId={patientId}
         />
 
+        {phase3Slice5 && (
+          <div
+            data-testid="clinical-workspace-toolbar"
+            className="flex flex-wrap items-center justify-between gap-2 rounded-full border border-border bg-card/60 px-4 py-2"
+          >
+            <WorkspaceModeSwitcher
+              currentUser={currentUser}
+              mode={workspaceMode}
+              onModeChange={setWorkspaceMode}
+            />
+            <button
+              type="button"
+              onClick={() => setSummaryConfigOpen(true)}
+              data-testid="clinical-summary-config-open"
+              className="inline-flex min-h-11 items-center gap-1.5 rounded-full border border-border bg-card px-4 py-2 text-sm text-foreground hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+            >
+              Configure summary
+            </button>
+          </div>
+        )}
+
+        {phase3Slice4 && (
+          <DataQualityPanel
+            canWrite={canWrite}
+            summary={summary}
+            activePlan={activePlan}
+            primaryDx={primaryDx}
+            encounterGroups={encounterGroups}
+            imaging={[]}
+            episodes={episodes || []}
+            outcomeEntries={[]}
+            onJumpTo={jumpTo}
+          />
+        )}
+
         <SummaryTiles summary={summary} onJumpTo={jumpTo} />
 
         {phase3 && (
@@ -587,12 +664,25 @@ export default function ClinicalTabV2({
         )}
       </section>
 
-      <section id="imaging" ref={registerSection("imaging")} className="scroll-mt-40">
-        <MediaCard
-          patientId={patientId}
-          canWrite={canWrite}
-          onReauthNeeded={onReauthNeeded}
-        />
+      <section id="imaging" ref={registerSection("imaging")} className="scroll-mt-40 space-y-4">
+        {phase3Slice4 ? (
+          <ImagingCard
+            patientId={patientId}
+            canWrite={canWrite}
+            routeInstanceToken={routeInstanceToken}
+            onOpenImaging={() => {
+              const el = document.getElementById("imaging-legacy");
+              if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+          />
+        ) : null}
+        <div id="imaging-legacy" className={phase3Slice4 ? "mt-4" : ""}>
+          <MediaCard
+            patientId={patientId}
+            canWrite={canWrite}
+            onReauthNeeded={onReauthNeeded}
+          />
+        </div>
       </section>
 
       <section id="outcomes" ref={registerSection("outcomes")} className="scroll-mt-40">
@@ -626,6 +716,18 @@ export default function ClinicalTabV2({
       </section>
 
       <BackToTopButton visible={showBackToTop} onClick={scrollToTop} />
+
+      {phase3Slice5 && (
+        <SummaryConfigDrawer
+          open={summaryConfigOpen}
+          onOpenChange={setSummaryConfigOpen}
+          mode={workspaceMode}
+          currentUser={currentUser}
+          order={savedSummaryOrder}
+          allowedModules={null}
+          onOrderChange={setSavedSummaryOrder}
+        />
+      )}
     </div>
   );
 }

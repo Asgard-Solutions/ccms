@@ -12,9 +12,9 @@ Prioritized backlog for remaining P0/P1/P2 work. Most-recent updates on top.
 | 2 — Advanced timeline filters, saved presets, long-timeline perf | ✅ Done | `TimelineFilterBar`, `SavedPresetsMenu`, sanitizer, backward-compat `schema_version 1.1`, durable `/me/preferences.clinical_ui_defaults`, 19 backend + 21 frontend tests. |
 | 3 — Outcome snapshot, trend, optional suggestions | ✅ Done | `OutcomesSection`, `outcomeSeriesHelpers`, snapshot + trend + accessible table + milestone markers + deterministic suggestions. Independent flag `clinicalRedesignPhase3Slice3`. 25 frontend + 15 backend tests. |
 | 2.1 — Preset icon-strip polish | ✅ Done | `PresetIconStrip` shows one icon per configured dimension with counts (never raw values), reuses sanitizer + stale detector, 10 tests. |
-| 4 — Imaging metadata + filters, Data-quality indicators | 🅱️ Backlog | Standalone files (`dataQualityEngine.js`, `DataQualityPanel.jsx`, `ImagingCard.jsx`) exist and are jest-tested (88/88), but per user direction on 2026-02-15 the integration into `ClinicalTabV2.jsx` and the `clinicalRedesignPhase3Slice4` flag wiring are **deferred**. Pick up by re-adding imports + flag gate + JSX slot in the imaging/data-quality sections when work resumes. |
-| 5 — Role-aware views, configurable summary, preference persistence | ⏳ Next | Wires durable global prefs across the whole Clinical tab. |
-| 6 — Telemetry, partial-failure handling, a11y hardening, UAT, rollback verification | ⏳ Planned | Final hardening; verifies parent flag disables every child cleanly. |
+| 4 — Imaging metadata + filters, Data-quality indicators | ✅ Done (re-integrated 2026-02-15) | `ImagingCard` + `DataQualityPanel` re-wired above legacy `MediaCard` fallback. Independent flag `clinicalRedesignPhase3Slice4`. 17 frontend tests. |
+| 5 — Role-aware views + configurable summary + durable prefs | ✅ Done (shipped 2026-02-15) | `workspaceModes.js` registry, `WorkspaceModeSwitcher`, `SummaryConfigDrawer` (Move up / Move down, no DnD). Extended `ClinicalUIDefaults` with `default_workspace_mode`, `summary_module_order`, `default_encounter_filter`, `default_outcome_view`, `collapsed_modules`. 24 frontend + 45 backend tests. Independent flag `clinicalRedesignPhase3Slice5`. |
+| 6 — Telemetry, partial-failure handling, a11y hardening, UAT, rollback verification | ⏳ Next | Final hardening; verifies parent flag disables every child cleanly. See `HANDOFF_SLICE6.md`. |
 
 ### Deferred / Blocked
 

@@ -227,6 +227,38 @@ ClinicalSectionSlug = Literal[
     "summary", "history", "diagnoses", "encounters",
     "care-plan", "timeline", "imaging", "outcomes",
 ]
+# Phase 3 Slice 5A — role-aware workspace modes. Users may only select a
+# mode the backend permission layer accepts for their role. Storing this
+# on the user (not the patient) means the mode follows the clinician
+# across charts. `general` is the fallback for any unrecognised value.
+ClinicalWorkspaceMode = Literal[
+    "general", "provider", "front_desk", "billing", "administrator",
+]
+# Phase 3 Slice 5B — summary-module identifiers. Every value here maps
+# to a module rendered near the top of the Clinical page. Adding a new
+# module requires a matching frontend registry entry.
+ClinicalSummaryModuleSlug = Literal[
+    "active_episode",
+    "primary_diagnosis",
+    "current_treatment_plan",
+    "next_appointment",
+    "reexam_status",
+    "documentation_tasks",
+    "billing_readiness",
+    "safety_summary",
+    "latest_clinical_response",
+    "outcomes_trend",
+    "recent_imaging",
+    "data_quality",
+    "next_actions",
+]
+# Phase 3 Slice 5C — default encounter/outcome view slugs, kept in
+# lockstep with the frontend filter enums.
+ClinicalEncounterFilterSlug = Literal[
+    "needs_action", "in_progress", "completed", "missing_note",
+    "billing", "cancelled", "all",
+]
+ClinicalOutcomeView = Literal["chart", "table"]
 
 
 class TimelinePresetFilters(BaseModel):
@@ -251,7 +283,13 @@ class TimelinePresetDefinition(BaseModel):
 
 
 class ClinicalUIDefaults(BaseModel):
-    """Durable, global-scope Clinical UI preferences."""
+    """Durable, global-scope Clinical UI preferences.
+
+    HIPAA / Slice 5C guard-rail: the schema is `extra=forbid` so any
+    accidental patient identifier (patient_id, encounter_id, note_id,
+    dates of service, names, free-text) gets rejected at 422. Only
+    structured slugs and tenant-scoped provider ids are stored here.
+    """
     model_config = ConfigDict(extra="forbid")
     default_section: ClinicalSectionSlug | None = None
     timeline_presets: list[TimelinePresetDefinition] = Field(
@@ -259,6 +297,25 @@ class ClinicalUIDefaults(BaseModel):
     )
     default_timeline_preset_id: str | None = Field(
         default=None, pattern=r"^p_[a-z0-9]{8,32}$",
+    )
+    # Phase 3 Slice 5A — role-aware workspace mode. Permission enforcement
+    # for whether a user *may* switch to this mode still happens at the
+    # session layer; this field is purely a user-preferred default.
+    default_workspace_mode: ClinicalWorkspaceMode | None = None
+    # Phase 3 Slice 5B — per-user ordering for the configurable summary
+    # rail. Contains only allow-listed slugs. Modules the user's role
+    # can't see are still rejected at the render layer, not here.
+    summary_module_order: list[ClinicalSummaryModuleSlug] | None = Field(
+        default=None, max_length=20,
+    )
+    # Phase 3 Slice 5C — default encounter filter and outcome view. These
+    # replace patient-specific transient defaults with a durable per-user
+    # preference so a clinician's default "Needs action" survives login.
+    default_encounter_filter: ClinicalEncounterFilterSlug | None = None
+    default_outcome_view: ClinicalOutcomeView | None = None
+    # Phase 3 Slice 5C — collapsed-module defaults. Global slugs only.
+    collapsed_modules: list[ClinicalSummaryModuleSlug] | None = Field(
+        default=None, max_length=20,
     )
 
     @model_validator(mode="after")
@@ -279,6 +336,20 @@ class ClinicalUIDefaults(BaseModel):
         names = [p.name for p in self.timeline_presets]
         if len(names) != len(set(names)):
             raise ValueError("timeline_presets names must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def _summary_module_order_unique(self):
+        order = self.summary_module_order
+        if order is not None and len(order) != len(set(order)):
+            raise ValueError("summary_module_order entries must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def _collapsed_modules_unique(self):
+        cm = self.collapsed_modules
+        if cm is not None and len(cm) != len(set(cm)):
+            raise ValueError("collapsed_modules entries must be unique")
         return self
 
 
