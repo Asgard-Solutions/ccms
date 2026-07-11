@@ -2,6 +2,22 @@
 
 Prioritized backlog for remaining P0/P1/P2 work. Most-recent updates on top.
 
+## Post-Freeze Maintenance (blocked on freeze lift)
+
+- **[BLOCKED] Remove performance-governance compatibility re-exports** —
+  see `/app/memory/TICKET_REMOVE_PERF_EXPORTS.md`.
+  Behavior-preserving cleanup that removes the compatibility layer
+  introduced when `scripts/_perf_gov_lib.py` was extracted. All shared
+  governance primitives must be imported directly from `_perf_gov_lib`;
+  no remaining shared-helper imports from `scripts.run_clinical_perf`;
+  CLI behavior, output formats, exception semantics, and exit codes
+  unchanged; full governance + clinical contract suites remain green;
+  no Clinical UI / preferences / telemetry / feature-flag / frozen-
+  contract code is modified; rollback is a single-commit revert.
+  **Blocked until the redesign freeze is formally lifted.** Not logged
+  in `CHANGELOG.md` yet — this is planned maintenance, not a shipped
+  change.
+
 ## 2026-02-15 — Clinical redesign Phase 3 — **FROZEN**
 
 **Status:** All slices shipped and frozen. Change-control now applies — see `/app/memory/CLINICAL_REDESIGN_FREEZE.md`. Remaining work is release-gate execution (G1–G6), not further development.
