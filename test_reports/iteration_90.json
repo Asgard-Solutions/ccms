@@ -28,7 +28,7 @@
   "seed_data_creation": "None. Used existing demo patients; noted gap for dismissible-rule coverage.",
   "retest_needed": false,
   "main_agent_can_self_test": true,
-  "context_for_next_testing_agent": "All 8 demo patients returned by GET /api/patients?q=%25 lack an active plan configured such that `schedule-remaining-planned-visits` or `record-configured-outcome-measure` fires. When those rules do fire, verify: (1) row disappears after Dismiss, (2) sessionStorage `ccms.clinical.returnState.v1` gets a `<token>::next-actions` key with `dismissed: [<id>]`, (3) reload preserves the dismissal, (4) full logout+re-login clears it. Backend URL: https://chirohipaa-ai.preview.emergentagent.com. Break-glass modal appears for doctor when opening a chart — textarea placeholder 'Covering for Dr. Monroe...' + 'Record & continue' button.",
+  "context_for_next_testing_agent": "All 8 demo patients returned by GET /api/patients?q=%25 lack an active plan configured such that `schedule-remaining-planned-visits` or `record-configured-outcome-measure` fires. When those rules do fire, verify: (1) row disappears after Dismiss, (2) sessionStorage `ccms.clinical.returnState.v1` gets a `<token>::next-actions` key with `dismissed: [<id>]`, (3) reload preserves the dismissal, (4) full logout+re-login clears it. Backend URL: https://imaging-data-quality.preview.emergentagent.com. Break-glass modal appears for doctor when opening a chart — textarea placeholder 'Covering for Dr. Monroe...' + 'Record & continue' button.",
   "validations_executed": {
     "backend_pytest_next_action_telemetry": "13/13 PASS (existing suite ran clean)",
     "backend_curl_phi_leaks": "5/5 PASS (patient_id, encounter_id, diagnosis_code, free_text, url → 422 extra_forbidden)",
