@@ -1360,7 +1360,7 @@ export default function PatientDetail() {
           <PatientDocumentsCard patientId={id} canEdit={canEditIntake} />
         </TabsContent>
 
-        <TabsContent value="clinical" className="mt-6">
+        <TabsContent value="clinical" className="mt-6 space-y-6">
           {clinicalRedesignOn ? (
             <ClinicalTabV2
               patientId={id}
@@ -1386,6 +1386,13 @@ export default function PatientDetail() {
               }}
             />
           )}
+          {/* AI clinical assistants — chart-review + chart-wide Q&A.
+              Placement-defect fix: these render as siblings after the
+              frozen ClinicalTabV2 so the redesign contract stays intact
+              while clinical decision-support finally lives on the
+              Clinical tab instead of hiding under Billing. */}
+          <ChartBriefCard patientId={id} />
+          <PatientSemanticSearch patientId={id} />
         </TabsContent>
 
         <TabsContent value="records" className="mt-6">
