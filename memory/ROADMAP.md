@@ -10,8 +10,9 @@ Prioritized backlog for remaining P0/P1/P2 work. Most-recent updates on top.
 |-------|--------|-------|
 | 1 — Cross-record linking & Deterministic Next Actions | ✅ Done | `useClinicalReturnState` hook, `nextActionsEngine`, `NextActionsPanel`, telemetry union, 50 backend + 25 frontend tests. |
 | 2 — Advanced timeline filters, saved presets, long-timeline perf | ✅ Done | `TimelineFilterBar`, `SavedPresetsMenu`, sanitizer, backward-compat `schema_version 1.1`, durable `/me/preferences.clinical_ui_defaults`, 19 backend + 21 frontend tests. |
-| 3 — Outcome snapshot, trend, optional suggestions | ⏳ Next | Read-only outcome trend widget; deterministic (non-clinical) suggestions. |
-| 4 — Imaging metadata + filters, Data-quality indicators | ⏳ Planned | Uses grouped-encounter enrichments. |
+| 3 — Outcome snapshot, trend, optional suggestions | ✅ Done | `OutcomesSection`, `outcomeSeriesHelpers`, snapshot + trend + accessible table + milestone markers + deterministic suggestions. Independent flag `clinicalRedesignPhase3Slice3`. 25 frontend + 15 backend tests. |
+| 2.1 — Preset icon-strip polish | ⏳ Deferred | Small compact icon-strip on each saved preset showing which filter dimensions are configured. Ship after Slice 3 freezes. |
+| 4 — Imaging metadata + filters, Data-quality indicators | ⏳ Next | Uses grouped-encounter enrichments. |
 | 5 — Role-aware views, configurable summary, preference persistence | ⏳ Planned | Wires durable global prefs across the whole Clinical tab. |
 | 6 — Telemetry, partial-failure handling, a11y hardening, UAT, rollback verification | ⏳ Planned | Final hardening; verifies parent flag disables every child cleanly. |
 

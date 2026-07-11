@@ -40,6 +40,7 @@ import SafetySummary from "./SafetySummary";
 import IntakeHistoryProgressive from "./IntakeHistoryProgressive";
 import ReExamSection from "./ReExamSection";
 import NextActionsPanel from "./NextActionsPanel";
+import OutcomesSection from "./OutcomesSection";
 import { getOrCreateRouteInstanceToken } from "./useClinicalReturnState";
 import { useFeatureFlag } from "../../utils/featureFlags";
 import {
@@ -81,6 +82,7 @@ export default function ClinicalTabV2({
   const [phase2WaveA] = useFeatureFlag("clinicalRedesignPhase2WaveA");
   const [phase2WaveB] = useFeatureFlag("clinicalRedesignPhase2WaveB");
   const [phase3] = useFeatureFlag("clinicalRedesignPhase3");
+  const [phase3Slice3] = useFeatureFlag("clinicalRedesignPhase3Slice3");
   const [summary, setSummary] = useState(null);
   const [episodes, setEpisodes] = useState(null);
   const [diagnoses, setDiagnoses] = useState(null);
@@ -580,11 +582,28 @@ export default function ClinicalTabV2({
       </section>
 
       <section id="outcomes" ref={registerSection("outcomes")} className="scroll-mt-40">
-        <OutcomesCard
-          patientId={patientId}
-          canWrite={canWrite}
-          onReauthNeeded={onReauthNeeded}
-        />
+        {phase3Slice3 ? (
+          <OutcomesSection
+            patientId={patientId}
+            canWrite={canWrite}
+            activePlan={activePlan}
+            routeInstanceToken={routeInstanceToken}
+            onRecordOutcome={() => {
+              // Delegate to the legacy card for the actual capture UI —
+              // Slice 3 is intentionally read-only. Scroll the legacy
+              // card into view so the user can complete the workflow.
+              const el = document.getElementById("outcomes-legacy");
+              if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+            }}
+          />
+        ) : null}
+        <div id="outcomes-legacy" className={phase3Slice3 ? "mt-4" : ""}>
+          <OutcomesCard
+            patientId={patientId}
+            canWrite={canWrite}
+            onReauthNeeded={onReauthNeeded}
+          />
+        </div>
       </section>
 
       <BackToTopButton visible={showBackToTop} onClick={scrollToTop} />

@@ -82,7 +82,30 @@ Two coexisting event shapes are validated on the same endpoint. Cross-field mixe
 | `action_id` | `sign-unsigned-note` · `complete-missing-documentation` · `attach-or-link-diagnosis` · `open-blocked-billing-readiness` · `review-billing-warning` · `schedule-due-or-overdue-reexam` · `schedule-remaining-planned-visits` · `review-missing-required-intake` · `record-configured-outcome-measure` |
 | `interaction` | `opened` · `dismissed` |
 
-Only attempt-level interactions are tracked — downstream workflow success is inferred from the existing audit trail, never from UX telemetry.
+### 3. Outcome-suggestion interaction — Phase 3 Slice 3
+
+```json
+{
+  "event_name":     "clinical_outcome_suggestion_interaction",
+  "section_slug":   "outcomes",
+  "source_surface": "patient-clinical",
+  "layout_version": "v2",
+  "instrument_key": "ndi",
+  "interaction":    "opened"
+}
+```
+
+| Field | Enum values |
+|---|---|
+| `event_name` | `clinical_outcome_suggestion_interaction` |
+| `section_slug` | `outcomes` |
+| `source_surface` | `patient-clinical` |
+| `layout_version` | `v1` · `v2` |
+| `instrument_key` | `ndi` · `oswestry` · `pain_vas` · `pain_scale` · `functional_index` · `bournemouth_neck` |
+| `interaction` | `opened` · `dismissed` |
+
+Only attempt-level interactions are tracked — score, captured_at, and
+notes NEVER leave the browser through this endpoint.
 
 All required fields (per shape) must be present; any extra field returns **422 `extra_forbidden`**.
 

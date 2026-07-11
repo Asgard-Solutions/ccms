@@ -123,3 +123,37 @@ export function trackNextActionInteraction({ action_id, interaction }) {
   const key = `next-action:${action_id}:${interaction}`;
   dedupe(key, () => firePost("/telemetry/ui-action", body));
 }
+
+/**
+ * Outcome-suggestion telemetry — Phase 3 Slice 3.
+ *
+ * `instrument_key` MUST be one of the allow-listed configured
+ * instruments the backend accepts on `NextInstrumentKey`. `interaction`
+ * covers only attempt-level clicks (opened / dismissed). No PHI, no
+ * scores, no captured_at values ever leak here.
+ */
+export const OUTCOME_SUGGESTION_INSTRUMENTS = new Set([
+  "ndi",
+  "oswestry",
+  "pain_vas",
+  "pain_scale",
+  "functional_index",
+  "bournemouth_neck",
+]);
+
+const OUTCOME_SUGGESTION_INTERACTIONS = new Set(["opened", "dismissed"]);
+
+export function trackOutcomeSuggestion({ instrument_key, interaction }) {
+  if (!OUTCOME_SUGGESTION_INSTRUMENTS.has(instrument_key)) return;
+  if (!OUTCOME_SUGGESTION_INTERACTIONS.has(interaction)) return;
+  const body = {
+    event_name: "clinical_outcome_suggestion_interaction",
+    section_slug: "outcomes",
+    source_surface: "patient-clinical",
+    layout_version: "v2",
+    instrument_key,
+    interaction,
+  };
+  const key = `outcome-suggestion:${instrument_key}:${interaction}`;
+  dedupe(key, () => firePost("/telemetry/ui-action", body));
+}

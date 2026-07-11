@@ -24,6 +24,7 @@ const FLAG_DEFAULTS = {
   clinicalRedesignPhase2WaveA: "on",
   clinicalRedesignPhase2WaveB: "on",
   clinicalRedesignPhase3: "on",
+  clinicalRedesignPhase3Slice3: "on",
 };
 
 // Explicit env-var mapping so grep/CI can find the strings.
@@ -32,6 +33,7 @@ const ENV_VAR_MAP = {
   clinicalRedesignPhase2WaveA: "REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_A",
   clinicalRedesignPhase2WaveB: "REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_B",
   clinicalRedesignPhase3: "REACT_APP_CLINICAL_REDESIGN_PHASE3",
+  clinicalRedesignPhase3Slice3: "REACT_APP_CLINICAL_REDESIGN_PHASE3_SLICE3",
 };
 
 // Nested-flag dependency: a child flag is only "on" if its parent chain is on.
@@ -41,6 +43,7 @@ const FLAG_PARENTS = {
   clinicalRedesignPhase2WaveA: "clinicalRedesign",
   clinicalRedesignPhase2WaveB: "clinicalRedesign",
   clinicalRedesignPhase3: "clinicalRedesign",
+  clinicalRedesignPhase3Slice3: "clinicalRedesignPhase3",
 };
 
 function normalise(raw) {

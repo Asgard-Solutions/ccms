@@ -4,6 +4,39 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-02-15 — Clinical redesign Phase 3 Slice 3 (Outcome snapshot, trend, optional suggestions)
+
+**Why:** Providers reviewing a chart needed a compact read-only view of outcome-measure history without any clinical inference — just neutral numeric summaries, a chart, an accessible table, and optional configured-instrument reminders. Slice 3 keeps every existing capture workflow untouched.
+
+**Shipped:**
+
+- **Frontend engine** (`frontend/src/pages/clinical/outcomeSeriesHelpers.js`, new)
+  - `groupByInstrument`, `deriveSeries`, `buildMilestones`, `deriveOutcomeSuggestions`, `formatDelta`, `windowSeriesToLastMonths`, `SUPPORTED_INSTRUMENTS`.
+  - Deterministic winner selection for duplicate captured_at (latest `updated_at` → latest `created_at` → lexicographic id).
+  - Amended detection (`updated_at !== created_at`).
+  - Partial-record filtering with `partial_count` surfaced.
+  - Deltas use unicode minus (U+2212) so screen readers say "minus".
+  - Explicit assertion in tests: no `improved`/`deteriorated`/`clinically_significant`/`direction` fields in engine output.
+- **UI components** (all new)
+  - `OutcomeSnapshotCard.jsx` — per-instrument card, amended + insufficient-baseline pills, source-record link.
+  - `OutcomeTrendChart.jsx` — accessible SVG chart with **shape-encoded markers** (circle vs diamond) + milestone dashed verticals.
+  - `OutcomeTrendTable.jsx` — data-table equivalent with `<caption>` / `<thead>` / `<tfoot>`, superseded rows visible.
+  - `OutcomeSuggestions.jsx` — dismissible, deterministic reminders that never auto-populate.
+  - `OutcomesSection.jsx` — orchestrator with loading / empty / permission-denied / error / view-toggle states.
+- **Feature flag** `clinicalRedesignPhase3Slice3` — independent nested rollback (child of `clinicalRedesignPhase3`); default `on`. Legacy `OutcomesCard` remains mounted below the new section so the capture workflow is unaffected when the child flag is off.
+- **Telemetry union #3** — `clinical_outcome_suggestion_interaction` on the shared `/api/telemetry/ui-action` endpoint. Six `OutcomeInstrumentKey` × two `OutcomeSuggestionInteraction` values. Cross-field mixes with `action_id` / `action_slug` / any PHI-shaped extra return **422**.
+- Contract doc: `/app/memory/PHASE3_SLICE3_CONTRACTS.md`.
+
+**Verified:**
+
+- Backend `pytest`: 47/47 telemetry contract tests (13 new outcome-suggestion + 13 next-action + 21 care-status).
+- Frontend `jest`: 62/62 clinical-unit tests (25 new outcome-series helper + 13 rule engine + 12 hook + 21 preset schema — some overlap in count sources).
+- Smoke: Isabella Cho chart renders NDI snapshot + chart + table toggle + optional suggestions when configured instruments are stale.
+
+**Files:** `frontend/src/pages/clinical/{outcomeSeriesHelpers,OutcomeSnapshotCard,OutcomeTrendChart,OutcomeTrendTable,OutcomeSuggestions,OutcomesSection}.{js,jsx}` + tests, `frontend/src/pages/clinical/ClinicalTabV2.jsx`, `frontend/src/utils/featureFlags.js`, `frontend/src/utils/telemetry.js`, `backend/services/telemetry/{router.py,SCHEMA.md}`, `backend/tests/test_outcome_suggestion_telemetry.py`.
+
+---
+
 ## 2026-02-15 — Clinical redesign Phase 3 Slice 2 (Timeline filters, saved presets, long-history perf guard)
 
 **Why:** Providers reviewing a long chart couldn't slice the timeline by kind, source, provider, episode, or date without losing scroll position, and every filter combination died on tab close. Slice 2 gives them durable, reusable presets while keeping patient-specific choices strictly transient.

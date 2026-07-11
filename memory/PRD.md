@@ -1,6 +1,35 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+## Phase 3 Slice 3 — Outcome snapshot, trend, optional suggestions (2026-02-15)
+
+**Status:** ✅ Shipped. Backend `pytest` 47/47 telemetry tests green (13 new outcome-suggestion contract tests). Frontend `jest` 62/62 (25 new outcome-series helper tests + 37 pre-existing).
+
+**Feature flag:** Independent nested flag `clinicalRedesignPhase3Slice3` (child of `clinicalRedesignPhase3`, grandchild of `clinicalRedesign`). Legacy `OutcomesCard` capture workflow remains mounted below the new section — Slice 3 is deliberately read-only.
+
+### Deliverables
+
+1. **`outcomeSeriesHelpers.js`** — pure, deterministic derivation. Baseline / latest / previous / change-from-baseline / change-from-previous with **no** clinical inference. Handles duplicate captured_at (winner picked, superseded kept for table view), amended entries, partial records (null/NaN scores counted separately), long histories (24-month window).
+2. **`OutcomeSnapshotCard.jsx`** — per-instrument card with neutral labels. Amended pill, insufficient-baseline pill, source-record link.
+3. **`OutcomeTrendChart.jsx`** — accessible SVG chart. **Shape-encoded** markers (circle vs diamond) so the chart is legible without color. Milestone dashed verticals with textual labels.
+4. **`OutcomeTrendTable.jsx`** — data-table equivalent for a11y / print. Shows superseded entries the chart hides. Milestone rows in `<tfoot>`.
+5. **`OutcomeSuggestions.jsx`** — deterministic optional suggestions from `configured_outcome_measures` on the active plan. Never auto-starts, auto-populates, or auto-submits. Dismissible; dismissals session-scoped.
+6. **`OutcomesSection.jsx`** — orchestrator with loading / empty / permission-denied / error / view-toggle (chart ↔ table) states, all `data-testid`-tagged.
+7. **New telemetry event** `clinical_outcome_suggestion_interaction` (third shape on `POST /api/telemetry/ui-action`). Six allow-listed `instrument_key`s. PHI extras (`patient_id`, `captured_at`, `score`, `note`, `linked_reexam_id`) all 422.
+
+### Guardrails locked-in per user's Slice 3 brief
+
+- **No clinical significance** claims anywhere.
+- **All calculated values labeled** (`Change from baseline`, `Change from previous`) with signed numbers; zero renders as `±0`.
+- **No improvement/deterioration inference** — the engine deliberately has no such fields; a unit test locks this in.
+- **Suggestions use configured instruments only** — allow-list intersected with `configured_outcome_measures`; unsupported keys silently dropped.
+- **Suggestions remain optional + dismissible** — mandatory workflow gaps live in Slice 1 next-actions instead.
+- **No auto-start / auto-populate / auto-submit**.
+- **Source records preserved + immutable** — Slice 3 exposes entry ids on snapshot cards and table rows; no new mutation surface added.
+- **Trend chart usable without color** — shape encoding + data-table toggle.
+- **Tests cover** duplicate dates, missing baseline, amended entries, partial records, long histories, dismissals, unsupported instruments, wording guardrails.
+
+
 ## Phase 3 Slice 2 — Advanced timeline filters, saved presets, long-history perf (2026-02-15)
 
 **Status:** ✅ Shipped. Backend `pytest` 19/19 new (9 timeline-filter + 10 durable-prefs) + all 50 legacy tests green. Frontend `jest` 37/37 (13 rule-engine + 12 hook + 21 preset sanitizer + stale detector). Smoke-tested on Isabella Cho's chart.

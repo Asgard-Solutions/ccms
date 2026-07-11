@@ -112,6 +112,7 @@ ActionSlug = Literal[
 ActionSectionSlug = Literal[
     "current-care-status",
     "next-actions",
+    "outcomes",
 ]
 
 SourceSurface = Literal[
@@ -121,6 +122,7 @@ SourceSurface = Literal[
 ActionEventName = Literal[
     "clinical_care_status_action_selected",
     "clinical_next_action_interaction",
+    "clinical_outcome_suggestion_interaction",
 ]
 
 # Phase 3 Slice 1 — deterministic next-action rule ids. Every id here
@@ -140,6 +142,22 @@ NextActionId = Literal[
 ]
 
 NextActionInteraction = Literal["opened", "dismissed"]
+
+# Phase 3 Slice 3 — configured outcome-instrument keys the app may
+# surface as an optional suggestion. MUST stay in lockstep with
+# `frontend/src/pages/clinical/outcomeSeriesHelpers.js`
+# `SUPPORTED_INSTRUMENTS`. Widening the list requires updates to
+# BOTH files + this SCHEMA.md + test_outcome_suggestion_telemetry.py.
+OutcomeInstrumentKey = Literal[
+    "ndi",
+    "oswestry",
+    "pain_vas",
+    "pain_scale",
+    "functional_index",
+    "bournemouth_neck",
+]
+
+OutcomeSuggestionInteraction = Literal["opened", "dismissed"]
 
 
 class UIActionPayload(BaseModel):
@@ -169,22 +187,36 @@ class UIActionPayload(BaseModel):
     action_id: Optional[NextActionId] = None
     interaction: Optional[NextActionInteraction] = None
 
+    # Outcome-suggestion shape (Phase 3 Slice 3):
+    instrument_key: Optional[OutcomeInstrumentKey] = None
+
     def model_post_init(self, __context) -> None:  # type: ignore[override]
         # Enforce shape ↔ event_name coupling. Reject cross-field mixes.
         if self.event_name == "clinical_care_status_action_selected":
             if self.action_slug is None:
                 raise ValueError("action_slug is required for care-status events")
-            if self.action_id is not None or self.interaction is not None:
-                raise ValueError("next-action fields not allowed for care-status events")
+            if (
+                self.action_id is not None
+                or self.interaction is not None
+                or self.instrument_key is not None
+            ):
+                raise ValueError("next-action / outcome fields not allowed for care-status events")
             if self.section_slug != "current-care-status":
                 raise ValueError("section_slug must be 'current-care-status' for care-status events")
         elif self.event_name == "clinical_next_action_interaction":
             if self.action_id is None or self.interaction is None:
                 raise ValueError("action_id and interaction are required for next-action events")
-            if self.action_slug is not None:
-                raise ValueError("action_slug not allowed for next-action events")
+            if self.action_slug is not None or self.instrument_key is not None:
+                raise ValueError("action_slug / instrument_key not allowed for next-action events")
             if self.section_slug != "next-actions":
                 raise ValueError("section_slug must be 'next-actions' for next-action events")
+        elif self.event_name == "clinical_outcome_suggestion_interaction":
+            if self.instrument_key is None or self.interaction is None:
+                raise ValueError("instrument_key and interaction are required for outcome-suggestion events")
+            if self.action_slug is not None or self.action_id is not None:
+                raise ValueError("action_slug / action_id not allowed for outcome-suggestion events")
+            if self.section_slug != "outcomes":
+                raise ValueError("section_slug must be 'outcomes' for outcome-suggestion events")
 
 
 @router.post("/ui-action", status_code=status.HTTP_204_NO_CONTENT)
@@ -211,5 +243,7 @@ async def record_ui_action(
         doc["action_id"] = payload.action_id
     if payload.interaction is not None:
         doc["interaction"] = payload.interaction
+    if payload.instrument_key is not None:
+        doc["instrument_key"] = payload.instrument_key
     await db.ui_telemetry_actions.insert_one(doc)
     return None
