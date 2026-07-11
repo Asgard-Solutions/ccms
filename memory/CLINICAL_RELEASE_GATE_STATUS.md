@@ -26,7 +26,8 @@ The frozen Clinical redesign is release-ready from an engineering perspective. A
 | Frontend clinical Jest (8 suites) | 117 / 117 | PASS | `craco test --testPathPattern=pages/clinical --watchAll=false` | 2026-02-15 |
 | Backend clinical contract Pytest (9 files) | 152 / 152 | PASS | 9-file targeted pytest run (see AUTOMATED_TEST_RESULTS.md) | 2026-02-15 |
 | Backend large-chart seeder Pytest (`test_seed_large_chart.py`) | 14 / 14 | PASS | `pytest tests/test_seed_large_chart.py` | 2026-02-15 |
-| **Combined clinical + seeder** | **166 / 166** | **PASS** | 10-file targeted pytest run (115.7 s) | 2026-02-15 |
+| Backend perf harness Pytest (`test_run_clinical_perf.py`) | 29 / 29 | PASS | `pytest tests/test_run_clinical_perf.py` | 2026-02-15 |
+| **Combined clinical + seeder + harness** | **195 / 195** | **PASS** | 11-file targeted pytest run | 2026-02-15 |
 
 Per-file breakdown captured in `/app/memory/release_evidence/AUTOMATED_TEST_RESULTS.md`.
 
@@ -90,6 +91,8 @@ Created in this pass:
 - `/app/memory/screenshots/*` (3 in-environment screenshots + capture plan for the full 25-shot set)
 - `/app/backend/scripts/seed_large_chart.py` (large-chart fixture seeder, 2026-02-15 update)
 - `/app/backend/tests/test_seed_large_chart.py` (14 tests covering the seeder)
+- `/app/backend/scripts/run_clinical_perf.py` (G2 measurement harness, 2026-02-15 update)
+- `/app/backend/tests/test_run_clinical_perf.py` (29 tests covering the harness)
 
 Updated in this pass:
 

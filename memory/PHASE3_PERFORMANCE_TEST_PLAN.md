@@ -93,3 +93,29 @@ Do not introduce a virtualization library unless P95 shows unacceptable timeline
 10. Update `PHASE3_PERFORMANCE_REPORT.md` with the large-chart figures and file the platform-reliability decision.
 
 Until platform reliability signs off, gate G2 remains `COMPLETE — MEASURED, BUDGET APPROVAL REQUIRED`.
+
+## Automation
+
+The rerun protocol is scripted as an instrument, not a ceremony:
+
+    cd /app/backend && APP_ENV=development python -m scripts.run_clinical_perf \
+      --patient fixture-large-chart-patient-0001 \
+      --runs 20 --warmup 3 \
+      --profile desktop --network normal \
+      --seed-fixture --fixture-events 500 \
+      --confirm-non-production
+
+The harness (backed by 29 unit tests in `backend/tests/test_run_clinical_perf.py`):
+
+- Refuses to run when `APP_ENV=production`.
+- Refuses to run without `--confirm-non-production`.
+- Refuses to run when `/app/frontend/build/index.html` is missing (`yarn build` is a prerequisite).
+- Verifies fixture patient exists and carries ≥ 250 timeline events; else raises `MissingFixtureError` / `UndersizedFixtureError`.
+- Executes `--warmup` iterations (default 3, discarded), then `--runs` measured iterations (minimum 20).
+- Captures wall-clock (Playwright), navigation timings (`responseEnd`, `domContentLoadedEventEnd`, `loadEventEnd`), and per-endpoint backend latencies (`timeline/grouped`, `encounters/grouped`, `billing-readiness/aggregate`) separately.
+- Emits `PHASE3_PERFORMANCE_RAW_RESULTS.json` + `PHASE3_PERFORMANCE_REPORT.md` in `--output-dir` (default `/app/memory/performance`).
+- Labels the report **Measured — threshold approval required**. The harness never asserts pass/fail without approved thresholds.
+- Fails the whole run (exit code 2) when fewer than `--runs` successful iterations complete, when the Clinical page never reaches its ready marker, when a timing field is missing, or when any backend endpoint returns ≥ 500.
+- Never emits patient identifiers to telemetry — Mongo access is local-only; the patient id appears only in the operator's own JSON + Markdown report.
+
+Supported profiles: `desktop` (1920×900), `tablet` (900×1200), `mobile` (375×667). Supported networks: `normal`, `throttled` (750 kbps / 100 ms latency via Chromium CDP).

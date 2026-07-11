@@ -1,6 +1,11 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+
+## 2026-02-15 (same day) — Large-chart fixture seeder shipped
+
+`scripts/seed_large_chart.py` generates a deterministic synthetic patient chart with a configurable timeline size (`--events 250 / 500 / 1000`) so the G2 measurement pass can exercise the frozen Clinical page against a production-shaped chart. Non-production only (hard `APP_ENV` guard + mandatory `--confirm-non-production` on every run). Idempotent, cleanup-safe, prints the fixture patient id only to the operator console. Backed by 14/14 tests in `backend/tests/test_seed_large_chart.py`. Live smoke runs confirmed 251 / 500 / 1001 timeline events for the three profiles. Freeze scope untouched — no change to Clinical UI, contracts, telemetry, preferences, or feature flags.
+
 ## 2026-02-15 — Clinical redesign release-gate closeout (G1–G6)
 
 Frozen Clinical redesign (Phases 1 + 2 Waves A/B + Phase 3 Slices 1–6) taken through the six release gates. No code was modified. Every gate is either `COMPLETE` (evidence is in-container-verifiable) or `READY FOR EXTERNAL SIGN-OFF / AUTHORIZED EXECUTION` (requires human signatures, production access, pilot tenant, or platform-reliability threshold approval). No signatures, performance passes, or rollout completions were fabricated.
@@ -9,7 +14,8 @@ Frozen Clinical redesign (Phases 1 + 2 Waves A/B + Phase 3 Slices 1–6) taken t
 - Frontend clinical Jest — **117 / 117 pass** (8 suites).
 - Backend clinical contract Pytest — **152 / 152 pass** (9 files).
 - Backend large-chart seeder Pytest — **14 / 14 pass** (`tests/test_seed_large_chart.py`).
-- Combined clinical + seeder — **166 / 166 pass**.
+- Backend G2 perf harness Pytest — **29 / 29 pass** (`tests/test_run_clinical_perf.py`).
+- Combined clinical + seeder + harness — **195 / 195 pass**.
 - ESLint — clean (no Clinical-UI code changes in this pass).
 
 **Gate summary:**
@@ -39,7 +45,7 @@ Frozen Clinical redesign (Phases 1 + 2 Waves A/B + Phase 3 Slices 1–6) taken t
 
 **No feature or contract change was made under this pass.** Freeze holds.
 
-**2026-02-15 (same day) — Large-chart fixture seeder shipped.** `scripts/seed_large_chart.py` generates a deterministic synthetic patient chart with a configurable timeline size (`--events 250 / 500 / 1000`) so the G2 measurement pass can exercise the frozen Clinical page against a production-shaped chart. Non-production only (hard `APP_ENV` guard + mandatory `--confirm-non-production` on every run). Idempotent, cleanup-safe, prints the fixture patient id only to the operator console. Backed by 14/14 tests in `backend/tests/test_seed_large_chart.py` covering the production guard, idempotency, relationship integrity, cleanup, requested event count, and CLI parsing. Live smoke runs confirmed 251 / 500 / 1001 timeline events for the three profiles. Freeze scope untouched — no change to Clinical UI, contracts, telemetry, preferences, or feature flags.
+**2026-02-15 (same day) — G2 measurement harness shipped.** `scripts/run_clinical_perf.py` scripts the rerun protocol into a single reproducible command. Enforces the production guard, verifies the production frontend build, verifies the fixture patient exists with the required event count, runs `--warmup` discarded iterations + `--runs` measured iterations (min 20), captures browser + backend timings separately, aggregates P50/P75/P95/min/max/error-rate, writes raw JSON + Markdown report in `--output-dir`, labels output "Measured — threshold approval required". Fails clearly on missing build / missing fixture / undersized fixture / ready-marker timeout / missing timing / partial run set. Never emits patient identifiers to telemetry. Backed by 29 tests in `backend/tests/test_run_clinical_perf.py` (percentile math + warm-up exclusion + failed runs + missing fixture + production guard + malformed timing + report generation + CLI parsing). Freeze scope untouched.
 
 ---
 
