@@ -13,7 +13,7 @@ The frozen Clinical redesign is release-ready from an engineering perspective. A
 | Gate | Title | Status | Owner (nominal) | External approval required? |
 |:-:|---|---|---|:-:|
 | G1 | 50-scenario stakeholder UAT sign-off | **READY FOR CLINICAL AND OPERATIONS SIGN-OFF** | Clinical operations | Yes — clinical lead + operations lead + product owner signatures |
-| G2 | P50/P95 performance measurement | **COMPLETE — MEASURED, BUDGET APPROVAL REQUIRED** | Platform reliability | Yes — approval of proposed performance thresholds |
+| G2 | P50/P75/P95 measurement | **COMPLETE — MEASURED, BUDGET APPROVAL REQUIRED** | Platform reliability | Fixture seeder shipped 2026-02-15; production-build large-chart measurement pass still outstanding |
 | G3 | Production rollback procedure walk-through | **READY FOR PRODUCTION WALK-THROUGH** | Clinical platform lead + Platform reliability | Yes — production access + rollback authority sign-off |
 | G4 | Contract freeze | **COMPLETE** | Clinical platform lead | No — verified from code + contract snapshot tests |
 | G5 | Workspace screenshots & release notes | **READY FOR SCREENSHOT CAPTURE** | Clinical platform lead | Partial — capture plan documented, 3 representative screenshots captured in-environment; full 25-shot set needs a staging tenant with realistic fixture data |
@@ -24,7 +24,9 @@ The frozen Clinical redesign is release-ready from an engineering perspective. A
 | Suite | Tests | Result | Command | Command timestamp |
 |---|---:|---|---|---|
 | Frontend clinical Jest (8 suites) | 117 / 117 | PASS | `craco test --testPathPattern=pages/clinical --watchAll=false` | 2026-02-15 |
-| Backend clinical contract Pytest (9 files) | 152 / 152 | PASS | `pytest test_preferences_slice5.py test_telemetry_phi_probe.py test_telemetry_ui_action.py test_next_action_telemetry.py test_outcome_suggestion_telemetry.py test_clinical_grouped_endpoints.py test_grouped_timeline_filters.py test_billing_readiness_aggregate.py test_clinical_ui_defaults.py` | 2026-02-15 |
+| Backend clinical contract Pytest (9 files) | 152 / 152 | PASS | 9-file targeted pytest run (see AUTOMATED_TEST_RESULTS.md) | 2026-02-15 |
+| Backend large-chart seeder Pytest (`test_seed_large_chart.py`) | 14 / 14 | PASS | `pytest tests/test_seed_large_chart.py` | 2026-02-15 |
+| **Combined clinical + seeder** | **166 / 166** | **PASS** | 10-file targeted pytest run (115.7 s) | 2026-02-15 |
 
 Per-file breakdown captured in `/app/memory/release_evidence/AUTOMATED_TEST_RESULTS.md`.
 
@@ -45,7 +47,7 @@ None. No verified in-scope defects were found. Two environmental issues were dis
 ## Residual risks
 
 1. **First-open workspace-mode discoverability.** No onboarding toast ships; users must discover the mode switcher on their own. Mitigation: release notes explicitly call out where the switcher lives; feature flag can be disabled per-user.
-2. **Large-history performance not yet measured on a real 500+ event patient chart.** Demo seed tops out at ~30 events. G2 performance report flags this as a threshold that must be re-verified during pilot rollout with production-shaped charts.
+2. **Large-history performance not yet measured under a production build.** Demo seed tops out at ~30 events. The `scripts/seed_large_chart.py` fixture now ships (2026-02-15, 14/14 tests green, 250/500/1000-event variants verified) and unblocks the measurement pass, but the actual 20-run harness against a production build has not been executed yet — do this before pilot Stage 2 per `PHASE3_PERFORMANCE_TEST_PLAN.md` §Rerun protocol.
 3. **Legacy `ClinicalTab` fallback is still mounted.** Rolling back the parent flag drops the user to the pre-redesign layout, which lacks Phase 1/2/3 features. This is by design (safe rollback) but pilot users should be informed that a rollback also removes billing-readiness aggregate, Next Actions, and Data Quality.
 
 ## Final release recommendation
@@ -86,6 +88,8 @@ Created in this pass:
 - `/app/memory/CLINICAL_GA_READINESS.md`
 - `/app/memory/release_evidence/AUTOMATED_TEST_RESULTS.md`
 - `/app/memory/screenshots/*` (3 in-environment screenshots + capture plan for the full 25-shot set)
+- `/app/backend/scripts/seed_large_chart.py` (large-chart fixture seeder, 2026-02-15 update)
+- `/app/backend/tests/test_seed_large_chart.py` (14 tests covering the seeder)
 
 Updated in this pass:
 

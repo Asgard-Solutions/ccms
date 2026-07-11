@@ -13,8 +13,8 @@ Establish reproducible P50/P75/P95 measurements for the frozen Clinical page acr
 |---|---:|---|---|
 | Small | < 25 | Riverbend demo — Aria Johnson (`patient_id=…`) | Bulk of demo personas |
 | Medium | 50–100 | Riverbend demo — Isabella Cho | PIP follow-up chart |
-| Large | 200–500 | Synthetic — must be seeded via `scripts/seed_large_chart.py` (proposed) | Not present in current demo seed; requires fixture pass |
-| Stress | > 500 | Synthetic — same fixture pass | Optional / not measured this pass |
+| Large | 200–500 | Synthetic — `python -m scripts.seed_large_chart --confirm-non-production --events 500` (available) | Fixture landed 2026-02-15; deterministic patient id `fixture-large-chart-patient-0001` |
+| Stress | > 500 | Synthetic — `python -m scripts.seed_large_chart --confirm-non-production --events 1000` (available) | Same fixture; 1000 events verified end-to-end |
 
 ## Instrumentation
 
@@ -69,4 +69,27 @@ These marks are **not yet shipped in-tree**. Adding them requires a release-gate
 
 Do not introduce a virtualization library unless P95 shows unacceptable timeline render at 200+ events. Existing `INITIAL_RENDER_CAP = 100` + `Load more` button already paginates. Slice 2 also emits a `console.info` `perf: long timeline` hint at 200+ events so ops can decide.
 
-**This pass:** insufficient data — no 200+ event chart exists in the demo seed. Recommendation: run the fixture seeder and re-measure before pilot.
+**This pass:** the fixture seeder `scripts/seed_large_chart.py` now ships and can generate a deterministic 250 / 500 / 1000 event patient chart on demand (non-production only, `--confirm-non-production` required every run). The measurement pass against these charts is the last release-gate step before pilot Stage 2. See §Rerun protocol below.
+
+## Rerun protocol (mandatory before pilot Stage 2)
+
+1. Confirm `APP_ENV != production`. The seeder hard-refuses on production.
+2. Seed the large chart:
+   ```
+   cd /app/backend && APP_ENV=development python -m scripts.seed_large_chart \
+     --confirm-non-production --events 500
+   ```
+   The seeder prints the deterministic patient id (`fixture-large-chart-patient-0001`) to the operator console only. Do not paste it into telemetry.
+3. Build the frontend in production mode: `cd /app/frontend && yarn build`.
+4. Serve the built bundle behind the standard nginx / static host (not the craco dev server).
+5. Execute the Playwright timing harness with **at least 20 warm runs per profile**, capturing:
+   - Wall-clock `page.goto → waitForSelector('[data-testid=clinical-patient-context-header]')`.
+   - `performance.getEntriesByType('navigation')` — `responseEnd`, `domContentLoadedEventEnd`, `loadEventEnd`.
+   - Backend request timings via `curl -w %{time_starttransfer}` on `/api/patients/<fixture_id>/clinical/{timeline,encounters,billing-readiness}/grouped`.
+6. Repeat with `--events 1000` for the stress profile.
+7. Record P50 / P75 / P95 / max / min / error rate per metric.
+8. Compare against the proposed thresholds. Escalate to platform reliability for approval.
+9. Run `--cleanup` after the measurement pass so the fixture rows do not linger on staging.
+10. Update `PHASE3_PERFORMANCE_REPORT.md` with the large-chart figures and file the platform-reliability decision.
+
+Until platform reliability signs off, gate G2 remains `COMPLETE — MEASURED, BUDGET APPROVAL REQUIRED`.

@@ -8,7 +8,9 @@ Frozen Clinical redesign (Phases 1 + 2 Waves A/B + Phase 3 Slices 1–6) taken t
 **Automated verification (2026-02-15):**
 - Frontend clinical Jest — **117 / 117 pass** (8 suites).
 - Backend clinical contract Pytest — **152 / 152 pass** (9 files).
-- ESLint — clean (no code changes in this pass).
+- Backend large-chart seeder Pytest — **14 / 14 pass** (`tests/test_seed_large_chart.py`).
+- Combined clinical + seeder — **166 / 166 pass**.
+- ESLint — clean (no Clinical-UI code changes in this pass).
 
 **Gate summary:**
 
@@ -36,6 +38,8 @@ Frozen Clinical redesign (Phases 1 + 2 Waves A/B + Phase 3 Slices 1–6) taken t
 - Backend tests routed via `REACT_APP_BACKEND_URL` (HTTPS) because auth cookies are `secure=True`.
 
 **No feature or contract change was made under this pass.** Freeze holds.
+
+**2026-02-15 (same day) — Large-chart fixture seeder shipped.** `scripts/seed_large_chart.py` generates a deterministic synthetic patient chart with a configurable timeline size (`--events 250 / 500 / 1000`) so the G2 measurement pass can exercise the frozen Clinical page against a production-shaped chart. Non-production only (hard `APP_ENV` guard + mandatory `--confirm-non-production` on every run). Idempotent, cleanup-safe, prints the fixture patient id only to the operator console. Backed by 14/14 tests in `backend/tests/test_seed_large_chart.py` covering the production guard, idempotency, relationship integrity, cleanup, requested event count, and CLI parsing. Live smoke runs confirmed 251 / 500 / 1001 timeline events for the three profiles. Freeze scope untouched — no change to Clinical UI, contracts, telemetry, preferences, or feature flags.
 
 ---
 

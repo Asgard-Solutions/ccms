@@ -1,3 +1,21 @@
+### G2 status update
+
+Fixture seeder `scripts/seed_large_chart.py` shipped 2026-02-15. Non-production only. 14/14 seeder tests green. 250 / 500 / 1000-event profiles verified live (251, 500, 1001 timeline events respectively). Cleanup + idempotency + relationship integrity + production guard all covered.
+
+**Outstanding for G2 closure:** the 20-run measurement pass on the 500-event fixture under `yarn build`, then platform-reliability approval of the observed values against the proposed thresholds. Until both land, G2 stays at `COMPLETE — MEASURED, BUDGET APPROVAL REQUIRED`.
+
+---
+
+
+
+- Large-chart fixture seeder shipped: `scripts/seed_large_chart.py` (14/14 tests green; 250 / 500 / 1000-event variants verified live).
+- Measurement pass under `yarn build` **not yet executed** — this is the last blocking item before gate G2 can be closed as `COMPLETE — MEETS APPROVED BUDGET`.
+- Rerun protocol documented in `PHASE3_PERFORMANCE_TEST_PLAN.md` §Rerun protocol.
+- Gate stays at `COMPLETE — MEASURED, BUDGET APPROVAL REQUIRED` until (a) large-chart P50/P75/P95/max/min/error-rate/backend-latency/frontend-render figures are recorded across ≥ 20 runs on the 500-event fixture under a production build AND (b) platform-reliability approves the observed values against the proposed thresholds.
+
+---
+
+
 # Phase 3 Performance Report
 
 **Redesign scope:** Patient Profile > Clinical (Phases 1 + 2 Waves A/B + Phase 3 Slices 1–6).
@@ -44,11 +62,16 @@ Not measured this pass. Bounded by the same DOM-ready envelope as the medium cha
 
 ### Large chart
 
-Not measured. No 200+ event chart exists in the seed. **BLOCKING FOLLOW-UP** before pilot Stage 2.
+Not yet measured under production build. Fixture is now available:
+- `scripts/seed_large_chart.py --confirm-non-production --events 500` — seeded end-to-end (verified live: 500 timeline events on `fixture-large-chart-patient-0001`).
+- 14/14 seeder tests green (`tests/test_seed_large_chart.py`).
+- Production guard verified: refuses when `APP_ENV=production` OR when `--confirm-non-production` is omitted.
+
+**Next required action:** run the 20-run measurement harness (see `PHASE3_PERFORMANCE_TEST_PLAN.md` §Rerun protocol) on the 500-event fixture under `yarn build`. Do not close G2 until platform reliability approves the observed P95 against thresholds.
 
 ### Stress chart
 
-Optional; not measured.
+Fixture available at `--events 1000` (verified live: 1001 timeline events). Optional; run only if the large-chart P95 exceeds threshold.
 
 ## Bottleneck findings
 
@@ -81,8 +104,5 @@ See `/app/memory/PHASE3_PERFORMANCE_TEST_PLAN.md`. Requires platform-reliability
 - No CPU throttling applied this pass.
 - Large-chart profile not measured; requires a synthetic fixture.
 
-## Final gate status
-
-**COMPLETE — MEASURED, BUDGET APPROVAL REQUIRED.**
-
-Escalate to platform reliability lead for threshold approval. Once approved, re-run the measurement pass under production build + at least one throttled profile + a synthetic 250-event chart.
+- G2 status update: fixture seeder `scripts/seed_large_chart.py` now available (14/14 tests green; 250/500/1000-event variants verified live). The measurement pass under `yarn build` remains the outstanding action before gate G2 can be closed as `COMPLETE — MEETS APPROVED BUDGET`.
+- Rerun protocol (mandatory before pilot Stage 2): `PHASE3_PERFORMANCE_TEST_PLAN.md` §Rerun protocol.

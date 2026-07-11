@@ -35,8 +35,24 @@ Command: `cd /app/backend && python -m pytest tests/test_preferences_slice5.py t
 | `test_billing_readiness_aggregate.py` | ~8 | PASS | Chart-wide billing-readiness aggregate contract + permission |
 | `test_clinical_ui_defaults.py` | ~11 | PASS | Slice 5A/B/C durable prefs — HTTP-layer allow-list |
 | **Total** | **152** | **PASS** | |
+| `test_seed_large_chart.py` (added 2026-02-15) | 14 | PASS | Production guard + idempotency + relationship integrity + cleanup + requested event count + CLI parsing for the new large-chart fixture seeder |
 
-Duration: 78.7 s.
+Combined run (clinical contract + seeder): **166 passed / 166 total** in 115.7 s.
+Standalone seeder run: **14 passed / 14 total** in 80.1 s.
+Standalone clinical contract run: **152 passed / 152 total** in 78.7 s.
+
+## Manual smoke verification of `scripts/seed_large_chart.py`
+
+| Command | Timeline events observed | Result |
+|---|---:|:-:|
+| `--confirm-non-production --events 250` | 251 | PASS |
+| `--confirm-non-production --events 500` | 500 | PASS |
+| `--confirm-non-production --events 1000` | 1001 | PASS |
+| `--confirm-non-production --cleanup` (after any seed) | 0 remaining | PASS |
+| `APP_ENV=production --confirm-non-production` | refused | PASS (guard) |
+| `APP_ENV=development` without `--confirm-non-production` | refused | PASS (guard) |
+
+Fixture patient id (deterministic, non-PHI): `fixture-large-chart-patient-0001`. Printed to operator console only. No telemetry emission.
 
 ## ESLint (Clinical files)
 
