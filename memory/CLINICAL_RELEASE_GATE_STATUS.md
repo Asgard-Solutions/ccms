@@ -60,6 +60,10 @@ Proceed to G6 Stage 1 (internal cohort) once:
 
 Do not proceed to Stage 2 (pilot clinic) without at least one production-shaped chart (200+ timeline events) being measured under the G2 thresholds.
 
+## External gate action plan
+
+The exact operator commands, checklists, evidence requirements, and stop conditions for closing G1, G2, G3, G5, and G6 Stage 1 are collected in `/app/memory/CLINICAL_EXTERNAL_GATE_ACTION_PLAN.md`. That plan is the single entry point for the human-driven work; every gate row above points into a matching section of that document.
+
 ## Complete list of created and modified release-gate evidence files
 
 Created in this pass:
