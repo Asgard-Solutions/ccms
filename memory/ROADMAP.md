@@ -14,7 +14,7 @@ Prioritized backlog for remaining P0/P1/P2 work. Most-recent updates on top.
 | 2.1 — Preset icon-strip polish | ✅ Done | `PresetIconStrip` shows one icon per configured dimension with counts (never raw values), reuses sanitizer + stale detector, 10 tests. |
 | 4 — Imaging metadata + filters, Data-quality indicators | ✅ Done (re-integrated 2026-02-15) | `ImagingCard` + `DataQualityPanel` re-wired above legacy `MediaCard` fallback. Independent flag `clinicalRedesignPhase3Slice4`. 17 frontend tests. |
 | 5 — Role-aware views + configurable summary + durable prefs | ✅ Done (shipped 2026-02-15) | `workspaceModes.js` registry, `WorkspaceModeSwitcher`, `SummaryConfigDrawer` (Move up / Move down, no DnD). Extended `ClinicalUIDefaults` with `default_workspace_mode`, `summary_module_order`, `default_encounter_filter`, `default_outcome_view`, `collapsed_modules`. 24 frontend + 45 backend tests. Independent flag `clinicalRedesignPhase3Slice5`. |
-| 6 — Telemetry, partial-failure handling, a11y hardening, UAT, rollback verification | ⏳ Next | Final hardening; verifies parent flag disables every child cleanly. See `HANDOFF_SLICE6.md`. |
+| 6 — Telemetry, partial-failure handling, a11y hardening, UAT, rollback verification | ✅ Done (shipped 2026-02-15) | `SectionErrorBoundary` wraps Imaging/Outcomes/Timeline; `test_telemetry_phi_probe.py` (25 fields); WorkspaceModeSwitcher aria-live + persistent description; 5-level surface tokens (light + dark); `ClinicalTabV2.flagMatrix.test.js` (12 slices of 256 combos); `/app/memory/PHASE3_UAT.md` (50 scenarios). Independent flag `clinicalRedesignPhase3Slice6`. |
 
 ### Deferred / Blocked
 

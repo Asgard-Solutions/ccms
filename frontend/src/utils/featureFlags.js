@@ -27,6 +27,7 @@ const FLAG_DEFAULTS = {
   clinicalRedesignPhase3Slice3: "on",
   clinicalRedesignPhase3Slice4: "on",
   clinicalRedesignPhase3Slice5: "on",
+  clinicalRedesignPhase3Slice6: "on",
 };
 
 // Explicit env-var mapping so grep/CI can find the strings.
@@ -38,6 +39,7 @@ const ENV_VAR_MAP = {
   clinicalRedesignPhase3Slice3: "REACT_APP_CLINICAL_REDESIGN_PHASE3_SLICE3",
   clinicalRedesignPhase3Slice4: "REACT_APP_CLINICAL_REDESIGN_PHASE3_SLICE4",
   clinicalRedesignPhase3Slice5: "REACT_APP_CLINICAL_REDESIGN_PHASE3_SLICE5",
+  clinicalRedesignPhase3Slice6: "REACT_APP_CLINICAL_REDESIGN_PHASE3_SLICE6",
 };
 
 // Nested-flag dependency: a child flag is only "on" if its parent chain is on.
@@ -50,6 +52,7 @@ const FLAG_PARENTS = {
   clinicalRedesignPhase3Slice3: "clinicalRedesignPhase3",
   clinicalRedesignPhase3Slice4: "clinicalRedesignPhase3",
   clinicalRedesignPhase3Slice5: "clinicalRedesignPhase3",
+  clinicalRedesignPhase3Slice6: "clinicalRedesignPhase3",
 };
 
 function normalise(raw) {
@@ -112,6 +115,12 @@ export function setFlagOverride(key, value) {
     /* ignore */
   }
 }
+
+// Slice 6 flag-matrix test surface. Exposed so unit tests can walk
+// the registry without duplicating the key list.
+export const FLAG_KEYS = Object.keys(FLAG_DEFAULTS);
+export { FLAG_DEFAULTS, ENV_VAR_MAP as FLAG_ENV_VARS, FLAG_PARENTS };
+
 
 export function useFeatureFlag(key) {
   const [value, setValue] = useState(() => getFlag(key));

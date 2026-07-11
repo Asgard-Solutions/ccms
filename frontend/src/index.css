@@ -148,6 +148,14 @@
         --surface: #FFFFFF;
         --surface-2: #F1F6F9;
         --surface-3: #EAF1F5;
+        /* Slice 6 / Item 7 — 5-level layered surface hierarchy.
+           Consumers use these directly for parity across the Clinical
+           workspace. Keep in lockstep with the dark-theme block below. */
+        --surface-nav:         #EAF1F5;
+        --surface-page:        #F6FAFC;
+        --surface-section:     #FFFFFF;
+        --surface-interactive: #F1F6F9;
+        --surface-selected:    #DDECF7;
         --border-strong-color: #B8C6D1;
         --focus: #23A1A8;
         --selection: rgba(35, 161, 168, 0.16);
@@ -207,6 +215,12 @@
         --surface: #16202B;
         --surface-2: #1B2834;
         --surface-3: #223241;
+        /* Slice 6 / Item 7 — 5-level layered surface hierarchy (dark). */
+        --surface-nav:         #0E1720;
+        --surface-page:        #111A22;
+        --surface-section:     #16202B;
+        --surface-interactive: #1B2834;
+        --surface-selected:    #223241;
         --border-strong-color: #3A5063;
         --focus: #7ACACE;
         --selection: rgba(122, 202, 206, 0.20);

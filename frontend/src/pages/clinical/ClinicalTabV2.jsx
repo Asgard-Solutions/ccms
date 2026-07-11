@@ -45,6 +45,7 @@ import ImagingCard from "./ImagingCard";
 import DataQualityPanel from "./DataQualityPanel";
 import WorkspaceModeSwitcher from "./WorkspaceModeSwitcher";
 import SummaryConfigDrawer from "./SummaryConfigDrawer";
+import SectionErrorBoundary from "./SectionErrorBoundary";
 import { effectiveMode, resolveSummaryOrder, sectionOrderForMode } from "./workspaceModes";
 import { getOrCreateRouteInstanceToken } from "./useClinicalReturnState";
 import { useFeatureFlag } from "../../utils/featureFlags";
@@ -651,17 +652,19 @@ export default function ClinicalTabV2({
       </section>
 
       <section id="timeline" ref={registerSection("timeline")} className="scroll-mt-40">
-        {phase2WaveA ? (
-          <GroupedTimelineCard
-            patientId={patientId}
-            providers={providers}
-            episodes={episodes || []}
-            clinicalUiDefaults={currentUser?.clinical_ui_defaults}
-            routeInstanceToken={routeInstanceToken}
-          />
-        ) : (
-          <CareTimelineCard patientId={patientId} />
-        )}
+        <SectionErrorBoundary slug="timeline" label="Timeline">
+          {phase2WaveA ? (
+            <GroupedTimelineCard
+              patientId={patientId}
+              providers={providers}
+              episodes={episodes || []}
+              clinicalUiDefaults={currentUser?.clinical_ui_defaults}
+              routeInstanceToken={routeInstanceToken}
+            />
+          ) : (
+            <CareTimelineCard patientId={patientId} />
+          )}
+        </SectionErrorBoundary>
       </section>
 
       <section id="imaging" ref={registerSection("imaging")} className="scroll-mt-40 space-y-4">
@@ -686,33 +689,35 @@ export default function ClinicalTabV2({
       </section>
 
       <section id="outcomes" ref={registerSection("outcomes")} className="scroll-mt-40">
-        {phase3Slice3 ? (
-          <OutcomesSection
-            patientId={patientId}
-            canWrite={canWrite}
-            activePlan={activePlan}
-            routeInstanceToken={routeInstanceToken}
-            suggestionContext={{
-              patient_age: age,
-              primary_dx_body_region: primaryDx?.body_region || null,
-              episode_case_type: activeEpisode?.case_type || null,
-            }}
-            onRecordOutcome={() => {
-              // Delegate to the legacy card for the actual capture UI —
-              // Slice 3 is intentionally read-only. Scroll the legacy
-              // card into view so the user can complete the workflow.
-              const el = document.getElementById("outcomes-legacy");
-              if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-            }}
-          />
-        ) : null}
-        <div id="outcomes-legacy" className={phase3Slice3 ? "mt-4" : ""}>
-          <OutcomesCard
-            patientId={patientId}
-            canWrite={canWrite}
-            onReauthNeeded={onReauthNeeded}
-          />
-        </div>
+        <SectionErrorBoundary slug="outcomes" label="Outcomes">
+          {phase3Slice3 ? (
+            <OutcomesSection
+              patientId={patientId}
+              canWrite={canWrite}
+              activePlan={activePlan}
+              routeInstanceToken={routeInstanceToken}
+              suggestionContext={{
+                patient_age: age,
+                primary_dx_body_region: primaryDx?.body_region || null,
+                episode_case_type: activeEpisode?.case_type || null,
+              }}
+              onRecordOutcome={() => {
+                // Delegate to the legacy card for the actual capture UI —
+                // Slice 3 is intentionally read-only. Scroll the legacy
+                // card into view so the user can complete the workflow.
+                const el = document.getElementById("outcomes-legacy");
+                if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+            />
+          ) : null}
+          <div id="outcomes-legacy" className={phase3Slice3 ? "mt-4" : ""}>
+            <OutcomesCard
+              patientId={patientId}
+              canWrite={canWrite}
+              onReauthNeeded={onReauthNeeded}
+            />
+          </div>
+        </SectionErrorBoundary>
       </section>
 
       <BackToTopButton visible={showBackToTop} onClick={scrollToTop} />

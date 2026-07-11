@@ -71,37 +71,59 @@ export default function WorkspaceModeSwitcher({
   return (
     <div
       data-testid="clinical-workspace-mode-switcher"
-      className="flex items-center gap-2"
+      className="flex flex-col gap-1"
     >
-      <LayoutDashboard className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
-      <label htmlFor="clinical-workspace-mode" className="sr-only">
-        Clinical workspace mode
-      </label>
-      <Select value={mode} onValueChange={handle}>
-        <SelectTrigger
-          id="clinical-workspace-mode"
-          data-testid="clinical-workspace-mode-trigger"
-          disabled={saving}
-          className="h-11 min-w-[180px] rounded-full border-border bg-card text-sm"
-        >
-          <SelectValue placeholder="Workspace mode" />
-        </SelectTrigger>
-        <SelectContent>
-          {allowed.map((m) => (
-            <SelectItem
-              key={m}
-              value={m}
-              data-testid={`clinical-workspace-mode-option-${m}`}
-              className="text-sm"
-            >
-              <div className="flex flex-col">
-                <span className="font-medium text-foreground">{MODE_LABEL[m]}</span>
-                <span className="text-xs text-muted-foreground">{MODE_DESCRIPTION[m]}</span>
-              </div>
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <div className="flex items-center gap-2">
+        <LayoutDashboard className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+        <label htmlFor="clinical-workspace-mode" className="sr-only">
+          Clinical workspace mode
+        </label>
+        <Select value={mode} onValueChange={handle}>
+          <SelectTrigger
+            id="clinical-workspace-mode"
+            data-testid="clinical-workspace-mode-trigger"
+            aria-describedby="clinical-workspace-mode-description"
+            disabled={saving}
+            className="h-11 min-w-[180px] rounded-full border-border bg-card text-sm"
+          >
+            <SelectValue placeholder="Workspace mode" />
+          </SelectTrigger>
+          <SelectContent>
+            {allowed.map((m) => (
+              <SelectItem
+                key={m}
+                value={m}
+                data-testid={`clinical-workspace-mode-option-${m}`}
+                className="text-sm"
+              >
+                <div className="flex flex-col">
+                  <span className="font-medium text-foreground">{MODE_LABEL[m]}</span>
+                  <span className="text-xs text-muted-foreground">{MODE_DESCRIPTION[m]}</span>
+                </div>
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      {/* Slice 6C — persistent discoverability. Screen readers get the
+          same information via aria-describedby; the aria-live region
+          below announces mode changes without stealing focus. */}
+      <p
+        id="clinical-workspace-mode-description"
+        data-testid="clinical-workspace-mode-description"
+        className="pl-6 text-xs text-muted-foreground"
+      >
+        <span className="font-medium text-foreground">{MODE_LABEL[mode]} mode</span>
+        <span> · {MODE_DESCRIPTION[mode]}</span>
+      </p>
+      <div
+        data-testid="clinical-workspace-mode-live"
+        role="status"
+        aria-live="polite"
+        className="sr-only"
+      >
+        {`Clinical workspace mode: ${MODE_LABEL[mode]}. ${MODE_DESCRIPTION[mode]}`}
+      </div>
     </div>
   );
 }
