@@ -4,7 +4,9 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
-## 2026-02-15 — Clinical redesign Phase 3 Slice 4 (Imaging metadata + Data-quality indicators)
+## 2026-02-15 — Clinical redesign Phase 3 Slice 4 (Imaging metadata + Data-quality indicators) — **STANDALONE FILES ONLY, INTEGRATION DEFERRED**
+
+**Status update (2026-02-15, later same day):** Per user direction, Slice 4 has been **moved back to the backlog**. The engine, panel, and imaging card files remain in-tree and jest-green, but the integration into `ClinicalTabV2.jsx` (imports, `clinicalRedesignPhase3Slice4` flag reference, and JSX slot) has been removed to keep the shell clean. Pick this up by re-wiring the imports + flag gate when work resumes.
 
 **Why:** Providers needed a compact, patient-scoped view of the imaging attached to a chart plus a deterministic, remediation-focused list of data-quality gaps. Both surfaces must stay strictly chart-scoped — no aggregate metrics, no cross-patient counters, no dashboard-shaped exports.
 

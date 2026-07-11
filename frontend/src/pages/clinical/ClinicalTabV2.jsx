@@ -41,8 +41,6 @@ import IntakeHistoryProgressive from "./IntakeHistoryProgressive";
 import ReExamSection from "./ReExamSection";
 import NextActionsPanel from "./NextActionsPanel";
 import OutcomesSection from "./OutcomesSection";
-import ImagingCard from "./ImagingCard";
-import DataQualityPanel from "./DataQualityPanel";
 import { getOrCreateRouteInstanceToken } from "./useClinicalReturnState";
 import { useFeatureFlag } from "../../utils/featureFlags";
 import {
@@ -85,7 +83,6 @@ export default function ClinicalTabV2({
   const [phase2WaveB] = useFeatureFlag("clinicalRedesignPhase2WaveB");
   const [phase3] = useFeatureFlag("clinicalRedesignPhase3");
   const [phase3Slice3] = useFeatureFlag("clinicalRedesignPhase3Slice3");
-  const [phase3Slice4] = useFeatureFlag("clinicalRedesignPhase3Slice4");
   const [summary, setSummary] = useState(null);
   const [episodes, setEpisodes] = useState(null);
   const [diagnoses, setDiagnoses] = useState(null);
@@ -600,19 +597,6 @@ export default function ClinicalTabV2({
           />
         ) : null}
         <div id="outcomes-legacy" className={phase3Slice3 ? "mt-4" : ""}>
-          <OutcomesCard
-            patientId={patientId}
-            canWrite={canWrite}
-            onReauthNeeded={onReauthNeeded}
-          />
-        </div>
-      </section>
-
-      <BackToTopButton visible={showBackToTop} onClick={scrollToTop} />
-    </div>
-  );
-}
-: ""}>
           <OutcomesCard
             patientId={patientId}
             canWrite={canWrite}

@@ -3,9 +3,9 @@
 
 ## Phase 3 Slice 4 — Imaging metadata + Data-quality indicators (2026-02-15)
 
-**Status:** ✅ Shipped. Frontend `jest` 88/88 (17 new `dataQualityEngine.test.js` + 71 pre-existing). Backend unchanged — Slice 4 is a pure UI surface on top of existing permission-checked endpoints.
+**Status:** 🅱️ **BACKLOG (integration deferred).** Standalone files (`dataQualityEngine.js`, `DataQualityPanel.jsx`, `ImagingCard.jsx`) remain in-tree and jest-green (88/88), but per user direction the integration into `ClinicalTabV2.jsx` — imports, `clinicalRedesignPhase3Slice4` flag reference, and JSX slot — was removed on 2026-02-15 (same day) to keep the shell clean. Backend unchanged. Resume by re-wiring the imports + flag gate + JSX slot when work restarts.
 
-**Feature flag:** Independent nested `clinicalRedesignPhase3Slice4` (child of `clinicalRedesignPhase3`, grandchild of `clinicalRedesign`). Legacy `MediaCard` stays mounted below the new card so the capture workflow keeps working with the flag off.
+**Feature flag (when re-integrated):** Independent nested `clinicalRedesignPhase3Slice4` (child of `clinicalRedesignPhase3`, grandchild of `clinicalRedesign`). Legacy `MediaCard` stays mounted below the new card so the capture workflow keeps working with the flag off.
 
 ### Deliverables
 
