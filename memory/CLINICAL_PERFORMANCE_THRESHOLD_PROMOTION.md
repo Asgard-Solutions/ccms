@@ -73,6 +73,33 @@ Populate one row per (`profile`, `network`, `dataset size`, `browser/device`) co
 - Fill approval owner, approval date, approval channel (ticket / email / meeting record).
 - After signing, flip the block's marker comment from `perf-draft` to `perf-approved` (the harness protects any run-id already recorded as approved and refuses to overwrite it).
 
+### Automating Step 3
+
+The reviewer can promote the signed draft with the companion script:
+
+```
+cd /app/backend && APP_ENV=development python -m scripts.promote_perf_threshold \
+  --run-id <run-id> \
+  --thresholds-file /app/memory/CLINICAL_PERFORMANCE_THRESHOLDS.md \
+  --approved-by "Platform Reliability Owner" \
+  --approval-date 2026-02-15 \
+  --rationale "Meets P95 budget with 30% headroom" \
+  --confirm-promotion
+```
+
+The script:
+- Locates exactly one `perf-draft` block matching `--run-id` (raises on missing / duplicate / stale / already-approved).
+- Rejects any remaining `REVIEW REQUIRED` value or non-numeric cell.
+- Validates `Release < Warning < Rollback` on every metric AND consistent units across the block.
+- Requires Approval owner, Approval date, Rationale to be filled (blanks like `____________________` are rejected).
+- Preserves the measured evidence table byte-for-byte.
+- Flips the marker `perf-draft` → `perf-approved`, status `AWAITING SIGN-OFF` → `APPROVED`.
+- Appends an immutable promotion stamp + history line.
+- Writes atomically through a temp file + `os.replace`, saves a `.backup-<UTC>` copy first.
+- Validates every downstream doc (`CLINICAL_MONITORING_PLAN.md`, `CLINICAL_STAGED_ROLLOUT_PLAN.md`, `CLINICAL_ROLLOUT_CHECKLIST.md`, `CLINICAL_GA_READINESS.md`, `PHASE3_PERFORMANCE_TEST_PLAN.md`) still cites `CLINICAL_PERFORMANCE_THRESHOLDS.md` — if a citation is broken, the promotion **aborts** and the operator must repair the reference. The script **never** edits downstream docs.
+- Refuses when `APP_ENV=production`.
+- Supports `--dry-run` to preview the diff without writing.
+
 ## Step 4 — Cross-document promotion
 
 Once the row is signed:
