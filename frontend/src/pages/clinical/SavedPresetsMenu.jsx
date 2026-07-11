@@ -21,6 +21,7 @@ import {
   sanitizePresetFilters,
   detectStaleness,
 } from "./timelinePresetsSchema";
+import PresetIconStrip from "./PresetIconStrip";
 
 function usePresets(clinicalUiDefaults, onDefaultsChange) {
   return {
@@ -172,15 +173,25 @@ export default function SavedPresetsMenu({
                       type="button"
                       onClick={() => doApply(p)}
                       data-testid={`saved-preset-${p.id}-apply`}
-                      className="min-w-0 flex-1 truncate text-left"
+                      className="min-w-0 flex-1 space-y-0.5 text-left"
                     >
-                      {stale ? "⚠ " : ""}
-                      <span className="font-medium text-foreground">{p.name}</span>
-                      {isDefault && (
-                        <span className="ml-1 text-[10px] uppercase text-muted-foreground">
-                          · default
+                      <div className="flex min-w-0 items-center gap-1">
+                        {stale && <span aria-hidden="true">⚠ </span>}
+                        <span className="truncate font-medium text-foreground">
+                          {p.name}
                         </span>
-                      )}
+                        {isDefault && (
+                          <span className="text-[10px] uppercase text-muted-foreground">
+                            · default
+                          </span>
+                        )}
+                      </div>
+                      <PresetIconStrip
+                        preset={p}
+                        filterMeta={filterMeta}
+                        testidPrefix={`saved-preset-${p.id}-strip`}
+                        size="sm"
+                      />
                     </button>
                     <button
                       type="button"

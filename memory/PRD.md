@@ -1,6 +1,21 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+## Slice 2.1 polish — Preset icon-strip (2026-02-15)
+
+**Status:** ✅ Shipped. 10 new jest tests + 11 pre-existing preset-schema tests all green.
+
+**Deliverables:**
+- `PresetIconStrip.jsx` — presentational surface for a saved preset. Shows one icon per configured dimension (`event_kinds`, `sources`, `provider_ids`, `date_window`). Multi-select dimensions show counts, `date_window` is presence-only. Stale-preset warnings reuse `detectStaleness`.
+- Wired into `SavedPresetsMenu.jsx` — every preset row now surfaces name + icon-strip.
+
+**Guardrails held:**
+- Zero persistence / migration changes.
+- No raw filter values in the DOM (values never leave the sanitized schema).
+- Unsupported dimensions in the input silently ignored.
+- Tests cover empty / partial / stale-vocab / stale-provider / value-leak / ordering.
+
+
 ## Phase 3 Slice 3 — Outcome snapshot, trend, optional suggestions (2026-02-15)
 
 **Status:** ✅ Shipped. Backend `pytest` 47/47 telemetry tests green (13 new outcome-suggestion contract tests). Frontend `jest` 62/62 (25 new outcome-series helper tests + 37 pre-existing).

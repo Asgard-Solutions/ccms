@@ -4,6 +4,23 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-02-15 — Clinical redesign Slice 2.1 polish (Preset icon-strip)
+
+**Why:** Users needed to identify saved timeline presets at a glance without opening them, while keeping the presentation strictly PHI-safe and reusing the sanitized preset schema.
+
+**Shipped:**
+- `frontend/src/pages/clinical/PresetIconStrip.jsx` (new) — purely presentational. Renders one icon per configured dimension (`event_kinds`, `sources`, `provider_ids`, `date_window`) using lucide-react `Layers`, `Database`, `Users`, `Calendar`. Multi-select dimensions show numeric counts only; `date_window` is presence-only so its value never surfaces. Icons carry `title` + `aria-label` for accessibility.
+- Stale-preset detection reuses `detectStaleness()` from `timelinePresetsSchema` — no new rules invented. Stale dimensions get a warning-tone chip with a `⚠` glyph.
+- `SavedPresetsMenu.jsx` — replaces the plain preset row with `preset name` + icon-strip on the second line. Legacy stale-glyph next to the name preserved for at-a-glance skim.
+- 10 new jest tests in `PresetIconStrip.test.js` covering empty / partial / unsupported / stale-vocab / stale-provider / no-raw-values-leak / stable-ordering.
+
+**Guardrails held:**
+- Zero persistence or migration changes — pure UI rendering off the already-sanitized preset shape.
+- Search text, dates, provider names, episode labels, and record ids are physically inaccessible (dimensions rendered as `count` numbers or presence bits only). A dedicated test asserts the JSON of the strip output never contains any raw filter value.
+- Unsupported dimension keys in the input are silently ignored (never render an ad-hoc icon).
+
+---
+
 ## 2026-02-15 — Clinical redesign Phase 3 Slice 3 (Outcome snapshot, trend, optional suggestions)
 
 **Why:** Providers reviewing a chart needed a compact read-only view of outcome-measure history without any clinical inference — just neutral numeric summaries, a chart, an accessible table, and optional configured-instrument reminders. Slice 3 keeps every existing capture workflow untouched.
