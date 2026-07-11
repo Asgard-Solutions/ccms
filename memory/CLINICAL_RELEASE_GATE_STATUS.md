@@ -98,6 +98,8 @@ Created in this pass:
 - `/app/backend/tests/test_perf_threshold_draft.py` (26 tests covering the `--write-threshold-draft` opt-in: marker parsing, draft block content, append behavior, duplicate/approved-row protection, stale detection, ordering validator, CLI flag)
 - `/app/backend/scripts/promote_perf_threshold.py` (companion promotion script: validates a reviewer-signed draft in place, flips marker `perf-draft` → `perf-approved`, appends immutable promotion stamp, atomic write with backup, validates downstream references, never edits downstream docs)
 - `/app/backend/tests/test_promote_perf_threshold.py` (20 tests covering the promotion pipeline)
+- `/app/backend/scripts/check_perf_governance.py` (read-only CI governance guard: validates every draft/approved block, enforces ordering/units/fields, classifies rows valid/pending/approaching_expiry/expired/not_applicable/invalid, verifies downstream citations, flags duplicated threshold numbers in downstream docs, JSON output, strict / permissive / allow-pending modes; never modifies any file)
+- `/app/backend/tests/test_check_perf_governance.py` (18 tests covering the CI check)
 
 Updated in this pass:
 
