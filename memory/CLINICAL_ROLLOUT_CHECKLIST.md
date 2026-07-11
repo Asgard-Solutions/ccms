@@ -13,6 +13,10 @@
 - [x] Release notes drafted — `CLINICAL_RELEASE_NOTES.md`
 - [x] Monitoring plan documented — `CLINICAL_MONITORING_PLAN.md`
 - [ ] Performance thresholds approved by platform reliability
+      - [ ] Combination row filled in `/app/memory/CLINICAL_PERFORMANCE_THRESHOLDS.md`
+      - [ ] Release budget < Warning alert < Rollback trigger ordering verified per metric
+      - [ ] Cross-references updated in `CLINICAL_MONITORING_PLAN.md`, `CLINICAL_STAGED_ROLLOUT_PLAN.md`, `CLINICAL_GA_READINESS.md`
+      - [ ] Promotion follows `/app/memory/CLINICAL_PERFORMANCE_THRESHOLD_PROMOTION.md`
 - [ ] Production rollback walk-through executed
 - [ ] Stage-1 cohort selected
 

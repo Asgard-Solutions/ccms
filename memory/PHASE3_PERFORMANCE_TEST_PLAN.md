@@ -55,7 +55,17 @@ These marks are **not yet shipped in-tree**. Adding them requires a release-gate
 
 ### Proposed thresholds (require approval)
 
-| Metric | Proposed P50 | Proposed P95 | Rationale |
+**Single source of truth after approval:** `/app/memory/CLINICAL_PERFORMANCE_THRESHOLDS.md` (combination row per profile × network × dataset × browser). Promotion process: `/app/memory/CLINICAL_PERFORMANCE_THRESHOLD_PROMOTION.md`.
+
+Rules that hold regardless of the approved numbers:
+
+- Three tiers per metric: **Release budget < Warning alert < Rollback trigger**. Warning and rollback must include headroom.
+- Context inheritance: a threshold approved for one (profile, network, dataset, browser) tuple does **not** govern any other tuple.
+- Sustain windows apply to warning and rollback tiers.
+
+Pre-approval placeholders (do **not** treat as approved):
+
+| Metric | Proposed release-budget P50 | Proposed release-budget P95 | Rationale |
 |---|---:|---:|---|
 | Time-to-first-meaningful-Clinical-content | ≤ 1500 ms | ≤ 3000 ms | Matches EHR benchmarks and existing dashboard perf goals |
 | Timeline load (grouped) | ≤ 400 ms | ≤ 900 ms | Local backend; MongoDB with indexed reads |
@@ -63,7 +73,7 @@ These marks are **not yet shipped in-tree**. Adding them requires a release-gate
 | Outcome trend chart render | ≤ 100 ms | ≤ 300 ms | SVG rendering, ≤ 24 months of points |
 | Workspace-mode switch | ≤ 200 ms | ≤ 500 ms | Preference PATCH + section reorder |
 
-**Approval required from:** Platform reliability lead. Until approved, no gate is marked `COMPLETE — MEETS APPROVED BUDGET`.
+**Approval required from:** Platform reliability lead. Until the first row is signed into `CLINICAL_PERFORMANCE_THRESHOLDS.md`, no gate is marked `COMPLETE — MEETS APPROVED BUDGET`.
 
 ## Virtualization decision
 

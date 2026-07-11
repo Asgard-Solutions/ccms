@@ -57,15 +57,29 @@ Before Stage 1 starts:
 
 ## Stop-condition thresholds (require approval)
 
-| Signal | Proposed stop threshold | Approved? |
-|---|---|:-:|
-| Clinical page load failures | > 20 / hour sustained 15 min | Pending |
-| Section-error-boundary activation | > 10 / hour on any single section sustained 15 min | Pending |
-| API error rate | > 2% sustained 10 min | Pending |
-| Preference-save failure rate | > 1% sustained 30 min | Pending |
-| Timeline P95 | > 3000 ms sustained 30 min | Pending |
+**Single source of truth:** `/app/memory/CLINICAL_PERFORMANCE_THRESHOLDS.md`.
+**Promotion process:** `/app/memory/CLINICAL_PERFORMANCE_THRESHOLD_PROMOTION.md`.
 
-Awaiting platform-reliability sign-off. Until approved, the release-gate G6 remains `READY FOR AUTHORIZED STAGED ROLLOUT`, not `COMPLETE`.
+The monitoring plan intentionally does **not** re-declare thresholds — it references the approved row for each (profile, network, dataset, browser) combination. This keeps release qualification (G2) and runtime monitoring on the same numbers.
+
+Rules that hold regardless of the approved numbers:
+
+- Three tiers per metric: **Release budget < Warning alert < Rollback trigger**. Warning and rollback must include headroom; never copy the release budget.
+- Sustain windows apply — warnings and rollback triggers only fire after the threshold has held for the approved window.
+- Context is inherited. A threshold approved for `desktop / normal / 500-event / Chromium` never silently governs mobile, throttled, or larger datasets. Unapproved combinations require a fresh approval row in `CLINICAL_PERFORMANCE_THRESHOLDS.md`.
+
+| Signal | Warning threshold | Rollback trigger | Source |
+|---|---|---|---|
+| Clinical page load failures per hour | See combination row | See combination row | `CLINICAL_PERFORMANCE_THRESHOLDS.md` |
+| Section-error-boundary activation per hour | See combination row | See combination row | Same |
+| API error rate on `/api/patients/*/clinical/*` | See combination row | See combination row | Same |
+| Preference-save failure rate | See combination row | See combination row | Same |
+| Timeline P95 latency | See combination row | See combination row | Same |
+| Wall-clock initial render P95 | See combination row | See combination row | Same |
+| Encounters P95 latency | See combination row | See combination row | Same |
+| Billing-readiness aggregate P95 latency | See combination row | See combination row | Same |
+
+Awaiting first platform-reliability sign-off. Until the first combination row lands, the release-gate G6 remains `READY FOR AUTHORIZED STAGED ROLLOUT`, not `COMPLETE`, and G2 remains `COMPLETE — MEASURED, BUDGET APPROVAL REQUIRED`.
 
 ## Data retention
 

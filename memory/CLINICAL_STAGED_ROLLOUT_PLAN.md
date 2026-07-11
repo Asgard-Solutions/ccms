@@ -73,6 +73,8 @@ See `CLINICAL_MONITORING_PLAN.md`. No PHI in any signal.
 
 ## Rollout stop conditions
 
+**Approved thresholds:** `/app/memory/CLINICAL_PERFORMANCE_THRESHOLDS.md` (per combination row). **Promotion process:** `/app/memory/CLINICAL_PERFORMANCE_THRESHOLD_PROMOTION.md`. The same approved numbers govern both G2 release qualification and rollout stop conditions — do not maintain a second copy in this document.
+
 Trigger immediate rollback (see `CLINICAL_ROLLBACK_RUNBOOK.md`) on any of:
 - Blank Clinical page (verified reproducible for ≥ 3 users OR ≥ 2 tenants).
 - Permission leakage (any user sees data they should not).
@@ -81,14 +83,14 @@ Trigger immediate rollback (see `CLINICAL_ROLLBACK_RUNBOOK.md`) on any of:
 - Signed-record mutation (any).
 - Audit-log emission failure sustained > 5 min.
 - Critical navigation failure (Clinical tab unreachable from Patient Detail).
-- Sustained elevated backend error rate above approved threshold (requires threshold approval).
-- Severe performance regression (P95 timeline > 5 s sustained; requires threshold approval).
+- Sustained elevated backend error rate above approved threshold (see approved combination row in `CLINICAL_PERFORMANCE_THRESHOLDS.md`).
+- Severe performance regression: P95 exceeds the approved rollback trigger for the sustain window in the matching combination row of `CLINICAL_PERFORMANCE_THRESHOLDS.md`. Never apply a threshold across profiles / network / datasets it wasn't measured for.
 - Preference corruption (durable `ClinicalUIDefaults` rejected on read for > 1% of users).
 - Unrecoverable partial-failure loop (SectionErrorBoundary retries fail indefinitely).
 - Repeated section-boundary crashes for the same user > 5 within one session.
 - Billing workflow regression (e.g., encounters no longer route to Ready).
 
-**Numerical thresholds pending approval.** Where approved, they will be listed in `CLINICAL_MONITORING_PLAN.md`.
+**Numerical thresholds pending approval.** Once approved, they live in `CLINICAL_PERFORMANCE_THRESHOLDS.md` (single source of truth) and are referenced — never duplicated — from `CLINICAL_MONITORING_PLAN.md`, this document, `CLINICAL_ROLLOUT_CHECKLIST.md`, and `CLINICAL_GA_READINESS.md`.
 
 ## Change freeze during rollout
 

@@ -2,6 +2,11 @@
 
 
 
+## 2026-02-15 (same day) — Threshold promotion workflow shipped
+
+`CLINICAL_PERFORMANCE_THRESHOLDS.md` established as the single source of truth for approved Clinical performance thresholds — one signed row per (profile, network, dataset size, browser/device) combination, with three tiers per metric (Release budget < Warning alert < Rollback trigger) and mandatory sustain windows. `CLINICAL_PERFORMANCE_THRESHOLD_PROMOTION.md` documents the six-step runbook: run harness → platform-reliability review → approval recording → cross-document promotion → context enforcement → renewal. `CLINICAL_MONITORING_PLAN.md`, `PHASE3_PERFORMANCE_TEST_PLAN.md`, `CLINICAL_STAGED_ROLLOUT_PLAN.md`, `CLINICAL_ROLLOUT_CHECKLIST.md`, and `CLINICAL_GA_READINESS.md` now cite the thresholds file instead of re-declaring numbers — release qualification (G2) and runtime monitoring / rollout stop conditions share the same approved values. Warning and rollback thresholds explicitly must NOT be auto-derived from the first observed run; each combination requires explicit approval with headroom. Freeze scope untouched.
+
+
 ## 2026-02-15 (same day) — Large-chart fixture seeder shipped
 
 `scripts/seed_large_chart.py` generates a deterministic synthetic patient chart with a configurable timeline size (`--events 250 / 500 / 1000`) so the G2 measurement pass can exercise the frozen Clinical page against a production-shaped chart. Non-production only (hard `APP_ENV` guard + mandatory `--confirm-non-production` on every run). Idempotent, cleanup-safe, prints the fixture patient id only to the operator console. Backed by 14/14 tests in `backend/tests/test_seed_large_chart.py`. Live smoke runs confirmed 251 / 500 / 1001 timeline events for the three profiles. Freeze scope untouched — no change to Clinical UI, contracts, telemetry, preferences, or feature flags.

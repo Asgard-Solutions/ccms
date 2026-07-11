@@ -71,6 +71,8 @@ Created in this pass:
 - `/app/memory/PHASE3_PERFORMANCE_REPORT.md`
 - `/app/memory/PHASE3_PERFORMANCE_TEST_PLAN.md`
 - `/app/memory/PHASE3_PERFORMANCE_RAW_RESULTS.json`
+- `/app/memory/CLINICAL_PERFORMANCE_THRESHOLDS.md` (single source of truth for approved thresholds; awaiting first sign-off)
+- `/app/memory/CLINICAL_PERFORMANCE_THRESHOLD_PROMOTION.md` (Step 1–6 promotion runbook keeping G2 + runtime monitoring on the same numbers)
 - `/app/memory/CLINICAL_ROLLBACK_RUNBOOK.md`
 - `/app/memory/CLINICAL_ROLLBACK_MATRIX.md`
 - `/app/memory/CLINICAL_ROLLBACK_REHEARSAL.md`

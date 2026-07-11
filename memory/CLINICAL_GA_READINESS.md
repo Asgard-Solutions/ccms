@@ -12,6 +12,9 @@
 - [ ] G3 rollback runbook rehearsed in production
 - [ ] G4 contract freeze re-confirmed (registry vs. code)
 - [ ] G5 screenshot set complete (25 shots) + release notes distributed
+
+**Performance thresholds:** governed by `/app/memory/CLINICAL_PERFORMANCE_THRESHOLDS.md`. GA cannot proceed until at least one approved combination row (typically desktop / normal / 500-event) is signed, and the readiness metrics table below references those exact values. Additional combinations (throttled, mobile, larger datasets) require their own approval rows before governing a stage that exposes them.
+
 - [ ] G6 monitoring dashboards stable ≥ 10 business days across Stage 3 cohort
 - [ ] No open Blocker/Critical defects tagged to the Clinical redesign
 
@@ -23,7 +26,10 @@
 | Section-error-boundary activation rate | ___ | ___ | ≤ baseline |
 | API error rate on Clinical endpoints | ___ | ___ | ≤ baseline |
 | Preference-save failure rate | ___ | ___ | ≤ 0.5% |
-| Timeline P95 | ___ | ___ | ≤ approved threshold |
+| Timeline P95 | ___ | ___ | ≤ approved release budget (combination row in `CLINICAL_PERFORMANCE_THRESHOLDS.md`); alerts fire at approved warning threshold; rollback at approved rollback trigger |
+| Wall-clock initial render P95 | ___ | ___ | Same — reference approved combination row |
+| Encounters P95 | ___ | ___ | Same |
+| Billing-readiness aggregate P95 | ___ | ___ | Same |
 | Support ticket volume tagged `clinical-redesign` | ___ | ___ | ≤ 2× baseline |
 
 ## Communications
