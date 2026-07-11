@@ -29,7 +29,22 @@ All flags default **on**. Env overrides live in `frontend/.env` and are individu
 
 **Rollback contract:** parent-off disables every descendant regardless of stored child preferences; stored child preferences persist but are effectively off. Legacy `ClinicalTab` + `MediaCard` fallbacks remain mounted at all times.
 
-## Release gates (still to complete before promotion)
+## Release gates — closeout status (updated 2026-02-15 fork agent)
+
+See `/app/memory/CLINICAL_RELEASE_GATE_STATUS.md` for the definitive per-gate status.
+
+| Gate | Status | Evidence |
+|:-:|---|---|
+| G1 | READY FOR CLINICAL AND OPERATIONS SIGN-OFF | `PHASE3_UAT_SIGNOFF.md`, `PHASE3_UAT_EVIDENCE_INDEX.md`, `PHASE3_UAT_DEFECTS.md` |
+| G2 | COMPLETE — MEASURED, BUDGET APPROVAL REQUIRED | `PHASE3_PERFORMANCE_REPORT.md`, `PHASE3_PERFORMANCE_RAW_RESULTS.json`, `PHASE3_PERFORMANCE_TEST_PLAN.md` |
+| G3 | READY FOR PRODUCTION WALK-THROUGH | `CLINICAL_ROLLBACK_RUNBOOK.md`, `CLINICAL_ROLLBACK_MATRIX.md`, `CLINICAL_ROLLBACK_REHEARSAL.md` |
+| G4 | COMPLETE | `CLINICAL_CONTRACT_FREEZE.md`, `CLINICAL_CONTRACT_REGISTRY.json`, `CLINICAL_CONTRACT_CHANGE_POLICY.md` |
+| G5 | READY FOR SCREENSHOT CAPTURE | `CLINICAL_RELEASE_NOTES.md`, `CLINICAL_RELEASE_SCREENSHOT_INDEX.md`, `CLINICAL_SUPPORT_BRIEF.md`, `CLINICAL_KNOWN_LIMITATIONS.md` |
+| G6 | READY FOR AUTHORIZED STAGED ROLLOUT | `CLINICAL_STAGED_ROLLOUT_PLAN.md`, `CLINICAL_ROLLOUT_CHECKLIST.md`, `CLINICAL_MONITORING_PLAN.md`, `CLINICAL_INCIDENT_RUNBOOK.md`, `CLINICAL_PILOT_FEEDBACK_FORM.md`, `CLINICAL_GA_READINESS.md` |
+
+Automated verification (2026-02-15): frontend **117/117** pass, backend clinical **152/152** pass. See `release_evidence/AUTOMATED_TEST_RESULTS.md`.
+
+## Original release-gate list (verbatim from freeze 2026-02-15)
 
 Each gate is owned by a named team and must be signed-off before the redesign leaves staging.
 

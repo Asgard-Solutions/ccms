@@ -1,6 +1,44 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+## 2026-02-15 — Clinical redesign release-gate closeout (G1–G6)
+
+Frozen Clinical redesign (Phases 1 + 2 Waves A/B + Phase 3 Slices 1–6) taken through the six release gates. No code was modified. Every gate is either `COMPLETE` (evidence is in-container-verifiable) or `READY FOR EXTERNAL SIGN-OFF / AUTHORIZED EXECUTION` (requires human signatures, production access, pilot tenant, or platform-reliability threshold approval). No signatures, performance passes, or rollout completions were fabricated.
+
+**Automated verification (2026-02-15):**
+- Frontend clinical Jest — **117 / 117 pass** (8 suites).
+- Backend clinical contract Pytest — **152 / 152 pass** (9 files).
+- ESLint — clean (no code changes in this pass).
+
+**Gate summary:**
+
+| Gate | Status |
+|:-:|---|
+| G1 — 50-scenario stakeholder UAT sign-off | READY FOR CLINICAL AND OPERATIONS SIGN-OFF |
+| G2 — P50/P95 performance measurement | COMPLETE — MEASURED, BUDGET APPROVAL REQUIRED |
+| G3 — Production rollback walk-through | READY FOR PRODUCTION WALK-THROUGH (preview rehearsal executed) |
+| G4 — Contract freeze | COMPLETE (17 contracts registered, tests pass, registry matches code) |
+| G5 — Workspace screenshots + release notes | READY FOR SCREENSHOT CAPTURE (release notes + support brief + capture plan complete; 3 in-env screenshots as proof-of-life) |
+| G6 — Staged rollout | READY FOR AUTHORIZED STAGED ROLLOUT (plan + monitoring + incident runbook + pilot form + GA checklist all drafted) |
+
+**Deliverables created (25 files):**
+
+- Governance: `CLINICAL_RELEASE_GATE_STATUS.md`, `release_evidence/AUTOMATED_TEST_RESULTS.md`, `PRD_RELEASE_GATE_SNAPSHOT.md`.
+- G1: `PHASE3_UAT_SIGNOFF.md`, `PHASE3_UAT_EVIDENCE_INDEX.md`, `PHASE3_UAT_DEFECTS.md`.
+- G2: `PHASE3_PERFORMANCE_REPORT.md`, `PHASE3_PERFORMANCE_TEST_PLAN.md`, `PHASE3_PERFORMANCE_RAW_RESULTS.json`.
+- G3: `CLINICAL_ROLLBACK_RUNBOOK.md`, `CLINICAL_ROLLBACK_MATRIX.md`, `CLINICAL_ROLLBACK_REHEARSAL.md`.
+- G4: `CLINICAL_CONTRACT_FREEZE.md`, `CLINICAL_CONTRACT_REGISTRY.json`, `CLINICAL_CONTRACT_CHANGE_POLICY.md`.
+- G5: `CLINICAL_RELEASE_NOTES.md`, `CLINICAL_RELEASE_SCREENSHOT_INDEX.md`, `CLINICAL_SUPPORT_BRIEF.md`, `CLINICAL_KNOWN_LIMITATIONS.md`, `screenshots/00_login.jpg`, `screenshots/01_admin_clinical_general.jpg`, `screenshots/02_admin_clinical_billing.jpg`, `screenshots/03_admin_clinical_mid.jpg`, `screenshots/04_legacy_fallback.jpg`, `screenshots/05_slice5_off.jpg`.
+- G6: `CLINICAL_STAGED_ROLLOUT_PLAN.md`, `CLINICAL_ROLLOUT_CHECKLIST.md`, `CLINICAL_MONITORING_PLAN.md`, `CLINICAL_INCIDENT_RUNBOOK.md`, `CLINICAL_PILOT_FEEDBACK_FORM.md`, `CLINICAL_GA_READINESS.md`.
+
+**Environment fixes done to enable the pass (not redesign defects):**
+- Reinstalled `libmagic1 libmagic-dev libmagic-mgc` — the known recurring container issue documented in the freeze doc.
+- Backend tests routed via `REACT_APP_BACKEND_URL` (HTTPS) because auth cookies are `secure=True`.
+
+**No feature or contract change was made under this pass.** Freeze holds.
+
+---
+
 ## 2026-02-15 — Clinical redesign audit follow-through (42-item pass)
 
 **Follow-up to the audit conducted 2026-02-15 after Slice 4 was moved to backlog.** Completed the concrete UI-level items that don't require Slice 5's role-aware framework or backend contract changes.

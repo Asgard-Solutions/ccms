@@ -1,0 +1,189 @@
+{
+  "generated_at": "2026-02-15",
+  "release": "clinical_redesign_frozen",
+  "contracts": [
+    {
+      "id": "clinical_ui_defaults",
+      "name": "ClinicalUIDefaults",
+      "owner": "workspace_preferences_team",
+      "version": "1.0",
+      "source": "backend/services/identity/models.py",
+      "allowed_fields": ["default_section", "timeline_presets", "default_timeline_preset_id", "default_workspace_mode", "summary_module_order", "default_encounter_filter", "default_outcome_view", "collapsed_modules"],
+      "policy": "extra=forbid",
+      "test_files": ["backend/tests/test_preferences_slice5.py", "backend/tests/test_clinical_ui_defaults.py"]
+    },
+    {
+      "id": "preferences_update",
+      "name": "PreferencesUpdate",
+      "owner": "identity_team",
+      "version": "1.0",
+      "source": "backend/services/identity/models.py",
+      "allowed_fields": ["theme", "locale", "clinical_ui_defaults"],
+      "policy": "extra=forbid",
+      "test_files": ["backend/tests/test_clinical_ui_defaults.py"]
+    },
+    {
+      "id": "ui_event_payload",
+      "name": "UIEventPayload",
+      "owner": "platform_reliability",
+      "version": "1.0",
+      "source": "backend/services/telemetry/router.py",
+      "allowed_fields": ["event", "layout", "section", "error_code"],
+      "allowed_events": ["clinical.layout.activated", "clinical.nav.jump", "clinical.section.load_failed"],
+      "allowed_sections": ["summary", "history", "diagnoses", "encounters", "care-plan", "timeline", "imaging", "outcomes"],
+      "policy": "extra=forbid",
+      "test_files": ["backend/tests/test_telemetry_phi_probe.py"]
+    },
+    {
+      "id": "ui_action_payload_care_status",
+      "name": "UIActionPayload (care-status shape)",
+      "owner": "product_analytics",
+      "version": "1.0",
+      "source": "backend/services/telemetry/router.py",
+      "action_slugs": ["open-encounter", "add-note", "record-outcome", "schedule-visit", "schedule-reexam", "review-billing-issues", "edit-missing-information"],
+      "policy": "extra=forbid",
+      "test_files": ["backend/tests/test_telemetry_ui_action.py"]
+    },
+    {
+      "id": "ui_action_payload_next_action",
+      "name": "UIActionPayload (next-action shape)",
+      "owner": "product_analytics",
+      "version": "1.0",
+      "source": "backend/services/telemetry/router.py",
+      "action_ids": ["sign-unsigned-note", "complete-missing-documentation", "attach-or-link-diagnosis", "open-blocked-billing-readiness", "review-billing-warning", "schedule-due-or-overdue-reexam", "schedule-remaining-planned-visits", "review-missing-required-intake", "record-configured-outcome-measure"],
+      "interactions": ["opened", "dismissed"],
+      "policy": "extra=forbid",
+      "test_files": ["backend/tests/test_next_action_telemetry.py"]
+    },
+    {
+      "id": "ui_action_payload_outcome_suggestion",
+      "name": "UIActionPayload (outcome-suggestion shape)",
+      "owner": "outcomes_team",
+      "version": "1.0",
+      "source": "backend/services/telemetry/router.py",
+      "instrument_keys": ["ndi", "oswestry", "pain_vas", "pain_scale", "functional_index", "bournemouth_neck"],
+      "interactions": ["opened", "dismissed"],
+      "policy": "extra=forbid",
+      "test_files": ["backend/tests/test_outcome_suggestion_telemetry.py"]
+    },
+    {
+      "id": "feature_flag_registry",
+      "name": "Feature-flag registry",
+      "owner": "clinical_platform_lead",
+      "version": "1.0",
+      "source": "frontend/src/utils/featureFlags.js",
+      "flags": ["clinicalRedesign", "clinicalRedesignPhase2WaveA", "clinicalRedesignPhase2WaveB", "clinicalRedesignPhase3", "clinicalRedesignPhase3Slice3", "clinicalRedesignPhase3Slice4", "clinicalRedesignPhase3Slice5", "clinicalRedesignPhase3Slice6"],
+      "parent_chain": {
+        "clinicalRedesignPhase2WaveA": "clinicalRedesign",
+        "clinicalRedesignPhase2WaveB": "clinicalRedesign",
+        "clinicalRedesignPhase3": "clinicalRedesign",
+        "clinicalRedesignPhase3Slice3": "clinicalRedesignPhase3",
+        "clinicalRedesignPhase3Slice4": "clinicalRedesignPhase3",
+        "clinicalRedesignPhase3Slice5": "clinicalRedesignPhase3",
+        "clinicalRedesignPhase3Slice6": "clinicalRedesignPhase3"
+      },
+      "test_files": ["frontend/src/pages/clinical/ClinicalTabV2.flagMatrix.test.js"]
+    },
+    {
+      "id": "workspace_mode_registry",
+      "name": "Workspace-mode registry",
+      "owner": "workspace_preferences_team",
+      "version": "1.0",
+      "source": "frontend/src/pages/clinical/workspaceModes.js",
+      "modes": ["general", "provider", "front_desk", "billing", "administrator"],
+      "role_allowed": {
+        "admin": ["general", "provider", "front_desk", "billing", "administrator"],
+        "platform_admin": ["general", "provider", "front_desk", "billing", "administrator"],
+        "super_admin": ["general", "provider", "front_desk", "billing", "administrator"],
+        "doctor": ["general", "provider"],
+        "staff": ["general", "front_desk", "billing"],
+        "patient": ["general"]
+      },
+      "test_files": ["frontend/src/pages/clinical/workspaceModes.test.js"]
+    },
+    {
+      "id": "timeline_grouped",
+      "name": "Timeline grouped endpoint",
+      "owner": "clinical_platform_lead",
+      "version_unfiltered": "1.0",
+      "version_filtered": "1.1",
+      "source": "backend/services/clinical/grouped_router.py",
+      "endpoint": "GET /api/patients/{id}/clinical/timeline/grouped",
+      "test_files": ["backend/tests/test_clinical_grouped_endpoints.py", "backend/tests/test_grouped_timeline_filters.py"]
+    },
+    {
+      "id": "encounter_grouped",
+      "name": "Encounter grouped endpoint",
+      "owner": "clinical_platform_lead",
+      "version": "1.0",
+      "source": "backend/services/clinical/grouped_router.py",
+      "endpoint": "GET /api/patients/{id}/clinical/encounters/grouped",
+      "test_files": ["backend/tests/test_clinical_grouped_endpoints.py"]
+    },
+    {
+      "id": "billing_readiness_aggregate",
+      "name": "Billing-readiness aggregate",
+      "owner": "billing_team",
+      "version": "1.0",
+      "source": "backend/services/clinical/grouped_router.py",
+      "endpoint": "GET /api/patients/{id}/clinical/billing-readiness/aggregate",
+      "top_message_vocabulary": ["Insurance eligibility not verified", "Diagnosis linkage incomplete", "Note not signed", "Provider signature missing", "Chart note missing", "Treatment not documented", "Provider missing on encounter", "Patient missing on encounter", "Date of service missing", "Treatment plan linkage incomplete", "Objective findings not captured", "Response to care not documented", "Encounter not marked completed", "Appointment not linked", "Re-exam overdue"],
+      "test_files": ["backend/tests/test_billing_readiness_aggregate.py"]
+    },
+    {
+      "id": "next_actions_engine",
+      "name": "Next Actions rule registry",
+      "owner": "clinical_platform_lead",
+      "version": "1.0",
+      "source": "frontend/src/pages/clinical/nextActionsEngine.js",
+      "rules": ["sign-unsigned-note", "complete-missing-documentation", "attach-or-link-diagnosis", "open-blocked-billing-readiness", "review-billing-warning", "schedule-due-or-overdue-reexam", "schedule-remaining-planned-visits", "review-missing-required-intake", "record-configured-outcome-measure"],
+      "test_files": ["frontend/src/pages/clinical/nextActionsEngine.test.js"]
+    },
+    {
+      "id": "outcome_series_helpers",
+      "name": "Outcome-series derivation contract",
+      "owner": "outcomes_team",
+      "version": "1.0",
+      "source": "frontend/src/pages/clinical/outcomeSeriesHelpers.js",
+      "supported_instruments": ["ndi", "oswestry", "pain_vas", "pain_scale", "functional_index", "bournemouth_neck"],
+      "test_files": ["frontend/src/pages/clinical/outcomeSeriesHelpers.test.js"]
+    },
+    {
+      "id": "imaging_vocabulary",
+      "name": "Imaging modality + source vocabulary",
+      "owner": "imaging_data_quality_team",
+      "version": "1.0",
+      "source": "frontend/src/pages/clinical/dataQualityEngine.js, frontend/src/pages/clinical/ImagingCard.jsx",
+      "modalities": ["xray", "mri", "ct", "ultrasound", "other"],
+      "test_files": ["frontend/src/pages/clinical/dataQualityEngine.test.js"]
+    },
+    {
+      "id": "data_quality_rules",
+      "name": "Data-quality rule registry",
+      "owner": "imaging_data_quality_team",
+      "version": "1.0",
+      "source": "frontend/src/pages/clinical/dataQualityEngine.js",
+      "rules": ["missing-primary-diagnosis", "unsigned-note-older-than-7d", "missing-note-on-encounter", "encounter-missing-provider", "imaging-missing-classification", "episode-without-encounters", "active-plan-without-configured-outcomes", "duplicate-outcome-day"],
+      "test_files": ["frontend/src/pages/clinical/dataQualityEngine.test.js"]
+    },
+    {
+      "id": "return_state_hook",
+      "name": "Return-state hook contract",
+      "owner": "clinical_platform_lead",
+      "version": "1.0",
+      "source": "frontend/src/pages/clinical/useClinicalReturnState.js",
+      "session_key": "ccms.clinical.returnState.v1",
+      "ttl_ms": 1800000,
+      "test_files": ["frontend/src/pages/clinical/useClinicalReturnState.test.js"]
+    },
+    {
+      "id": "status_badge",
+      "name": "StatusBadge dimensions + vocabulary",
+      "owner": "clinical_platform_lead",
+      "version": "1.0",
+      "source": "frontend/src/pages/clinical/status/StatusBadge.jsx",
+      "dimensions": ["workflow", "documentation", "clinical_response", "billing", "record_state"],
+      "test_files": []
+    }
+  ]
+}
