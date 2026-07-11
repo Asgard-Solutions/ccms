@@ -36,7 +36,8 @@ Command: `cd /app/backend && python -m pytest tests/test_preferences_slice5.py t
 | `test_clinical_ui_defaults.py` | ~11 | PASS | Slice 5A/B/C durable prefs — HTTP-layer allow-list |
 | **Total** | **152** | **PASS** | |
 | `test_seed_large_chart.py` (added 2026-02-15) | 14 | PASS | Production guard + idempotency + relationship integrity + cleanup + requested event count + CLI parsing for the new large-chart fixture seeder |
-| `test_run_clinical_perf.py` (added 2026-02-15) | 29 | PASS | Production guard (APP_ENV + confirm flag), build guard, percentile math (odd/even/single/empty/out-of-range), aggregate keys, summarise_runs (error rate, all-failed, empty, missing timing field, none timing field, percentiles), report generation (JSON + Markdown, never asserts pass without thresholds), CLI parsing (defaults, min runs, throttled, seed/cleanup, output-dir) |
+| Backend perf threshold-draft Pytest (`test_perf_threshold_draft.py`) | 26 | PASS | Marker parsing (3), draft block content (5), append behavior (7), stale detection (5), ordering validator (4), CLI flag (2). Enforces the "harness carries the clipboard; does not sign the form" contract. |
+| **Combined backend Clinical + seeder + harness + threshold-draft** | **221 / 221** | **PASS** | 12-file targeted pytest run |
 
 Combined run (clinical contract + seeder): **166 passed / 166 total** in 115.7 s.
 Standalone seeder run: **14 passed / 14 total** in 80.1 s.

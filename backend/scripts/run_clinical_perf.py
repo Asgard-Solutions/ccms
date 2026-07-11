@@ -42,10 +42,11 @@ import argparse
 import asyncio
 import json
 import os
-import statistics
+import re
+import statistics  # noqa: F401  (kept for future percentile alternatives)
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -91,6 +92,180 @@ class AuthenticationError(HarnessError): ...
 class ReadyMarkerError(HarnessError): ...
 class MissingTimingError(HarnessError): ...
 class InsufficientRunsError(HarnessError): ...
+class DuplicateDraftError(HarnessError): ...
+class ApprovedRowProtectionError(HarnessError): ...
+class MalformedRunContextError(HarnessError): ...
+class InvalidThresholdOrderingError(HarnessError): ...
+
+
+# --------------------------------------------------------------------
+# Threshold-draft management — opt-in via --write-threshold-draft.
+#
+# The harness carries the clipboard; it does NOT sign the form. It
+# appends a draft block containing measured values and REVIEW REQUIRED
+# placeholders for the three threshold tiers. Measured values remain
+# visually separate from thresholds. Reviewers must fill Release budget
+# / Warning / Rollback manually.
+# --------------------------------------------------------------------
+THRESHOLDS_PATH = Path("/app/memory/CLINICAL_PERFORMANCE_THRESHOLDS.md")
+STALE_WINDOW_DAYS = 180
+
+_MARKER_RE = re.compile(
+    r"<!--\s*perf-(draft|approved):run-id=([^\s]+)\s+timestamp=(\S+)\s*-->"
+)
+
+
+def _parse_existing_markers(text: str) -> list[dict]:
+    """Scan `text` for perf-draft / perf-approved anchor comments and
+    return `{"kind": "draft"|"approved", "run_id": ..., "timestamp": ...}`.
+    """
+    return [
+        {"kind": m.group(1), "run_id": m.group(2), "timestamp": m.group(3)}
+        for m in _MARKER_RE.finditer(text)
+    ]
+
+
+def _validate_run_context(meta: dict, run_id: str, raw_path: Path) -> None:
+    required = ("patient_id", "fixture_events", "profile", "network", "generated_at")
+    if not run_id or not isinstance(run_id, str):
+        raise MalformedRunContextError("run_id is required (non-empty string)")
+    if not raw_path or not str(raw_path):
+        raise MalformedRunContextError("raw_path is required")
+    for key in required:
+        if meta.get(key) in (None, "", 0):
+            raise MalformedRunContextError(f"meta missing required field {key!r}")
+
+
+def build_draft_block(
+    *,
+    run_id: str,
+    meta: dict,
+    summary: dict,
+    raw_path: Path,
+) -> str:
+    """Build the appended markdown block. Measured values live in a
+    dedicated section; the threshold tiers are all ``REVIEW REQUIRED``.
+    """
+    metrics = summary.get("metrics") or {}
+    lines = [
+        f"<!-- perf-draft:run-id={run_id} timestamp={meta['generated_at']} -->",
+        "### Draft proposal (harness-appended, awaiting sign-off)",
+        "",
+        "**Status:** `AWAITING SIGN-OFF`",
+        "",
+        "| Field | Value |",
+        "|---|---|",
+        f"| Source run id | `{run_id}` |",
+        f"| Generated at | {meta['generated_at']} |",
+        f"| Raw results | `{raw_path}` |",
+        f"| Profile | `{meta['profile']}` |",
+        f"| Network | `{meta['network']}` |",
+        f"| Dataset | {meta['fixture_events']} timeline events (`{meta['patient_id']}`) |",
+        f"| Browser / device | Chromium (production build) |",
+        "",
+        "#### Measured values (evidence — not thresholds)",
+        "",
+        "| Metric | P50 | P75 | P95 | min | max |",
+        "|---|---:|---:|---:|---:|---:|",
+    ]
+    for name in METRICS:
+        m = metrics.get(name)
+        if not m:
+            lines.append(f"| `{name}` | — | — | — | — | — |")
+            continue
+        lines.append(
+            f"| `{name}` | {m['p50']:.1f} | {m['p75']:.1f} | {m['p95']:.1f} | "
+            f"{m['min']:.1f} | {m['max']:.1f} |"
+        )
+    lines += [
+        "",
+        "#### Proposed thresholds (reviewer to fill; measured values are NOT auto-applied)",
+        "",
+        "| Metric | Proposed release budget | Proposed warning threshold | Proposed rollback threshold |",
+        "|---|---|---|---|",
+    ]
+    for name in METRICS:
+        lines.append(f"| `{name}` | REVIEW REQUIRED | REVIEW REQUIRED | REVIEW REQUIRED |")
+    lines += [
+        "",
+        "**Approval owner:** ____________________",
+        "",
+        "**Approval date:** ____________________",
+        "",
+        "**Rationale:** ____________________",
+        "",
+        "**Ordering guarantee:** for every metric, `Release budget < Warning threshold < Rollback threshold`. Any promotion violating this ordering is rejected by `validate_promotion_ordering()`.",
+        "",
+        "**Notes:**",
+        "- Measured values above are evidence, not policy.",
+        "- Do NOT copy measured P95 into the release budget column without review.",
+        "- Warning and rollback thresholds must include headroom over the release budget to avoid noisy alerts.",
+        "- This draft expires 180 days after the timestamp above unless promoted.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def append_threshold_draft(
+    *,
+    thresholds_path: Path,
+    run_id: str,
+    meta: dict,
+    summary: dict,
+    raw_path: Path,
+) -> str:
+    """Append a draft block to the thresholds document. Rejects
+    duplicate run_ids and prevents insertion when the same run_id is
+    already recorded as approved."""
+    _validate_run_context(meta, run_id, raw_path)
+    if not thresholds_path.exists():
+        raise MalformedRunContextError(
+            f"thresholds document not found at {thresholds_path}"
+        )
+    text = thresholds_path.read_text()
+    for m in _parse_existing_markers(text):
+        if m["run_id"] != run_id:
+            continue
+        if m["kind"] == "approved":
+            raise ApprovedRowProtectionError(
+                f"run_id {run_id!r} is already recorded as APPROVED; "
+                "harness refuses to overwrite an approved row"
+            )
+        raise DuplicateDraftError(
+            f"run_id {run_id!r} already has a draft block; refusing to duplicate"
+        )
+    block = build_draft_block(run_id=run_id, meta=meta, summary=summary, raw_path=raw_path)
+    thresholds_path.write_text(text.rstrip() + "\n\n" + block)
+    return block
+
+
+def is_stale_draft(
+    timestamp_iso: str,
+    now: datetime | None = None,
+    window_days: int = STALE_WINDOW_DAYS,
+) -> bool:
+    """Return True if a draft's timestamp is older than the review
+    window."""
+    ref = now or datetime.now(timezone.utc)
+    try:
+        stamp = datetime.fromisoformat(timestamp_iso)
+    except ValueError as exc:
+        raise MalformedRunContextError(f"unparseable timestamp {timestamp_iso!r}") from exc
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    return (ref - stamp).days > window_days
+
+
+def validate_promotion_ordering(
+    release: float, warning: float, rollback: float,
+) -> None:
+    """Called by the reviewer's promotion step. Ensures the ordering
+    guarantee `release < warning < rollback` holds."""
+    if not (release < warning < rollback):
+        raise InvalidThresholdOrderingError(
+            f"threshold ordering violated: release={release} warning={warning} "
+            f"rollback={rollback}; required release < warning < rollback"
+        )
 
 
 # --------------------------------------------------------------------
@@ -438,7 +613,7 @@ async def _measure_runs(
 
 
 # --------------------------------------------------------------------
-# Orchestration
+# CLI + console summary
 # --------------------------------------------------------------------
 @dataclass
 class HarnessArgs:
@@ -452,6 +627,7 @@ class HarnessArgs:
     seed_fixture: bool
     cleanup_fixture: bool
     fixture_events: int
+    write_threshold_draft: bool
 
 
 def _parse_args(argv: list[str] | None = None) -> HarnessArgs:
@@ -468,6 +644,15 @@ def _parse_args(argv: list[str] | None = None) -> HarnessArgs:
     p.add_argument("--cleanup-fixture", action="store_true",
                    help="Cleanup the fixture after measuring.")
     p.add_argument("--fixture-events", type=int, default=500)
+    p.add_argument(
+        "--write-threshold-draft", action="store_true",
+        help=(
+            "OPT-IN: after a valid run, append a DRAFT proposal block to "
+            "CLINICAL_PERFORMANCE_THRESHOLDS.md. All three threshold tiers "
+            "will read 'REVIEW REQUIRED'; measured values are recorded as "
+            "evidence but NOT copied into the threshold columns. Default: off."
+        ),
+    )
     ns = p.parse_args(argv)
     if ns.runs < MIN_MEASURED_RUNS:
         p.error(f"--runs must be >= {MIN_MEASURED_RUNS}")
@@ -479,6 +664,7 @@ def _parse_args(argv: list[str] | None = None) -> HarnessArgs:
         seed_fixture=ns.seed_fixture,
         cleanup_fixture=ns.cleanup_fixture,
         fixture_events=ns.fixture_events,
+        write_threshold_draft=ns.write_threshold_draft,
     )
 
 
@@ -504,6 +690,10 @@ def _console_summary(summary: dict[str, Any], meta: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+
+# --------------------------------------------------------------------
+# Orchestration
+# --------------------------------------------------------------------
 async def _amain(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     enforce_guard(args.confirm_non_production)
@@ -543,6 +733,22 @@ async def _amain(argv: list[str] | None = None) -> int:
     print(_console_summary(summary, {**meta, "raw_path": str(raw_path)}))
     print(f"[clinical-perf] raw:    {raw_path}")
     print(f"[clinical-perf] report: {report_path}")
+
+    if args.write_threshold_draft:
+        # run_id derived from the harness timestamp — deterministic per run,
+        # never collides across runs, easy to grep for.
+        run_id = meta["generated_at"].replace(":", "").replace("-", "")
+        try:
+            append_threshold_draft(
+                thresholds_path=THRESHOLDS_PATH,
+                run_id=run_id, meta=meta, summary=summary, raw_path=raw_path,
+            )
+            print(
+                f"[clinical-perf] draft appended: {THRESHOLDS_PATH} "
+                f"(run_id={run_id}) — thresholds are REVIEW REQUIRED"
+            )
+        except (DuplicateDraftError, ApprovedRowProtectionError) as exc:
+            print(f"[clinical-perf] draft not appended: {exc}", file=sys.stderr)
 
     if args.cleanup_fixture:
         seed_or_cleanup_fixture(cleanup=True)

@@ -95,6 +95,7 @@ Created in this pass:
 - `/app/backend/tests/test_seed_large_chart.py` (14 tests covering the seeder)
 - `/app/backend/scripts/run_clinical_perf.py` (G2 measurement harness, 2026-02-15 update)
 - `/app/backend/tests/test_run_clinical_perf.py` (29 tests covering the harness)
+- `/app/backend/tests/test_perf_threshold_draft.py` (26 tests covering the `--write-threshold-draft` opt-in: marker parsing, draft block content, append behavior, duplicate/approved-row protection, stale detection, ordering validator, CLI flag)
 
 Updated in this pass:
 

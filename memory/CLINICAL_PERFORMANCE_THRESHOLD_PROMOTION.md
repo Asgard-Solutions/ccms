@@ -43,11 +43,35 @@ Platform reliability lead reviews the report and **explicitly** proposes:
 
 ## Step 3 — Approval recording
 
-Populate the matching combination row in `/app/memory/CLINICAL_PERFORMANCE_THRESHOLDS.md`:
+The reviewer can start from a **harness-appended draft block** (opt-in) or transcribe manually.
 
-- One row per (`profile`, `network`, `dataset size`, `browser/device`) combination.
-- **Enforce ordering:** for every metric, `Release budget < Warning < Rollback`. Reject any row that violates.
+### Option A — harness appends a draft (recommended)
+
+Add `--write-threshold-draft` to the harness invocation. After a valid run, the harness appends a block to `CLINICAL_PERFORMANCE_THRESHOLDS.md` with:
+
+- Status `AWAITING SIGN-OFF`.
+- Source run id (derived from the run timestamp; unique per run) + raw JSON path.
+- Full context tuple (profile, network, dataset size, browser/device).
+- **Measured** P50/P75/P95/min/max per metric — visually **separated** from thresholds, labeled "evidence — not thresholds".
+- All three threshold tiers (Release / Warning / Rollback) rendered as `REVIEW REQUIRED`. The harness never copies measured values into these columns.
+
+Then the reviewer fills:
+
+- **Approval owner** + **Approval date** + **Approval channel**.
+- Each metric's Release budget / Warning / Rollback with explicit headroom.
+- Sustain windows.
+
+### Option B — manual transcription
+
+If the harness cannot be re-run against the fixture (e.g., audit-only review), the reviewer creates a fresh combination row by hand. Same rules apply.
+
+### Common rules (both options)
+
+Populate one row per (`profile`, `network`, `dataset size`, `browser/device`) combination:
+
+- **Enforce ordering:** for every metric, `Release budget < Warning < Rollback`. `scripts/run_clinical_perf.py::validate_promotion_ordering()` enforces this if you call it from a promotion helper.
 - Fill approval owner, approval date, approval channel (ticket / email / meeting record).
+- After signing, flip the block's marker comment from `perf-draft` to `perf-approved` (the harness protects any run-id already recorded as approved and refuses to overwrite it).
 
 ## Step 4 — Cross-document promotion
 
