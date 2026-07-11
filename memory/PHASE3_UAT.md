@@ -69,6 +69,6 @@ All fictional identities live inside **Riverbend Chiropractic & Wellness** (see 
 
 ## Rollback verification matrix
 
-Verified via `ClinicalTabV2.flagMatrix.test.jsx` (12 hand-picked slices of the 256 flag combos — full sweep is redundant given the nested-flag maths). Every combination mounts without throwing and produces non-empty output.
+Verified via `ClinicalTabV2.flagMatrix.test.js` (registry-layer flag-matrix — parent-invalidates-descendants, independent slice rollback, env-default overridable). Full-render safety is delegated to the browser-based UAT above.
 
 Acceptance signed by: _____________________  Date: _____________

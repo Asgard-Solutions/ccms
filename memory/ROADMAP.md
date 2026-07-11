@@ -2,7 +2,9 @@
 
 Prioritized backlog for remaining P0/P1/P2 work. Most-recent updates on top.
 
-## 2026-02-15 — Clinical redesign Phase 3 (in progress)
+## 2026-02-15 — Clinical redesign Phase 3 — **FROZEN**
+
+**Status:** All slices shipped and frozen. Change-control now applies — see `/app/memory/CLINICAL_REDESIGN_FREEZE.md`. Remaining work is release-gate execution (G1–G6), not further development.
 
 **Nested feature flag:** `clinicalRedesignPhase3` (child of `clinicalRedesign`).
 
@@ -14,14 +16,24 @@ Prioritized backlog for remaining P0/P1/P2 work. Most-recent updates on top.
 | 2.1 — Preset icon-strip polish | ✅ Done | `PresetIconStrip` shows one icon per configured dimension with counts (never raw values), reuses sanitizer + stale detector, 10 tests. |
 | 4 — Imaging metadata + filters, Data-quality indicators | ✅ Done (re-integrated 2026-02-15) | `ImagingCard` + `DataQualityPanel` re-wired above legacy `MediaCard` fallback. Independent flag `clinicalRedesignPhase3Slice4`. 17 frontend tests. |
 | 5 — Role-aware views + configurable summary + durable prefs | ✅ Done (shipped 2026-02-15) | `workspaceModes.js` registry, `WorkspaceModeSwitcher`, `SummaryConfigDrawer` (Move up / Move down, no DnD). Extended `ClinicalUIDefaults` with `default_workspace_mode`, `summary_module_order`, `default_encounter_filter`, `default_outcome_view`, `collapsed_modules`. 24 frontend + 45 backend tests. Independent flag `clinicalRedesignPhase3Slice5`. |
-| 6 — Telemetry, partial-failure handling, a11y hardening, UAT, rollback verification | ✅ Done (shipped 2026-02-15) | `SectionErrorBoundary` wraps Imaging/Outcomes/Timeline; `test_telemetry_phi_probe.py` (25 fields); WorkspaceModeSwitcher aria-live + persistent description; 5-level surface tokens (light + dark); `ClinicalTabV2.flagMatrix.test.js` (12 slices of 256 combos); `/app/memory/PHASE3_UAT.md` (50 scenarios). Independent flag `clinicalRedesignPhase3Slice6`. |
+| 6 — Telemetry, partial-failure handling, a11y hardening, UAT, rollback verification | ✅ Done (shipped 2026-02-15) | `SectionErrorBoundary` wraps Imaging/Outcomes/Timeline; `test_telemetry_phi_probe.py` (25 fields); WorkspaceModeSwitcher aria-live + persistent description; 5-level surface tokens (light + dark); `ClinicalTabV2.flagMatrix.test.js`; `/app/memory/PHASE3_UAT.md` (50 scenarios). Independent flag `clinicalRedesignPhase3Slice6`. |
 
-### Deferred / Blocked
+### Release gates (G1–G6) — pending
+
+- [ ] **G1** — 50-scenario UAT sign-off (`PHASE3_UAT.md`). Owner: Clinical operations.
+- [ ] **G2** — P50/P95 perf measurement on ≥ 200-event timeline chart. Owner: Platform reliability.
+- [ ] **G3** — Production rollback procedure walk-through. Owner: Clinical platform lead + Platform reliability.
+- [ ] **G4** — Contract freeze on `ClinicalUIDefaults` / `UIEventPayload` / featureFlags / workspaceModes. Owner: Clinical platform lead.
+- [ ] **G5** — Screenshots per workspace mode + release notes. Owner: Clinical platform lead.
+- [ ] **G6** — Staged rollout (internal → pilot clinic → GA). Owner: Release manager.
+
+### Deferred / Blocked (do NOT re-scope during freeze)
 
 - Diagnosis "Set inactive" state — awaiting backend status-model decision. Do not map to "resolved".
-- Layered surface token restructure (audit item 35) — deeper 5-level surface system beyond existing `--surface`, `--surface-2`, `--surface-3`. Requires theme redesign.
-- Slice 5 — Role-aware views + configurable chart summary + preference persistence (still Next).
-- Slice 6 — Telemetry, partial-failure handling, a11y hardening, UAT, rollback verification (still Planned).
+- Reuse of `SectionErrorBoundary` around AI Scribe / Billing Ledger — needs separately scoped resilience review (idempotency, unsaved-state preservation, PHI safety in richer surfaces).
+- Case-type-based outcome suggestion mappings.
+- Chart-at-a-glance print sheet, My Worklist, Today's Chart Preview, Billing digest, Clinic-wide DQ dashboard, Change Healthcare / Optum transport, AI cost estimator, Admin-facing feature-flag panel, first-open workspace-mode toast.
+- Application-wide theme overhaul.
 - Seed a demo patient with `total_visits_planned > completed + scheduled` **or** stale `configured_outcome_measures` so browser regressions can exercise the dismissible Next-Action flows end-to-end.
 
 
