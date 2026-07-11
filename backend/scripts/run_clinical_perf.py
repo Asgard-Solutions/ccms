@@ -94,46 +94,51 @@ class MissingTimingError(HarnessError): ...
 class InsufficientRunsError(HarnessError): ...
 class DuplicateDraftError(HarnessError): ...
 class ApprovedRowProtectionError(HarnessError): ...
-class MalformedRunContextError(HarnessError): ...
-class InvalidThresholdOrderingError(HarnessError): ...
 
+
+# Threshold-draft management is bound to shared primitives in
+# ``_perf_gov_lib``. Names below are re-exported from this module for
+# backward-compatible imports; every implementation lives in the lib.
+from scripts._perf_gov_lib import (  # noqa: E402  (kept next to header)
+    DOWNSTREAM_DOCUMENTS as _LIB_DOWNSTREAM,
+    HarnessError as _LibHarnessError,
+    InvalidThresholdOrderingError as _LibOrderingError,
+    MixedUnitsError as _LibMixedUnitsError,
+    UnresolvedPlaceholderError as _LibUnresolvedError,
+    ReviewerFieldError as _LibReviewerError,
+    MalformedRunContextError as _LibRunContextError,
+    DownstreamReferenceError as _LibDownstreamError,
+    is_stale_draft as _lib_is_stale_draft,
+    parse_existing_markers as _lib_parse_existing_markers,
+    parse_number as _lib_parse_number,
+    validate_promotion_ordering as _lib_validate_ordering,
+    validate_run_context as _lib_validate_run_context,
+)
+
+STALE_WINDOW_DAYS = 180
+
+# Wire the shared exception types to the local aliases so ``isinstance``
+# checks against the local names continue to work everywhere.
+InvalidThresholdOrderingError = _LibOrderingError
+MixedUnitsError = _LibMixedUnitsError
+UnresolvedPlaceholderError = _LibUnresolvedError
+ReviewerFieldError = _LibReviewerError
+MalformedRunContextError = _LibRunContextError
+DownstreamReferenceError = _LibDownstreamError
+
+# Re-export the pure primitives.
+_parse_existing_markers = _lib_parse_existing_markers
+is_stale_draft = _lib_is_stale_draft
+validate_promotion_ordering = _lib_validate_ordering
+_validate_run_context = _lib_validate_run_context
+
+# HarnessError is the shared base; keep the local reference identical
+# so ``isinstance(exc, HarnessError)`` matches lib-raised errors.
+HarnessError = _LibHarnessError
 
 # --------------------------------------------------------------------
 # Threshold-draft management — opt-in via --write-threshold-draft.
-#
-# The harness carries the clipboard; it does NOT sign the form. It
-# appends a draft block containing measured values and REVIEW REQUIRED
-# placeholders for the three threshold tiers. Measured values remain
-# visually separate from thresholds. Reviewers must fill Release budget
-# / Warning / Rollback manually.
 # --------------------------------------------------------------------
-THRESHOLDS_PATH = Path("/app/memory/CLINICAL_PERFORMANCE_THRESHOLDS.md")
-STALE_WINDOW_DAYS = 180
-
-_MARKER_RE = re.compile(
-    r"<!--\s*perf-(draft|approved):run-id=([^\s]+)\s+timestamp=(\S+)\s*-->"
-)
-
-
-def _parse_existing_markers(text: str) -> list[dict]:
-    """Scan `text` for perf-draft / perf-approved anchor comments and
-    return `{"kind": "draft"|"approved", "run_id": ..., "timestamp": ...}`.
-    """
-    return [
-        {"kind": m.group(1), "run_id": m.group(2), "timestamp": m.group(3)}
-        for m in _MARKER_RE.finditer(text)
-    ]
-
-
-def _validate_run_context(meta: dict, run_id: str, raw_path: Path) -> None:
-    required = ("patient_id", "fixture_events", "profile", "network", "generated_at")
-    if not run_id or not isinstance(run_id, str):
-        raise MalformedRunContextError("run_id is required (non-empty string)")
-    if not raw_path or not str(raw_path):
-        raise MalformedRunContextError("raw_path is required")
-    for key in required:
-        if meta.get(key) in (None, "", 0):
-            raise MalformedRunContextError(f"meta missing required field {key!r}")
 
 
 def build_draft_block(
@@ -239,33 +244,9 @@ def append_threshold_draft(
     return block
 
 
-def is_stale_draft(
-    timestamp_iso: str,
-    now: datetime | None = None,
-    window_days: int = STALE_WINDOW_DAYS,
-) -> bool:
-    """Return True if a draft's timestamp is older than the review
-    window."""
-    ref = now or datetime.now(timezone.utc)
-    try:
-        stamp = datetime.fromisoformat(timestamp_iso)
-    except ValueError as exc:
-        raise MalformedRunContextError(f"unparseable timestamp {timestamp_iso!r}") from exc
-    if stamp.tzinfo is None:
-        stamp = stamp.replace(tzinfo=timezone.utc)
-    return (ref - stamp).days > window_days
+THRESHOLDS_PATH = Path("/app/memory/CLINICAL_PERFORMANCE_THRESHOLDS.md")
 
 
-def validate_promotion_ordering(
-    release: float, warning: float, rollback: float,
-) -> None:
-    """Called by the reviewer's promotion step. Ensures the ordering
-    guarantee `release < warning < rollback` holds."""
-    if not (release < warning < rollback):
-        raise InvalidThresholdOrderingError(
-            f"threshold ordering violated: release={release} warning={warning} "
-            f"rollback={rollback}; required release < warning < rollback"
-        )
 
 
 # --------------------------------------------------------------------

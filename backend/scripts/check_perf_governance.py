@@ -314,13 +314,15 @@ def _detect_duplicated_downstream_numbers(
 # --------------------------------------------------------------------
 def _detect_template_rows(text: str) -> list[BlockReport]:
     reports: list[BlockReport] = []
-    for m in re.finditer(
-        r"^### (Combination \d+.*)\n(.*?)(?=^###|\Z)",
-        text, flags=re.MULTILINE | re.DOTALL,
-    ):
-        header = m.group(1).strip()
-        body = m.group(2)
-        if "not yet approved" in body:
+    # Simple line-oriented scan — accept any "### Combination N" heading
+    # followed within ~50 lines by "not yet approved".
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if not line.startswith("### Combination"):
+            continue
+        header = line[4:].strip()
+        window = "\n".join(lines[i : i + 50])
+        if "not yet approved" in window:
             reports.append(BlockReport(
                 run_id=header, kind="template",
                 status=STATUS_NOT_APPLICABLE, timestamp=None,

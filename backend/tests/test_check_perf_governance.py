@@ -222,7 +222,7 @@ class TestInvalidBlocks:
         assert any("ordering violated" in p for p in block.problems)
 
     def test_mixed_units_in_approved_row(self, tmp_path):
-        block = _approved_block("mix-1", unit="ms")
+        block = _approved_block("mix-1", release=500.0, warning=800.0, rollback=1500.0, unit="ms")
         block = block.replace(
             "| `wall_clock_ms` | 500.0ms | 800.0ms | 1500.0ms |",
             "| `wall_clock_ms` | 500.0s | 800.0ms | 1500.0ms |",

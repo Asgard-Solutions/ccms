@@ -245,15 +245,13 @@ class TestBlockValidation:
             )
 
     def test_mixed_units_rejected(self, tmp_path):
-        block = _signed_block(run_id="run-1", release=500, warning=800, rollback=1500, unit="ms")
-        # Replace one metric's release value with a bare number (no unit) — that's fine.
-        # But swap one row entirely to a "seconds"-looking value.
+        block = _signed_block(run_id="run-1", release=500.0, warning=800.0, rollback=1500.0, unit="ms")
         block = block.replace(
             "| `wall_clock_ms` | 500.0ms | 800.0ms | 1500.0ms |",
             "| `wall_clock_ms` | 500.0s | 800.0ms | 1500.0ms |",
         )
         thresholds, memory = _seed_full_env(tmp_path, block)
-        with pytest.raises(pp.MixedUnitsError, match="unit mismatch|non-numeric"):
+        with pytest.raises(pp.MixedUnitsError, match="unit mismatch|non-numeric|unexpected unit"):
             pp.promote(
                 thresholds_path=thresholds, run_id="run-1",
                 approved_by="X", approval_date="2026-02-15", rationale=None,

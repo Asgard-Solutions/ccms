@@ -100,6 +100,8 @@ Created in this pass:
 - `/app/backend/tests/test_promote_perf_threshold.py` (20 tests covering the promotion pipeline)
 - `/app/backend/scripts/check_perf_governance.py` (read-only CI governance guard: validates every draft/approved block, enforces ordering/units/fields, classifies rows valid/pending/approaching_expiry/expired/not_applicable/invalid, verifies downstream citations, flags duplicated threshold numbers in downstream docs, JSON output, strict / permissive / allow-pending modes; never modifies any file)
 - `/app/backend/tests/test_check_perf_governance.py` (18 tests covering the CI check)
+- `/app/backend/scripts/_perf_gov_lib.py` (shared governance primitives — behavior-preserving refactor: stable public surface for `parse_existing_markers`, `is_stale_draft`, `parse_number`, `validate_promotion_ordering`, `parse_thresholds_table`, `parse_reviewer_fields`, `parse_context_tuple`, `validate_run_context`, `validate_downstream_references`, `DOWNSTREAM_DOCUMENTS`, `RENEWAL_PERIOD_DAYS`, `THRESHOLDS_FILE_TOKEN`, shared exception hierarchy)
+- `/app/backend/tests/test_perf_gov_lib.py` (22 direct-lib tests pinning the stable shared vocabulary)
 
 Updated in this pass:
 
