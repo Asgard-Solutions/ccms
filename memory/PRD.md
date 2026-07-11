@@ -1,6 +1,31 @@
 # CCMS — Product Requirements & Architecture Notes
 
 
+## Phase 3 Slice 4 — Imaging metadata + Data-quality indicators (2026-02-15)
+
+**Status:** ✅ Shipped. Frontend `jest` 88/88 (17 new `dataQualityEngine.test.js` + 71 pre-existing). Backend unchanged — Slice 4 is a pure UI surface on top of existing permission-checked endpoints.
+
+**Feature flag:** Independent nested `clinicalRedesignPhase3Slice4` (child of `clinicalRedesignPhase3`, grandchild of `clinicalRedesign`). Legacy `MediaCard` stays mounted below the new card so the capture workflow keeps working with the flag off.
+
+### Deliverables
+
+1. **`DataQualityPanel`** with 8 deterministic patient-scoped rules:
+   `missing-primary-diagnosis` · `unsigned-note-older-than-7d` · `missing-note-on-encounter` · `encounter-missing-provider` · `imaging-missing-classification` · `episode-without-encounters` · `active-plan-without-configured-outcomes` · `duplicate-outcome-day`.
+   Severity ladder `error` → `warning` → `info`. Direct **Resolve** button jumps to the section that owns the fix. Non-dismissible — rows clear only when data is fixed.
+2. **`ImagingCard`** — patient-chart imaging with allow-listed modalities `{xray, mri, ct, ultrasound, other}`, missing-modality warning pill, transient modality filters via `useClinicalReturnState({ section: "imaging" })`. Empty / no-results / error / permission-denied states each carry a `data-testid`.
+3. **Contract doc** `/app/memory/PHASE3_SLICE4_CONTRACTS.md` — explicitly documents that a future operational dashboard must ship as a **separate versioned** `GET /api/operations/data-quality/aggregate` contract with its own tenant-permission gate, allow-listed metric keys, and retention policy. Aggregate counters do **not** ship inside `filter_meta` or any patient-scoped response.
+
+### Guardrails locked-in per Slice 4 brief
+
+- Patient-chart scoped only. No cross-patient aggregation.
+- Deterministic severity (three-tier ladder, sort by severity → priority).
+- Non-mutating (test asserts input byte-identical).
+- Permission-aware (write-scoped rules silent for read-only viewers).
+- Direct-resolution links (no dismissal affordance — issues must be fixed).
+- No PHI in engine output (patient/provider/episode ids never surface — JSON.stringify assertion).
+- Independent rollback via nested flag.
+
+
 ## Slice 2.1 polish — Preset icon-strip (2026-02-15)
 
 **Status:** ✅ Shipped. 10 new jest tests + 11 pre-existing preset-schema tests all green.

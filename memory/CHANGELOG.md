@@ -4,6 +4,29 @@ Append-only log of delivered work. Most recent on top.
 
 ---
 
+## 2026-02-15 — Clinical redesign Phase 3 Slice 4 (Imaging metadata + Data-quality indicators)
+
+**Why:** Providers needed a compact, patient-scoped view of the imaging attached to a chart plus a deterministic, remediation-focused list of data-quality gaps. Both surfaces must stay strictly chart-scoped — no aggregate metrics, no cross-patient counters, no dashboard-shaped exports.
+
+**Shipped:**
+- `frontend/src/pages/clinical/dataQualityEngine.js` (new) — 8 deterministic, non-mutating, structured-data-only rules with `error` → `warning` → `info` severity ladder. Non-clinical wording guardrail enforced by regex-based unit test.
+- `frontend/src/pages/clinical/DataQualityPanel.jsx` (new) — surfaces rows with severity chip + count chip + one-sentence explanation + **Resolve** button that jumps to the resolution section. Rows are NOT dismissible; they clear only when the underlying data is fixed.
+- `frontend/src/pages/clinical/ImagingCard.jsx` (new) — patient-chart imaging list with modality inference (allow-listed `{xray, mri, ct, ultrasound, other}`), transient filter chips backed by `useClinicalReturnState({ section: "imaging" })`, and explicit `Missing modality` pill that 1:1 mirrors the `imaging-missing-classification` data-quality rule. Handles loading / empty / no-results / error / permission-denied.
+- Feature flag `clinicalRedesignPhase3Slice4` — independent nested rollback child of `clinicalRedesignPhase3`. Legacy `MediaCard` stays mounted below the new card.
+- Contract doc `/app/memory/PHASE3_SLICE4_CONTRACTS.md` with an explicit "operational dashboard is out of scope" section, plus the future `GET /api/operations/data-quality/aggregate` schema stub — documented so nobody accidentally smuggles those counters into `filter_meta`.
+
+**Verified:** Frontend `jest` 88/88 clinical tests (17 new dataQualityEngine + 10 icon-strip + 25 outcome engine + 13 next-action + 12 hook + 21 preset schema — some overlap). Test coverage locks:
+  - Non-mutation (input arrays byte-identical after derivation)
+  - Tenant isolation (no cross-patient inputs accepted by the engine)
+  - Rule accuracy (all 8 rules × happy / edge cases)
+  - No-value-leak (patient / provider / episode ids never surface in stringified engine output)
+  - Non-clinical wording guardrail
+  - Deterministic severity + priority ordering
+
+**Files:** `frontend/src/pages/clinical/{dataQualityEngine.js,dataQualityEngine.test.js,DataQualityPanel.jsx,ImagingCard.jsx}`, `frontend/src/pages/clinical/ClinicalTabV2.jsx`, `frontend/src/utils/featureFlags.js`.
+
+---
+
 ## 2026-02-15 — Clinical redesign Slice 2.1 polish (Preset icon-strip)
 
 **Why:** Users needed to identify saved timeline presets at a glance without opening them, while keeping the presentation strictly PHI-safe and reusing the sanitized preset schema.
