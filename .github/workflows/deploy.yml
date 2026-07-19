@@ -1,0 +1,113 @@
+name: Deploy ChiroPro (blue/green)
+
+# Build backend (FastAPI) + frontend (CRA/CRACO) images, push to GHCR, then SSH
+# into the Hostinger VPS and run the blue/green deploy (idle colour →
+# health-check → atomic Nginx switch, with instant rollback).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      backend_tag:
+        description: "Existing backend tag to redeploy (e.g. sha-abc1234). Blank = build HEAD."
+        required: false
+      frontend_tag:
+        description: "Existing frontend tag to redeploy. Blank = build HEAD."
+        required: false
+
+concurrency:
+  group: chiropro-deploy
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  # Public origin baked into the frontend bundle (frontend calls ${it}/api/...).
+  PUBLIC_URL: https://adjustpro.io
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image names (lowercase)
+        id: img
+        run: |
+          OWNER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          echo "backend=${{ env.REGISTRY }}/${OWNER}/chiropro-backend"   >> "$GITHUB_OUTPUT"
+          echo "frontend=${{ env.REGISTRY }}/${OWNER}/chiropro-frontend" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push BACKEND
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.backend
+          push: true
+          tags: |
+            ${{ steps.img.outputs.backend }}:sha-${{ github.sha }}
+            ${{ steps.img.outputs.backend }}:latest
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Build & push FRONTEND
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile.frontend
+          push: true
+          build-args: |
+            REACT_APP_BACKEND_URL=${{ env.PUBLIC_URL }}
+          tags: |
+            ${{ steps.img.outputs.frontend }}:sha-${{ github.sha }}
+            ${{ steps.img.outputs.frontend }}:latest
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+      - name: Resolve image refs to deploy
+        id: ref
+        run: |
+          BT="${{ github.event.inputs.backend_tag }}";  BT="${BT:-sha-${{ github.sha }}}"
+          FT="${{ github.event.inputs.frontend_tag }}"; FT="${FT:-sha-${{ github.sha }}}"
+          echo "backend=${{ steps.img.outputs.backend }}:${BT}"   >> "$GITHUB_OUTPUT"
+          echo "frontend=${{ steps.img.outputs.frontend }}:${FT}" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to VPS over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script_stop: true
+          script: |
+            set -euo pipefail
+            echo "${{ secrets.GHCR_PAT }}" | docker login ${{ env.REGISTRY }} -u "${{ github.actor }}" --password-stdin
+            cd /opt/chiropro
+            bash /opt/chiropro/scripts/deploy.sh \
+              "${{ steps.ref.outputs.backend }}" \
+              "${{ steps.ref.outputs.frontend }}"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### ChiroPro deploy"
+            echo "- Backend:  \`${{ steps.ref.outputs.backend }}\`"
+            echo "- Frontend: \`${{ steps.ref.outputs.frontend }}\`"
+            echo "- Result: ${{ job.status }}"
+          } >> "$GITHUB_STEP_SUMMARY"
