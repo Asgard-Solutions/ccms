@@ -1,0 +1,46 @@
+{
+  "summary": "Phase 3 Slice 1 (NextActionsPanel + useClinicalReturnState + telemetry) E2E validation. All backend contract tests pass (13/13). Frontend panel renders correctly with proper data-testids, Open click scrolls + fires telemetry, feature-flag guardrails (both child and nested parent) hide the panel, route-instance token is opaque with `r_` prefix and never contains the patient UUID. Staff (read-only) correctly sees empty state (write-gated actions suppressed). Only gap: none of the 8 demo patients trigger a *dismissible* rule (schedule-remaining-planned-visits / record-configured-outcome-measure), so the Dismiss click, reload-persistence, sessionStorage PHI-scan on populated state, and logout-clears-dismissal paths could not be exercised end-to-end in the browser. Frontend unit tests (jest, 25 passing per E1) cover these paths; a seed patient with an active care plan whose (planned - completed - scheduled) > 0 OR configured outcome measures + no recent measurement would enable full E2E in future iterations.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_next_action_telemetry.py",
+    "/app/test_reports/pytest/iter90_next_action.xml"
+  ],
+  "action_items": [
+    "OPTIONAL (not blocking): Extend demo seed data (DEMO_SEED.md) with at least one patient whose active treatment plan has `total_visits_planned > visits_completed + visits_scheduled` so that the `schedule-remaining-planned-visits` (dismissible) row can be exercised end-to-end in future browser regressions. Ditto for `record-configured-outcome-measure` — attach a `configured_outcome_measures` array on an active plan with no `summary.outcomes.last_recorded_at` within 14 days."
+  ],
+  "critical_code_review_comments": [
+    "nextActionsEngine.js:74 — `total === 1 ? 's' : ''` (should be inverted) — actually correct: '1 unsigned document' vs '2 unsigned documents'. False alarm.",
+    "useClinicalReturnState.js: session storage is written even when the section slug is unknown; assertKnownSection only warns. Acceptable given tight allow-list in the engine, but a hard throw in dev would be safer.",
+    "NextActionsPanel: no aria-live region for row addition/removal after dismiss — dismiss is silent for screen-reader users. Non-blocking a11y nit.",
+    "Backend telemetry router: ActionSectionSlug enum has only 2 members ('current-care-status', 'next-actions') while UI-event's SectionSlug enum has 9 — the two enums are intentionally distinct; consider adding a comment explaining that ActionSectionSlug is a *host surface* list, not a jump-target list, to avoid a future maintainer accidentally widening it."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (13/13 pytest + 6/6 curl-style)", "frontend": "100% of testable flows (dismiss flow blocked by seed data — 6/6 other flows pass)"},
+  "test_credentials": "doctor@ccms.app / Doctor@ComplianceClinic1 (used for full E2E). staff@ccms.app / Staff@ComplianceClinic1 (read-only permission-filter check).",
+  "seed_data_creation": "None. Used existing demo patients; noted gap for dismissible-rule coverage.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 8 demo patients returned by GET /api/patients?q=%25 lack an active plan configured such that `schedule-remaining-planned-visits` or `record-configured-outcome-measure` fires. When those rules do fire, verify: (1) row disappears after Dismiss, (2) sessionStorage `ccms.clinical.returnState.v1` gets a `<token>::next-actions` key with `dismissed: [<id>]`, (3) reload preserves the dismissal, (4) full logout+re-login clears it. Backend URL: https://phi-safe-clinical-ui.preview.emergentagent.com. Break-glass modal appears for doctor when opening a chart — textarea placeholder 'Covering for Dr. Monroe...' + 'Record & continue' button.",
+  "validations_executed": {
+    "backend_pytest_next_action_telemetry": "13/13 PASS (existing suite ran clean)",
+    "backend_curl_phi_leaks": "5/5 PASS (patient_id, encounter_id, diagnosis_code, free_text, url → 422 extra_forbidden)",
+    "backend_curl_cross_mix": "PASS (action_slug+next-action event → 422 'action_slug not allowed')",
+    "panel_present_on_clinical_tab": "PASS (D. Stone patient renders panel with 1 action row)",
+    "row_testids_correct": "PASS (label + why + open present; dismiss only on dismissible rules per allow-list)",
+    "open_click_scrolls_and_updates_hash": "PASS ('' → '#encounters')",
+    "open_click_fires_telemetry": "PASS (payload: event_name=clinical_next_action_interaction, action_id=complete-missing-documentation, interaction=opened, section_slug=next-actions, source_surface=patient-clinical, layout_version=v2)",
+    "route_instance_token": "PASS (history.state.ccms_route_token = 'r_te16feqzmrfk0yj4', does NOT contain patient UUID)",
+    "feature_flag_phase3_off": "PASS (panel hidden)",
+    "feature_flag_parent_off": "PASS (parent clinicalRedesign=off cascades to child even when phase3 default-on)",
+    "staff_readonly_filtering": "PASS (Mia Ramirez / staff sees next-actions-empty — all write-gated rules suppressed)",
+    "dismiss_flow_e2e": "SKIPPED — no demo patient triggers a dismissible rule. Covered by jest unit tests per E1 note."
+  }
+}

@@ -1,0 +1,41 @@
+{
+  "summary": "Tested the new Patient Intake & Engagement bundle (SMS + Portal OTP + Booking Requests + Questionnaires + Kiosk). Backend pytest suite (/app/backend/tests/test_patient_intake_bundle.py) is solid: 14 passed, 1 skipped (scheduling conflict in test fixture, not a regression). All four backend feature surfaces respond correctly: /api/sms/settings, /api/sms/send (log-only), /api/portal/auth/otp/{request,verify}, /api/portal/booking-requests, /api/booking-requests/{id}/{approve,decline}, /api/questionnaires/templates+/{id}, /api/portal/questionnaires/{id}+/submit, /api/kiosk/check-in. CRITICAL FRONTEND BLOCKER found: after a successful OTP verify the patient is *immediately* bounced to /login because /api/auth/me crashes with 500. Root cause is Pydantic v2 email validation in the auth/me response model rejecting the synthetic email `portal-<uuid>@portal.local` issued by the OTP verify path (the .local TLD is on Pydantic's reserved list). This breaks the entire patient portal UI — overview, booking, questionnaires, statements, check-in are all unreachable from the browser even though the cookies + JWT + every backend portal endpoint work fine.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/auth/me", "issue": "Returns 500 for portal/patient sessions whose email ends in '@portal.local'. Pydantic v2 EmailStr in the response model rejects the synthetic email with: \"value is not a valid email address: The part after the @-sign is a special-use or reserved name that cannot be used with email.\" This is the single point of failure that blocks the entire portal frontend (PortalLogin -> AuthContext.refresh() -> /auth/me 500 -> ProtectedRoute treats user as null -> redirects to /login).", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "PortalLogin → ProtectedRoute(portal=true)", "issue": "After successful OTP verify, navigating to /portal redirects to /login because AuthContext sees user=null (caused by the /api/auth/me 500 above). All downstream portal UI (/portal, /portal/book, /portal/questionnaires, /portal/questionnaires/:id, /portal/statements) is unreachable from the browser.", "selector": "[data-testid='portal-login-verify-btn']", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [
+      {"flow": "Patient portal end-to-end (login → overview → book → questionnaires)", "issue": "Blocked by /auth/me 500. Backend portal endpoints work via direct API; only the browser-facing flow is broken.", "affected_selectors": ["[data-testid='portal-login-verify-btn']", "[data-testid='portal-shell']"]}
+    ],
+    "design_issues": [
+      {"screen": "/kiosk", "issues": ["Uses native browser date picker for date_of_birth (input type=date) instead of the shadcn calendar component used elsewhere in the app. Acceptable for a kiosk tablet flow but inconsistent with the rest of CCMS."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_patient_intake_bundle.py",
+    "/app/test_reports/pytest/iter75_intake.xml"
+  ],
+  "action_items": [
+    "FIX /api/auth/me serialization for portal/patient sessions. Either (a) change the response_model email field from EmailStr to plain str, (b) drop the email field from the /auth/me response_model, or (c) issue patient OTP users a non-reserved email domain (e.g. portal-<uuid>@ccms.invalid uses a reserved TLD too — try ccms.local-portal.test would still fail; safest is to skip @portal.local entirely and store None / use the patient's real email when available). Confirmed via direct curl: POST /api/portal/auth/otp/verify returns 200 + sets cookies; GET /api/auth/me with those cookies returns 500 with the email validation error.",
+    "After backend fix, re-test the full portal browser flow end-to-end (login → overview → book → questionnaires → submit) — every UI screen depends on this single endpoint succeeding."
+  ],
+  "critical_code_review_comments": [
+    "OTP verify mints a synthetic email `portal-{patient_id_short}@portal.local` (services/portal/auth_router.py). The .local TLD is RFC 6762 reserved AND on Pydantic v2's special-use blocklist — any response_model returning this through EmailStr will raise. Centralised /auth/me response model needs to either (a) treat email as Optional[str] for portal users or (b) the OTP path needs a different placeholder (e.g. None and a separate display name).",
+    "Backend tests in test_patient_intake_bundle.py do not exercise /auth/me on a portal session — they only exercise /portal/overview which has its own response model that doesn't touch the EmailStr validator. That's why the suite is green while the browser flow is broken. Add an explicit `requests.get(f'{API}/auth/me')` assertion right after `verify` so the next regression catches this immediately.",
+    "ProtectedRoute (frontend/components/auth/ProtectedRoute.jsx) treats /auth/me errors and 401s identically — both yield user=null. Worth surfacing a one-line dev-console error when /auth/me returns ≥500 so this kind of failure is visible during local dev instead of silently bouncing to /login."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (14/14 new bundle tests + endpoint smoke checks)", "frontend": "Kiosk public flow OK (404 path verified). Portal browser flow BLOCKED by /auth/me 500 — could not test PortalOverview, PortalBook, PortalQuestionnaires, or staff booking-requests queue from the UI. SMS settings UI not exercised due to time."},
+  "test_credentials": "Staff admin admin@ccms.app / Admin@ComplianceClinic1 verified. Portal patient was created via POST /api/patients (admin) with phone=5035557160; OTP request returns dev_code in body (log-only mode confirmed).",
+  "seed_data_creation": "Created one transient portal patient (id 7ab294c6-90f0-4302-b17e-f05144cf0129, phone 5035557160, last_name Tester{rand}). Pytest also creates ~6 ephemeral patients per run; all are namespaced and safe to leave behind.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend bundle is solid; the SINGLE remaining blocker is /api/auth/me 500 for portal users. Reproduce with: (1) admin POST /api/patients {phone:'5035557160', ...}; (2) POST /api/portal/auth/otp/request {phone}; (3) POST /api/portal/auth/otp/verify {phone, code: dev_code}; (4) GET /api/auth/me with the resulting cookies → 500. Backend log shows pydantic email-validator rejecting `portal-<short>@portal.local`. Once main agent fixes that, re-run the Playwright portal flow (already wired up at /portal/login with testids portal-login-phone-input + portal-login-code-input + portal-login-verify-btn) and walk through /portal, /portal/book, /portal/questionnaires, /portal/questionnaires/:id. Staff booking queue at /scheduling/booking-requests is unblocked (admin sign-in works) but I did not click through it this run.",
+  "rca of the issue": "PortalLogin.handleVerify calls portalOtpVerify(...) (POST /api/portal/auth/otp/verify) then refresh() which calls GET /api/auth/me. The OTP verify path provisions a patient-role User document with email=`portal-{patient_id[:8]}@portal.local`. The /auth/me endpoint serialises through a response_model whose email field is Pydantic v2 EmailStr. EmailStr defers to email-validator, which rejects '.local' as it's on the IANA special-use TLDs list (RFC 6762). FastAPI converts the response-validation ValidationError into a 500. The browser's AuthContext sees the 500, sets user=null, and ProtectedRoute(portal) renders <Navigate to='/login' />. Mitigation: either (a) drop EmailStr from the auth/me response model (use Optional[str]), (b) stop minting `@portal.local` placeholders — use None, or (c) switch to '@portal.invalid' and confirm pydantic accepts it (it doesn't — '.invalid' is also reserved, but it's RFC-compliant for placeholders so wrap email field validation with a custom Annotated[str, AfterValidator(...)] that allows reserved TLDs for system-internal emails)."
+}

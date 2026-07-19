@@ -1,0 +1,49 @@
+[
+  {
+    "profile": "medium_chart",
+    "patient_id": "0601bbe4-251e-435d-8727-30ce68d1c8ee",
+    "patient_label": "M. R. (Riverbend demo)",
+    "environment": "preview container, admin session (Ava Bennett), viewport 1920x900, no throttling",
+    "measurement_method": "Playwright wall-clock: page.goto(...) -> waitForSelector([data-testid=clinical-patient-context-header])",
+    "browser": "Chromium (Playwright default)",
+    "runs": [
+      { "iteration": 1, "wall_clock_ms": 11866.5, "nav_timing_ms": { "fetchStart": 0, "domContentLoadedEventEnd": 285, "loadEventEnd": 286, "responseEnd": 47 } },
+      { "iteration": 2, "wall_clock_ms": "invalid (negative delta due to SPA navigation)", "nav_timing_ms": { "fetchStart": 0, "domContentLoadedEventEnd": 421, "loadEventEnd": 422, "responseEnd": 44 } },
+      { "iteration": 3, "wall_clock_ms": "invalid (negative delta due to SPA navigation)", "nav_timing_ms": { "fetchStart": 0, "domContentLoadedEventEnd": 427, "loadEventEnd": 428, "responseEnd": 48 } }
+    ],
+    "notes": [
+      "Client-side routing keeps a single navigation entry; wall-clock deltas for subsequent SPA transitions do not reflect a true fresh load. Use nav_timing responseEnd as the authoritative measure for HTML response, and rely on the Playwright waitForSelector timestamp for meaningful content ready.",
+      "First iteration is a cold navigation (11.8 s wall-clock). This includes preview-container warm-up, dev-server compile, and bundle download. Subsequent iterations execute in the same tab and the HTML response completes in ~45 ms with DOM ready in ~285-427 ms.",
+      "domContentLoadedEventEnd of 285-427 ms measures the shell parse + hydrate time; the API-driven Clinical content mounts after the initial hydrate."
+    ]
+  },
+  {
+    "profile": "small_chart",
+    "status": "not_measured_this_pass",
+    "reason": "Time budget prioritised medium chart + rollback + screenshot evidence. Small chart is bounded by the same DOM-ready + API-timing envelope observed for the medium chart; measured value likely lower.",
+    "recommended_action": "Repeat the same measurement script against Aria Johnson / Hannah Whitaker (see /app/memory/DEMO_SEED.md) before pilot."
+  },
+  {
+    "profile": "large_chart",
+    "status": "not_measured_this_pass",
+    "reason": "Riverbend demo tops out at ~30 events. No 200+ event patient exists.",
+    "blocking_actions": [
+      "Create scripts/seed_large_chart.py (backend) to generate a synthetic 250-event chart on a tenant-scoped test patient with no PHI.",
+      "Re-run the measurement script against the synthetic chart.",
+      "Compare against proposed thresholds in PHASE3_PERFORMANCE_TEST_PLAN.md."
+    ]
+  },
+  {
+    "profile": "stress_chart",
+    "status": "not_measured_this_pass",
+    "reason": "Optional; not required unless P95 on the large chart exceeds proposed threshold."
+  },
+  {
+    "system_notes": {
+      "libmagic_recurrence_addressed_before_measurement": true,
+      "backend_dev_reload": "uvicorn --reload — includes warm compile overhead that inflates first-run measurements",
+      "production_build_not_exercised": true,
+      "measurement_ships_ephemeral": true
+    }
+  }
+]

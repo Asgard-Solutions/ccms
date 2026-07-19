@@ -812,6 +812,18 @@ async def sign_follow_up_note(
         entity_type="clinical_follow_up_note", entity_id=note_id, phi_accessed=True,
         metadata={"patient_id": patient_id, "visit_number": visit_number},
     )
+    # Auto-delete any scribe audio captured for this note (HIPAA retention
+    # policy: keep until signed, then drop). Soft-delete only — the rows
+    # themselves stay for audit, just `is_deleted=True`.
+    try:
+        from services.scribe.router import delete_audio_for_note
+        await delete_audio_for_note(
+            tenant_id=ctx.tenant_id, note_id=note_id,
+            note_type="follow_up", actor_id=user["id"],
+        )
+    except Exception:  # noqa: BLE001
+        # Audio cleanup is best-effort; the note itself is already signed.
+        pass
     return await _hydrate(db, ctx.tenant_id, fresh)
 
 

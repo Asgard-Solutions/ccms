@@ -43,6 +43,10 @@ from core.tenancy import TenantContext, get_tenant_context
 from core.tenant_scope import scoped_filter
 from services.clinical.models import now_iso
 from services.clinical.router import _load_patient
+from services.billing.eligibility_status import (
+    is_expired,
+    classify_result,
+)
 
 router = APIRouter(prefix="/patients", tags=["clinical"])
 
@@ -166,9 +170,15 @@ def _parse_iso(value: str | None) -> datetime | None:
         return None
     try:
         # Best-effort: our stored ISO strings include "Z"
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (ValueError, TypeError):
         return None
+    # Date-only strings (e.g. plan.re_exam_date = "2026-05-13") parse as
+    # naive — normalise to UTC so comparisons with tz-aware datetimes
+    # don't raise TypeError.
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
 async def _hydrate_user_name(db, tenant_id: str, user_id: str | None) -> str | None:
@@ -264,6 +274,47 @@ async def get_billing_readiness(
         metadata={"patient_id": patient_id, "overall_status": response.overall_status},
     )
     return response
+
+
+async def _eligibility_check_status(
+    db, ctx: TenantContext, patient_id: str, service_date: str | None,
+) -> tuple[bool, str, str | None]:
+    """Look up the latest eligibility check for this patient, applied
+    to the encounter's DOS. Returns (passed, status, detail).
+
+    * `passed=True`  when status is `active` or `partial`.
+    * `passed=False` in every other case (missing, inactive, rejected,
+      error, expired, unknown) — caller decides severity.
+    """
+    row = await db.eligibility_checks.find_one(
+        {"patient_id": patient_id, "tenant_id": ctx.tenant_id},
+        {"_id": 0, "request_wire": 0, "response_wire": 0},
+        sort=[("checked_at", -1)],
+    )
+    if not row:
+        return (
+            False, "not_checked",
+            "No eligibility check on file. Run eligibility from "
+            "the appointment, check-in, or patient profile.",
+        )
+    effective = row.get("status") or classify_result(row.get("result"))
+    if is_expired(row, target_service_date=service_date):
+        return (
+            False, "expired",
+            "Eligibility check is expired for this date of service. "
+            "Re-verify coverage before submitting the claim.",
+        )
+    if effective in ("active", "partial"):
+        return (True, effective, None)
+    labels = {
+        "inactive": "Payer returned inactive coverage; claim will likely deny.",
+        "rejected": "Payer rejected the inquiry (subscriber mismatch). Verify member id.",
+        "error":    "Eligibility inquiry errored. Retry or verify manually.",
+        "unknown":  "Payer response was inconclusive. Re-check before billing.",
+        "submitted": "Eligibility request still pending.",
+    }
+    return (False, effective, labels.get(effective,
+            "Eligibility status is not verified active."))
 
 
 async def evaluate_billing_readiness(
@@ -510,6 +561,21 @@ async def evaluate_billing_readiness(
         "warn",
         not reexam_due,
         "Treatment plan's re-exam date has passed; schedule a re-evaluation." if reexam_due else None,
+    )
+
+    # eligibility verified (scenario 9)
+    elig_passed, elig_status, elig_detail = await _eligibility_check_status(
+        db, ctx, patient_id, encounter.get("date_of_service"),
+    )
+    add(
+        "eligibility_verified",
+        "Insurance eligibility verified",
+        # block when eligibility is a hard no (inactive/rejected/error);
+        # warn otherwise when missing/unknown/expired — front desk can
+        # still submit, but the claim may bounce.
+        "fail" if elig_status in {"inactive", "rejected", "error"} else "warn",
+        elig_passed,
+        elig_detail,
     )
 
     # Derive overall status

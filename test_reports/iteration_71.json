@@ -1,0 +1,36 @@
+{
+  "summary": "Iteration 71 — Targeted RETEST of the two CRITICAL bugs flagged in iteration 70 on the Compliance Ops Incidents tab. Both fixes verified end-to-end. (1) Backend permission downgrade: GET /api/compliance-ops/incidents now uses require_permission('reporting','read', audit_allow=False) at router.py:306 (was 'export'). curl with a fresh login cookie from group-admin@sunrise.ccms.app returns HTTP 200 (no 401 reauth challenge) and 10 incident rows. (2) Schema relaxation: IncidentPublic now declares owner_user_id: str | None = None and reported_at: str | None = None (services/compliance_ops/__init__.py lines 247, 251), so the seeded 'Replica lag spike on 2026-02-15' row (and 6 prior 'Sev-test ...' test-created rows that all have owner_user_id=null) serialize cleanly — no more ResponseValidationError. Frontend Playwright on /compliance: Incidents tab renders 10 rows under the register, the red 'Re-authentication required' banner is GONE, and incidents-error testid is not visible. Smoke checked the other 8 tabs (dashboard/controls/policies/risks/evidence/access-reviews/vendors/audit) → all OK (no unexpected reauth banner). The Audit tab still shows 'Re-authentication required for this action' on first open but that is the expected global /api/audit-logs reauth gate (interceptor handles user password prompt) and matches the rest of the app's AuditLog page — per the agent-to-agent context this is intentional and consistent. Backend pytest suite test_compliance_ops_ui_backend.py + test_custom_roles_phase2.py + test_riverbend_demo_sanitation.py: 48/48 PASSED in 26.62s.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_compliance_ops_ui_backend.py",
+    "/app/backend/tests/test_custom_roles_phase2.py",
+    "/app/backend/tests/test_riverbend_demo_sanitation.py",
+    "/app/test_reports/pytest/iter71_compliance.xml",
+    "/app/test_reports/iter71_incidents_fixed.png",
+    "/app/test_reports/iter71_incidents_final.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Fix is minimal and correct — single-line permission change in router.py:306 plus two Optional fields in IncidentPublic. Consistent with the other 8 GET endpoints in the same router (all use reporting.read, audit_allow=False).",
+    "Pre-existing test pollution: 6 'Sev-test ...' incidents from prior iterations still live in the Sunrise tenant DB (in addition to the seed and 4 'UI inc ...' rows from this run). Not blocking, but consider a TEST_-prefix pattern + cleanup fixture for future iterations to keep the register tidy.",
+    "owner_user_id was already Optional on IncidentDoc — the bug was only on the response model. Suggest adding a Pydantic round-trip assertion in seed integrity tests so a similar mismatch surfaces at seed time, not at GET time."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "48/48 (100%) — test_compliance_ops_ui_backend 8/8, test_custom_roles_phase2 14/14, test_riverbend_demo_sanitation 26/26", "frontend": "9/9 compliance tabs functional (Incidents tab now lists 10 rows; Audit tab's reauth on /api/audit-logs is the expected global gate)"},
+  "test_credentials": "group-admin@sunrise.ccms.app / Sunrise@ComplianceClinic1 used for both curl and Playwright. No new accounts created.",
+  "seed_data_creation": "No new persistent seed/test data created in this iteration. Carry-over from prior iterations: 6 'Sev-test …' + 4 'UI inc …' incidents on Sunrise tenant (10 rows total including seed).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iteration 70's two CRITICAL bugs are fully resolved and verified at three layers (curl 200 with rows, pytest 48/48, Playwright 10 rows + no reauth banner on Incidents tab). Compliance Ops UI hub is now fully functional across all 9 tabs. The only remaining 'reauth' prompt in the area is on the Audit Trail tab — that is the expected global /api/audit-logs reauth gate (the same one used everywhere else in the app via AuditLog.jsx + interceptor) and is NOT a bug. If a follow-up iteration touches this area, watch for: (a) router permission drift on other GET routes, and (b) the 6 'Sev-test …' carry-over rows on Sunrise that may need a TEST_-prefix cleanup pattern.",
+  "rca of the issue": {
+    "verification_of_iter70_fixes": "Layer 1 (authz) FIXED: router.py line 306 now reads `Depends(require_permission('reporting','read', audit_allow=False))` matching the other 8 GET routes. Verified by raw curl: POST /api/auth/login then GET /api/compliance-ops/incidents → HTTP 200 with no Set-Cookie reauth prompt. Layer 2 (schema) FIXED: IncidentPublic.owner_user_id and reported_at are now `str | None = None`. Verified by the same curl returning 10 rows where multiple have owner_user_id=null and reported_at=null with no ResponseValidationError. Frontend smoke confirms the user-facing manifestation (red banner + empty register) is gone — register shows 'Incidents (10)' and renders the seed row plus the 9 historical test rows."
+  }
+}

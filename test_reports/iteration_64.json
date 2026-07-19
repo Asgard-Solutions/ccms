@@ -1,0 +1,52 @@
+{
+  "summary": "Backend GET-only verification of the Riverbend demo sanitation pass (clinic profile, appointment types, rooms, tenancy, /auth/me for admin+doctor, patient list+sex, PATCH round-trip for Hannah & Marcus). 9/10 pytest cases pass. ONE real seed bug discovered: Hannah Whitaker and Marcus Reid each have TWO patient records in the Riverbend tenant (10 patients total instead of 8) — _upsert_patient is non-idempotent for those two personas.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/patients (Riverbend tenant) / services/demo/seed.py::_upsert_patient",
+        "issue": "Hannah Whitaker and Marcus Reid each appear TWICE. Both pairs share identical email (hannah.whitaker@example.com, marcus.reid@example.com), phone, and DOB but have distinct ids and distinct created_at timestamps (19:02:09 and 19:05:42 in this run). Total patient count is 10 instead of the expected 8. The other six personas (Isabella Cho, Derrick Stone, Aria Johnson, Claire Morgan, Jaxon Morgan, Ethan Parker) each appear once. Suggests a non-idempotent upsert path for these two personas (e.g. matching by id-only the first time and missing a unique-email-or-(first+last+dob) lookup the second time, or a recent rename of seed entries that broke the idempotency key).",
+        "priority": "HIGH"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_riverbend_demo_sanitation.py",
+    "/app/test_reports/pytest/iteration_64.xml"
+  ],
+  "action_items": [
+    "Fix seed: make _upsert_patient idempotent for Hannah Whitaker + Marcus Reid (likely match by email or by deterministic id), then re-run /app/backend/scripts/reseed_demo_clinic.py and DELETE the orphan duplicate rows (Hannah b892456f-a17b-4502-a586-bcb49010d3d0 and Marcus afd078d7-d360-4992-9081-1774ed2761ec, OR whichever pair has the newer created_at depending on which row holds the canonical seed data). After fix: GET /api/patients should return exactly 8 personas. All other 9 sanitation checks already pass."
+  ],
+  "critical_code_review_comments": [
+    "Patient-list response includes a top-level `name: null` field for every record — UI consumers must derive display name from first_name/last_name. Worth confirming the wizard/edit screen reads first_name/last_name and not the (always-null) name field.",
+    "Patient demographics.sex_at_birth and demographics.gender are populated for all 10 personas (including the duplicates) — that part of the sanitation is solid.",
+    "Clinic-profile schema uses `address_line1`/`address_line2` and hours intervals use `open_time`/`close_time` — the review-request bullet referred to these as `address` and `start_time`/`end_time`. Data values are correct; just a naming convention to be aware of (already adjusted in the test file)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_riverbend_demo_sanitation.py (NEW — pytest suite for this iteration)"
+  ],
+  "success_rate": {"backend": "90% (9/10)", "frontend": "n/a (skipped per request)"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1, doctor@ccms.app / Doctor@ComplianceClinic1 (no MFA, used /api/auth/reauth for /api/rooms + /api/patients?unmask=true).",
+  "seed_data_creation": "None. PATCH round-trip on Hannah Whitaker (id b892456f-a17b-4502-a586-bcb49010d3d0) and Marcus Reid (id afd078d7-d360-4992-9081-1774ed2761ec) re-saved the existing record as-is using the wizard-style payload (demographics, address_details, emergency_contact_details, contact, insurance, address, emergency_contact); both returned 200 with no validation errors. NO new rows created by tests.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All sanitation bullets pass EXCEPT the patient count: 10 instead of 8 because Hannah Whitaker and Marcus Reid are duplicated (different ids, same email/phone/dob). After main agent fixes the seed idempotency and re-runs reseed_demo_clinic.py, just re-run `pytest /app/backend/tests/test_riverbend_demo_sanitation.py -v` to confirm 10/10 pass. The PATCH round-trip already validates that the structured patient payload survives a save without validation errors, so the wizard edit flow is good on the backend side.",
+  "rca of the issue": {
+    "summary": "Hannah Whitaker and Marcus Reid each have two patient rows in the Riverbend tenant.",
+    "evidence": "GET /api/patients?unmask=true returns 10 records. Hannah ids: b892456f-a17b-4502-a586-bcb49010d3d0 (created 2026-04-22T19:05:42) AND 4c0a6d34-3aab-4e45-bd3d-246665a6126f (created 2026-04-22T19:02:09). Marcus ids: afd078d7-d360-4992-9081-1774ed2761ec (created 2026-04-22T19:05:42) AND 812a02b4-9786-4bbb-8851-4cb53b08e967 (created 2026-04-22T19:02:09). Both pairs share identical email/phone/dob.",
+    "likely_cause": "_upsert_patient in /app/backend/services/demo/seed.py (or the reseed script) used different matching keys across the two seed runs at 19:02 and 19:05 — first run inserted with one id, second run failed to find the existing row and inserted a new one. The other six personas (Isabella, Derrick, Aria, Claire, Jaxon, Ethan) survived idempotent because their lookup key matched.",
+    "reproduction": "1) Login admin@ccms.app, 2) POST /api/auth/reauth with same password, 3) GET /api/patients?unmask=true, 4) count first_name+last_name occurrences — Hannah=2, Marcus=2, others=1.",
+    "mitigation": "(a) Patch _upsert_patient to look up existing rows by lower(email) within the tenant before insert (or by deterministic id derived from a slug of the persona name). (b) Re-run reseed_demo_clinic.py with the expanded wipe list so the duplicates are pruned. (c) Verify by re-running the pytest in this report — TestPatients::test_eight_personas_present must pass."
+  },
+  "verified_passing_checks": [
+    "GET /api/clinic-profiles returns exactly 1 Riverbend profile with name/address_line1/city/state/postal/phone/email/website/timezone all matching spec; 7 hours entries; Mon-Fri have 2 intervals with 12:00-13:00 lunch gap; Sat 09:00-13:00 single interval; Sun is_closed=true.",
+    "GET /api/appointment-types returns exactly 9 types in the expected sort order (Chiropractic Adjustment 15, Follow-up 30, New Patient 60, Re-Exam 30, Therapy 20, Auto/PIP 45, Workers' Comp 45, Maintenance 15, Pediatric 15); all is_active=true; descriptions present; no Dup-/Filterable-/DefaultOnly- junk.",
+    "GET /api/rooms (after reauth) returns exactly 7 rooms on Riverbend Downtown matching {Exam 1, Exam 2, Adjustment 1, Adjustment 2, Consult Room, X-Ray Suite, Therapy Bay}; types cover exam/consult/xray/therapy; all is_active=true.",
+    "GET /api/tenancy/me/context returns exactly one location 'Riverbend — Downtown' (code 'RB-DT'); no Main Clinic/Main Office/HQ leftovers.",
+    "GET /api/auth/me for admin@ccms.app returns first_name=Ava, last_name=Bennett, display_name='Ava Bennett', job_title='Clinic Administrator', credentials_suffix='', preferred_signature_name='A. Bennett', time_zone='America/Los_Angeles' (no Ada Lovelace / DACBR remnants).",
+    "GET /api/auth/me for doctor@ccms.app returns first_name=Noah, last_name=Carter, display_name='Dr. Noah Carter, DC', credentials_suffix='DC, CCSP', job_title='Lead Chiropractor'.",
+    "Every patient (all 10 — including the duplicates) has demographics.sex_at_birth in {male, female} and demographics.gender populated. No null/missing sex fields.",
+    "PATCH /api/patients/{id} round-trip for Hannah Whitaker AND Marcus Reid: re-saving the full structured wizard-style payload (demographics, address_details, emergency_contact_details, contact, insurance, address, emergency_contact) returns 200 with no validation errors."
+  ]
+}

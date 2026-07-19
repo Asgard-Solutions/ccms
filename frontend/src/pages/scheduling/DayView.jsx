@@ -3,6 +3,7 @@ import { isoDateKey, sameDay } from "./dateHelpers";
 import { extractDaySpan } from "./useClinicHours";
 import { formatPhoneDisplay } from "../../utils/phone";
 import { Button } from "../../components/ui/button";
+import { statusMeta } from "./statusMeta";
 
 /**
  * Day view — vertical timeline with 15-minute slots.
@@ -488,19 +489,29 @@ export default function DayView({
                   key={appt.id}
                   type="button"
                   data-testid={`scheduling-day-appt-${appt.id}`}
+                  data-appt-status={appt.status}
                   onClick={() => onOpenAppointment?.(appt)}
-                  className="pointer-events-auto absolute overflow-hidden rounded-sm border-l-2 border-primary bg-primary/15 p-2 text-left text-xs text-foreground shadow-sm transition-colors hover:bg-primary/25"
+                  className={`pointer-events-auto absolute overflow-hidden rounded-sm border-l-4 p-2 text-left text-xs text-foreground shadow-sm transition-colors ${statusMeta(appt.status).tone} hover:brightness-105`}
                   style={commonStyle}
-                  aria-label={`Appointment for ${appt.patient_name} at ${formatHHMM(new Date(appt.start_time))}`}
+                  aria-label={`${statusMeta(appt.status).label} appointment for ${appt.patient_name} at ${formatHHMM(new Date(appt.start_time))}`}
                 >
                   <div className="flex items-baseline justify-between gap-2">
-                    <span className="truncate font-medium text-primary">
+                    <span className={`truncate font-medium ${statusMeta(appt.status).textColor}`}>
                       {appt.patient_name || "Unknown patient"}
                     </span>
                     <span className="shrink-0 text-[10px] font-mono text-muted-foreground">
                       {formatHHMM(new Date(appt.start_time))}
                     </span>
                   </div>
+                  {appt.status && appt.status !== "scheduled" && (
+                    <div
+                      data-testid={`scheduling-day-appt-status-${appt.id}`}
+                      className={`mt-0.5 inline-flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wider ${statusMeta(appt.status).textColor}`}
+                    >
+                      {(() => { const Icon = statusMeta(appt.status).Icon; return <Icon className="h-2.5 w-2.5" />; })()}
+                      {statusMeta(appt.status).label}
+                    </div>
+                  )}
                   {appt.patient_phone && (
                     <div
                       data-testid={`scheduling-day-appt-phone-${appt.id}`}
@@ -512,6 +523,15 @@ export default function DayView({
                   {appt.provider_name && height >= SLOT_HEIGHT * 2 && (
                     <div className="mt-1 truncate text-[11px] text-muted-foreground">
                       {appt.provider_name}
+                    </div>
+                  )}
+                  {appt.current_room_name && (
+                    <div
+                      data-testid={`scheduling-day-appt-room-${appt.id}`}
+                      className="mt-0.5 truncate text-[10px] font-semibold uppercase tracking-wider text-primary"
+                      title={`Current room: ${appt.current_room_name}`}
+                    >
+                      Room · {appt.current_room_name}
                     </div>
                   )}
                   {appt.reason && height >= SLOT_HEIGHT * 3 && (

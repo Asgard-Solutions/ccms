@@ -59,15 +59,19 @@ export default function ReExamsCard({ patientId }) {
       ) : rows.length === 0 ? (
         <div
           data-testid="reexams-empty"
-          className="rounded-lg border border-dashed border-border bg-card p-8 text-center"
+          className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-dashed border-border bg-card/60 px-5 py-4"
         >
-          <Activity className="mx-auto h-8 w-8 text-muted-foreground" />
-          <p className="mt-3 font-display text-base font-semibold text-foreground">
-            No re-exams yet
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Launch one from a re-evaluation encounter on the schedule.
-          </p>
+          <div className="flex items-center gap-3">
+            <Activity className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+            <div>
+              <p className="text-sm font-medium text-foreground">
+                No re-evaluation encounter scheduled
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Launch a re-exam from a re-evaluation encounter on the schedule.
+              </p>
+            </div>
+          </div>
         </div>
       ) : (
         <div data-testid="reexams-list" className="space-y-2">

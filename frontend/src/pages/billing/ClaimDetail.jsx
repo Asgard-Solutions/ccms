@@ -10,6 +10,7 @@ import {
   ListChecks,
   Pencil,
   Send,
+  Zap,
 } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -36,6 +37,7 @@ import {
   CLAIM_STATUS_LABELS,
   claimStatusTone,
   fetchClaimDetail,
+  quickSubmitClaim,
   replaceClaimDiagnoses,
   replaceClaimLines,
   submitClaim,
@@ -43,6 +45,7 @@ import {
   validateClaim,
 } from "./useClaims";
 import ClaimWorkflow from "./ClaimWorkflow";
+import ClaimTimeline from "./ClaimTimeline";
 
 const EDITABLE_STATUSES = new Set(["draft", "validation_failed", "rejected"]);
 
@@ -97,6 +100,32 @@ export default function ClaimDetail() {
     } finally { setBusy(false); }
   }
 
+  async function onQuickSubmit() {
+    setBusy(true);
+    try {
+      const res = await quickSubmitClaim(id);
+      const route = res?.adapter_route || "none";
+      const status = res?.adapter_status || "manual";
+      const label = res?.sandbox ? `${route} (sandbox)` : route;
+      const warn = res?.submitted_with_warnings
+        ? ` — submitted with ${res.scrubber_error_count || 0} scrubber findings`
+        : "";
+      toast[status === "rejected" ? "error" : "success"](
+        `${label}: ${status}${warn}`,
+      );
+      await refresh();
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      if (detail && typeof detail === "object" && detail.code === "VALIDATION_FAILED") {
+        toast.error(
+          `Scrubber blocked submission — ${detail.errors?.length || 0} errors`,
+        );
+      } else {
+        toast.error(typeof detail === "string" ? detail : "Quick-submit failed");
+      }
+    } finally { setBusy(false); }
+  }
+
   if (loading || !detail) {
     return (
       <div className="space-y-4">
@@ -107,9 +136,35 @@ export default function ClaimDetail() {
     );
   }
 
-  const { claim, diagnoses, lines, latest_validation } = detail;
+  const { claim, diagnoses, lines, latest_validation, refs = {} } = detail;
   const errors = latest_validation?.errors || [];
   const warnings = latest_validation?.warnings || [];
+
+  // Human-readable display values — never render raw UUIDs. Every `refs.*`
+  // is resolved server-side against the correct collection (patient,
+  // payer, providers, service_facilities, users, locations) so the UI
+  // stays a pure display layer. Fallbacks use readable placeholders
+  // instead of UUID slices.
+  const patientLabel = refs.patient?.name
+    || (refs.patient?.mrn ? `MRN ${refs.patient.mrn}` : "Unknown patient");
+  const billingProviderLabel = refs.billing_provider
+    ? [
+        refs.billing_provider.name,
+        refs.billing_provider.npi ? `NPI ${refs.billing_provider.npi}` : null,
+      ].filter(Boolean).join(" · ")
+    : "—";
+  const renderingProviderLabel = refs.rendering_provider
+    ? [
+        refs.rendering_provider.name,
+        refs.rendering_provider.npi ? `NPI ${refs.rendering_provider.npi}` : null,
+      ].filter(Boolean).join(" · ")
+    : "—";
+  const facilityLabel = refs.facility
+    ? [
+        refs.facility.name,
+        refs.facility.npi ? `NPI ${refs.facility.npi}` : null,
+      ].filter(Boolean).join(" · ")
+    : "—";
 
   return (
     <div data-testid="claim-detail" className="space-y-6">
@@ -133,8 +188,9 @@ export default function ClaimDetail() {
             <Link
               to={`/patients/${claim.patient_id}`}
               className="hover:underline"
+              data-testid="claim-detail-patient-link"
             >
-              Patient {claim.patient_id.slice(0, 8)}
+              {patientLabel}
             </Link>
             <span>Billed {formatCents(claim.billed_cents)}</span>
             <span>{claim.service_date_from} → {claim.service_date_to}</span>
@@ -159,6 +215,16 @@ export default function ClaimDetail() {
           >
             <Send className="mr-2 h-4 w-4" /> Submit
           </Button>
+          <Button
+            variant="secondary"
+            onClick={onQuickSubmit}
+            disabled={busy || !["draft", "validation_failed", "ready"].includes(claim.status)}
+            data-testid="claim-quick-submit-btn"
+            className="rounded-sm"
+            title="Run scrubber and submit through the resolved clearinghouse adapter in one step."
+          >
+            <Zap className="mr-2 h-4 w-4" /> Submit to clearinghouse
+          </Button>
         </div>
       </header>
 
@@ -166,11 +232,15 @@ export default function ClaimDetail() {
       <ValidationPanel
         errors={errors}
         warnings={warnings}
+        byCategory={latest_validation?.by_category}
         lastRunAt={latest_validation?.run_at}
       />
 
       {/* Phase 4 workflow — submissions, outcomes, timeline, assignment */}
-      <ClaimWorkflow claim={claim} onChanged={refresh} />
+      <ClaimWorkflow claim={claim} refs={refs} onChanged={refresh} />
+
+      {/* Live submission timeline — polls + WebSocket */}
+      <ClaimTimeline claimId={claim.id} />
 
       {/* Header card */}
       <section
@@ -193,9 +263,9 @@ export default function ClaimDetail() {
           <Field label="Claim type" value={claim.claim_type || "—"} />
           <Field label="Place of service" value={claim.place_of_service || "—"} />
           <Field label="Frequency code" value={claim.frequency_code || "—"} />
-          <Field label="Billing provider" value={claim.billing_provider_id || "—"} />
-          <Field label="Rendering provider" value={claim.rendering_provider_id || "—"} />
-          <Field label="Facility" value={claim.facility_id || "—"} />
+          <Field label="Billing provider" value={billingProviderLabel} />
+          <Field label="Rendering provider" value={renderingProviderLabel} />
+          <Field label="Facility" value={facilityLabel} />
           <Field label="Authorization #" value={claim.authorization_number || "—"} />
           <Field label="Referral #" value={claim.referral_number || "—"} />
           <Field label="Source invoice" value={claim.source_invoice_id?.slice(0, 8) || "—"} />
@@ -324,8 +394,22 @@ function Field({ label, value }) {
   );
 }
 
-function ValidationPanel({ errors, warnings, lastRunAt }) {
+function ValidationPanel({ errors, warnings, byCategory, lastRunAt }) {
   const hasAny = errors.length + warnings.length > 0;
+  // Category labels drive the summary row + the per-finding pill.
+  const CATEGORY_LABELS = {
+    identity:     "Identity",
+    provider:     "Provider",
+    codes:        "Codes",
+    dates:        "Dates",
+    totals:       "Totals",
+    routing:      "Routing",
+    chiropractic: "Chiropractic",
+    other:        "Other",
+  };
+  const summaryEntries = Object.entries(byCategory || {})
+    .filter(([, v]) => (v?.errors || 0) + (v?.warnings || 0) > 0)
+    .sort();
   return (
     <section
       data-testid="validation-panel"
@@ -342,6 +426,31 @@ function ValidationPanel({ errors, warnings, lastRunAt }) {
           {lastRunAt ? `Last run ${lastRunAt}` : "Not yet validated"}
         </div>
       </header>
+
+      {summaryEntries.length > 0 && (
+        <div
+          data-testid="validation-category-summary"
+          className="mb-3 flex flex-wrap gap-2"
+        >
+          {summaryEntries.map(([cat, v]) => (
+            <span
+              key={cat}
+              data-testid={`validation-cat-${cat}`}
+              className={`inline-flex items-center gap-1 rounded-sm border px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide ${
+                v.errors > 0
+                  ? "border-destructive/40 bg-destructive/10 text-destructive"
+                  : "border-warning/40 bg-warning-soft text-warning"
+              }`}
+            >
+              {CATEGORY_LABELS[cat] || cat}
+              <span className="tabular-nums">
+                {v.errors > 0 && `· ${v.errors}e`}
+                {v.warnings > 0 && ` ${v.warnings}w`}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {!hasAny && lastRunAt && (
         <div
@@ -370,14 +479,20 @@ function ValidationPanel({ errors, warnings, lastRunAt }) {
               className="flex items-start gap-2 text-sm text-destructive"
             >
               <AlertCircle className="mt-0.5 h-4 w-4 flex-none" />
-              <div>
-                <span className="font-semibold">{f.code}</span>
-                <span className="mx-1">·</span>
-                <span>{f.message}</span>
+              <div className="flex-1">
+                <div className="flex flex-wrap items-center gap-x-2">
+                  {f.category && (
+                    <span className="rounded-sm border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-destructive">
+                      {CATEGORY_LABELS[f.category] || f.category}
+                    </span>
+                  )}
+                  <span className="font-semibold">{f.code}</span>
+                  <span>{f.message}</span>
+                </div>
                 {f.entity_path && (
-                  <span className="ml-2 text-xs font-mono text-muted-foreground">
+                  <div className="mt-1 font-mono text-[11px] text-muted-foreground">
                     {f.entity_path}
-                  </span>
+                  </div>
                 )}
               </div>
             </li>
@@ -391,12 +506,27 @@ function ValidationPanel({ errors, warnings, lastRunAt }) {
           className="mt-3 space-y-2 rounded-sm border border-warning/30 bg-warning-soft p-3"
         >
           {warnings.map((f, i) => (
-            <li key={i} className="flex items-start gap-2 text-sm text-warning">
+            <li
+              key={i}
+              data-testid={`validation-warning-${f.code}`}
+              className="flex items-start gap-2 text-sm text-warning"
+            >
               <AlertTriangle className="mt-0.5 h-4 w-4 flex-none" />
-              <div>
-                <span className="font-semibold">{f.code}</span>
-                <span className="mx-1">·</span>
-                <span>{f.message}</span>
+              <div className="flex-1">
+                <div className="flex flex-wrap items-center gap-x-2">
+                  {f.category && (
+                    <span className="rounded-sm border border-warning/40 bg-warning/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning">
+                      {CATEGORY_LABELS[f.category] || f.category}
+                    </span>
+                  )}
+                  <span className="font-semibold">{f.code}</span>
+                  <span>{f.message}</span>
+                </div>
+                {f.entity_path && (
+                  <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    {f.entity_path}
+                  </div>
+                )}
               </div>
             </li>
           ))}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ShieldCheck, Plus, Trash2, Pencil } from "lucide-react";
+import { ShieldCheck, Plus, Trash2, Pencil, Activity } from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
@@ -30,6 +30,7 @@ import {
 } from "./useBillingAdmin";
 import { formatDate } from "../../utils/time";
 import ConfirmDialog from "../../components/ConfirmDialog";
+import { EligibilityDialog } from "./EligibilityDialog";
 
 const RANKS = [
   { v: "primary", l: "Primary" },
@@ -53,6 +54,7 @@ export default function PatientInsuranceManager({ patientId }) {
   const { rows: payers } = usePayers({ activeOnly: true });
   const [editing, setEditing] = useState(null); // null | {} for new
   const [confirmDeactivate, setConfirmDeactivate] = useState(null);
+  const [eligibilityPolicy, setEligibilityPolicy] = useState(null);
 
   const activePrimary = useMemo(
     () => rows.find((p) => p.rank === "primary" && p.status === "active"),
@@ -130,6 +132,17 @@ export default function PatientInsuranceManager({ patientId }) {
                   </div>
                 </div>
                 <div className="flex items-center gap-1">
+                  {p.status === "active" && (
+                    <Button
+                      variant="ghost" size="sm"
+                      onClick={() => setEligibilityPolicy(p)}
+                      data-testid={`policy-eligibility-${p.id}`}
+                      title="Check eligibility (270/271)"
+                      className="rounded-sm"
+                    >
+                      <Activity className="mr-1 h-3.5 w-3.5" /> Eligibility
+                    </Button>
+                  )}
                   <Button
                     variant="ghost" size="sm"
                     onClick={() => setEditing(p)}
@@ -190,6 +203,12 @@ export default function PatientInsuranceManager({ patientId }) {
           if (confirmDeactivate) await onDeactivate(confirmDeactivate);
         }}
         testId="policy-deactivate-confirm"
+      />
+
+      <EligibilityDialog
+        open={!!eligibilityPolicy}
+        policy={eligibilityPolicy}
+        onClose={() => setEligibilityPolicy(null)}
       />
     </section>
   );

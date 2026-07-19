@@ -1,0 +1,49 @@
+{
+  "summary": "Frontend-only verification of Phase 1 Clinical Tab redesign (ClinicalTabV2). Logged in as admin (no reauth PIN required to browse). Navigated to /patients/0601bbe4-251e-435d-8727-30ce68d1c8ee?tab=clinical. 62/64 direct assertions passed; the 2 failures reduce to: (a) one preview-environment overlay masking the back-to-top hit region (functional via JS click — not a code bug), (b) one real minor scrollspy edge case where aria-current does not stick on the last section (outcomes). Regression cards render correctly (encounters/exams/notes/diagnoses/care-plan/timeline/imaging/outcomes). Feature flag toggle off restores legacy v1. Archive dialog copy + reason validation are correct. IntakeHistoryCard shows the single 'Imported from patient intake on <date>' pill, red-flag rendered as clinical sentence, no per-field 'From intake' badges. BillingReadinessPanel collapsed header shows sentence-case 'Billing readiness' with warning summary and aria-expanded. Compact empty states verified for media (70px) and reexams (70px).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "ClinicalTabV2 SectionNav / scrollspy",
+        "issue": "When user jumps to (or scrolls to) the last section 'Outcomes', the nav pill does not receive aria-current='location' / bg-primary styling. jumpTo('outcomes') calls setActiveId('outcomes') but the IntersectionObserver immediately overrides it back to 'timeline' because with rootMargin '-30% 0px -60% 0px' the last section rarely enters the 30–40% activation band when the page can't scroll any further. All other 7 sections (summary/history/diagnoses/encounters/care-plan/timeline/imaging) light up correctly. Suggested fix: (i) detect near-bottom (window.innerHeight + scrollY >= document.body.scrollHeight - 4) and force activeId to the last section, OR (ii) make jumpTo's setActiveId 'sticky' for a few hundred ms (ignore observer during programmatic scroll).",
+        "selector": "[data-testid='clinical-nav-outcomes']",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "ClinicalTabV2 jumpTo hash + browser history",
+        "issue": "Clicking nav items updates the URL hash via window.history.replaceState (not pushState). Task spec says 'browser back/forward preserves hash'. In practice, hitting Back from #history exits the patient page entirely instead of stepping through the nav hashes (#summary → #history). Consider pushState for user-initiated nav clicks so back/forward walks through sections, or accept the current behaviour and update the acceptance criteria.",
+        "selector": "ClinicalTabV2.jsx jumpTo()",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "ClinicalTabV2 back-to-top button",
+        "issues": [
+          "In the Emergent preview environment the 'Made with Emergent' watermark badge (fixed, bottom-right) sits on top of the back-to-top button and swallows Playwright pointer clicks. Programmatic .click() on the DOM node works fine and scrollTo({top:0}) executes. Not a production bug (the badge isn't shipped to real tenants), but if you want the preview to be clickable, add pointer-events:none to the watermark or bump the back-to-top button's z-index above the watermark and inset a few more pixels."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Fix scrollspy for last section: force activeId to the last section when window is at scroll bottom, or temporarily suspend the IntersectionObserver-driven activeId update for ~400ms after a user-initiated jumpTo() so the click intent isn't reverted.",
+    "Decide whether the 'back/forward preserves hash' story really requires history.pushState instead of replaceState in ClinicalTabV2 jumpTo() and, if yes, switch to pushState."
+  ],
+  "critical_code_review_comments": [
+    "ClinicalTabV2.jsx is 1000+ lines; consider extracting PatientContextHeader, SectionNav, CurrentCareStatusPanel, and SummaryTiles into sibling files under /pages/clinical/ so the shell stays readable. Same behaviour, easier reviews.",
+    "extractRedFlagFindings in ClinicalTabV2 treats any truthy value as positive; renderRedFlagScreening in IntakeHistoryCard restricts to typeof boolean. Two callers on the same dict — please align on one predicate so the header 'clinical alerts' banner never disagrees with the field-level rendering.",
+    "The IntersectionObserver rootMargin '-30% 0px -60% 0px' does not activate the last section when the page bottom prevents the section from ever crossing the top band. Consider adding a scroll-end guard (see UI bug above).",
+    "billingWarnings is hard-coded to { count: 0 } (line 771). Fine for Phase 1 per the comment, but leave a TODO/ticket link so nobody thinks the row is actually wired.",
+    "PatientDetail.jsx > 1600 lines. The More-actions dropdown + AlertDialog block is a clean extraction candidate for a future refactor."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only)", "frontend": "97% (62/64 direct assertions)"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (PIN 100001 — not needed for browsing). Confirmed no reauth PIN prompt when opening the Clinical tab.",
+  "seed_data_creation": "None. Used existing patient 0601bbe4-251e-435d-8727-30ce68d1c8ee (M. R., masked).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Everything in the review request checklist verified except: (1) the aria-current fails ONLY on the last nav item (outcomes) — all 7 others light up; (2) hash back/forward walks through history only if we switch to pushState. Correct card testids for the encounters section regression check are `clinical-encounters-card`, `clinical-exams-card`, `clinical-notes-card` (not `encounters-card`/`initial-exams-card`/`follow-up-notes-card`). Diagnoses card testid is `clinical-diagnoses-card` with an `Add diagnosis` button (labelled that way in the UI, not `New diagnosis`). Timeline card testid is `care-timeline-card`. TreatmentPlansCard testid is `treatment-plans-card`. Feature flag override works via window.localStorage.setItem('ccms.flags.clinicalRedesign','off') + reload; test cleaned up with removeItem. Back-to-top button works end-to-end via DOM .click(); in preview only, the 'Made with Emergent' watermark badge intercepts pointer events at the same coordinates — irrelevant to production.",
+  "rca of the issue": "For the outcomes aria-current issue: In ClinicalTabV2.jsx, jumpTo(id) sets activeId(id) then triggers smooth scroll. The IntersectionObserver (rootMargin '-30% 0px -60% 0px') fires on scroll and calls setActiveId with the topmost 'isIntersecting' section. Because the Outcomes section is anchored at the very bottom of the page, once smooth-scroll settles the observer sees Timeline (which sits within the activation band) rather than Outcomes, and reverts activeId → 'timeline'. Fix options: (a) short-circuit the observer for ~400ms after any programmatic jump, (b) special-case: if window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 8, force activeId = last NAV_ITEMS id. Option (b) is simpler and closer to how other apps solve this."
+}

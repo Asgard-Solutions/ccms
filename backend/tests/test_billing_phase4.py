@@ -192,7 +192,7 @@ class TestPayloadBuilders:
         assert p["diagnoses"][0]["code"] == "M54.16"
         assert p["lines"][0]["code"] == "98940"
         assert p["patient"]["first_name"] == "Jane"
-        assert p["payer"]["payer_id_external"] == "AH-001"
+        assert p["payer"]["electronic_payer_id"] == "AH-001"
         assert p["policy"]["member_id"] == "M123"
 
     def test_x12_preview_has_envelope_and_lines(self):
@@ -255,7 +255,7 @@ class TestSubmissionLifecycle:
         )
         assert pl.status_code == 200, pl.text
         body = pl.json()
-        assert body["payload_format"] == "json+x12-837p-preview"
+        assert body["payload_format"] == "json+x12-837p-005010X222A1"
         assert body["payload_json"]["schema"] == "ccms.claim.v1"
         assert "ST*837*" in body["payload_x12"]
 

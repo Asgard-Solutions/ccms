@@ -1,11 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Download, Eye, EyeOff, FileText, Pencil, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Archive, Download, Eye, EyeOff, FileText, MoreHorizontal, Pencil, Plus, ShieldAlert, Trash2 } from "lucide-react";
 import { api, formatApiError } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 import { useProviders } from "../contexts/ProvidersContext";
 import { formatDate, formatDateTime, relativeFromNow } from "../utils/time";
+import { useFeatureFlag } from "../utils/featureFlags";
+import { trackUiEvent } from "../utils/telemetry";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "../components/ui/dropdown-menu";
 import { formatPhoneDisplay } from "../utils/phone";
 import { PatientWizardDialog } from "../components/patient-wizard/PatientWizardDialog";
 import { payloadToForm } from "./patientWizardLogic";
@@ -49,9 +59,15 @@ import BreakGlassDialog from "../components/BreakGlassDialog";
 import ReauthDialog from "../components/ReauthDialog";
 import PatientDocumentsCard from "../components/PatientDocumentsCard";
 import PatientLedgerCard from "./billing/PatientLedgerCard";
+import PatientStatementsCard from "./billing/PatientStatementsCard";
+import PatientQuestionnairesCard from "./patients/PatientQuestionnairesCard";
+import ChartBriefCard from "./ai/ChartBriefCard";
+import PatientSemanticSearch from "./ai/PatientSemanticSearch";
 import PatientInsuranceManager from "./billing/PatientInsuranceManager";
+import { PatientEligibilityCard } from "./billing/PatientEligibilityCard";
 import ChargeCaptureDialog from "./billing/ChargeCaptureDialog";
 import ClinicalTab from "./clinical/ClinicalTab";
+import ClinicalTabV2 from "./clinical/ClinicalTabV2";
 
 // ---------------------------------------------------------------------------
 // Expanded-intake section renderers (Phase 4).
@@ -213,7 +229,7 @@ function InsurancePlanBlock({ plan, label, testId }) {
   );
 }
 
-function PatientOverview({ patient, providers, onEdit, canEdit }) {
+function PatientOverview({ patient, providers, locations, onEdit, canEdit }) {
   const demo = patient.demographics || {};
   const contact = patient.contact || {};
   const addr = patient.address_details || {};
@@ -227,6 +243,10 @@ function PatientOverview({ patient, providers, onEdit, canEdit }) {
   const providerId = admin.primary_provider_id;
   const providerLabel =
     (providers || []).find((p) => p.id === providerId)?.name || providerId || null;
+  const locationLabel =
+    (locations || []).find((l) => l.id === patient.location_id)?.name
+    || patient.location_name
+    || null;
 
   const consentSummary = [
     contact.sms_consent && "SMS",
@@ -313,7 +333,7 @@ function PatientOverview({ patient, providers, onEdit, canEdit }) {
         testId="overview-care"
       >
         <OverviewField label="Assigned provider" value={providerLabel} testId="ov-provider" />
-        <OverviewField label="Preferred location" value={patient.location_id} testId="ov-location" />
+        <OverviewField label="Preferred location" value={locationLabel} testId="ov-location" />
         <OverviewField label="Referral source" value={admin.referral_source} testId="ov-referral" />
       </OverviewSection>
 
@@ -967,11 +987,20 @@ export default function PatientDetail() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(() => searchParams.get("tab") || "overview");
+  const [clinicalRedesignOn] = useFeatureFlag("clinicalRedesign");
+
+  // Fire legacy-layout activation once whenever this patient's Clinical tab
+  // resolves to the v1 experience. v2 activation is tracked inside
+  // ClinicalTabV2 itself so the two events stay symmetric.
+  useEffect(() => {
+    if (tab === "clinical" && !clinicalRedesignOn) {
+      trackUiEvent("clinical.layout.activated", { layout: "v1" });
+    }
+  }, [tab, clinicalRedesignOn, id]);
   useEffect(() => {
     const urlTab = searchParams.get("tab");
     if (urlTab && urlTab !== tab) setTab(urlTab);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [searchParams, tab]);
   const canAddRecord = user.role === "admin" || user.role === "doctor";
   const canDelete = user.role === "admin";
   const canEditIntake = ["admin", "doctor", "staff"].includes(user.role);
@@ -996,6 +1025,14 @@ export default function PatientDetail() {
   const [intakeRefreshKey, setIntakeRefreshKey] = useState(0);
   const [chargeRecord, setChargeRecord] = useState(null);
   const { providers } = useProviders();
+  const [locations, setLocations] = useState([]);
+  useEffect(() => {
+    let cancelled = false;
+    api.get("/authz/locations")
+      .then((r) => { if (!cancelled) setLocations(r.data || []); })
+      .catch(() => { if (!cancelled) setLocations([]); });
+    return () => { cancelled = true; };
+  }, []);
   const [recordsRange, setRecordsRange] = useState(null);
   const [appointmentsRange, setAppointmentsRange] = useState(null);
   const [intakeRange, setIntakeRange] = useState(null);
@@ -1164,6 +1201,7 @@ export default function PatientDetail() {
     );
   }
 
+  const hasMoreActions = canUnmask || canExport || canDelete;
   return (
     <div data-testid="patient-detail-page" className="space-y-10 animate-in fade-in duration-300">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -1172,43 +1210,62 @@ export default function PatientDetail() {
             <ArrowLeft className="mr-2 h-4 w-4" /> All patients
           </Link>
         </Button>
-        <div className="flex items-center gap-2">
-          {canUnmask && (
-            <Button
-              variant="outline"
-              onClick={() => {
-                const next = !unmask;
-                setUnmask(next);
-                load({ withUnmask: next, breakGlassReason: reason });
-              }}
-              data-testid="patient-unmask-toggle"
-              className="rounded-sm"
-            >
-              {unmask ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
-              {unmask ? "Mask" : "Unmask (audited)"}
-            </Button>
-          )}
-          {canExport && (
-            <Button
-              variant="outline"
-              onClick={exportPatient}
-              data-testid="patient-export-btn"
-              className="rounded-sm"
-            >
-              <Download className="mr-2 h-4 w-4" /> Export JSON
-            </Button>
-          )}
-          {canDelete && (
-            <Button
-              variant="outline"
-              onClick={() => setDeleteConfirm(true)}
-              data-testid="patient-delete-btn"
-              className="rounded-sm border-destructive text-destructive hover:bg-destructive-soft"
-            >
-              <Trash2 className="mr-2 h-4 w-4" /> Soft-delete
-            </Button>
-          )}
-        </div>
+        {hasMoreActions && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="outline"
+                data-testid="patient-more-actions-trigger"
+                className="rounded-full"
+              >
+                <MoreHorizontal className="mr-2 h-4 w-4" aria-hidden="true" />
+                More actions
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[260px]">
+              <DropdownMenuLabel>Patient record</DropdownMenuLabel>
+              {canUnmask && (
+                <DropdownMenuItem
+                  data-testid="patient-menu-toggle-unmask"
+                  onSelect={() => {
+                    const next = !unmask;
+                    setUnmask(next);
+                    load({ withUnmask: next, breakGlassReason: reason });
+                  }}
+                >
+                  {unmask ? (
+                    <EyeOff className="mr-2 h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <Eye className="mr-2 h-4 w-4" aria-hidden="true" />
+                  )}
+                  {unmask ? "Hide protected information" : "Reveal protected information"}
+                </DropdownMenuItem>
+              )}
+              {canExport && (
+                <DropdownMenuItem
+                  data-testid="patient-menu-export"
+                  onSelect={exportPatient}
+                >
+                  <Download className="mr-2 h-4 w-4" aria-hidden="true" />
+                  Export patient data
+                </DropdownMenuItem>
+              )}
+              {canDelete && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    data-testid="patient-menu-archive"
+                    onSelect={() => setDeleteConfirm(true)}
+                    className="text-destructive focus:bg-destructive-soft focus:text-destructive"
+                  >
+                    <Archive className="mr-2 h-4 w-4" aria-hidden="true" />
+                    Archive patient
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       <header className="flex flex-wrap items-start justify-between gap-6">
@@ -1249,22 +1306,33 @@ export default function PatientDetail() {
       >
         <TabsList
           data-testid="patient-detail-tablist"
-          className="flex h-auto w-full flex-wrap justify-start gap-1 rounded-sm bg-muted/60 p-1"
+          className="flex h-auto w-full flex-wrap items-center justify-start gap-1 rounded-lg bg-muted/60 p-1.5"
         >
-          <TabsTrigger value="overview" data-testid="tab-overview" className="rounded-sm">Overview</TabsTrigger>
-          <TabsTrigger value="intake" data-testid="tab-intake" className="rounded-sm">Intake</TabsTrigger>
-          <TabsTrigger value="clinical" data-testid="tab-clinical" className="rounded-sm">Clinical</TabsTrigger>
-          <TabsTrigger value="documents" data-testid="tab-documents" className="rounded-sm">Documents &amp; Attachments</TabsTrigger>
-          <TabsTrigger value="records" data-testid="tab-records" className="rounded-sm">Medical Records</TabsTrigger>
-          <TabsTrigger value="appointments" data-testid="tab-appointments" className="rounded-sm">Appointments</TabsTrigger>
-          <TabsTrigger value="insurance" data-testid="tab-insurance" className="rounded-sm">Insurance</TabsTrigger>
-          <TabsTrigger value="billing" data-testid="tab-billing" className="rounded-sm">Billing &amp; Ledger</TabsTrigger>
+          <span className="ml-1 mr-1 hidden text-xs font-medium text-muted-foreground md:inline" aria-hidden="true">
+            Clinical
+          </span>
+          <TabsTrigger value="overview" data-testid="tab-overview" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Overview</TabsTrigger>
+          <TabsTrigger value="clinical" data-testid="tab-clinical" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Clinical</TabsTrigger>
+          <TabsTrigger value="intake" data-testid="tab-intake" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Intake</TabsTrigger>
+          <TabsTrigger value="records" data-testid="tab-records" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Records</TabsTrigger>
+          <TabsTrigger value="documents" data-testid="tab-documents" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Documents</TabsTrigger>
+          <span
+            aria-hidden="true"
+            className="mx-2 hidden h-6 w-px bg-border md:inline-block"
+          />
+          <span className="mr-1 hidden text-xs font-medium text-muted-foreground md:inline" aria-hidden="true">
+            Administrative
+          </span>
+          <TabsTrigger value="appointments" data-testid="tab-appointments" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Appointments</TabsTrigger>
+          <TabsTrigger value="insurance" data-testid="tab-insurance" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Insurance</TabsTrigger>
+          <TabsTrigger value="billing" data-testid="tab-billing" className="min-h-11 rounded-md px-4 py-2 text-sm data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:font-semibold data-[state=active]:shadow-sm">Billing</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-6">
           <PatientOverview
             patient={patient}
             providers={providers}
+            locations={locations}
             canEdit={canEditIntake}
             onEdit={openEditPatientWizard}
           />
@@ -1281,6 +1349,10 @@ export default function PatientDetail() {
             onEdit={openIntakeWizard}
             refreshKey={intakeRefreshKey}
           />
+          {/* Questionnaires are patient-reported intake forms — they
+              belong on the Intake tab, not Billing. Moved here as part
+              of the 2026-02-15 placement-defect fix. */}
+          <PatientQuestionnairesCard patientId={id} />
         </TabsContent>
 
         <TabsContent value="documents" className="mt-6 space-y-6">
@@ -1288,17 +1360,39 @@ export default function PatientDetail() {
           <PatientDocumentsCard patientId={id} canEdit={canEditIntake} />
         </TabsContent>
 
-        <TabsContent value="clinical" className="mt-6">
-          <ClinicalTab
-            patientId={id}
-            providers={providers}
-            canWrite={canAddRecord}
-            currentUser={user}
-            onReauthNeeded={() => {
-              setReauthIntent("clinical");
-              setReauthOpen(true);
-            }}
-          />
+        <TabsContent value="clinical" className="mt-6 space-y-6">
+          {clinicalRedesignOn ? (
+            <ClinicalTabV2
+              patientId={id}
+              patient={patient}
+              appointments={appointments}
+              providers={providers}
+              canWrite={canAddRecord}
+              currentUser={user}
+              onReauthNeeded={() => {
+                setReauthIntent("clinical");
+                setReauthOpen(true);
+              }}
+            />
+          ) : (
+            <ClinicalTab
+              patientId={id}
+              providers={providers}
+              canWrite={canAddRecord}
+              currentUser={user}
+              onReauthNeeded={() => {
+                setReauthIntent("clinical");
+                setReauthOpen(true);
+              }}
+            />
+          )}
+          {/* AI clinical assistants — chart-review + chart-wide Q&A.
+              Placement-defect fix: these render as siblings after the
+              frozen ClinicalTabV2 so the redesign contract stays intact
+              while clinical decision-support finally lives on the
+              Clinical tab instead of hiding under Billing. */}
+          <ChartBriefCard patientId={id} />
+          <PatientSemanticSearch patientId={id} />
         </TabsContent>
 
         <TabsContent value="records" className="mt-6">
@@ -1408,20 +1502,45 @@ export default function PatientDetail() {
                   : "No appointments in the selected range."}
               </div>
             ) : (
-              <ul className="space-y-2">
+              <ul className="space-y-2" data-testid="patient-appointments-list">
                 {filteredAppointments.map((a) => (
-                  <li key={a.id} className="flex items-center justify-between rounded-sm border border-border bg-card px-5 py-4 text-sm">
-                    <div>
+                  <li
+                    key={a.id}
+                    data-testid={`patient-appt-${a.id}`}
+                    className="flex items-center justify-between gap-3 rounded-sm border border-border bg-card px-5 py-4 text-sm"
+                  >
+                    <div className="min-w-0">
                       <div className="font-medium text-foreground">{formatDateTime(a.start_time)}</div>
                       <div className="text-xs text-muted-foreground">
                         with {a.provider_name} · {relativeFromNow(a.start_time)}
                       </div>
+                      {a.intake_status && (
+                        <div
+                          data-testid={`patient-appt-intake-${a.id}`}
+                          className="mt-1 text-[11px] uppercase tracking-wider text-muted-foreground"
+                        >
+                          Intake: <span className={
+                            a.intake_status === "completed"
+                              ? "text-emerald-700 dark:text-emerald-300"
+                              : a.intake_status === "in_progress"
+                                ? "text-amber-700 dark:text-amber-300"
+                                : "text-muted-foreground"
+                          }>{a.intake_status.replace("_", " ")}</span>
+                          {a.checked_in_at && (
+                            <> · checked in {formatDateTime(a.checked_in_at)}</>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <span className={`rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
-                      a.status === "cancelled" ? "bg-destructive-soft text-destructive"
-                        : a.status === "completed" ? "bg-muted text-muted-foreground"
+                    <span
+                      data-testid={`patient-appt-status-${a.id}`}
+                      className={`shrink-0 rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wider ${
+                        a.status === "cancelled" || a.status === "canceled" || a.status === "no_show"
+                          ? "bg-destructive-soft text-destructive"
+                        : a.status === "completed" || a.status === "checked_out"
+                          ? "bg-muted text-muted-foreground"
                         : "bg-primary/10 text-primary"}`}>
-                      {a.status}
+                      {String(a.status || "").replace(/_/g, " ")}
                     </span>
                   </li>
                 ))}
@@ -1431,11 +1550,17 @@ export default function PatientDetail() {
         </TabsContent>
 
         <TabsContent value="insurance" className="mt-6">
-          <PatientInsuranceManager patientId={id} />
+          <div className="space-y-6">
+            <PatientEligibilityCard patientId={id} />
+            <PatientInsuranceManager patientId={id} />
+          </div>
         </TabsContent>
 
         <TabsContent value="billing" className="mt-6">
-          <PatientLedgerCard patientId={id} />
+          <div className="space-y-6">
+            <PatientLedgerCard patientId={id} title="Activity" />
+            <PatientStatementsCard patientId={id} />
+          </div>
         </TabsContent>
       </Tabs>
 
@@ -1480,31 +1605,35 @@ export default function PatientDetail() {
       <AlertDialog open={deleteConfirm} onOpenChange={(v) => !v && setDeleteConfirm(false)}>
         <AlertDialogContent data-testid="patient-delete-confirm" className="rounded-sm">
           <AlertDialogHeader>
-            <AlertDialogTitle className="font-display">Soft-delete patient?</AlertDialogTitle>
+            <div className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-destructive" aria-hidden="true" />
+              <AlertDialogTitle className="font-display">Archive this patient?</AlertDialogTitle>
+            </div>
             <AlertDialogDescription>
-              The record will be archived and retained for 7 years, per our retention policy. It will
-              disappear from the active list but stay recoverable for compliance.
+              The patient will be removed from active workflows but retained according to the 7-year
+              record-retention policy. This action is audited and can only be reversed by an authorized user.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="space-y-1">
-            <Label>Reason (8+ characters)</Label>
+            <Label>Reason for archiving (8+ characters)</Label>
             <Textarea
               data-testid="patient-delete-reason"
               value={deleteReason}
               onChange={(e) => setDeleteReason(e.target.value)}
               rows={3}
               className="rounded-sm"
+              placeholder="e.g. Patient transferred care to another clinic on Jul 3."
             />
           </div>
           <AlertDialogFooter>
-            <AlertDialogCancel className="rounded-sm">Keep it</AlertDialogCancel>
+            <AlertDialogCancel className="rounded-sm">Keep active</AlertDialogCancel>
             <AlertDialogAction
               data-testid="patient-delete-confirm-btn"
               disabled={deleteReason.trim().length < 8}
               onClick={softDelete}
               className="rounded-sm bg-destructive hover:brightness-95"
             >
-              Soft-delete
+              Archive patient
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

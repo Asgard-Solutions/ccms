@@ -1,6 +1,12 @@
 """
 Seed admin + demo users on startup (idempotent).
 All seeded passwords meet the HIPAA-compliant strength policy.
+
+Demo identities belong to the fictional Riverbend Chiropractic &
+Wellness clinic (see /app/memory/DEMO_SEED.md). Emails + passwords are
+stable (tests + login helper depend on them); display names, phones,
+job titles, and signature credentials are realistic so the app never
+looks like a dev sandbox on first login.
 """
 import os
 import uuid
@@ -14,34 +20,82 @@ DEMO_USERS = [
     {
         "email": "doctor@ccms.app",
         "password": "Doctor@ComplianceClinic1",
-        "name": "Dr. Alicia Monroe",
+        "name": "Dr. Noah Carter",
         "role": "doctor",
-        "phone": "+1-555-0102",
+        "phone": "+1-503-555-0142",
+        "title": "Lead Chiropractor, DC",
+        "credentials": "DC, CCSP",
+        "npi": "1841792253",
+        "display_name": "Dr. Noah Carter, DC",
+        "first_name": "Noah",
+        "last_name": "Carter",
+        "credentials_suffix": "DC, CCSP",
+        "preferred_signature_name": "N. Carter, DC",
+        "job_title": "Lead Chiropractor",
     },
     {
         "email": "staff@ccms.app",
         "password": "Staff@ComplianceClinic1",
-        "name": "Jamie Reyes",
+        "name": "Mia Ramirez",
         "role": "staff",
-        "phone": "+1-555-0103",
+        "phone": "+1-503-555-0158",
+        "title": "Front Desk Coordinator",
+        "display_name": "Mia Ramirez",
+        "first_name": "Mia",
+        "last_name": "Ramirez",
+        "credentials_suffix": "",
+        "preferred_signature_name": "M. Ramirez",
+        "job_title": "Front Desk Coordinator",
     },
     {
         "email": "patient@ccms.app",
         "password": "Patient@ComplianceClinic1",
-        "name": "Morgan Lee",
+        "name": "Ethan Parker",
         "role": "patient",
-        "phone": "+1-555-0104",
+        "phone": "+1-503-555-0190",
+        "display_name": "Ethan Parker",
+        "first_name": "Ethan",
+        "last_name": "Parker",
+        "credentials_suffix": "",
+        "preferred_signature_name": "",
+        "job_title": "",
     },
 ]
 
+ADMIN_PROFILE = {
+    "name": "Ava Bennett",
+    "title": "Clinic Administrator",
+    "display_name": "Ava Bennett",
+    "phone": "+1-503-555-0101",
+    "first_name": "Ava",
+    "last_name": "Bennett",
+    "credentials_suffix": "",
+    "preferred_signature_name": "A. Bennett",
+    "job_title": "Clinic Administrator",
+}
 
-async def _upsert_user(email: str, password: str, name: str, role: str, phone: str) -> None:
+
+async def _upsert_user(
+    email: str, password: str, name: str, role: str, phone: str,
+    *,
+    title: str | None = None,
+    credentials: str | None = None,
+    npi: str | None = None,
+    display_name: str | None = None,
+    first_name: str | None = None,
+    last_name: str | None = None,
+    credentials_suffix: str | None = None,
+    preferred_signature_name: str | None = None,
+    job_title: str | None = None,
+    **_ignored,
+) -> None:
     db = get_db()
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     now = datetime.now(timezone.utc).isoformat()
     hashed = hash_password(password)
 
-    # Legacy demo users all live under the Default Practice tenant.
+    # Legacy demo users all live under the Riverbend Chiropractic &
+    # Wellness tenant (slug=default).
     default_tenant = await db.tenants.find_one({"slug": "default"}, {"_id": 0, "id": 1})
     default_tenant_id = default_tenant["id"] if default_tenant else None
 
@@ -56,6 +110,43 @@ async def _upsert_user(email: str, password: str, name: str, role: str, phone: s
         "tenant_scope_all": role in ("admin", "super_admin"),
         "updated_at": now,
     }
+    # Realistic professional profile fields — optional, idempotently refreshed.
+    if title is not None:
+        base["title"] = title
+    if credentials is not None:
+        base["credentials"] = credentials
+    if npi is not None:
+        base["npi"] = npi
+    if display_name is not None:
+        base["display_name"] = display_name
+    # Self-service profile fields — idempotently reset on every boot so
+    # pytest-polluted rows (e.g. "Ada Lovelace" written during an auth
+    # test) don't leak into the demo.
+    if first_name is not None:
+        base["first_name"] = first_name
+    if last_name is not None:
+        base["last_name"] = last_name
+    if credentials_suffix is not None:
+        base["credentials_suffix"] = credentials_suffix
+    if preferred_signature_name is not None:
+        base["preferred_signature_name"] = preferred_signature_name
+    if job_title is not None:
+        base["job_title"] = job_title
+    # Force demo accounts to sit in Pacific time (Portland clinic) and
+    # clear the legacy mobile/work_phone fields that pytest assertions
+    # populate. Phone-on-profile is re-exposed via `phone` above.
+    base["time_zone"] = "America/Los_Angeles"
+    base["mobile_phone"] = ""
+    base["work_phone"] = ""
+    # Demo accounts: always reset suspicious-login step-up flags on
+    # seed. Playwright/testing-agent runs log in from fresh browsers
+    # (new user-agent strings) which trip the `record_login_signal`
+    # hook and set `step_up_required=True`; that then 401s every
+    # subsequent authz check because the demo users have no MFA
+    # factor to "step up" to. Clearing here makes the demo walkable
+    # and re-lockdown still fires on a real suspicious-login event.
+    base["step_up_required"] = False
+    base["suspicious_flag"] = False
     if existing is None:
         await db.users.insert_one(
             {
@@ -95,55 +186,148 @@ async def _upsert_user(email: str, password: str, name: str, role: str, phone: s
 
 async def seed() -> None:
     from core.crypto import encrypt_text  # avoid import cycle at module load
+    from services.patient._shared import encrypt_patient_value  # noqa: WPS433
 
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@ccms.app")
     admin_password = os.environ.get("ADMIN_PASSWORD", "Admin@ComplianceClinic1")
-    await _upsert_user(admin_email, admin_password, "System Admin", "admin", "+1-555-0101")
+    await _upsert_user(
+        admin_email, admin_password,
+        ADMIN_PROFILE["name"], "admin", ADMIN_PROFILE["phone"],
+        title=ADMIN_PROFILE["title"],
+        display_name=ADMIN_PROFILE["display_name"],
+        first_name=ADMIN_PROFILE["first_name"],
+        last_name=ADMIN_PROFILE["last_name"],
+        credentials_suffix=ADMIN_PROFILE["credentials_suffix"],
+        preferred_signature_name=ADMIN_PROFILE["preferred_signature_name"],
+        job_title=ADMIN_PROFILE["job_title"],
+    )
     for u in DEMO_USERS:
         await _upsert_user(**u)
 
-    # Seed a demo patient record linked to the demo patient user
+    # Seed the demo patient record (Ethan Parker — active-adult
+    # self-pay maintenance persona). Realistic intake so the app looks
+    # lived-in on the first login. See /app/memory/DEMO_SEED.md.
     db = get_db()
     patient_email = "patient@ccms.app"
     patient_user = await db.users.find_one({"email": patient_email}, {"_id": 0})
+    doctor_user = await db.users.find_one(
+        {"email": "doctor@ccms.app"}, {"_id": 0, "id": 1},
+    )
+    doctor_id = doctor_user["id"] if doctor_user else None
     if patient_user:
         await db.patients.update_many(
             {"email": {"$in": ["patient@ccms.local", patient_email]}},
             {"$set": {"user_id": patient_user["id"], "email": patient_email}},
         )
-        has_record = await db.patients.find_one(
-            {"user_id": patient_user["id"]}, {"_id": 0, "id": 1}
+        existing_record = await db.patients.find_one(
+            {"user_id": patient_user["id"]}, {"_id": 0, "id": 1, "first_name": 1},
         )
-        if not has_record:
-            now = datetime.now(timezone.utc).isoformat()
-            # Ensure the demo patient is attached to the Default Practice.
-            default_tenant = await db.tenants.find_one({"slug": "default"}, {"_id": 0, "id": 1})
-            default_location = await db.locations.find_one(
-                {"tenant_id": default_tenant["id"]} if default_tenant else {},
-                {"_id": 0, "id": 1},
-            ) if default_tenant else None
-            await db.patients.insert_one(
-                {
-                    "id": str(uuid.uuid4()),
-                    "user_id": patient_user["id"],
-                    "tenant_id": default_tenant["id"] if default_tenant else None,
-                    "location_id": default_location["id"] if default_location else None,
-                    "first_name": "Morgan",
-                    "last_name": "Lee",
-                    "date_of_birth": "1990-04-12",
-                    "gender": "non-binary",
-                    "phone": patient_user.get("phone"),
-                    "email": patient_user["email"],
-                    # PHI free-text fields are encrypted at rest.
-                    "address": encrypt_text("124 Willow Lane, Portland, OR"),
-                    "emergency_contact": encrypt_text("Taylor Lee (+1-555-0199)"),
-                    "notes": encrypt_text(
-                        "Initial intake — chronic lower-back discomfort."
-                    ),
-                    "status": "active",
-                    "created_at": now,
-                    "updated_at": now,
-                }
+        now = datetime.now(timezone.utc).isoformat()
+        default_tenant = await db.tenants.find_one({"slug": "default"}, {"_id": 0, "id": 1})
+        default_location = await db.locations.find_one(
+            {"tenant_id": default_tenant["id"]} if default_tenant else {},
+            {"_id": 0, "id": 1},
+        ) if default_tenant else None
+
+        patient_doc = {
+            "tenant_id": default_tenant["id"] if default_tenant else None,
+            "location_id": default_location["id"] if default_location else None,
+            "first_name": "Ethan",
+            "middle_name": "James",
+            "last_name": "Parker",
+            "preferred_name": "Ethan",
+            "date_of_birth": "1991-08-17",
+            "gender": "male",
+            "pronouns": "he/him",
+            "marital_status": "married",
+            "language": "English",
+            "phone": patient_user.get("phone") or "+1-503-555-0190",
+            "phone_work": "+1-503-555-0233",
+            "email": patient_user["email"],
+            "preferred_contact_method": "email",
+            "occupation": "Software Engineer",
+            "employer": "Cascade Analytics",
+            "primary_provider_id": doctor_id,
+            # PHI free-text fields — encrypted at rest.
+            "address": encrypt_text(
+                "842 NW Lovejoy St, Apt 4B, Portland, OR 97209"
+            ),
+            "emergency_contact": encrypt_text(
+                "Sarah Parker (Spouse) — +1-503-555-0191"
+            ),
+            "notes": encrypt_text(
+                "Active-adult wellness patient. Returns every 4–6 weeks "
+                "for maintenance adjustments after resolving a 2024 "
+                "lumbar strain episode. No current acute complaint."
+            ),
+            # Grouped sections — the Edit Patient wizard reads from
+            # these and shows inline validation errors when missing.
+            # Encrypted at rest as JSON blobs (see
+            # services/patient/_shared.py :: PATIENT_SECTION_ENCRYPTED).
+            "demographics": encrypt_patient_value({
+                "first_name": "Ethan",
+                "middle_name": "James",
+                "last_name": "Parker",
+                "preferred_name": "Ethan",
+                "date_of_birth": "1991-08-17",
+                "gender": "male",
+                "sex_at_birth": "male",
+                "pronouns": "he/him",
+                "marital_status": "married",
+                "language": "English",
+                "occupation": "Software Engineer",
+                "employer": "Cascade Analytics",
+                "employer_phone": "+1-503-555-0233",
+            }),
+            "contact": encrypt_patient_value({
+                "phone": patient_user.get("phone") or "+1-503-555-0190",
+                "phone_alt": None,
+                "phone_work": "+1-503-555-0233",
+                "email": patient_user["email"],
+                "preferred_contact_method": "email",
+                "sms_consent": True,
+                "email_consent": True,
+                "voicemail_consent": True,
+            }),
+            "address_details": encrypt_patient_value({
+                "line1": "842 NW Lovejoy St",
+                "line2": "Apt 4B",
+                "city": "Portland",
+                "state": "OR",
+                "postal_code": "97209",
+                "country": "USA",
+            }),
+            "emergency_contact_details": encrypt_patient_value({
+                "name": "Sarah Parker",
+                "relationship": "Spouse",
+                "phone": "+1-503-555-0191",
+                "phone_alt": None,
+                "email": "sarah.parker@example.com",
+            }),
+            "admin": encrypt_patient_value({
+                "primary_provider_id": doctor_id,
+                "referral_source": "Employee demo account",
+                "tags": ["self_pay_wellness"],
+            }),
+            "guarantor": encrypt_patient_value({"same_as_patient": True}),
+            "insurance": None,
+            "status": "active",
+            "updated_at": now,
+        }
+
+        if existing_record is None:
+            await db.patients.insert_one({
+                "id": str(uuid.uuid4()),
+                "user_id": patient_user["id"],
+                "created_at": now,
+                **patient_doc,
+            })
+        else:
+            # Refresh in place so a re-seed after an upgrade pulls the
+            # realistic persona onto the legacy "Morgan Lee" row.
+            await db.patients.update_one(
+                {"id": existing_record["id"]},
+                {"$set": patient_doc},
             )
 
     await _write_credentials_file(admin_email, admin_password)
@@ -158,18 +342,19 @@ async def _write_credentials_file(admin_email: str, admin_password: str) -> None
 > Passwords all meet the 12-char complexity policy. Required MFA prompt appears
 > at login for users who have enrolled TOTP. Admin/doctor/staff roles see an
 > MFA-setup banner until they enrol.
+>
+> All demo accounts map to fictional identities inside
+> **Riverbend Chiropractic & Wellness** (Portland, OR). See
+> `/app/memory/DEMO_SEED.md` for the full persona catalog.
 
-## Admin
-- email: `{admin_email}`
-- password: `{admin_password}`
-- role: `admin`
+## Demo clinic sign-in quick reference
 
-## Demo users
-| Role    | Email                 | Password                      |
-|---------|-----------------------|-------------------------------|
-| doctor  | doctor@ccms.app       | Doctor@ComplianceClinic1      |
-| staff   | staff@ccms.app        | Staff@ComplianceClinic1       |
-| patient | patient@ccms.app      | Patient@ComplianceClinic1     |
+| Role label     | Person             | Email              | Password                   |
+|----------------|--------------------|--------------------|----------------------------|
+| Administrator  | Ava Bennett        | `{admin_email}`      | `{admin_password}` |
+| Chiropractor   | Dr. Noah Carter    | `doctor@ccms.app`  | `Doctor@ComplianceClinic1` |
+| Front desk     | Mia Ramirez        | `staff@ccms.app`   | `Staff@ComplianceClinic1`  |
+| Patient portal | Ethan Parker       | `patient@ccms.app` | `Patient@ComplianceClinic1`|
 
 ## Auth endpoints
 - POST /api/auth/register          — public; creates a `patient`
@@ -227,17 +412,17 @@ async def _write_credentials_file(admin_email: str, admin_password: str) -> None
 ### Platform admin (sees all tenants)
 - email: `platform-admin@ccms.app`
 - password: `Platform@ComplianceClinic1`
-- role: `platform_admin` (tenant_id = None)
+- role: `platform_admin` (tenant_id = None) — Owen Sinclair, Operations Lead
 
 ### Sunrise Chiro Group (multi-location demo)
 All demo users share the password: `Sunrise@ComplianceClinic1`
 
-| Email                            | Role   | Tenant scope         | Locations                     |
-|----------------------------------|--------|----------------------|-------------------------------|
-| group-admin@sunrise.ccms.app     | admin  | entire tenant        | all                           |
-| downtown-doc@sunrise.ccms.app    | doctor | specific location    | Downtown Clinic               |
-| floater-doc@sunrise.ccms.app     | doctor | multi-location       | Downtown + Uptown             |
-| eastside-staff@sunrise.ccms.app  | staff  | specific location    | Eastside Clinic               |
+| Email                            | Person           | Role   | Tenant scope         | Locations                     |
+|----------------------------------|------------------|--------|----------------------|-------------------------------|
+| group-admin@sunrise.ccms.app     | Parker Hayes     | admin  | entire tenant        | all                           |
+| downtown-doc@sunrise.ccms.app    | Dr. Casey Nguyen | doctor | specific location    | Downtown Clinic               |
+| floater-doc@sunrise.ccms.app     | Dr. Jules Okafor | doctor | multi-location       | Downtown + Uptown             |
+| eastside-staff@sunrise.ccms.app  | Riley Thompson   | staff  | specific location    | Eastside Clinic               |
 
 ### Tenant endpoints
 - GET  /api/tenancy/me/context                       — current user's tenant + visible locations

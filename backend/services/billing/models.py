@@ -228,6 +228,29 @@ PayerType = Literal["commercial", "medicare", "medicaid", "workers_comp",
                     "auto", "self_pay", "other"]
 RemitMethod = Literal["era", "paper_eob", "none"]
 
+# Phase 2a — clearinghouse routing
+#
+# `clearinghouse_route` names the adapter used to transmit claims /
+# pull ERAs for this payer. `"none"` keeps the current manual workflow
+# (operator posts claims via paper/fax/portal). Additional adapters
+# register in `services.billing.clearinghouse.routing`.
+ClearinghouseRoute = Literal[
+    "none",
+    "change_healthcare",
+    "optum",
+    "availity",
+    "waystar",
+]
+# How claims leave the system for this payer. Defaults to `portal` to
+# preserve the existing manual workflow until clearinghouse enrollment
+# has flipped the payer to `edi`.
+ClaimSubmissionMode = Literal["edi", "portal", "paper"]
+# Enrollment progress toward a clearinghouse adapter. Gate real EDI
+# submission on `enrolled`.
+EnrollmentStatus = Literal[
+    "not_started", "in_progress", "enrolled", "suspended",
+]
+
 
 class PayerCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -237,6 +260,27 @@ class PayerCreate(BaseModel):
     electronic_payer_id: str | None = Field(default=None, max_length=40)
     remit_method: RemitMethod = "era"
     notes: str | None = Field(default=None, max_length=2000)
+    # Phase 2a — clearinghouse routing (all optional / safe defaults)
+    clearinghouse_route: ClearinghouseRoute = "none"
+    claim_submission_mode: ClaimSubmissionMode = "portal"
+    enrollment_status: EnrollmentStatus = "not_started"
+    trading_partner_id: str | None = Field(default=None, max_length=60)
+    # Phase 6 — clearinghouse-side routing identifiers. The CPID /
+    # realtime payer id are assigned by the clearinghouse and
+    # SEPARATE from the insurance-card `electronic_payer_id`. We
+    # never assume the two are equal — 837P must use `claims_cpid`
+    # on the wire when present.
+    claims_cpid: str | None = Field(default=None, max_length=40)
+    realtime_payer_id: str | None = Field(default=None, max_length=40)
+    enrollment_required: bool = False
+    routing_metadata: dict | None = None
+    # Phase 9 — payer-level opt-in for stricter chiropractic rules.
+    # Medicare always gets these rules as errors; other payers only
+    # when the operator explicitly opts in. Keeps chiropractic
+    # enforcement *payer-rule driven* instead of hardcoded by name.
+    requires_at_modifier: bool = False
+    requires_subluxation_primary: bool = False
+    requires_initial_treatment_date: bool = False
 
     @field_validator("name")
     @classmethod
@@ -256,6 +300,20 @@ class PayerUpdate(BaseModel):
     remit_method: RemitMethod | None = None
     notes: str | None = Field(default=None, max_length=2000)
     status: Literal["active", "inactive"] | None = None
+    # Phase 2a — clearinghouse routing
+    clearinghouse_route: ClearinghouseRoute | None = None
+    claim_submission_mode: ClaimSubmissionMode | None = None
+    enrollment_status: EnrollmentStatus | None = None
+    trading_partner_id: str | None = Field(default=None, max_length=60)
+    # Phase 6
+    claims_cpid: str | None = Field(default=None, max_length=40)
+    realtime_payer_id: str | None = Field(default=None, max_length=40)
+    enrollment_required: bool | None = None
+    routing_metadata: dict | None = None
+    # Phase 9 — chiropractic enforcement opt-ins.
+    requires_at_modifier: bool | None = None
+    requires_subluxation_primary: bool | None = None
+    requires_initial_treatment_date: bool | None = None
 
 
 class PayerPublic(BaseModel):
@@ -269,6 +327,126 @@ class PayerPublic(BaseModel):
     remit_method: RemitMethod
     notes: str | None = None
     status: Literal["active", "inactive"] = "active"
+    # Phase 2a — clearinghouse routing (defaults keep legacy rows valid).
+    clearinghouse_route: ClearinghouseRoute = "none"
+    claim_submission_mode: ClaimSubmissionMode = "portal"
+    enrollment_status: EnrollmentStatus = "not_started"
+    trading_partner_id: str | None = None
+    # Phase 6 — clearinghouse-side routing identifiers + cache.
+    claims_cpid: str | None = None
+    realtime_payer_id: str | None = None
+    enrollment_required: bool = False
+    routing_metadata: dict | None = None
+    routing_last_resolved_at: str | None = None
+    # Phase 9 — chiropractic enforcement opt-ins (default False so
+    # legacy rows continue to behave exactly like pre-Phase 9).
+    requires_at_modifier: bool = False
+    requires_subluxation_primary: bool = False
+    requires_initial_treatment_date: bool = False
+    created_at: str
+    updated_at: str
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Providers + Service Facilities
+# ---------------------------------------------------------------------------
+# A clinic-side directory of the real NPI / Tax-ID / address records
+# needed to populate 837P loops 2010AA (Billing provider), 2310B
+# (Rendering), and 2310C (Service facility). Existing claims still
+# carry free-text `billing_provider_id` / `rendering_provider_id` /
+# `facility_id` FKs — when a matching row exists in these collections
+# the clearinghouse payload builder resolves it to full wire shape;
+# otherwise the ID is passed through as-is for backward compat.
+ProviderKind = Literal[
+    "billing",      # loop 2010AA (group / type-2 NPI)
+    "rendering",    # loop 2310B (individual / type-1 NPI)
+    "referring",    # loop 2310A
+    "supervising",  # loop 2310D
+]
+
+
+class ProviderCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: ProviderKind
+    name: str = Field(min_length=1, max_length=200)
+    # NPI type-1 (individual, 10 digits) or type-2 (organisation).
+    npi: str = Field(min_length=10, max_length=10, pattern=r"^\d{10}$")
+    # EIN or SSN; 9 digits with optional dash. Required for billing
+    # providers (2010AA), optional elsewhere.
+    tax_id: str | None = Field(default=None, max_length=15)
+    taxonomy_code: str | None = Field(default=None, max_length=20)
+    phone: str | None = Field(default=None, max_length=30)
+    address: dict | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ProviderUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    kind: ProviderKind | None = None
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    npi: str | None = Field(
+        default=None, min_length=10, max_length=10, pattern=r"^\d{10}$",
+    )
+    tax_id: str | None = Field(default=None, max_length=15)
+    taxonomy_code: str | None = Field(default=None, max_length=20)
+    phone: str | None = Field(default=None, max_length=30)
+    address: dict | None = None
+    status: Literal["active", "inactive"] | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ProviderPublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    tenant_id: str
+    kind: ProviderKind
+    name: str
+    npi: str
+    tax_id: str | None = None
+    taxonomy_code: str | None = None
+    phone: str | None = None
+    address: dict | None = None
+    status: Literal["active", "inactive"] = "active"
+    notes: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class ServiceFacilityCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=200)
+    # Type-2 NPI for the facility location (2310C). Optional — when
+    # absent the billing provider's address is used on the wire.
+    npi: str | None = Field(
+        default=None, min_length=10, max_length=10, pattern=r"^\d{10}$",
+    )
+    address: dict | None = None
+    phone: str | None = Field(default=None, max_length=30)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ServiceFacilityUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    npi: str | None = Field(
+        default=None, min_length=10, max_length=10, pattern=r"^\d{10}$",
+    )
+    address: dict | None = None
+    phone: str | None = Field(default=None, max_length=30)
+    status: Literal["active", "inactive"] | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ServiceFacilityPublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    tenant_id: str
+    name: str
+    npi: str | None = None
+    address: dict | None = None
+    phone: str | None = None
+    status: Literal["active", "inactive"] = "active"
+    notes: str | None = None
     created_at: str
     updated_at: str
 
@@ -295,6 +473,17 @@ class PatientInsurancePolicyCreate(BaseModel):
     termination_date: str | None = Field(
         default=None, pattern=r"^\d{4}-\d{2}-\d{2}$",
     )
+    # Phase 5 — structured subscriber fields required on 837P when
+    # the subscriber is not the patient (SBR loop 2000B). These are
+    # optional on create to preserve the legacy flat intake shape;
+    # the scrubber enforces presence when `relationship != self`.
+    subscriber_dob: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )
+    subscriber_gender: Literal["M", "F", "U"] | None = None
+    # Loose dict to keep address parsing out of this schema. Expected
+    # keys: street1 / street2 / city / state / postal_code / country.
+    subscriber_address: dict | None = None
     notes: str | None = Field(default=None, max_length=2000)
 
 
@@ -312,6 +501,10 @@ class PatientInsurancePolicyPublic(BaseModel):
     effective_date: str | None = None
     termination_date: str | None = None
     status: Literal["active", "inactive"] = "active"
+    # Phase 5 — structured subscriber fields (see note above).
+    subscriber_dob: str | None = None
+    subscriber_gender: Literal["M", "F", "U"] | None = None
+    subscriber_address: dict | None = None
     notes: str | None = None
     created_at: str
     updated_at: str
@@ -399,6 +592,12 @@ class InvoiceLinePublic(BaseModel):
     modifiers: list[str] = Field(default_factory=list)
     provider_id: str | None = None
 
+    @field_validator("code_type", mode="before")
+    @classmethod
+    def _coerce_code_type(cls, v):
+        # Tolerate legacy upper-case rows in Mongo.
+        return v.lower() if isinstance(v, str) else v
+
 
 # ---------------------------------------------------------------------------
 # Payments & allocations
@@ -449,12 +648,33 @@ class PaymentPublic(BaseModel):
     status: PaymentStatus
     amount_cents: int
     allocated_cents: int = 0
-    currency: str
+    currency: str = "USD"
     received_at: str | None = None
     reference: str | None = None
     external_txn_id: str | None = None
     created_at: str
     updated_at: str
+
+    # Legacy-data tolerance: older rows (pre-2026-Q1) used
+    # `status="completed"` before the gateway-aware status machine
+    # was introduced. Normalise them to `captured` on read so the
+    # list endpoint doesn't 500 on historical data. Writes still go
+    # through the modern Literal above.
+    @field_validator("status", mode="before")
+    @classmethod
+    def _coerce_legacy_status(cls, value):
+        if value == "completed":
+            return "captured"
+        return value
+
+    # Same tolerance for currency: historical demo-seed rows landed
+    # without a currency field before the field was added to the seed.
+    # Default to USD on read so the list endpoint never 500s on
+    # pre-existing rows.
+    @field_validator("currency", mode="before")
+    @classmethod
+    def _default_currency(cls, value):
+        return value or "USD"
 
 
 # ---------------------------------------------------------------------------
@@ -546,6 +766,24 @@ class ClaimCreate(BaseModel):
     facility_id: str | None = None
     authorization_number: str | None = Field(default=None, max_length=60)
     referral_number: str | None = Field(default=None, max_length=60)
+    # Phase 5 — 837P foundational fields.
+    # PCN: provider-assigned unique claim id sent in CLM01. Must be
+    # unique per tenant. When absent, the router auto-assigns
+    # `CCMS-<8char>` derived from the claim's uuid so existing clients
+    # keep working.
+    patient_control_number: str | None = Field(default=None, max_length=38)
+    accident_date: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )
+    onset_date: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )
+    # Phase 9 — initial treatment date of the current condition.
+    # Distinct from `onset_date` (the first symptom date). Required on
+    # Medicare chiropractic claims; emitted as X12 DTP*454 when set.
+    initial_treatment_date: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}$",
+    )
     service_date_from: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     service_date_to: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     diagnoses: list[ClaimDiagnosisInput] = Field(min_length=1, max_length=12)
@@ -570,6 +808,29 @@ class ClaimPublic(BaseModel):
     facility_id: str | None = None
     authorization_number: str | None = None
     referral_number: str | None = None
+    # Phase 5 — 837P foundational fields
+    patient_control_number: str | None = None
+    # Populated from remittance / 277CA events — the payer's claim
+    # control number (ICN / DCN). Empty until the payer responds.
+    payer_claim_control_number: str | None = None
+    accident_date: str | None = None
+    onset_date: str | None = None
+    initial_treatment_date: str | None = None
+    # Phase 10 — operational follow-up workflow fields. Every claim
+    # carries a human-readable flag + reason set either manually by
+    # staff or automatically by the inbound-report pipeline. The
+    # Claims Queue's "Follow-up needed" tab aggregates three sources:
+    #   1. `followup_flag=True` (manual or auto)
+    #   2. raw status ∈ {partially_paid, appealed}
+    #   3. stale submissions (see `followup_claim_ids`)
+    followup_flag: bool = False
+    followup_reason: str | None = None
+    followup_flagged_at: str | None = None
+    followup_flagged_by: str | None = None
+    # Next action date the operator should act by. Computed from
+    # `followup_flagged_at + SLA days` at flag time, or set manually
+    # when staff triage a claim. Ticker-UI consumers sort on this.
+    next_action_at: str | None = None
     status: ClaimStatus
     service_date_from: str
     service_date_to: str
@@ -587,6 +848,12 @@ class ClaimPublic(BaseModel):
     assigned_to: str | None = None
     last_submission_at: str | None = None
     submission_count: int = 0
+    # Phase 2b — queue enrichment. Populated by the named-queue
+    # endpoint from the `claim_events` stream so operators see "last
+    # activity" without drilling into the timeline. Always `None` on
+    # create / detail / patch responses.
+    last_event: str | None = None
+    last_event_at: str | None = None
     created_at: str
     updated_at: str
 
@@ -628,6 +895,15 @@ class ClaimSubmissionPublic(BaseModel):
     submitted_by: str
     payload_format: str          # "json" | "x12-837p-preview"
     payload_size_bytes: int
+    # Phase 2a — adapter handoff metadata
+    adapter_route: str | None = None
+    adapter_status: str | None = None
+    adapter_external_id: str | None = None
+    adapter_message: str | None = None
+    # Phase 8 — transport trace identifiers (operator debugging / support)
+    trace_id: str | None = None
+    correlation_id: str | None = None
+    sandbox: bool = False
     # Outcome fields (populated once recorded)
     outcome: SubmissionOutcomeKind | None = None
     outcome_at: str | None = None
@@ -636,6 +912,26 @@ class ClaimSubmissionPublic(BaseModel):
     denial_code: str | None = None
     paid_cents: int | None = None
     notes: str | None = None
+
+
+class ClaimBulkSubmitRequest(BaseModel):
+    """Phase 8 — batch submission request.
+
+    The bulk endpoint runs the scrubber for every claim and submits the
+    ones that pass through the adapter resolved for each claim's
+    payer. There's no server-side queue — submissions are processed
+    synchronously in claim-id order so operator feedback is immediate.
+    """
+    model_config = ConfigDict(extra="forbid")
+    claim_ids: list[str] = Field(min_length=1, max_length=50)
+    method: SubmissionMethod = "batch_file"
+    external_reference: str | None = Field(default=None, max_length=60)
+    notes: str | None = Field(default=None, max_length=2000)
+    # When True the endpoint refuses to submit any claim that fails
+    # validation. When False the endpoint still skips failing claims
+    # but returns them in `failed_validation` so the operator can
+    # triage. Defaults to True — safer posture for real billing.
+    strict: bool = True
 
 
 class ClaimAssignmentUpdate(BaseModel):
@@ -774,6 +1070,10 @@ class StatementPublic(BaseModel):
     total_balance_cents: int
     invoice_count: int
     body: str           # rendered plain-text statement
+    invoice_breakdown: list[dict] = Field(default_factory=list)
+    sent_at: str | None = None
+    sent_via: str | None = None   # "email" | "mail" | "portal"
+    sent_to: str | None = None    # redacted recipient for audit
     created_at: str
 
 
@@ -784,3 +1084,219 @@ class AgingBucket(BaseModel):
     max_days: int | None # null means "open-ended 120+"
     balance_cents: int
     invoice_count: int
+
+
+# ---------------------------------------------------------------------------
+# Phase 2a — Claim event stream
+# ---------------------------------------------------------------------------
+# An append-only chronological record of every transport- or state-
+# significant thing that happened to a claim. Unlike the claim status
+# enum (which stays minimal and portable), events let us record
+# adapter-specific acknowledgments (999 / 277CA), ERA linkage,
+# resubmissions, and appeal lifecycle without exploding the canonical
+# status vocabulary.
+#
+# Writers: services/billing/events.py::emit_claim_event
+# Readers: GET /api/billing/claims/{id}/events, ClaimDetail timeline.
+ClaimEventType = Literal[
+    "created",
+    "validated",
+    "submitted",
+    "resubmitted",
+    "ack_999_accepted",
+    "ack_999_rejected",
+    "ack_277ca_accepted",
+    "ack_277ca_rejected",
+    "outcome_recorded",
+    "era_posted",
+    "accepted",
+    "paid",
+    "partially_paid",
+    "rejected",
+    "denied",
+    "appeal_filed",
+    "assigned",
+    "voided",
+    "closed",
+    "followup_flagged",
+    "followup_cleared",
+]
+
+
+class ClaimEventPublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    tenant_id: str
+    claim_id: str
+    event_type: ClaimEventType
+    # Optional links to transport records / remittances.
+    submission_id: str | None = None
+    remittance_id: str | None = None
+    # Which clearinghouse adapter (if any) emitted this event.
+    adapter_route: str | None = None
+    # Optional CARC/denial code or payer reference surfaced on the event.
+    denial_code: str | None = None
+    # Free-form structured payload — intentionally untyped so adapter-
+    # specific echoes (999 details, 277CA snapshots, etc.) can ride along
+    # without bloating the canonical model.
+    payload: dict | None = None
+    # `from_status` / `to_status` are populated for status-moving events
+    # so the timeline can render "draft → ready" without re-joining.
+    from_status: str | None = None
+    to_status: str | None = None
+    # `occurred_at` is optional for legacy/demo-seeded rows where only
+    # `created_at` was persisted; callers should fall back to created_at
+    # in the UI when this is null.
+    occurred_at: str | None = None
+    recorded_by: str | None = None
+    created_at: str
+
+
+# ---------------------------------------------------------------------------
+# Phase 2c — Clearinghouse enrollments
+# ---------------------------------------------------------------------------
+# Per-tenant, per-payer record of enrollment progress with a specific
+# clearinghouse. Gates real submissions: an adapter may refuse to
+# transmit claims for a payer whose enrollment is not `enrolled`.
+#
+# Storage collection: `clearinghouse_enrollments`.
+# Uniqueness:         (tenant_id, payer_id, clearinghouse)
+EnrollmentState = Literal[
+    "not_started", "in_progress", "enrolled", "suspended",
+]
+
+
+class ClearinghouseEnrollmentCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    payer_id: str = Field(min_length=1)
+    clearinghouse: ClearinghouseRoute
+    status: EnrollmentState = "not_started"
+    submitter_id: str | None = Field(default=None, max_length=60)
+    trading_partner_id: str | None = Field(default=None, max_length=60)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ClearinghouseEnrollmentUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    status: EnrollmentState | None = None
+    submitter_id: str | None = Field(default=None, max_length=60)
+    trading_partner_id: str | None = Field(default=None, max_length=60)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ClearinghouseEnrollmentPublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    tenant_id: str
+    payer_id: str
+    clearinghouse: ClearinghouseRoute
+    status: EnrollmentState
+    submitter_id: str | None = None
+    trading_partner_id: str | None = None
+    notes: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class ClearinghouseConfigSummary(BaseModel):
+    """Env-sourced, secret-free summary of one registered adapter."""
+    model_config = ConfigDict(extra="ignore")
+    route_id: str
+    mode: str                        # "disabled" | "sandbox" | "production"
+    base_url: str | None = None
+    has_client_id: bool = False
+    has_client_secret: bool = False
+    client_id_hint: str | None = None
+    env_prefix: str | None = None
+    supports_edi: bool = False
+    supports_era: bool = False
+    supports_eligibility: bool = False
+    # Phase 6 — envelope identity + per-service credential indicators.
+    # None of these fields ever carry raw secret values — hints are
+    # obfuscated via the adapter's `_redact()` helper.
+    receiver_id: str | None = None
+    receiver_name: str | None = None
+    biller_id: str | None = None
+    submitter_id: str | None = None
+    has_claims_username: bool = False
+    has_claims_password: bool = False
+    claims_username_hint: str | None = None
+    has_reports_username: bool = False
+    has_reports_password: bool = False
+    reports_username_hint: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — Clearinghouse reports / acknowledgments
+# ---------------------------------------------------------------------------
+# An append-only log of every 999 / 277CA / portal-confirmation / ERA
+# receipt from the adapter. This is the raw persistence target for
+# any response the clearinghouse hands back — parsers downstream (999
+# accept/reject, 277CA status) read from here and emit canonical
+# `claim_events`.
+ClearinghouseReportKind = Literal[
+    "999", "277ca", "portal_confirmation", "batch_ack",
+    "era_835_receipt", "other",
+]
+
+
+class ClearinghouseReportPublic(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+    id: str
+    tenant_id: str
+    clearinghouse: str
+    report_type: ClearinghouseReportKind
+    status: Literal["accepted", "rejected", "warning", "info"] = "info"
+    # Optional links — batch-level acks may not reference a specific
+    # claim or submission.
+    claim_id: str | None = None
+    submission_id: str | None = None
+    # Transport fields.
+    external_id: str | None = None
+    received_at: str
+    raw_content: str | None = None    # full text payload
+    raw_hash: str | None = None       # sha256(raw_content)
+    # Loose parsed payload — schema varies by report kind.
+    parsed: dict | None = None
+    notes: str | None = None
+    created_at: str
+
+
+# ---------------------------------------------------------------------------
+# Phase 10 — inbound ingest + manual follow-up flag requests.
+# ---------------------------------------------------------------------------
+class ClearinghouseReportIngestRequest(BaseModel):
+    """Payload shape for POST /billing/clearinghouse/reports/ingest.
+
+    Either `claim_id` OR `adapter_external_id` (matched against the
+    most recent submission) must be provided so the ingest can tie the
+    report back to a specific claim. Batch-level acks (no claim link)
+    are accepted when `report_type == "batch_ack"`.
+    """
+    model_config = ConfigDict(extra="forbid")
+    clearinghouse: str = Field(min_length=1, max_length=60)
+    report_type: ClearinghouseReportKind
+    status: Literal["accepted", "rejected", "warning", "info"] = "info"
+    claim_id: str | None = None
+    submission_id: str | None = None
+    adapter_external_id: str | None = None
+    received_at: str | None = None
+    raw_content: str | None = Field(default=None, max_length=1_000_000)
+    parsed: dict | None = None
+    notes: str | None = Field(default=None, max_length=2000)
+    denial_code: str | None = Field(default=None, max_length=40)
+
+
+class ClaimFollowupFlagRequest(BaseModel):
+    """Payload shape for POST /billing/claims/{id}/flag-followup.
+
+    `reason` is required so the queue can render a human-readable
+    triage hint. `next_action_at` is optional — when absent, the
+    server defaults it to `now + 3 days` so the claim surfaces back
+    on the triage dashboard.
+    """
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=2, max_length=280)
+    next_action_at: str | None = Field(
+        default=None, pattern=r"^\d{4}-\d{2}-\d{2}(T.*)?$",
+    )

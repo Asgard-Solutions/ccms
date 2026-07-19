@@ -93,3 +93,81 @@ async def seed_billing() -> None:
         "billing.seed complete: %d CPT codes / %d modifiers (system defaults)",
         len(_CPT_CATALOG), len(_MODIFIER_CATALOG),
     )
+
+    # Phase 2a — clearinghouse routing backfill.
+    #
+    # Existing payer rows created before the clearinghouse-routing
+    # fields existed are missing the four new keys. Fill them in with
+    # the safe defaults (none / portal / not_started / null) so
+    # `PayerPublic` validation and routing both keep working without a
+    # dedicated migration script. Idempotent — only rows missing the
+    # field are touched.
+    for field_name, default_value in (
+        ("clearinghouse_route", "none"),
+        ("claim_submission_mode", "portal"),
+        ("enrollment_status", "not_started"),
+        ("trading_partner_id", None),
+        # Phase 6 — clearinghouse-side routing ids + enrollment flag.
+        # Safe defaults so PayerPublic validation continues to work
+        # for rows created before Phase 6.
+        ("claims_cpid", None),
+        ("realtime_payer_id", None),
+        ("enrollment_required", False),
+        ("routing_metadata", None),
+        ("routing_last_resolved_at", None),
+        # Phase 9 — chiropractic enforcement opt-in flags. All False
+        # by default so existing payers keep their current behaviour.
+        ("requires_at_modifier", False),
+        ("requires_subluxation_primary", False),
+        ("requires_initial_treatment_date", False),
+    ):
+        res = await db.billing_payers.update_many(
+            {field_name: {"$exists": False}},
+            {"$set": {field_name: default_value, "updated_at": now}},
+        )
+        if res.modified_count:
+            logger.info(
+                "billing.seed backfilled %s on %d payer rows",
+                field_name, res.modified_count,
+            )
+
+    # Phase 5 — patient_control_number backfill.
+    #
+    # Every claim row needs a non-null PCN so the clearinghouse
+    # payload builder can always populate CLM01. For rows that predate
+    # Phase 5 we derive `CCMS-<first 8 chars of uuid, upper>` from
+    # the claim's existing id — deterministic and unique per tenant.
+    legacy_claims = db.claims.find(
+        {"$or": [
+            {"patient_control_number": {"$exists": False}},
+            {"patient_control_number": None},
+            {"patient_control_number": ""},
+        ]},
+        {"_id": 0, "id": 1},
+    )
+    backfilled = 0
+    async for c in legacy_claims:
+        await db.claims.update_one(
+            {"id": c["id"]},
+            {"$set": {
+                "patient_control_number": f"CCMS-{c['id'][:8].upper()}",
+                "updated_at": now,
+            }},
+        )
+        backfilled += 1
+    if backfilled:
+        logger.info(
+            "billing.seed backfilled patient_control_number on %d claim rows",
+            backfilled,
+        )
+
+    # Phase 9 — claim.initial_treatment_date default (null for legacy rows).
+    res = await db.claims.update_many(
+        {"initial_treatment_date": {"$exists": False}},
+        {"$set": {"initial_treatment_date": None, "updated_at": now}},
+    )
+    if res.modified_count:
+        logger.info(
+            "billing.seed backfilled initial_treatment_date on %d claim rows",
+            res.modified_count,
+        )

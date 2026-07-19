@@ -1,0 +1,43 @@
+{
+  "summary": "Iteration 84 — validated 3 features: (1) NL scheduling parse+create, (2) merged-template-override propagation into chart-brief / prior-sections / draft-sections, (3) per-location/provider id-picker dropdowns on AITemplatesPage. Backend cross-suite (test_ai_context_documentation + test_portal_visit_brief + test_scribe + test_post_scribe_ai + test_nl_scheduling): 43 passed + 1 skipped (xml at /app/test_reports/pytest/iter84_ai_all.xml). Extra ad-hoc checks: prior-sections + draft-sections regenerate with active tenant overrides return 200 (no 500), NL parse hallucination guard returns 200 with no fake provider, NL create happy-path returns 200 with appointment id. Frontend NL Quick-book e2e (doctor): /scheduling renders [data-testid=nl-book-card] above the toolbar; typed 'Book Hannah Whitaker for an adjustment with Dr. Carter next Friday at 10am' → parse → patient-resolved='Hannah Whitaker', provider-resolved='Dr. Noah Carter', start prefilled 2026-05-08T10:00 (Friday 10:00 local), Confirm created the appointment which now shows on Fri May 8 10:00 in the calendar. CRITICAL FRONTEND BUG: AITemplatesPage location/provider Select dropdowns are empty because /app/frontend/src/pages/settings/AITemplatesPage.jsx calls api.get('/locations') and api.get('/users?role=doctor') which both return 404 in this tenant build. Correct endpoints exist: /api/tenancy/me/context (returns locations[]) and /api/auth/users?role=doctor. Net effect: admins cannot add ANY location- or provider-scoped override from the UI (the free-text input was removed in the same change).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "AITemplatesPage.jsx (lines 73-74)",
+        "issue": "GET /api/locations 404 and GET /api/users?role=doctor 404 — wrong endpoints. Use /api/tenancy/me/context (response.locations[]) and /api/auth/users?role=doctor instead. Result: scope=Location and scope=Provider dropdowns are always empty so admin can no longer save location/provider-scoped overrides. Free-text input was replaced, so this is a regression — there is no fallback path.",
+        "selector": "[data-testid=\"ai-templates-scope-id-select\"]",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_nl_scheduling.py",
+    "/app/backend/tests/test_post_scribe_ai.py",
+    "/app/backend/tests/test_scribe.py",
+    "/app/backend/tests/test_ai_context_documentation.py",
+    "/app/backend/tests/test_portal_visit_brief.py",
+    "/app/test_reports/pytest/iter84_ai_all.xml"
+  ],
+  "action_items": [
+    "Fix AITemplatesPage location/provider lookup: replace api.get('/locations') with api.get('/tenancy/me/context').then(r => r.data?.locations || []) and replace api.get('/users', { params: { role: 'doctor' } }) with api.get('/auth/users', { params: { role: 'doctor' } }). After fix, retest: scope=Location and scope=Provider dropdowns must populate, save must succeed, and the saved row must render the friendly name (not a raw UUID)."
+  ],
+  "critical_code_review_comments": [
+    "Frontend AITemplatesPage.jsx: replaces free-text scope_id input with Selects but the lookup endpoints are wrong (/api/locations and /api/users return 404 — they don't exist on this backend). The correct admin-visible endpoints are /api/tenancy/me/context (locations) and /api/auth/users?role=doctor (providers). Because the free-text input was removed in the same PR, this is a strict regression: admins can no longer save any location- or provider-scoped override. Tenant-scope save still works.",
+    "NLBookCard.jsx works end-to-end. Placeholder still says 'Dr. Park' but the parse correctly resolves 'Dr. Carter' to Dr. Noah Carter, so this is cosmetic only. Confidence + clarifications fields are wired but unused in the happy path UI (only 'parsed' marker is rendered). Date prefill via formatLocalDateTimeForInput works correctly across timezones.",
+    "NL parse confidence value not currently surfaced in UI — could help users decide whether to confirm or refine. Optional UX add for next iteration.",
+    "Backend services/ai/router.py _augment_with_template helper is wired into chart_brief, prior_sections, draft_sections. since_last_diff and semantic search intentionally skipped per minimal-change principle — this matches the request and is documented. Reasonable.",
+    "Backend services/scheduling/nl_router.py validates all LLM-suggested IDs against tenant data before returning them — solid hallucination guard. NL create delegates to the canonical create_appointment service so event-bus hooks fire — correct.",
+    "test_nl_scheduling.py::test_hallucinated_ids_stripped opens a separate AsyncIOMotorClient with reset_router_for_tests — leaks a connection (no .close() awaited cleanly inside an async runner across tests). Low-priority cleanup."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (43/43 passed + 1 skipped)", "frontend": "NL Quick-book 100%; AI Templates picker 0% — Location & Provider dropdowns empty due to wrong API URLs"},
+  "test_credentials": "doctor@ccms.app / Doctor@ComplianceClinic1, admin@ccms.app / Admin@ComplianceClinic1 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created 1 real appointment via NL Quick-book confirm: Hannah Whitaker × Dr. Noah Carter on 2026-05-08T10:00 (visible on the doctor's Week view, Fri May 8, 10:00 AM). Tenant-scoped chart_brief/prior_sections/draft_sections override rows created and deleted within the regression suite.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend AI regression remains 100% green over five suites (43+1). NL parse + NL create + template-override propagation all verified with curl in addition to pytest. Only outstanding issue: AITemplatesPage.jsx uses /api/locations and /api/users which return 404. Replace with /api/tenancy/me/context and /api/auth/users?role=doctor. After fix, retest scope=Location and scope=Provider dropdowns and the friendly-name rendering on the list view (currently can't be reached because dropdowns are empty). Hannah Whitaker patient_id=ccms-voice-notes, Dr. Noah Carter provider_id=ccms-voice-notes, doctor tenant. Note: an extra appointment was created on 2026-05-08T10:00 by this iteration's e2e — main agent may want to clean it up if the seed dataset is supposed to be deterministic.",
+  "rca of the issue": "AITemplatesPage.jsx lines 72-79: Promise.all calls api.get('/locations') and api.get('/users', {params:{role:'doctor'}}). The CCMS backend does not expose /api/locations or /api/users as top-level routes — locations are served via /api/tenancy/me/context (in the response body's .locations[] array) or /api/tenancy/tenants/{id}/locations, and the user listing is at /api/auth/users (verified: GET /api/auth/users?role=doctor returns 200, GET /api/users?role=doctor returns 404). The .catch(() => []) clause swallows the 404, so the Selects render but with zero options. Combined with the same PR removing the free-text scope_id input, admins can only save tenant-scoped overrides via this page until the URLs are corrected."
+}

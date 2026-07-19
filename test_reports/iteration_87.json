@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 87 — verified the 5 NEW items from this wave (A1 fee-schedule price_sources, A3 server-side provider search, B1 quick-submit endpoint, B2 ClaimDetail button, B3 ScribePanel button). Backend: 10/10 tests passing (test_quick_submit.py 3/3 + new test_iter87_wave_b.py 7/7). Frontend: live verification of A3 (server-side ?q= debounced search) and B2 (button rendered with correct disabled gating). B3 verified by code review + transitive backend coverage. No defects found; sandbox CHC adapter returns synthetic chc-sbx-{hex} external_ids as designed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_quick_submit.py",
+    "/app/backend/tests/test_iter87_wave_b.py",
+    "/app/test_reports/pytest/iter87_quick_submit.xml",
+    "/app/test_reports/pytest/iter87_wave_b.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ClaimDetail.jsx claim-quick-submit-btn correctly gates on `['draft','validation_failed','ready'].includes(claim.status)` — verified disabled on a 'submitted' claim (1f6a68bb).",
+    "AITemplatesPage.jsx now does server-side debounced search: live test typing 'noah' fired exactly one GET /api/auth/users?role=doctor&limit=200&q=noah and returned Dr. Noah Carter. Loading state ('Searching…') and empty state ('No matches') are rendered inside SelectContent — only visible while the dropdown is open, which is acceptable UX.",
+    "ScribePanel.jsx: scribe-quick-submit-btn wired to quickSubmitClaim helper from useClaims.js; renders alongside 'Open claim →' link after send-to-claim success. Backend chain (send-to-claim → quick-submit) covered end-to-end by test_quick_submit.py::test_happy_path_via_scribe_send_to_claim (passing).",
+    "Send-to-claim now returns price_sources array; entries are plain strings ('catalog' / 'fee_schedule' / 'zero') rather than dicts — fine, matches doctor's intent of seeing where each line price came from. len(price_sources) == lines is enforced in test.",
+    "Quick-submit endpoint correctly returns 409 on already-submitted claim (verified via second call), 403/404 on staff role, 404 on unknown claim. Sandbox CHC returns adapter_external_id matching `chc-sbx-...` pattern."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter87_wave_b.py (new, 7 tests)"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% on A3 + B2 live; B3 via code review + transitive backend"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1, doctor@ccms.app / Doctor@ComplianceClinic1, staff@ccms.app / Staff@ComplianceClinic1",
+  "seed_data_creation": "None — used existing Riverbend follow-up notes and CHC-routed payers. test_iter87_wave_b reuses the same seed lookup helpers as test_quick_submit.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 5 new wave items verified. Mocked: Change Healthcare adapter is in sandbox mode (CLEARINGHOUSE_CHC_MODE=sandbox in /app/backend/.env) and emits synthetic 'chc-sbx-{12hex}' external_ids without a real network call — INTENTIONAL per user choice B3c. Backend tests assert this prefix when adapter_route=='change_healthcare'. test_iter87_wave_b.py is reusable for future regression. The TestQuickSubmitEdgeCases class consumes a draft note per run (transitions it to submitted via successful quick-submit) — make sure new draft notes are seedable if running back-to-back. No regressions detected on iteration_86's three flows (NL reschedule/cancel, AITemplates, Scribe send-to-claim).",
+  "rca of the issue": "N/A — no defects."
+}

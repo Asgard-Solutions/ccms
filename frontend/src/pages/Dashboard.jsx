@@ -16,6 +16,7 @@ function greetingName(fullName) {
 import { Button } from "../components/ui/button";
 import { Skeleton } from "../components/ui/skeleton";
 import { Badge } from "../components/ui/badge";
+import BillingFailuresPanel from "./billing/helcim/BillingFailuresPanel";
 
 function Stat({ label, value, helper, icon: Icon }) {
   return (
@@ -131,6 +132,10 @@ export default function Dashboard() {
           flow through the in-process event bus to the communication service.
         </p>
       </header>
+
+      {(user.role === "admin" || user.role === "doctor" || user.role === "staff") && (
+        <BillingFailuresPanel limit={10} />
+      )}
 
       <section className="grid grid-cols-1 gap-6 md:grid-cols-3">
         <Stat

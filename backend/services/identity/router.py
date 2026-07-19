@@ -12,6 +12,7 @@ Adds:
   - Admin MFA reset + admin force-require-MFA
 """
 import hashlib
+import os
 import secrets
 import uuid
 from datetime import datetime, timezone, timedelta
@@ -23,6 +24,7 @@ from core import cache, cache_keys
 from core.db import get_db, get_db_read, get_db_write, read_after_write_db
 from core.deps import get_current_user, require_role
 from core import rate_limit
+from services.notifications import send_email
 from core.mfa import (
     MFA_REQUIRED_ROLES,
     create_mfa_ticket,
@@ -142,6 +144,7 @@ def _to_public(user: dict) -> dict:
         "npi_number": user.get("npi_number"),
         "dea_number": user.get("dea_number"),
         "dea_expires_at": user.get("dea_expires_at"),
+        "clinical_ui_defaults": user.get("clinical_ui_defaults"),
         "created_at": user["created_at"],
     }
 
@@ -346,10 +349,21 @@ async def _finalise_login(db, user: dict, response: Response, request: Request) 
     )
     refresh = create_refresh_token(user["id"], epoch, session_started_at)
     _set_auth_cookies(response, access, refresh)
-    await db.users.update_one(
-        {"id": user["id"]},
-        {"$set": {"last_login_at": session_started_at}},
+    # If the user has no MFA factor enrolled, `step_up_required` cannot
+    # be honoured — there is nothing to step up to. Clear it on
+    # successful password login so the user isn't permanently locked
+    # out of MFA-gated actions by a stale suspicious-login flag.
+    # Users WITH MFA enrolled still carry the flag (their MFA
+    # challenge clears it) so this doesn't weaken real step-up.
+    clear_step_up = (
+        bool(user.get("step_up_required"))
+        and not user.get("mfa_enabled")
     )
+    set_doc = {"last_login_at": session_started_at}
+    if clear_step_up:
+        set_doc["step_up_required"] = False
+        set_doc["suspicious_flag"] = False
+    await db.users.update_one({"id": user["id"]}, {"$set": set_doc})
     # Iteration 19 — run suspicious-login detection BEFORE the auth.login
     # audit row so the "prior IP lookup" doesn't match the row we're about
     # to write.
@@ -523,11 +537,13 @@ async def update_preferences(
 ):
     """Persist lightweight per-user UI preferences (theme today; locale + density
     later). Auth-only; no reauth required — these are non-sensitive settings."""
-    updates = {k: v for k, v in payload.model_dump().items() if v is not None}
+    updates = payload.model_dump(exclude_unset=True)
+    updates = {k: v for k, v in updates.items() if v is not None}
     if not updates:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST, "No preference fields supplied."
         )
+    # Nested Pydantic models serialize to dicts; that's what we store.
     updates["updated_at"] = datetime.now(timezone.utc).isoformat()
     db = get_db_write()
     updated = await db.users.find_one_and_update(
@@ -1663,22 +1679,49 @@ async def list_users(
     request: Request,
     role: str | None = None,
     include_disabled: bool = False,
+    q: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
     admin: dict = Depends(require_role("admin")),
 ):
     db = get_db()
-    q: dict = {}
+    query: dict = {}
     # Tenant scoping: non-platform admins only see users in their tenant.
     if not (admin.get("is_platform_admin") or admin.get("role") == "platform_admin"):
-        q["tenant_id"] = admin.get("tenant_id")
+        query["tenant_id"] = admin.get("tenant_id")
     if role:
-        q["role"] = role
+        query["role"] = role
     if not include_disabled:
-        q["status"] = {"$ne": "disabled"}
-    cursor = db.users.find(q, {"_id": 0, "password_hash": 0, "password_history": 0}).sort(
-        "created_at", -1
+        query["status"] = {"$ne": "disabled"}
+    # Server-side search across the most common identity fields. Used
+    # by the admin AI-templates picker so tenants with hundreds of
+    # doctors don't have to ship the full list to the browser.
+    if q and q.strip():
+        needle = q.strip()
+        # Mongo regex is anchored loosely so partial matches work; we
+        # escape the raw input to keep this safe from regex injection.
+        import re
+        safe = re.escape(needle)
+        query["$or"] = [
+            {"name": {"$regex": safe, "$options": "i"}},
+            {"first_name": {"$regex": safe, "$options": "i"}},
+            {"last_name": {"$regex": safe, "$options": "i"}},
+            {"display_name": {"$regex": safe, "$options": "i"}},
+            {"email": {"$regex": safe, "$options": "i"}},
+        ]
+    capped = max(1, min(int(limit or 200), 500))
+    skip = max(0, int(offset or 0))
+    cursor = (
+        db.users.find(query, {"_id": 0, "password_hash": 0, "password_history": 0})
+        .sort("created_at", -1)
+        .skip(skip)
+        .limit(capped)
     )
     rows = [_to_public(u) async for u in cursor]
-    await audit_success(admin, "user.list_viewed", request, metadata={"count": len(rows)})
+    await audit_success(
+        admin, "user.list_viewed", request,
+        metadata={"count": len(rows), "q": bool(q), "offset": skip, "limit": capped},
+    )
     return rows
 
 
@@ -1965,6 +2008,28 @@ async def password_reset_request(
                 + timedelta(minutes=PASSWORD_RESET_TTL_MINUTES),
                 "used_at": None,
             }
+        )
+        # Send the reset link email. Falls back to log-only when
+        # RESEND_API_KEY is absent; `dev_token` is still returned in
+        # the response for dev convenience.
+        frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+        reset_link = (f"{frontend}/reset-password?token={raw_token}"
+                      if frontend else f"(token: {raw_token})")
+        await send_email(
+            to=email,
+            subject="Reset your CCMS password",
+            html_body=(
+                f"<p>We received a request to reset your CCMS password.</p>"
+                f"<p>This link expires in {PASSWORD_RESET_TTL_MINUTES} minutes. "
+                f"If you didn't request it, you can safely ignore this email.</p>"
+                f"<p><a href='{reset_link}'>Reset password</a></p>"
+            ),
+            text_body=(
+                f"Reset your CCMS password: {reset_link}\n"
+                f"Expires in {PASSWORD_RESET_TTL_MINUTES} minutes."
+            ),
+            event_type="password_reset_request",
+            correlation_id=user["id"],
         )
         await log_audit(
             action="auth.password_reset_requested",

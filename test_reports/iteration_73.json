@@ -1,0 +1,31 @@
+{
+  "summary": "Validated Helcim Customer Vault + recurring auto-charge engine (Sprint 1 + Sprint 2). Backend: 11/11 test_helcim_scheduler.py + 14/14 test_helcim_integration.py + 11/11 test_helcim_live_endpoints.py + 7/7 NEW test_helcim_scheduler_extra.py PASS (43/43 total). Verified: vault CRUD with encrypted token, single-default semantics, soft-delete, payment plan amount math ($100/3 → 33.33/33.33/33.34 and 99c/3 → 33/33/33), schedule lifecycle (active↔paused, cancel), retry-with-backoff (3 declines → status=failed + admin notification posted), credentials missing → outcome=error/schedule stays active, /scheduler/tick processes only due schedules, run-now rejects non-runnable, capture+save_card persists vault row tied to session.patient_id (no plaintext token in response). RBAC verified: doctor (no payment.collect) → 403 on cards listing/create, schedules create, scheduler/tick (admin-only). Background worker confirmed running via log line `scheduler.worker started (interval=60s)`. Frontend: SavedCardsCard + PaymentPlansCard render side-by-side under PatientLedgerCard with proper empty states. plan-add-btn correctly disabled when no card on file, enables after saving a card. Plan dialog shows kind/card/label/total/num-charges/frequency/start/notes; live summary correctly reads `2 × $33.33 + 1 × $33.34 = $100.00 total`. Saved card row shows brand+last4+default badge+cardholder+expiry+saved date+Charge+Delete buttons. HelcimPayDialog `data-testid=\"helcim-pay-save-card\"` checkbox is conditionally rendered when `enableSaveCard && patientId && phase==='awaiting'` and propagates `save_card` to /checkout/capture.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_helcim_scheduler.py",
+    "/app/backend/tests/test_helcim_scheduler_extra.py",
+    "/app/test_reports/pytest/iter73_helcim_scheduler.xml",
+    "/app/test_reports/pytest/iter73_helcim_all.xml",
+    "/app/test_reports/pytest/iter73_helcim_extra.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "router.py POST /schedules/{sid}/run-now: when status is 'failed', endpoint quietly resets consecutive_failures to 0 and re-attempts. Behaviour is documented in the docstring and matches the UI 'Retry' button intent — acceptable, but consider auditing the reset as a discrete event so ops can see who unblocked the schedule (currently only the run outcome is audited).",
+    "scheduler.py charge_one_schedule: on the LAST charge, both `charges_completed` increments and `last_charge_cents` is used — verified by test_engine_charges_advances_and_completes. Math is sound. Suggest adding an idempotency guard so a duplicate run-now within the same minute can't double-charge (today the only safety net is consecutive_failures + worker cadence).",
+    "card_vault.py: encrypted helcim_card_token via core.crypto. Plaintext is never returned from list/get_public — verified. get_decrypted is called only inside charge_saved_card_by_id and the engine. Good.",
+    "PaymentPlansCard.jsx: plan-summary element is hidden until total + num_charges are both populated; this is a UX nice-to-have rather than a bug — show a faint placeholder summary on dialog open so users understand the field's purpose. Minor.",
+    "router.py /cards/{patient_id}: returns full list with no pagination param. Patients with many cards on file should be rare, but consider a soft-cap response or `?limit=` for completeness.",
+    "Worker logs: confirmed `scheduler.worker started (interval=60s)` repeats on each backend hot-reload. No leak observed in current run — clean cancel on shutdown via on_shutdown hook."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_helcim_scheduler_extra.py (NEW — 7 RBAC + 502-not-500 + math-edge tests)"
+  ],
+  "success_rate": {"backend": "100% (43/43 — 11 new scheduler + 14 mocked integration + 11 live + 7 RBAC/extras)", "frontend": "100% (admin ledger flow, empty + populated states, dialog math, RBAC)"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 ; doctor@ccms.app / Doctor@ComplianceClinic1 (both verified working).",
+  "seed_data_creation": "Tests use TEST_/UI-TEST_ prefixes and direct vault deletion via DELETE /api/billing/helcim/cards/{id} after each test. UI smoke test pre-cleans saved cards for the patient before assertions and deletes the test card on completion.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Helcim auto-charge engine is fully integrated end-to-end. Live Helcim API still returns Unauthorized for the test token (TEST-99999) — that surfaces correctly as outcome='error' (not HTTP 500) on /run-now and /scheduler/tick. To exercise a real charge cycle, plug a sandbox Helcim API token into Settings → Payments and either (a) POST /api/billing/helcim/scheduler/tick (admin) for an immediate sweep or (b) wait up to HELCIM_SCHEDULER_INTERVAL_SECONDS (default 60s) for the background worker. The HelcimPayDialog save-card checkbox is rendered only when phase==='awaiting' AND patientId is supplied — to E2E-test the save-card-on-checkout path you need live creds plus the Helcim iframe to mount.",
+  "rca of the issue": "N/A — no bugs found. All 43 backend tests green and the new SavedCardsCard + PaymentPlansCard render with correct empty states, correct disabled semantics on plan-add-btn, correct payment-plan math, correct RBAC, and the background worker is verified running via supervisor logs."
+}

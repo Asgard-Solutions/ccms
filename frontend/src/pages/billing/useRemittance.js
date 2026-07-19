@@ -161,11 +161,27 @@ export function statementPdfUrl(patientId, stmtId) {
   return `${base}/api/billing/patients/${patientId}/statements/${stmtId}/pdf`;
 }
 
-export async function emailStatement(patientId, stmtId) {
+export async function emailStatement(patientId, stmtId, { channel = "email", to = null } = {}) {
+  const payload = { channel };
+  if (to) payload.to = to;
   const { data } = await api.post(
     `/billing/patients/${patientId}/statements/${stmtId}/send`,
+    payload,
   );
   return data;
+}
+
+/**
+ * Patient self-service — my own statements.
+ */
+export async function listMyStatements() {
+  const { data } = await api.get("/billing/me/statements");
+  return data;
+}
+
+export function myStatementPdfUrl(stmtId) {
+  const base = process.env.REACT_APP_BACKEND_URL || "";
+  return `${base}/api/billing/me/statements/${stmtId}.pdf`;
 }
 
 export async function uploadRemittanceImport(file) {
@@ -173,6 +189,17 @@ export async function uploadRemittanceImport(file) {
   form.append("file", file);
   const { data } = await api.post("/billing/remittances/import", form, {
     headers: { "Content-Type": "multipart/form-data" },
+  });
+  return data;
+}
+
+/**
+ * Month-end bulk action: regenerate + dispatch statements for every
+ * patient whose outstanding balance has moved since their last statement.
+ */
+export async function sendOutstandingStatements({ dryRun = false } = {}) {
+  const { data } = await api.post("/billing/statements/send-outstanding", {
+    dry_run: dryRun,
   });
   return data;
 }

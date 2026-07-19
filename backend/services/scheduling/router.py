@@ -19,15 +19,25 @@ from core.event_bus import publish
 from core.tenancy import TenantContext, get_tenant_context
 from core.tenant_scope import scoped_filter, stamp_for_write
 from services.authz.policy import require_permission
+from services.rooms.models import RoomAssignRequest
 from services.scheduling.models import (
     AppointmentCreate,
     AppointmentPublic,
     AppointmentUpdate,
+    CheckoutRequest,
+    PatientLocationChangeRequest,
+    WorkflowTransitionRequest,
+)
+from services.scheduling.rooms import assign_or_change_room, clear_room
+from services.scheduling.workflow import (
+    TRANSITIONS,
+    apply_patient_location,
+    apply_transition,
 )
 
 router = APIRouter(prefix="/appointments", tags=["scheduling"])
 STAFF_ROLES = ("admin", "doctor", "staff")
-ENCRYPTED = ["notes"]
+ENCRYPTED = ["notes", "checkout_notes", "checkout_summary"]
 
 
 def _now_iso() -> str:
@@ -62,11 +72,66 @@ async def _hydrate(apps: list[dict]) -> list[dict]:
             {"_id": 0, "id": 1, "first_name": 1, "last_name": 1, "phone": 1},
         )
     }
+    # Latest intake form per patient (single pass, newest-first).
+    # - completed form wins; otherwise a draft is surfaced as "in_progress".
+    # - patients with zero intake forms → "not_started".
+    intake_by_pid: dict[str, dict] = {}
+    async for f in db.patient_intake_forms.find(
+        {"patient_id": {"$in": patient_ids}},
+        {"_id": 0, "id": 1, "patient_id": 1, "status": 1,
+         "captured_at": 1, "captured_by_name": 1, "created_at": 1},
+    ).sort("created_at", -1):
+        pid = f["patient_id"]
+        cur = intake_by_pid.get(pid)
+        # A completed form wins over a later draft.
+        if cur and cur.get("status") == "completed":
+            continue
+        if cur is None or f.get("status") == "completed":
+            intake_by_pid[pid] = f
+    # Rooms lookup (only for appts that carry a current_room_id).
+    room_ids = list({a.get("current_room_id") for a in apps if a.get("current_room_id")})
+    rooms_by_id: dict[str, dict] = {}
+    if room_ids:
+        async for r in db.rooms.find(
+            {"id": {"$in": room_ids}},
+            {"_id": 0, "id": 1, "name": 1, "type": 1},
+        ):
+            rooms_by_id[r["id"]] = r
+    # Appointment type names — only for appts with a type set.
+    type_ids = list({a.get("appointment_type_id") for a in apps if a.get("appointment_type_id")})
+    types_by_id: dict[str, dict] = {}
+    if type_ids:
+        async for t in db.appointment_types.find(
+            {"id": {"$in": type_ids}},
+            {"_id": 0, "id": 1, "name": 1},
+        ):
+            types_by_id[t["id"]] = t
     for a in apps:
         a["provider_name"] = providers.get(a["provider_id"])
         info = patients.get(a["patient_id"]) or {}
         a["patient_name"] = info.get("name")
         a["patient_phone"] = info.get("phone")
+        f = intake_by_pid.get(a["patient_id"])
+        if f is None:
+            a["intake_status"] = "not_started"
+            a["intake_completed_at"] = None
+            a["intake_completed_by_name"] = None
+            a["intake_form_id"] = None
+        elif f.get("status") == "completed":
+            a["intake_status"] = "completed"
+            a["intake_completed_at"] = f.get("captured_at")
+            a["intake_completed_by_name"] = f.get("captured_by_name")
+            a["intake_form_id"] = f.get("id")
+        else:  # draft
+            a["intake_status"] = "in_progress"
+            a["intake_completed_at"] = None
+            a["intake_completed_by_name"] = None
+            a["intake_form_id"] = f.get("id")
+        r = rooms_by_id.get(a.get("current_room_id") or "")
+        a["current_room_name"] = r.get("name") if r else None
+        a["current_room_type"] = r.get("type") if r else None
+        t = types_by_id.get(a.get("appointment_type_id") or "")
+        a["appointment_type_name"] = t.get("name") if t else None
     return apps
 
 
@@ -75,9 +140,15 @@ async def _check_conflict(
     exclude_id: str | None = None, tenant_id: str | None = None,
 ) -> None:
     db = get_db_write()  # conflict checks must read latest committed state
+    # Block booking against any *active* appointment. Cancelled, canceled,
+    # no-show, and already-checked-out visits must NOT block rebooking —
+    # the spec requires cancelled slots to remain historically visible
+    # but fully reusable, and completed visits have vacated the slot.
     q: dict = {
         "provider_id": provider_id,
-        "status": "scheduled",
+        "status": {"$nin": [
+            "cancelled", "canceled", "no_show", "checked_out",
+        ]},
         "start_time": {"$lt": end_iso},
         "end_time": {"$gt": start_iso},
     }
@@ -141,6 +212,20 @@ async def create_appointment(
 
     start_iso = _to_iso(payload.start_time)
     end_iso = _to_iso(payload.end_time)
+
+    # Validate appointment_type_id BEFORE the conflict check so we return
+    # a clear 400 instead of a misleading "slot busy" 409 when the type
+    # id is malformed or inactive.
+    if payload.appointment_type_id:
+        at_q: dict = {"id": payload.appointment_type_id, "is_active": True}
+        if ctx.tenant_id and not ctx.is_platform_admin:
+            at_q["tenant_id"] = ctx.tenant_id
+        at_row = await db.appointment_types.find_one(at_q, {"_id": 0, "id": 1})
+        if not at_row:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "Invalid appointment_type_id",
+            )
+
     await _check_conflict(payload.provider_id, start_iso, end_iso, tenant_id=ctx.tenant_id)
 
     now = _now_iso()
@@ -148,6 +233,7 @@ async def create_appointment(
         "id": str(uuid.uuid4()),
         "patient_id": payload.patient_id,
         "provider_id": payload.provider_id,
+        "appointment_type_id": payload.appointment_type_id,
         "start_time": start_iso,
         "end_time": end_iso,
         "reason": payload.reason,
@@ -416,6 +502,145 @@ async def appointment_counts(
     return await cache.get_or_set(cache_key, 30, _aggregate)
 
 
+# ---------------------------------------------------------------------------
+# Follow-up suggestions — written by the checkout event-bus hooks.
+# Declared BEFORE /{appointment_id} so the path is not shadowed by the
+# generic single-appointment fetch route.
+# ---------------------------------------------------------------------------
+
+@router.get("/follow-up-suggestions")
+async def list_follow_up_suggestions(
+    request: Request,
+    user: dict = Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
+    status_filter: str | None = Query(default="pending", alias="status"),
+    patient_id: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    """Return the queue of pending follow-up suggestions created by
+    the checkout hook (scaffold for the future follow-up scheduler UI).
+    Providers see only their own queue; admin/staff see the full queue."""
+    db = get_db_read()
+    q: dict = {}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        q["tenant_id"] = ctx.tenant_id
+    if status_filter and status_filter != "all":
+        q["status"] = status_filter
+    if patient_id:
+        q["patient_id"] = patient_id
+    if user.get("role") == "doctor":
+        q["provider_id"] = user["id"]
+    cursor = db.follow_up_suggestions.find(q, {"_id": 0}).sort("suggested_at", 1).limit(limit)
+    rows = [r async for r in cursor]
+    pids = list({r["patient_id"] for r in rows if r.get("patient_id")})
+    tids = list({r["appointment_type_id"] for r in rows if r.get("appointment_type_id")})
+    patients = {
+        p["id"]: f"{p['first_name']} {p['last_name']}"
+        async for p in db.patients.find(
+            {"id": {"$in": pids}},
+            {"_id": 0, "id": 1, "first_name": 1, "last_name": 1},
+        )
+    } if pids else {}
+    types = {
+        t["id"]: t["name"]
+        async for t in db.appointment_types.find(
+            {"id": {"$in": tids}}, {"_id": 0, "id": 1, "name": 1},
+        )
+    } if tids else {}
+    for r in rows:
+        r["patient_name"] = patients.get(r.get("patient_id"))
+        r["appointment_type_name"] = types.get(r.get("appointment_type_id"))
+    return rows
+
+
+@router.post("/follow-up-suggestions/{suggestion_id}/dismiss")
+async def dismiss_follow_up_suggestion(
+    suggestion_id: str,
+    request: Request,
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    db = get_db_write()
+    q: dict = {"id": suggestion_id}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        q["tenant_id"] = ctx.tenant_id
+    row = await db.follow_up_suggestions.find_one(q, {"_id": 0})
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Suggestion not found")
+    await db.follow_up_suggestions.update_one(
+        {"id": suggestion_id},
+        {"$set": {
+            "status": "dismissed",
+            "resolved_at": _now_iso(),
+            "resolved_by": actor["id"],
+        }},
+    )
+    await audit_success(
+        actor, "follow_up_suggestion.dismissed", request,
+        entity_type="follow_up_suggestion", entity_id=suggestion_id,
+        metadata={"tenant_id": ctx.tenant_id},
+    )
+    return {"ok": True}
+
+
+@router.post("/follow-up-suggestions/{suggestion_id}/resolve")
+async def resolve_follow_up_suggestion(
+    suggestion_id: str,
+    payload: dict,
+    request: Request,
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Mark a suggestion as scheduled — called after a follow-up booking
+    from the Checkout page lands in BookDialog and saves successfully.
+    Links the new appointment id so the suggestion is not duplicated.
+
+    Idempotent: re-calling with the same or different appointment id on an
+    already-resolved suggestion returns 200 without mutating history.
+    """
+    appointment_id = (payload or {}).get("appointment_id")
+    if not appointment_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "appointment_id is required")
+    db = get_db_write()
+    q: dict = {"id": suggestion_id}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        q["tenant_id"] = ctx.tenant_id
+    row = await db.follow_up_suggestions.find_one(q, {"_id": 0})
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Suggestion not found")
+    # Verify the target appointment belongs to the same tenant.
+    appt_q: dict = {"id": appointment_id}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        appt_q["tenant_id"] = ctx.tenant_id
+    appt = await db.appointments.find_one(appt_q, {"_id": 0, "id": 1})
+    if not appt:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Unknown appointment")
+    if row.get("status") == "pending":
+        await db.follow_up_suggestions.update_one(
+            {"id": suggestion_id},
+            {"$set": {
+                "status": "scheduled",
+                "resolved_at": _now_iso(),
+                "resolved_by": actor["id"],
+                "resolved_appointment_id": appointment_id,
+            }},
+        )
+        await audit_success(
+            actor, "follow_up_suggestion.resolved", request,
+            entity_type="follow_up_suggestion", entity_id=suggestion_id,
+            metadata={
+                "tenant_id": ctx.tenant_id,
+                "resolved_appointment_id": appointment_id,
+            },
+        )
+    return {"ok": True}
+
+
+
 @router.get("/{appointment_id}", response_model=AppointmentPublic)
 async def get_appointment(
     appointment_id: str, request: Request,
@@ -488,6 +713,16 @@ async def update_appointment(
         updates["notes"] = payload.notes
     if payload.status is not None:
         updates["status"] = payload.status
+    if payload.appointment_type_id is not None:
+        # Validate the type exists + is active + tenant-scoped.
+        at_q: dict = {"id": payload.appointment_type_id, "is_active": True}
+        if ctx.tenant_id and not ctx.is_platform_admin:
+            at_q["tenant_id"] = ctx.tenant_id
+        if not await db.appointment_types.find_one(at_q, {"_id": 0, "id": 1}):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST, "Invalid appointment_type_id",
+            )
+        updates["appointment_type_id"] = payload.appointment_type_id
 
     if not updates:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No fields to update")
@@ -560,3 +795,360 @@ async def cancel_appointment(
     )
     (hydrated,) = await _hydrate([updated_dec])
     return hydrated
+
+
+# ---------------------------------------------------------------------------
+# Appointment workflow transitions — Phase 1 backbone.
+#
+# Each endpoint is a thin wrapper around `apply_transition` which centralises
+# the validation rules, audit emission, and physical-location side effects.
+# ---------------------------------------------------------------------------
+
+async def _load_for_transition(
+    appointment_id: str, ctx: TenantContext,
+) -> dict:
+    """Fetch the appointment under tenant+location scope or 404."""
+    db = get_db_write()  # read-after-write: use write client
+    q = scoped_filter({"id": appointment_id}, ctx, location_scoped=True)
+    if q.get("__deny__"):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
+    a = await db.appointments.find_one(q, {"_id": 0})
+    if not a:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Appointment not found")
+    return a
+
+
+async def _run_transition(
+    transition_name: str,
+    appointment_id: str,
+    payload: WorkflowTransitionRequest,
+    request: Request,
+    actor: dict,
+    ctx: TenantContext,
+) -> dict:
+    spec = TRANSITIONS[transition_name]
+    current = await _load_for_transition(appointment_id, ctx)
+    updated = await apply_transition(
+        appointment_id, spec,
+        current=current,
+        actor=actor,
+        request=request,
+        override=payload.override,
+        reason=payload.reason,
+        location_override=payload.location,
+        tenant_id=ctx.tenant_id,
+    )
+    (hydrated,) = await _hydrate([updated])
+    return hydrated
+
+
+@router.post("/{appointment_id}/check-in", response_model=AppointmentPublic)
+async def appointment_check_in(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition("check_in", appointment_id, payload, request, actor, ctx)
+
+
+@router.post("/{appointment_id}/undo-check-in", response_model=AppointmentPublic)
+async def appointment_undo_check_in(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition("undo_check_in", appointment_id, payload, request, actor, ctx)
+
+
+@router.post("/{appointment_id}/no-show", response_model=AppointmentPublic)
+async def appointment_no_show(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition("no_show", appointment_id, payload, request, actor, ctx)
+
+
+@router.post("/{appointment_id}/ready-for-provider", response_model=AppointmentPublic)
+async def appointment_ready_for_provider(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition(
+        "ready_for_provider", appointment_id, payload, request, actor, ctx,
+    )
+
+
+@router.post("/{appointment_id}/undo-ready-for-provider", response_model=AppointmentPublic)
+async def appointment_undo_ready_for_provider(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Reverse an accidental Ready-for-Provider click — returns to checked_in."""
+    return await _run_transition(
+        "undo_ready_for_provider", appointment_id, payload, request, actor, ctx,
+    )
+
+
+@router.post("/{appointment_id}/start-visit", response_model=AppointmentPublic)
+async def appointment_start_visit(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition("start_visit", appointment_id, payload, request, actor, ctx)
+
+
+@router.post("/{appointment_id}/ready-for-checkout", response_model=AppointmentPublic)
+async def appointment_ready_for_checkout(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition(
+        "ready_for_checkout", appointment_id, payload, request, actor, ctx,
+    )
+
+
+@router.post("/{appointment_id}/undo-ready-for-checkout", response_model=AppointmentPublic)
+async def appointment_undo_ready_for_checkout(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Reverse an accidental Ready-for-Checkout — returns to in_progress."""
+    return await _run_transition(
+        "undo_ready_for_checkout", appointment_id, payload, request, actor, ctx,
+    )
+
+
+@router.post("/{appointment_id}/complete", response_model=AppointmentPublic)
+async def appointment_complete(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition("complete", appointment_id, payload, request, actor, ctx)
+
+
+@router.post("/{appointment_id}/start-checkout", response_model=AppointmentPublic)
+async def appointment_start_checkout(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Mark the patient as at the checkout counter. Physical-location move
+    only — `status` remains `ready_for_checkout`/`completed`. Stamps
+    `checkout_started_at`/`_by_user_id` for future handoffs."""
+    return await _run_transition(
+        "start_checkout", appointment_id, payload, request, actor, ctx,
+    )
+
+
+@router.post("/{appointment_id}/checkout", response_model=AppointmentPublic)
+async def appointment_checkout(
+    appointment_id: str,
+    request: Request,
+    payload: CheckoutRequest = CheckoutRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Complete checkout — `status → checked_out`, optionally capture
+    `checkout_notes` / `checkout_summary` in the same atomic write.
+
+    Event-bus publishes `appointment.checkout` with the full updated
+    appointment, providing the hook point for future payment-collection,
+    invoice-handoff, follow-up-scheduling, and document-print/email
+    subscribers without needing to touch this endpoint.
+    """
+    spec = TRANSITIONS["checkout"]
+    current = await _load_for_transition(appointment_id, ctx)
+    extra = {
+        "checkout_notes": payload.checkout_notes,
+        "checkout_summary": payload.checkout_summary,
+    }
+    updated = await apply_transition(
+        appointment_id, spec,
+        current=current,
+        actor=actor,
+        request=request,
+        override=payload.override,
+        reason=payload.reason,
+        location_override=payload.location,
+        tenant_id=ctx.tenant_id,
+        extra_fields=extra,
+    )
+    (hydrated,) = await _hydrate([updated])
+    return hydrated
+
+
+@router.post("/{appointment_id}/depart", response_model=AppointmentPublic)
+async def appointment_depart(
+    appointment_id: str,
+    request: Request,
+    payload: WorkflowTransitionRequest = WorkflowTransitionRequest(),
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    return await _run_transition("depart", appointment_id, payload, request, actor, ctx)
+
+
+@router.post("/{appointment_id}/location", response_model=AppointmentPublic)
+async def appointment_set_location(
+    appointment_id: str,
+    payload: PatientLocationChangeRequest,
+    request: Request,
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Change the patient's physical location without touching lifecycle status."""
+    current = await _load_for_transition(appointment_id, ctx)
+    updated = await apply_patient_location(
+        appointment_id,
+        current=current,
+        new_location=payload.location,
+        actor=actor,
+        request=request,
+        reason=payload.reason,
+        tenant_id=ctx.tenant_id,
+    )
+    (hydrated,) = await _hydrate([updated])
+    return hydrated
+
+
+# ---------------------------------------------------------------------------
+# Room assignment endpoints (Phase 4)
+# ---------------------------------------------------------------------------
+
+class _RoomClearRequest(PatientLocationChangeRequest):
+    """Reuses `reason` and adds the return-to-waiting toggle."""
+    # `location` is inherited but ignored for clear-room; kept for backwards
+    # compatibility with the generic request shape.
+
+
+@router.post("/{appointment_id}/room", response_model=AppointmentPublic)
+async def appointment_assign_room(
+    appointment_id: str,
+    payload: RoomAssignRequest,
+    request: Request,
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Assign (or change) the current room on an active appointment.
+
+    409 on single-occupancy conflict; pass `force=true` + `reason` to
+    override (audited with `forced=true`).
+    """
+    current = await _load_for_transition(appointment_id, ctx)
+    updated = await assign_or_change_room(
+        current=current,
+        room_id=payload.room_id,
+        actor=actor,
+        request=request,
+        reason=payload.reason,
+        force=payload.force,
+        tenant_id=ctx.tenant_id,
+    )
+    (hydrated,) = await _hydrate([updated])
+    return hydrated
+
+
+@router.post("/{appointment_id}/clear-room", response_model=AppointmentPublic)
+async def appointment_clear_room(
+    appointment_id: str,
+    request: Request,
+    actor: dict = Depends(
+        require_permission("appointment", "update", audit_allow=False)
+    ),
+    ctx: TenantContext = Depends(get_tenant_context),
+    return_to_waiting: bool = Query(
+        default=False,
+        description="When true, also sets current_location_type=waiting_room.",
+    ),
+    reason: str | None = Query(default=None),
+):
+    """Clear the current_room_id. Set `return_to_waiting=true` to also
+    move the patient back to the waiting room."""
+    current = await _load_for_transition(appointment_id, ctx)
+    updated = await clear_room(
+        current=current,
+        actor=actor,
+        request=request,
+        reason=reason,
+        return_to_waiting=return_to_waiting,
+        tenant_id=ctx.tenant_id,
+    )
+    (hydrated,) = await _hydrate([updated])
+    return hydrated
+
+
+@router.get("/{appointment_id}/room-history")
+async def appointment_room_history(
+    appointment_id: str,
+    request: Request,
+    user: dict = Depends(get_current_user),
+    ctx: TenantContext = Depends(get_tenant_context),
+):
+    """Return the chronological room/location history for an appointment."""
+    await _load_for_transition(appointment_id, ctx)
+    db = get_db_read()
+    q: dict = {"appointment_id": appointment_id}
+    if ctx.tenant_id and not ctx.is_platform_admin:
+        q["tenant_id"] = ctx.tenant_id
+    rows = [
+        r async for r in db.appointment_room_history.find(q, {"_id": 0})
+        .sort("at", 1)
+    ]
+    return rows
+
+

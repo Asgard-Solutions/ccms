@@ -1,6 +1,16 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { FileStack, Filter, Users } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
+  FileStack,
+  Filter,
+  Search,
+  Users,
+} from "lucide-react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
@@ -15,13 +25,16 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "../../components/ui/tabs";
 import { formatCents } from "../../utils/money";
 import { formatDateTime } from "../../utils/time";
-import { usePayers } from "./useBillingAdmin";
 import {
   CLAIM_STATUS_LABELS,
+  CANONICAL_STATUS_LABELS,
+  CANONICAL_STATUS_ORDER,
   QUEUE_KEYS,
+  canonicalStatusLabel,
+  canonicalStatusTone,
+  claimEventLabel,
   claimStatusTone,
-  useClaimQueue,
-  useClaims,
+  useClaimsQueueV2,
 } from "./useClaims";
 
 const ALL_KEY = "all";
@@ -31,41 +44,107 @@ const STATUS_OPTIONS = [
   ...Object.entries(CLAIM_STATUS_LABELS).map(([v, l]) => ({ v, l })),
 ];
 
+const PAGE_SIZES = [10, 25, 50, 100];
+
+// Human-friendly column definitions. `sortKey` is null for columns
+// that don't map cleanly to a single server-side field.
+const COLUMNS = [
+  { id: "claim",         label: "Claim",         sortKey: null },
+  { id: "patient",       label: "Patient",       sortKey: null },
+  { id: "service_dates", label: "Service dates", sortKey: "service_date_from" },
+  { id: "billed",        label: "Billed",        sortKey: "billed_cents",
+    align: "right" },
+  { id: "status",        label: "Status",        sortKey: "status" },
+  { id: "assignee",      label: "Assignee",      sortKey: null },
+  { id: "last_activity", label: "Last activity", sortKey: "updated_at" },
+];
+
 export default function ClaimsQueue() {
   const [tab, setTab] = useState(ALL_KEY);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [sort, setSort] = useState("updated_at:desc");
+
+  // Filters
   const [status, setStatus] = useState("all");
+  const [canonicalStatus, setCanonicalStatus] = useState("all");
   const [payerId, setPayerId] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
   const [ageDays, setAgeDays] = useState("");
 
-  const { rows: payers } = usePayers();
+  // "unassigned" is modelled as a sentinel value of `assignedTo`
+  // ("__unassigned__") so a single Select drives both states.
+  const unassigned = assignedTo === "__unassigned__";
 
-  // "All" uses the classic listing endpoint; named queues use the
-  // dedicated queue endpoint (server-side filtering).
-  const isNamedQueue = tab !== ALL_KEY;
-  const allRows = useClaims({
-    status: !isNamedQueue && status !== "all" ? status : null,
+  const filters = useMemo(() => ({
+    status_in: status !== "all" ? [status] : null,
+    canonical_status_in: canonicalStatus !== "all" ? [canonicalStatus] : null,
+    payer_id: payerId || null,
+    assigned_to: unassigned ? null : (assignedTo || null),
+    unassigned: unassigned || null,
+    age_days: ageDays ? Number(ageDays) : null,
+  }), [status, canonicalStatus, payerId, assignedTo, unassigned, ageDays]);
+
+  const { data, loading, error } = useClaimsQueueV2({
+    tab, page, pageSize, sort, filters,
   });
-  const queue = useClaimQueue({
-    queue: isNamedQueue ? tab : null,
-    filters: {
-      payer_id: payerId || null,
-      assigned_to: assignedTo || null,
-      age_days: ageDays ? Number(ageDays) : null,
-      status_in: status !== "all" ? [status] : null,
-    },
-  });
 
-  const rows = isNamedQueue ? queue.rows : allRows.rows;
-  const loading = isNamedQueue ? queue.loading : allRows.loading;
+  const rows = data?.rows || [];
+  const total = data?.total || 0;
+  const summary = data?.summary || {
+    shown: 0, ready: 0, needs_fixes: 0, billed_total_cents: 0,
+  };
+  const tabCounts = data?.tab_counts || {};
+  const billedTotals = data?.billed_totals || {};
+  const filterOptions = data?.filter_options || { payers: [], assignees: [] };
 
-  const summary = useMemo(() => ({
-    total: rows.length,
-    billed: rows.reduce((a, c) => a + (c.billed_cents || 0), 0),
-    ready: rows.filter((c) => c.status === "ready").length,
-    needsFixes: rows.filter((c) =>
-      ["validation_failed", "rejected", "denied"].includes(c.status)).length,
-  }), [rows]);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const hasActiveFilters =
+    status !== "all" || canonicalStatus !== "all" || payerId || assignedTo || ageDays;
+  const isEmptyView = !loading && rows.length === 0;
+
+  // If the queue fetch failed (auth, permission, network), surface it
+  // with the correlation id so the user doesn't see a misleading
+  // "No claims yet" empty state. The payload from the API interceptor
+  // looks like `{detail, correlation_id}`.
+  const queueError = error
+    ? {
+        status: error?.response?.status ?? 0,
+        detail:
+          error?.response?.data?.detail
+          || error?.message
+          || "Unable to load the claims queue.",
+        correlationId:
+          error?.response?.data?.correlation_id
+          || error?.response?.headers?.["x-correlation-id"]
+          || null,
+      }
+    : null;
+
+  function onSortClick(sortKey) {
+    if (!sortKey) return;
+    const [curField, curDir] = sort.split(":");
+    if (curField === sortKey) {
+      setSort(`${sortKey}:${curDir === "asc" ? "desc" : "asc"}`);
+    } else {
+      setSort(`${sortKey}:desc`);
+    }
+    setPage(1);
+  }
+
+  function setTabAndReset(newTab) {
+    setTab(newTab);
+    setPage(1);
+  }
+
+  function resetFilters() {
+    setStatus("all");
+    setCanonicalStatus("all");
+    setPayerId("");
+    setAssignedTo("");
+    setAgeDays("");
+    setPage(1);
+  }
 
   return (
     <div data-testid="claims-queue" className="space-y-6">
@@ -77,192 +156,624 @@ export default function ClaimsQueue() {
           <h1 className="mt-1 font-display text-4xl font-medium tracking-tight">
             Claims queue
           </h1>
+          <p className="mt-2 max-w-xl text-sm text-muted-foreground">
+            Operational workspace for claim submission, follow-up, and fixes.
+            Rows show the latest activity from the canonical event stream.
+          </p>
         </div>
         <Button asChild variant="outline" className="rounded-sm">
           <Link to="/billing" data-testid="claims-back-btn">
-            Back to dashboard
+            ← Back to dashboard
           </Link>
         </Button>
       </header>
 
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs value={tab} onValueChange={setTabAndReset}>
         <TabsList data-testid="claims-queue-tabs" className="rounded-sm">
-          <TabsTrigger value={ALL_KEY} data-testid="tab-all">All</TabsTrigger>
+          <TabsTrigger value={ALL_KEY} data-testid="tab-all">
+            <span className="flex flex-col items-start leading-tight">
+              <span className="flex items-center">
+                All
+                <CountChip n={tabCounts.all} />
+              </span>
+              <BilledChip cents={billedTotals.all} />
+            </span>
+          </TabsTrigger>
           {QUEUE_KEYS.map((q) => (
             <TabsTrigger
               key={q.key}
               value={q.key}
               data-testid={`tab-${q.key}`}
             >
-              {q.label}
+              <span className="flex flex-col items-start leading-tight">
+                <span className="flex items-center">
+                  {q.label}
+                  <CountChip n={tabCounts[q.key]} />
+                </span>
+                <BilledChip cents={billedTotals[q.key]} />
+              </span>
             </TabsTrigger>
           ))}
         </TabsList>
       </Tabs>
 
       <div className="grid gap-4 sm:grid-cols-4">
-        <Stat label="Shown" value={summary.total} />
-        <Stat label="Ready" value={summary.ready} tone="primary" />
-        <Stat label="Needs fixes" value={summary.needsFixes} tone="destructive" />
-        <Stat label="Billed total" value={formatCents(summary.billed)} />
+        <Stat
+          testid="stat-shown"
+          label="Shown"
+          value={loading ? "—" : summary.shown}
+          hint={total ? `of ${total.toLocaleString()} total` : null}
+        />
+        <Stat
+          testid="stat-ready"
+          label="Ready"
+          value={loading ? "—" : summary.ready}
+          tone="primary"
+        />
+        <Stat
+          testid="stat-needs-fixes"
+          label="Needs fixes"
+          value={loading ? "—" : summary.needs_fixes}
+          tone="destructive"
+        />
+        <Stat
+          testid="stat-billed-total"
+          label="Billed total"
+          value={loading ? "—" : formatCents(summary.billed_total_cents)}
+        />
       </div>
 
-      <section
-        data-testid="claims-filter-bar"
-        className="flex flex-wrap items-end gap-3 rounded-sm border border-border bg-card p-4"
-      >
-        <div className="flex min-w-[10rem] flex-col gap-1">
-          <Label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
-            <Filter className="mr-1 inline h-3 w-3" /> Status
-          </Label>
-          <Select value={status} onValueChange={setStatus}>
-            <SelectTrigger data-testid="claims-status-filter" className="w-48">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {STATUS_OPTIONS.map((o) => (
-                <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="flex min-w-[10rem] flex-col gap-1">
-          <Label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
-            Payer
-          </Label>
-          <Select value={payerId || "any"} onValueChange={(v) => setPayerId(v === "any" ? "" : v)}>
-            <SelectTrigger data-testid="claims-payer-filter" className="w-56">
-              <SelectValue placeholder="Any payer" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="any">Any payer</SelectItem>
-              {(payers || []).map((p) => (
-                <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="flex min-w-[9rem] flex-col gap-1">
-          <Label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
-            Age &gt; days
-          </Label>
-          <Input
-            data-testid="claims-age-filter"
-            type="number"
-            min="0"
-            placeholder="any"
-            value={ageDays}
-            onChange={(e) => setAgeDays(e.target.value)}
-            className="w-28"
-          />
-        </div>
-
-        <div className="flex min-w-[11rem] flex-col gap-1">
-          <Label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
-            <Users className="mr-1 inline h-3 w-3" /> Assignee
-          </Label>
-          <Input
-            data-testid="claims-assignee-filter"
-            placeholder="user id"
-            value={assignedTo}
-            onChange={(e) => setAssignedTo(e.target.value)}
-            className="w-48"
-          />
-        </div>
-      </section>
+      <FilterBar
+        status={status} setStatus={setStatus}
+        canonicalStatus={canonicalStatus} setCanonicalStatus={setCanonicalStatus}
+        payerId={payerId} setPayerId={setPayerId}
+        assignedTo={assignedTo} setAssignedTo={setAssignedTo}
+        ageDays={ageDays} setAgeDays={setAgeDays}
+        payers={filterOptions.payers}
+        assignees={filterOptions.assignees}
+        canonicalStatuses={filterOptions.canonical_statuses}
+        hasActiveFilters={!!hasActiveFilters}
+        onReset={resetFilters}
+      />
 
       <section className="overflow-hidden rounded-sm border border-border bg-card">
         {loading ? (
-          <div className="p-4 space-y-2">
-            {[0, 1, 2].map((i) => (
-              <Skeleton key={i} className="h-10 w-full rounded-sm" />
-            ))}
-          </div>
-        ) : rows.length === 0 ? (
-          <div className="flex flex-col items-center gap-2 py-10 text-muted-foreground">
-            <FileStack className="h-6 w-6" />
-            <p className="text-sm">No claims match this view.</p>
-          </div>
+          <TableSkeleton />
+        ) : queueError ? (
+          <QueueErrorState error={queueError} onRetry={() => window.location.reload()} />
+        ) : isEmptyView && hasActiveFilters ? (
+          <NoResultsState onReset={resetFilters} />
+        ) : isEmptyView ? (
+          <EmptyState tab={tab} />
         ) : (
-          <table className="w-full table-auto text-sm">
-            <thead className="bg-muted/50 text-left text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2">Claim</th>
-                <th className="px-4 py-2">Patient</th>
-                <th className="px-4 py-2">Service dates</th>
-                <th className="px-4 py-2 text-right">Billed</th>
-                <th className="px-4 py-2">Status</th>
-                <th className="px-4 py-2">Assignee</th>
-                <th className="px-4 py-2">Last activity</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((c) => (
-                <tr
-                  key={c.id}
-                  data-testid={`claim-row-${c.id}`}
-                  className="border-t border-border hover:bg-muted/30"
-                >
-                  <td className="px-4 py-3 font-medium">
-                    <Link
-                      to={`/billing/claims/${c.id}`}
-                      className="hover:underline"
-                    >
-                      {c.id.slice(0, 8)}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    <Link to={`/patients/${c.patient_id}`} className="hover:underline">
-                      {c.patient_id.slice(0, 8)}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {c.service_date_from} → {c.service_date_to}
-                  </td>
-                  <td className="px-4 py-3 text-right tabular-nums">
-                    {formatCents(c.billed_cents)}
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`inline-flex items-center rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${claimStatusTone(c.status)}`}
-                    >
-                      {CLAIM_STATUS_LABELS[c.status] || c.status}
-                    </span>
-                    {c.validation_error_count > 0 && (
-                      <span className="ml-2 text-[11px] font-semibold text-destructive">
-                        {c.validation_error_count} error{c.validation_error_count === 1 ? "" : "s"}
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">
-                    {c.assigned_to ? c.assigned_to.slice(0, 8) : "—"}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">
-                    {c.updated_at ? formatDateTime(c.updated_at) : "—"}
-                  </td>
+          <>
+            <table className="w-full table-auto text-sm">
+              <thead className="bg-muted/50 text-left text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
+                <tr>
+                  {COLUMNS.map((c) => (
+                    <SortableHeader
+                      key={c.id}
+                      column={c}
+                      currentSort={sort}
+                      onClick={onSortClick}
+                    />
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((c) => (
+                  <ClaimRow key={c.id} c={c} />
+                ))}
+              </tbody>
+            </table>
+            <Pagination
+              page={page}
+              pageSize={pageSize}
+              total={total}
+              totalPages={totalPages}
+              onPageChange={setPage}
+              onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
+            />
+          </>
         )}
       </section>
     </div>
   );
 }
 
-function Stat({ label, value, tone }) {
-  const toneClass = tone === "primary"
-    ? "text-primary"
-    : tone === "destructive"
-      ? "text-destructive"
-      : "text-foreground";
+// ---------------------------------------------------------------------------
+// Small pieces
+// ---------------------------------------------------------------------------
+function CountChip({ n }) {
+  if (n === undefined || n === null) return null;
   return (
-    <div className="rounded-sm border border-border bg-card p-5">
-      <div className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">{label}</div>
-      <div className={`mt-1 font-display text-3xl font-medium tabular-nums ${toneClass}`}>
+    <span className="ml-2 rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-muted-foreground">
+      {n}
+    </span>
+  );
+}
+
+function BilledChip({ cents }) {
+  if (cents === undefined || cents === null) return null;
+  return (
+    <span
+      data-testid="tab-billed-total"
+      className="mt-0.5 text-[10px] tabular-nums text-muted-foreground/80"
+    >
+      {formatCents(cents)}
+    </span>
+  );
+}
+
+function Stat({ label, value, hint, tone, testid }) {
+  const toneClass =
+    tone === "primary" ? "text-primary" :
+    tone === "destructive" ? "text-destructive" : "";
+  return (
+    <div
+      data-testid={testid}
+      className="rounded-sm border border-border bg-card p-4"
+    >
+      <div className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
+        {label}
+      </div>
+      <div className={`mt-1 font-display text-2xl tabular-nums ${toneClass}`}>
         {value}
+      </div>
+      {hint ? (
+        <div className="mt-0.5 text-[11px] text-muted-foreground">{hint}</div>
+      ) : null}
+    </div>
+  );
+}
+
+function SortableHeader({ column, currentSort, onClick }) {
+  const [field, dir] = (currentSort || "").split(":");
+  const active = column.sortKey && field === column.sortKey;
+  const sortable = !!column.sortKey;
+  const Icon = active
+    ? (dir === "asc" ? ArrowUp : ArrowDown)
+    : ArrowUpDown;
+  return (
+    <th
+      className={`px-4 py-2 ${column.align === "right" ? "text-right" : ""} ${sortable ? "cursor-pointer select-none hover:text-foreground" : ""}`}
+      onClick={() => sortable && onClick(column.sortKey)}
+      data-testid={`claims-col-${column.id}`}
+    >
+      <span className="inline-flex items-center gap-1">
+        {column.label}
+        {sortable && (
+          <Icon className={`h-3 w-3 ${active ? "text-foreground" : "opacity-40"}`} />
+        )}
+      </span>
+    </th>
+  );
+}
+
+function ClaimRow({ c }) {
+  const lastEventLabel = claimEventLabel(c.last_event);
+  const lastAt = c.last_event_at || c.updated_at;
+  const patientDisplay = c.patient_name
+    || (c.patient_mrn ? `MRN ${c.patient_mrn}` : null)
+    || "Unknown patient";
+  const assigneeDisplay = c.assignee_name || null;
+  return (
+    <tr
+      data-testid={`claim-row-${c.id}`}
+      className="border-t border-border transition-colors hover:bg-muted/30"
+    >
+      <td className="px-4 py-3 font-medium">
+        <Link
+          to={`/billing/claims/${c.id}`}
+          className="hover:underline"
+          data-testid={`claim-row-link-${c.id}`}
+        >
+          {c.id.slice(0, 8)}
+        </Link>
+        {c.payer_name ? (
+          <div className="text-[11px] text-muted-foreground">{c.payer_name}</div>
+        ) : null}
+      </td>
+      <td className="px-4 py-3">
+        <Link to={`/patients/${c.patient_id}`} className="hover:underline">
+          {patientDisplay}
+        </Link>
+        {c.patient_mrn && c.patient_name ? (
+          <div className="text-[11px] text-muted-foreground">MRN {c.patient_mrn}</div>
+        ) : null}
+      </td>
+      <td className="px-4 py-3 text-muted-foreground">
+        {c.service_date_from} → {c.service_date_to}
+      </td>
+      <td className="px-4 py-3 text-right tabular-nums">
+        {formatCents(c.billed_cents)}
+      </td>
+      <td className="px-4 py-3">
+        <span
+          className={`inline-flex items-center rounded-sm px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${canonicalStatusTone(c.canonical_status)}`}
+          data-testid={`claim-row-canonical-${c.id}`}
+          title={c.status ? `Raw: ${CLAIM_STATUS_LABELS[c.status] || c.status}` : undefined}
+        >
+          {canonicalStatusLabel(c.canonical_status)}
+        </span>
+        {/* Raw status is kept as a subtle secondary chip for operators
+            who need the fine-grained state. */}
+        {c.status && c.canonical_status !== c.status && (
+          <span
+            className={`ml-1.5 inline-flex items-center rounded-sm px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide ${claimStatusTone(c.status)}`}
+            data-testid={`claim-row-status-${c.id}`}
+          >
+            {CLAIM_STATUS_LABELS[c.status] || c.status}
+          </span>
+        )}
+        {c.validation_error_count > 0 && (
+          <span
+            data-testid={`claim-row-errors-${c.id}`}
+            className="ml-2 text-[11px] font-semibold text-destructive"
+          >
+            {c.validation_error_count} error{c.validation_error_count === 1 ? "" : "s"}
+          </span>
+        )}
+        {c.validation_warning_count > 0 && (
+          <span
+            data-testid={`claim-row-warnings-${c.id}`}
+            className="ml-2 text-[11px] font-semibold text-warning"
+          >
+            {c.validation_warning_count} warn
+          </span>
+        )}
+      </td>
+      <td className="px-4 py-3 text-xs text-muted-foreground">
+        <div className="flex flex-col gap-1">
+          <span>{assigneeDisplay || <span className="italic">Unassigned</span>}</span>
+          {c.followup_flag && (
+            <span
+              data-testid={`claim-row-followup-${c.id}`}
+              title={c.followup_reason || "Follow-up required"}
+              className="inline-flex w-fit items-center rounded-sm bg-warning-soft px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-warning"
+            >
+              Follow-up{c.followup_reason ? `: ${c.followup_reason}` : ""}
+            </span>
+          )}
+          {c.aging_days != null && c.aging_days >= 30 && !c.followup_flag && (
+            <span
+              data-testid={`claim-row-aging-${c.id}`}
+              className="text-[10px] text-muted-foreground"
+            >
+              {c.aging_days}d old
+            </span>
+          )}
+        </div>
+      </td>
+      <td className="px-4 py-3 text-xs text-muted-foreground">
+        {lastEventLabel ? (
+          <span
+            data-testid={`claim-row-last-event-${c.id}`}
+            className="inline-flex flex-col"
+          >
+            <span className="font-medium text-foreground">{lastEventLabel}</span>
+            <span>{lastAt ? formatDateTime(lastAt) : "—"}</span>
+          </span>
+        ) : (
+          lastAt ? formatDateTime(lastAt) : "—"
+        )}
+      </td>
+    </tr>
+  );
+}
+
+function FilterBar({
+  status, setStatus,
+  canonicalStatus, setCanonicalStatus,
+  payerId, setPayerId, assignedTo, setAssignedTo,
+  ageDays, setAgeDays, payers, assignees,
+  canonicalStatuses, hasActiveFilters, onReset,
+}) {
+  // Fall back to CANONICAL_STATUS_ORDER when the server hasn't
+  // populated filter_options yet (first render).
+  const canonicalOptions = canonicalStatuses?.length
+    ? canonicalStatuses
+    : CANONICAL_STATUS_ORDER.map((v) => ({
+        value: v, label: CANONICAL_STATUS_LABELS[v],
+      }));
+  return (
+    <section
+      data-testid="claims-filter-bar"
+      className="flex flex-wrap items-end gap-3 rounded-sm border border-border bg-card p-4"
+    >
+      <div className="flex min-w-[10rem] flex-col gap-1">
+        <Label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
+          <Filter className="mr-1 inline h-3 w-3" /> Lifecycle
+        </Label>
+        <Select value={canonicalStatus} onValueChange={setCanonicalStatus}>
+          <SelectTrigger data-testid="claims-canonical-filter" className="w-52">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All lifecycle states</SelectItem>
+            {canonicalOptions.map((o) => (
+              <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="flex min-w-[10rem] flex-col gap-1">
+        <Label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
+          Raw status
+        </Label>
+        <Select value={status} onValueChange={setStatus}>
+          <SelectTrigger data-testid="claims-status-filter" className="w-48">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {STATUS_OPTIONS.map((o) => (
+              <SelectItem key={o.v} value={o.v}>{o.l}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="flex min-w-[10rem] flex-col gap-1">
+        <Label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
+          Payer
+        </Label>
+        <Select value={payerId || "any"} onValueChange={(v) => setPayerId(v === "any" ? "" : v)}>
+          <SelectTrigger data-testid="claims-payer-filter" className="w-56">
+            <SelectValue placeholder="Any payer" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="any">Any payer</SelectItem>
+            {(payers || []).map((p) => (
+              <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="flex min-w-[9rem] flex-col gap-1">
+        <Label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
+          Age &gt; days
+        </Label>
+        <Input
+          data-testid="claims-age-filter"
+          type="number"
+          min="0"
+          placeholder="any"
+          value={ageDays}
+          onChange={(e) => setAgeDays(e.target.value)}
+          className="w-28"
+        />
+      </div>
+
+      <div className="flex min-w-[11rem] flex-col gap-1">
+        <Label className="text-[11px] uppercase tracking-[0.15em] text-muted-foreground">
+          <Users className="mr-1 inline h-3 w-3" /> Assignee
+        </Label>
+        {(assignees || []).length > 0 ? (
+          <Select
+            value={assignedTo || "any"}
+            onValueChange={(v) => setAssignedTo(v === "any" ? "" : v)}
+          >
+            <SelectTrigger data-testid="claims-assignee-filter" className="w-56">
+              <SelectValue placeholder="Any" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="any">Any</SelectItem>
+              <SelectItem
+                value="__unassigned__"
+                data-testid="claims-assignee-filter-unassigned"
+              >
+                Unassigned only
+              </SelectItem>
+              {assignees.map((u) => (
+                <SelectItem key={u.id} value={u.id}>{u.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <Select
+            value={assignedTo || "any"}
+            onValueChange={(v) => setAssignedTo(v === "any" ? "" : v)}
+          >
+            <SelectTrigger data-testid="claims-assignee-filter" className="w-56">
+              <SelectValue placeholder="Any" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="any">Any</SelectItem>
+              <SelectItem
+                value="__unassigned__"
+                data-testid="claims-assignee-filter-unassigned"
+              >
+                Unassigned only
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+
+      {hasActiveFilters && (
+        <Button
+          data-testid="claims-filters-reset"
+          variant="ghost"
+          size="sm"
+          onClick={onReset}
+          className="h-8 self-end text-xs text-muted-foreground"
+        >
+          Clear filters
+        </Button>
+      )}
+    </section>
+  );
+}
+
+function Pagination({ page, pageSize, total, totalPages, onPageChange, onPageSizeChange }) {
+  const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, total);
+  return (
+    <div
+      data-testid="claims-pagination"
+      className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3 text-xs text-muted-foreground"
+    >
+      <span>
+        {start.toLocaleString()}–{end.toLocaleString()} of {total.toLocaleString()}
+      </span>
+      <div className="flex items-center gap-3">
+        <span className="flex items-center gap-2">
+          Rows:
+          <Select
+            value={String(pageSize)}
+            onValueChange={(v) => onPageSizeChange(Number(v))}
+          >
+            <SelectTrigger
+              data-testid="claims-page-size"
+              className="h-7 w-20"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PAGE_SIZES.map((n) => (
+                <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </span>
+        <div className="flex items-center gap-1">
+          <Button
+            data-testid="claims-prev-page"
+            variant="outline"
+            size="sm"
+            className="h-7 w-7 rounded-sm p-0"
+            disabled={page <= 1}
+            onClick={() => onPageChange(page - 1)}
+          >
+            <ChevronLeft className="h-3 w-3" />
+          </Button>
+          <span className="tabular-nums" data-testid="claims-page-indicator">
+            {page} / {totalPages}
+          </span>
+          <Button
+            data-testid="claims-next-page"
+            variant="outline"
+            size="sm"
+            className="h-7 w-7 rounded-sm p-0"
+            disabled={page >= totalPages}
+            onClick={() => onPageChange(page + 1)}
+          >
+            <ChevronRight className="h-3 w-3" />
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TableSkeleton() {
+  return (
+    <div className="space-y-2 p-4">
+      {[0, 1, 2, 3, 4].map((i) => (
+        <Skeleton key={i} className="h-10 w-full rounded-sm" />
+      ))}
+    </div>
+  );
+}
+
+function EmptyState({ tab }) {
+  return (
+    <div
+      data-testid="claims-empty-state"
+      className="flex flex-col items-center gap-2 py-16 text-muted-foreground"
+    >
+      <FileStack className="h-8 w-8" />
+      <p className="text-sm">
+        {tab === "all"
+          ? "No claims yet. Create one from a patient's encounter to get started."
+          : "Nothing here right now — this queue is clear."}
+      </p>
+    </div>
+  );
+}
+
+function NoResultsState({ onReset }) {
+  return (
+    <div
+      data-testid="claims-no-results"
+      className="flex flex-col items-center gap-3 py-16 text-muted-foreground"
+    >
+      <Search className="h-8 w-8" />
+      <p className="text-sm">No claims match the current filters.</p>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onReset}
+        data-testid="claims-no-results-reset"
+      >
+        Clear filters
+      </Button>
+    </div>
+  );
+}
+
+/** Failed-to-load panel. Replaces the misleading "No claims yet"
+ *  empty state when the queue API returned an error (401/403/5xx/
+ *  network). Surfaces the real status, detail, and correlation id
+ *  so the user can copy-paste into a support ticket instead of
+ *  assuming there just aren't any claims. */
+function QueueErrorState({ error, onRetry }) {
+  const isAuth = error.status === 401;
+  const isPerm = error.status === 403;
+  const headline = isAuth
+    ? "Re-authentication required to load claims."
+    : isPerm
+      ? "You don't have permission to view the claims queue."
+      : "Couldn't load the claims queue.";
+  return (
+    <div
+      data-testid="claims-queue-error"
+      className="flex flex-col items-center gap-3 py-16 text-muted-foreground"
+    >
+      <div className="rounded-full border border-destructive/30 bg-destructive/5 p-3 text-destructive">
+        <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <path d="M12 8v5m0 3.01.01-.011" />
+          <circle cx="12" cy="12" r="9" />
+        </svg>
+      </div>
+      <p className="text-sm font-medium text-foreground" data-testid="claims-queue-error-headline">
+        {headline}
+      </p>
+      <p className="max-w-sm text-center text-xs">
+        {error.detail}
+        {error.status ? (
+          <span className="ml-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+            HTTP {error.status}
+          </span>
+        ) : null}
+      </p>
+      {error.correlationId ? (
+        <p
+          className="text-[10px] text-muted-foreground"
+          data-testid="claims-queue-error-correlation"
+        >
+          Correlation id:{" "}
+          <code className="rounded bg-muted px-1 py-0.5">{error.correlationId}</code>
+        </p>
+      ) : null}
+      <div className="mt-1 flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onRetry}
+          data-testid="claims-queue-error-retry"
+        >
+          Try again
+        </Button>
+        {isAuth ? (
+          <Button asChild variant="ghost" size="sm">
+            <Link to="/login" data-testid="claims-queue-error-login">
+              Sign in again
+            </Link>
+          </Button>
+        ) : null}
       </div>
     </div>
   );

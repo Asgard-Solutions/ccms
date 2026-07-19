@@ -39,6 +39,21 @@ export async function requestExport(name, payload) {
   return data;
 }
 
+export async function fetchDenialClassifications() {
+  const { data } = await api.get("/reports/denial-classifications");
+  return data;
+}
+
+export async function upsertDenialClassification(payload) {
+  const { data } = await api.post("/reports/denial-classifications", payload);
+  return data;
+}
+
+export async function removeDenialClassification(id) {
+  await api.delete(`/reports/denial-classifications/${id}`);
+}
+
+
 export async function pollExport(exportId) {
   const { data } = await api.get(`/exports/${exportId}`);
   return data;

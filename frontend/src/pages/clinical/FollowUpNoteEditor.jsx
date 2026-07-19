@@ -52,6 +52,8 @@ import {
 import { useAuth } from "../../contexts/AuthContext";
 import { useReauth } from "../../components/ReauthGate";
 import AddendumPanel from "./AddendumPanel";
+import EncounterAssistPanel from "../ai/EncounterAssistPanel";
+import ScribePanel from "../ai/ScribePanel";
 import { formatDateTime } from "../../utils/time";
 
 const PAIN_CHANGE = [
@@ -162,6 +164,31 @@ export default function FollowUpNoteEditor() {
   const [plan, setPlan] = useState({});
 
   const readOnly = !canWrite || note?.status === "signed";
+
+  // Shared apply-to-section handler for both the EncounterAssistPanel
+  // (prior-encounter pull-ins) and the AI Scribe (voice-to-SOAP).
+  const applySectionFromAi = useCallback((section, text) => {
+    if (!text) return;
+    if (section === "subjective") {
+      setSubjective((s) => ({
+        ...(s || {}),
+        interval_history: [(s && s.interval_history) || "", text].filter(Boolean).join("\n\n"),
+      }));
+    } else if (section === "objective") {
+      setObjective((s) => ({ ...(s || {}), ai_notes: text }));
+    } else if (section === "assessment") {
+      setAssessment((s) => ({
+        ...(s || {}),
+        clinical_impression: [(s && s.clinical_impression) || "", text].filter(Boolean).join("\n\n"),
+      }));
+    } else if (section === "plan") {
+      setPlan((s) => ({
+        ...(s || {}),
+        narrative: [(s && s.narrative) || "", text].filter(Boolean).join("\n\n"),
+      }));
+    }
+    toast.success(`Pulled into ${section}.`);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -305,7 +332,8 @@ export default function FollowUpNoteEditor() {
 
   return (
     <>
-      <div data-testid="follow-up-note-editor" className="mx-auto max-w-4xl space-y-6 p-4 sm:p-6">
+      <div data-testid="follow-up-note-editor" className="mx-auto max-w-7xl grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 p-4 sm:p-6">
+        <div className="space-y-6">
         {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -849,6 +877,24 @@ export default function FollowUpNoteEditor() {
           onChanged={load}
           onReauthNeeded={() => requestReauth(async () => load())}
         />
+        </div>
+        {/* AI assist rail — pulled from prior encounters / outcomes /
+            questionnaires. Sticky on lg+ so it stays visible as the
+            doctor scrolls through the SOAP sections. */}
+        <div className="lg:sticky lg:top-6 lg:self-start space-y-4">
+          <EncounterAssistPanel
+            noteId={nid}
+            onPullSection={applySectionFromAi}
+          />
+          {user?.role === "doctor" && note.status !== "signed" && (
+            <ScribePanel
+              noteId={nid}
+              noteType="follow_up"
+              disabled={!canWrite}
+              onApplySection={applySectionFromAi}
+            />
+          )}
+        </div>
       </div>
 
       <NarrativeDialog

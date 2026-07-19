@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import { ClipboardList, Pencil, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
+import { ClipboardList, GripVertical, Pencil, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { api } from "../api/client";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -14,6 +14,7 @@ const EMPTY_DRAFT = {
   description: "",
   is_active: true,
   sort_order: 0,
+  default_follow_up_days: "",
 };
 
 /**
@@ -31,6 +32,8 @@ export default function AppointmentTypesManager() {
   const [editingId, setEditingId] = useState(null);
   const [editDraft, setEditDraft] = useState(EMPTY_DRAFT);
   const [saving, setSaving] = useState(false);
+  const [dragIndex, setDragIndex] = useState(null);
+  const [overIndex, setOverIndex] = useState(null);
 
   async function refresh() {
     setLoading(true);
@@ -47,6 +50,41 @@ export default function AppointmentTypesManager() {
   useEffect(() => {
     refresh();
   }, []);
+
+  // --- Drag-and-drop reordering ---
+  function onDragStart(e, idx) {
+    setDragIndex(idx);
+    try { e.dataTransfer.effectAllowed = "move"; } catch { /* ignore */ }
+  }
+  function onDragOver(e, idx) {
+    e.preventDefault();
+    if (dragIndex === null || dragIndex === idx) return;
+    setOverIndex(idx);
+  }
+  function onDragLeave() {
+    setOverIndex(null);
+  }
+  async function onDrop(e, dropIdx) {
+    e.preventDefault();
+    const src = dragIndex;
+    setDragIndex(null);
+    setOverIndex(null);
+    if (src === null || src === dropIdx) return;
+    const next = [...rows];
+    const [moved] = next.splice(src, 1);
+    next.splice(dropIdx, 0, moved);
+    const prev = rows;
+    setRows(next);  // optimistic
+    try {
+      await api.post("/appointment-types/reorder", {
+        ordered_ids: next.map((r) => r.id),
+      });
+      toast.success("Order saved");
+    } catch (err) {
+      setRows(prev);  // rollback
+      toast.error(err.response?.data?.detail || "Reorder failed");
+    }
+  }
 
   function validDraft(d) {
     if (!d.name.trim()) return "Name is required";
@@ -71,6 +109,9 @@ export default function AppointmentTypesManager() {
         description: newDraft.description?.trim() || null,
         is_active: newDraft.is_active,
         sort_order: Number(newDraft.sort_order) || 0,
+        default_follow_up_days:
+          newDraft.default_follow_up_days === "" || newDraft.default_follow_up_days === null
+            ? null : Number(newDraft.default_follow_up_days),
       });
       toast.success(`Added "${newDraft.name.trim()}"`);
       setNewDraft(EMPTY_DRAFT);
@@ -94,6 +135,7 @@ export default function AppointmentTypesManager() {
       description: row.description || "",
       is_active: row.is_active,
       sort_order: row.sort_order ?? 0,
+      default_follow_up_days: row.default_follow_up_days ?? "",
     });
   }
 
@@ -110,6 +152,9 @@ export default function AppointmentTypesManager() {
         default_duration_minutes: Number(editDraft.default_duration_minutes),
         description: editDraft.description?.trim() || null,
         sort_order: Number(editDraft.sort_order) || 0,
+        default_follow_up_days:
+          editDraft.default_follow_up_days === "" || editDraft.default_follow_up_days === null
+            ? null : Number(editDraft.default_follow_up_days),
       });
       toast.success("Saved");
       setEditingId(null);
@@ -210,6 +255,23 @@ export default function AppointmentTypesManager() {
             </div>
             <div className="space-y-1">
               <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Follow-up (days, optional)
+              </Label>
+              <Input
+                type="number"
+                min={1}
+                max={365}
+                data-testid="appt-type-new-followup"
+                value={newDraft.default_follow_up_days}
+                onChange={(e) =>
+                  setNewDraft((d) => ({ ...d, default_follow_up_days: e.target.value }))
+                }
+                placeholder="e.g. 14"
+                className="rounded-sm"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                 Description (optional)
               </Label>
               <Textarea
@@ -251,6 +313,7 @@ export default function AppointmentTypesManager() {
         <table className="w-full text-sm">
           <thead className="border-b border-border bg-muted/50 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             <tr>
+              <th className="w-8 px-2 py-2" aria-label="drag-handle"></th>
               <th className="px-4 py-2 text-left">Name</th>
               <th className="px-4 py-2 text-left">Duration</th>
               <th className="px-4 py-2 text-left">Description</th>
@@ -261,7 +324,7 @@ export default function AppointmentTypesManager() {
           <tbody>
             {loading ? (
               <tr>
-                <td className="px-4 py-3 text-xs text-muted-foreground" colSpan={5}>
+                <td className="px-4 py-3 text-xs text-muted-foreground" colSpan={6}>
                   Loading…
                 </td>
               </tr>
@@ -270,23 +333,39 @@ export default function AppointmentTypesManager() {
                 <td
                   data-testid="appt-type-empty"
                   className="px-4 py-6 text-center text-xs text-muted-foreground"
-                  colSpan={5}
+                  colSpan={6}
                 >
                   No appointment types yet. Click{" "}
                   <span className="font-semibold">New type</span> to add one.
                 </td>
               </tr>
             ) : (
-              rows.map((row) => {
+              rows.map((row, idx) => {
                 const isEditing = editingId === row.id;
+                const isDraggingOver = overIndex === idx;
+                const isDragging = dragIndex === idx;
                 return (
                   <tr
                     key={row.id}
                     data-testid={`appt-type-row-${row.id}`}
-                    className={`border-b border-border last:border-b-0 ${
+                    draggable={!isEditing}
+                    onDragStart={(e) => onDragStart(e, idx)}
+                    onDragOver={(e) => onDragOver(e, idx)}
+                    onDragLeave={onDragLeave}
+                    onDrop={(e) => onDrop(e, idx)}
+                    className={`border-b border-border last:border-b-0 transition-colors ${
                       row.is_active ? "" : "opacity-60"
+                    } ${isDragging ? "opacity-30" : ""} ${
+                      isDraggingOver ? "bg-primary/10" : ""
                     }`}
                   >
+                    <td
+                      className="w-8 cursor-grab px-2 py-3 text-center text-muted-foreground hover:text-foreground active:cursor-grabbing"
+                      data-testid={`appt-type-drag-handle-${row.id}`}
+                      aria-label="Drag to reorder"
+                    >
+                      <GripVertical className="mx-auto h-4 w-4" />
+                    </td>
                     <td className="px-4 py-3 font-medium">
                       {isEditing ? (
                         <Input

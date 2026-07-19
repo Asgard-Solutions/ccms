@@ -7,7 +7,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { CheckCircle2, Pencil, PlayCircle, PlusCircle, Star } from "lucide-react";
+import { CheckCircle2, ClipboardList, History, Pencil, PlayCircle, PlusCircle, Star } from "lucide-react";
 import { api, formatApiError } from "../../api/client";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
@@ -15,6 +15,7 @@ import { Badge } from "../../components/ui/badge";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
 import { Textarea } from "../../components/ui/textarea";
+import StatusBadge from "./status/StatusBadge";
 import {
   Select,
   SelectContent,
@@ -270,94 +271,179 @@ function DiagnosisDialog({ open, onOpenChange, initial, episodes, onSubmit, subm
   );
 }
 
-function DiagnosisRow({ dx, episodes, canWrite, onEdit, onResolve, onReactivate }) {
+function DiagnosisRow({ dx, episodes, canWrite, onEdit, onResolve, onReactivate, onViewHistory }) {
   const linkedEpisode = episodes.find((ep) => ep.id === dx.episode_id);
+  const stateValue = dx.status === "resolved" ? "resolved" : "active";
+  const isBillable = dx.billable !== false;
+  const onProblemList = dx.status === "active" && !!dx.is_primary;
   return (
     <div
       data-testid={`dx-row-${dx.id}`}
-      className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-border bg-card p-4"
+      className="rounded-lg border border-border bg-card p-4"
     >
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-mono text-sm font-semibold text-foreground">
-            {dx.icd10_code}
-          </span>
-          <span className="text-sm text-foreground">{dx.label}</span>
-          {dx.is_primary && (
-            <Badge
-              variant="outline"
-              className="border-warning/40 bg-warning-soft text-warning text-[10px]"
-              data-testid={`dx-primary-${dx.id}`}
-            >
-              <Star className="mr-1 h-3 w-3" />
-              Primary
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 space-y-2">
+          {/* Line 1: ICD-10 + label — the primary object identifier. */}
+          <div className="flex flex-wrap items-baseline gap-2">
+            <span className="font-mono text-base font-semibold text-foreground" data-testid={`dx-${dx.id}-icd10`}>
+              {dx.icd10_code}
+            </span>
+            <span className="text-base text-foreground">— {dx.label}</span>
+          </div>
+          {/* Line 2: primacy + record state — status pills on their own row. */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {dx.is_primary && (
+              <Badge
+                variant="outline"
+                className="border-warning/40 bg-warning-soft text-warning text-xs"
+                data-testid={`dx-primary-${dx.id}`}
+              >
+                <Star className="mr-1 h-3 w-3" aria-hidden="true" />
+                Primary
+              </Badge>
+            )}
+            <StatusBadge dim="record_state" value={stateValue} testId={`dx-${dx.id}-state`} />
+          </div>
+          {/* Line 3: classifications — how this diagnosis is used across the chart. */}
+          <div className="flex flex-wrap items-center gap-1.5" data-testid={`dx-${dx.id}-classifications`}>
+            <Badge variant="outline" className="border-primary/30 bg-primary/10 text-primary text-xs">
+              Clinical
             </Badge>
+            {isBillable && (
+              <Badge variant="outline" className="border-success/30 bg-success-soft text-success text-xs" data-testid={`dx-${dx.id}-billing`}>
+                Billing
+              </Badge>
+            )}
+            {onProblemList && (
+              <Badge variant="outline" className="border-warning/30 bg-warning-soft text-warning text-xs" data-testid={`dx-${dx.id}-problem-list`}>
+                Problem list
+              </Badge>
+            )}
+          </div>
+          {/* Line 4: clinical descriptors. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+            {dx.body_region && <span>Region · <span className="text-foreground">{dx.body_region}</span></span>}
+            {dx.laterality && <span>Laterality · <span className="text-foreground">{dx.laterality}</span></span>}
+            {dx.chronicity && <span>Chronicity · <span className="text-foreground">{dx.chronicity}</span></span>}
+            {dx.onset_date && <span>Onset · <span className="text-foreground">{formatDate(dx.onset_date)}</span></span>}
+            {dx.resolved_date && <span>Resolved · <span className="text-foreground">{formatDate(dx.resolved_date)}</span></span>}
+          </div>
+          {/* Line 5: episode + audit meta. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            {linkedEpisode && <span>Episode · {linkedEpisode.title}</span>}
+            {dx.updated_at && <span>Updated · {formatDate(dx.updated_at)}</span>}
+          </div>
+          {dx.notes && <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">{dx.notes}</p>}
+          {dx.resolution_notes && (
+            <p className="max-w-prose text-xs italic leading-relaxed text-muted-foreground">
+              Resolution: {dx.resolution_notes}
+            </p>
           )}
-          <Badge
-            variant="outline"
-            className={`text-[10px] uppercase ${
-              dx.status === "resolved"
-                ? "border-border bg-muted text-muted-foreground"
-                : "border-success/30 bg-success-soft text-success"
-            }`}
-          >
-            {dx.status}
-          </Badge>
         </div>
-        <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          {dx.body_region && <span>Region · {dx.body_region}</span>}
-          {dx.laterality && <span>Laterality · {dx.laterality}</span>}
-          {dx.chronicity && <span>Chronicity · {dx.chronicity}</span>}
-          {dx.onset_date && <span>Onset · {formatDate(dx.onset_date)}</span>}
-          {dx.resolved_date && <span>Resolved · {formatDate(dx.resolved_date)}</span>}
-          {linkedEpisode && <span>Episode · {linkedEpisode.title}</span>}
-        </div>
-        {dx.notes && <p className="mt-2 text-sm text-muted-foreground">{dx.notes}</p>}
-        {dx.resolution_notes && (
-          <p className="mt-1 text-xs italic text-muted-foreground">
-            Resolution: {dx.resolution_notes}
-          </p>
-        )}
-      </div>
 
-      {canWrite && (
-        <div className="flex shrink-0 gap-2">
+        <div className="flex shrink-0 flex-wrap gap-2">
           <Button
             size="sm"
-            variant="outline"
-            onClick={() => onEdit(dx)}
-            data-testid={`dx-edit-${dx.id}`}
+            variant="ghost"
+            onClick={() => onViewHistory(dx)}
+            data-testid={`dx-${dx.id}-history`}
             className="rounded-sm"
           >
-            <Pencil className="mr-1.5 h-3.5 w-3.5" />
-            Edit
+            <History className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+            View history
           </Button>
-          {dx.status === "active" ? (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onResolve(dx)}
-              data-testid={`dx-resolve-${dx.id}`}
-              className="rounded-sm"
-            >
-              <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
-              Resolve
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onReactivate(dx)}
-              data-testid={`dx-reactivate-${dx.id}`}
-              className="rounded-sm"
-            >
-              <PlayCircle className="mr-1.5 h-3.5 w-3.5" />
-              Reactivate
-            </Button>
+          {canWrite && (
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => onEdit(dx)}
+                data-testid={`dx-edit-${dx.id}`}
+                className="rounded-sm"
+              >
+                <Pencil className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                Edit
+              </Button>
+              {dx.status === "active" ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onResolve(dx)}
+                  data-testid={`dx-resolve-${dx.id}`}
+                  className="rounded-sm"
+                >
+                  <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                  Mark resolved
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onReactivate(dx)}
+                  data-testid={`dx-reactivate-${dx.id}`}
+                  className="rounded-sm"
+                >
+                  <PlayCircle className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+                  Reactivate
+                </Button>
+              )}
+            </>
           )}
         </div>
-      )}
+      </div>
     </div>
+  );
+}
+
+function DiagnosisHistoryDialog({ open, onOpenChange, dx }) {
+  if (!dx) return null;
+  // No dedicated diagnosis-history endpoint exists yet. Surface every
+  // change the record itself has captured (create, update, resolve,
+  // reactivate) as a deterministic timeline. New history entries land
+  // here automatically as backend fields grow.
+  const events = [];
+  if (dx.created_at) events.push({ ts: dx.created_at, label: "Diagnosis created" });
+  if (dx.updated_at && dx.updated_at !== dx.created_at) {
+    events.push({ ts: dx.updated_at, label: "Diagnosis updated" });
+  }
+  if (dx.resolved_date) {
+    events.push({
+      ts: dx.resolved_date,
+      label: "Marked resolved",
+      note: dx.resolution_notes || null,
+    });
+  }
+  events.sort((a, b) => (a.ts < b.ts ? -1 : 1));
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent data-testid={`dx-history-dialog`} className="max-w-md rounded-sm">
+        <DialogHeader>
+          <DialogTitle className="font-display">
+            History · {dx.icd10_code}
+          </DialogTitle>
+        </DialogHeader>
+        {events.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No prior state changes recorded.</p>
+        ) : (
+          <ol className="space-y-3" data-testid="dx-history-list">
+            {events.map((e, idx) => (
+              <li key={idx} className="rounded-sm border border-border bg-card/60 p-3">
+                <div className="text-xs uppercase tracking-wider text-muted-foreground">
+                  {formatDate(e.ts)}
+                </div>
+                <div className="mt-0.5 text-sm text-foreground">{e.label}</div>
+                {e.note && <div className="mt-1 text-xs italic text-muted-foreground">{e.note}</div>}
+              </li>
+            ))}
+          </ol>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} className="rounded-sm">
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -370,7 +456,11 @@ function ResolveDialog({ open, onOpenChange, dx, onSubmit, submitting }) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="dx-resolve-dialog" className="max-w-md rounded-sm">
         <DialogHeader>
-          <DialogTitle className="font-display">Resolve diagnosis</DialogTitle>
+          <DialogTitle className="font-display">Mark diagnosis resolved</DialogTitle>
+          <p className="text-xs text-muted-foreground">
+            This may affect billing linkage, active treatment plans, and open claims tied to this
+            diagnosis. The change is audited and reversible only by an authorized user.
+          </p>
         </DialogHeader>
         {dx && (
           <div className="space-y-3">
@@ -399,7 +489,7 @@ function ResolveDialog({ open, onOpenChange, dx, onSubmit, submitting }) {
             data-testid="dx-resolve-submit-btn"
             className="rounded-sm"
           >
-            {submitting ? "Resolving…" : "Resolve"}
+            {submitting ? "Marking…" : "Mark resolved"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -414,6 +504,7 @@ export default function DiagnosesCard({ patientId, episodes = [], canWrite, onRe
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [resolving, setResolving] = useState(null);
+  const [viewHistoryDx, setViewHistoryDx] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
@@ -535,9 +626,9 @@ export default function DiagnosesCard({ patientId, episodes = [], canWrite, onRe
 
       <div className="flex flex-wrap items-end gap-3">
         <div className="space-y-1">
-          <Label className="text-xs uppercase tracking-wider text-muted-foreground">Status</Label>
+          <Label className="text-sm font-medium text-muted-foreground">Status</Label>
           <Select value={statusFilter} onValueChange={setStatusFilter}>
-            <SelectTrigger data-testid="dx-filter-status" className="h-9 w-40 rounded-sm">
+            <SelectTrigger data-testid="dx-filter-status" className="h-11 w-40 rounded-sm">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -549,12 +640,12 @@ export default function DiagnosesCard({ patientId, episodes = [], canWrite, onRe
         </div>
         {episodes.length > 0 && (
           <div className="space-y-1">
-            <Label className="text-xs uppercase tracking-wider text-muted-foreground">Episode</Label>
+            <Label className="text-sm font-medium text-muted-foreground">Episode</Label>
             <Select
               value={episodeFilter}
               onValueChange={(v) => setEpisodeFilter(v === "__orphan" ? "all" : v)}
             >
-              <SelectTrigger data-testid="dx-filter-episode" className="h-9 w-72 rounded-sm">
+              <SelectTrigger data-testid="dx-filter-episode" className="h-11 w-72 rounded-sm">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -592,6 +683,7 @@ export default function DiagnosesCard({ patientId, episodes = [], canWrite, onRe
               onEdit={setEditing}
               onResolve={setResolving}
               onReactivate={handleReactivate}
+              onViewHistory={setViewHistoryDx}
             />
           ))}
         </div>
@@ -618,6 +710,11 @@ export default function DiagnosesCard({ patientId, episodes = [], canWrite, onRe
         dx={resolving}
         onSubmit={handleResolve}
         submitting={submitting}
+      />
+      <DiagnosisHistoryDialog
+        open={!!viewHistoryDx}
+        onOpenChange={(v) => !v && setViewHistoryDx(null)}
+        dx={viewHistoryDx}
       />
     </section>
   );

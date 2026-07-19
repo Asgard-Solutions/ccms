@@ -12,14 +12,18 @@ submission workers) consume the canonical model through these routes.
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Literal, get_args
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import Response
 
-from core.audit import audit_success
-from core.deps import require_role
+from core.audit import audit_success, audit_failure
+from core.deps import get_current_user, require_role
 from core.tenancy import TenantContext, require_tenant, tenant_db
 from core.tenant_scope import scoped_filter, stamp_for_write
 from services.authz.policy import require_permission
@@ -45,24 +49,45 @@ from services.billing.statement_delivery import (
     render_statement_pdf,
     send_statement_email,
 )
+from services.billing.clearinghouse import (
+    config_summaries,
+    get_adapter_for_payer,
+)
+from services.billing.canonical_status import (
+    CANONICAL_LABELS,
+    CANONICAL_STATUSES,
+    canonical_status,
+    raw_statuses_for_canonical,
+)
+from services.billing.events import emit_claim_event
+from services.billing.sandbox_ack_simulator import schedule_sandbox_simulation
 from services.billing.submission import (
     DEFAULT_FOLLOWUP_DAYS,
     build_json_payload,
-    build_x12_837p_preview,
     followup_claim_ids,
     followup_threshold_iso,
 )
+from services.billing.clearinghouse.x12_837p import build_x12_837p_wire
 from services.billing.models import (
     AdjustmentCreate,
     AdjustmentPublic,
     AgingBucket,
     ClaimAssignmentUpdate,
     ClaimCreate,
+    ClaimEventPublic,
     ClaimPublic,
     ClaimStatus,
+    ClaimBulkSubmitRequest,
+    ClaimFollowupFlagRequest,
     ClaimSubmissionCreate,
     ClaimSubmissionOutcome,
     ClaimSubmissionPublic,
+    ClearinghouseConfigSummary,
+    ClearinghouseEnrollmentCreate,
+    ClearinghouseEnrollmentPublic,
+    ClearinghouseEnrollmentUpdate,
+    ClearinghouseReportIngestRequest,
+    ClearinghouseReportPublic,
     DenialWorkItemPublic,
     DenialWorkItemUpdate,
     DEFAULT_CURRENCY,
@@ -78,12 +103,18 @@ from services.billing.models import (
     PaymentCreate,
     PaymentPublic,
     PaymentStatus,
+    ProviderCreate,
+    ProviderPublic,
+    ProviderUpdate,
     RefundCreate,
     RefundPublic,
     RemittanceClaimPublic,
     RemittanceLinePublic,
     RemittancePostRequest,
     RemittancePublic,
+    ServiceFacilityCreate,
+    ServiceFacilityPublic,
+    ServiceFacilityUpdate,
     StatementPublic,
 )
 from services.clinical.billing_readiness_router import evaluate_billing_readiness
@@ -97,6 +128,22 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 # ---------------------------------------------------------------------------
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _days_since_iso(iso_ts: str | None) -> int | None:
+    """Return whole-days delta between `iso_ts` and now. Used by the
+    Claims Queue to expose `aging_days` on every row without making
+    the UI parse timestamps client-side."""
+    if not iso_ts:
+        return None
+    try:
+        ts = datetime.fromisoformat(iso_ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=timezone.utc)
+    delta = datetime.now(timezone.utc) - ts
+    return max(0, delta.days)
 
 
 def _public(doc: dict) -> dict:
@@ -298,6 +345,17 @@ async def create_payer(
         "remit_method": payload.remit_method,
         "notes": payload.notes,
         "status": "active",
+        # Phase 2a — clearinghouse routing defaults
+        "clearinghouse_route": payload.clearinghouse_route,
+        "claim_submission_mode": payload.claim_submission_mode,
+        "enrollment_status": payload.enrollment_status,
+        "trading_partner_id": payload.trading_partner_id,
+        # Phase 6 — clearinghouse-side routing ids + enrollment flag
+        "claims_cpid": payload.claims_cpid,
+        "realtime_payer_id": payload.realtime_payer_id,
+        "enrollment_required": payload.enrollment_required,
+        "routing_metadata": payload.routing_metadata,
+        "routing_last_resolved_at": None,
         "created_at": now,
         "updated_at": now,
         "created_by": user["id"],
@@ -400,6 +458,10 @@ async def create_insurance_policy(
         "effective_date": payload.effective_date,
         "termination_date": payload.termination_date,
         "status": "active",
+        # Phase 5 — structured subscriber identity.
+        "subscriber_dob": payload.subscriber_dob,
+        "subscriber_gender": payload.subscriber_gender,
+        "subscriber_address": payload.subscriber_address,
         "notes": payload.notes,
         "created_at": now,
         "updated_at": now,
@@ -1006,6 +1068,9 @@ async def create_claim(
 
     now = _now()
     claim_id = str(uuid.uuid4())
+    # Phase 5 — PCN: caller-supplied value, else auto-derive from the
+    # new uuid so every claim leaves here with a valid CLM01 identifier.
+    pcn = (payload.patient_control_number or f"CCMS-{claim_id[:8].upper()}").strip()
 
     billed_cents = sum(ln.billed_cents * ln.units for ln in payload.lines)
     claim_doc = stamp_for_write({
@@ -1023,6 +1088,12 @@ async def create_claim(
         "facility_id": payload.facility_id,
         "authorization_number": payload.authorization_number,
         "referral_number": payload.referral_number,
+        # Phase 5 — 837P foundational identifiers
+        "patient_control_number": pcn,
+        "payer_claim_control_number": None,
+        "accident_date": payload.accident_date,
+        "onset_date": payload.onset_date,
+        "initial_treatment_date": payload.initial_treatment_date,
         "status": "draft",
         "service_date_from": payload.service_date_from,
         "service_date_to": payload.service_date_to,
@@ -1093,6 +1164,17 @@ async def create_claim(
                   "payer_id": payload.payer_id,
                   "billed_cents": billed_cents,
                   "lines": len(line_docs)},
+    )
+    await emit_claim_event(
+        db, ctx,
+        claim_id=claim_id,
+        event_type="created",
+        actor_id=user["id"],
+        payload={"billed_cents": billed_cents,
+                 "line_count": len(line_docs),
+                 "diagnosis_count": len(diag_docs)},
+        to_status="draft",
+        location_id=payload.location_id,
     )
     return _public(claim_doc)
 
@@ -2182,8 +2264,23 @@ async def _load_claim_context(db, ctx: TenantContext, claim: dict) -> ScrubberCo
 
     patient = await db.patients.find_one(
         {"tenant_id": ctx.tenant_id, "id": claim.get("patient_id")},
-        {"_id": 0, "id": 1, "first_name": 1, "last_name": 1, "dob": 1},
+        # Phase 4 — project DOB + gender for the validator. Keep this
+        # projection tight so no other PHI leaves the DB.
+        {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+         "dob": 1, "date_of_birth": 1, "gender": 1, "sex": 1,
+         "demographics": 1},
     )
+    if patient:
+        # Normalise DOB + gender so the scrubber can read them without
+        # caring which legacy/grouped field they live on.
+        if not patient.get("date_of_birth"):
+            demo = patient.get("demographics") or {}
+            patient["date_of_birth"] = (
+                patient.get("dob") or demo.get("date_of_birth") or ""
+            )
+        if not patient.get("gender"):
+            demo = patient.get("demographics") or {}
+            patient["gender"] = demo.get("gender") or patient.get("sex") or ""
     payer = await db.billing_payers.find_one(
         {"tenant_id": ctx.tenant_id, "id": claim.get("payer_id")},
         {"_id": 0},
@@ -2195,10 +2292,41 @@ async def _load_claim_context(db, ctx: TenantContext, claim: dict) -> ScrubberCo
             {"_id": 0},
         )
 
+    # Resolve billing/rendering provider UUIDs to canonical NPIs so
+    # the NPI-format rule accepts stored `providers.id` references
+    # (the submission adapter translates them at wire time).
+    provider_npi_by_id: dict[str, str] = {}
+    facility_npi_by_id: dict[str, str] = {}
+    candidate_ids = [
+        v for v in (
+            claim.get("billing_provider_id"),
+            claim.get("rendering_provider_id"),
+        ) if v
+    ]
+    if candidate_ids:
+        async for p in db.providers.find(
+            {"tenant_id": ctx.tenant_id, "id": {"$in": candidate_ids}},
+            {"_id": 0, "id": 1, "npi": 1},
+        ):
+            if p.get("npi"):
+                provider_npi_by_id[p["id"]] = str(p["npi"]).strip()
+        # Billing provider may also be a `service_facilities` row
+        # (group NPI). Same lookup shape.
+        async for f in db.service_facilities.find(
+            {"tenant_id": ctx.tenant_id, "id": {"$in": candidate_ids}},
+            {"_id": 0, "id": 1, "npi": 1},
+        ):
+            if f.get("npi"):
+                facility_npi_by_id[f["id"]] = str(f["npi"]).strip()
+
     return ScrubberContext(
         claim=claim, diagnoses=diagnoses, lines=lines,
         line_modifiers_by_line=mods_by_line,
         patient=patient, payer=payer, policy=policy,
+        extras={
+            "provider_npi_by_id": provider_npi_by_id,
+            "facility_npi_by_id": facility_npi_by_id,
+        },
     )
 
 
@@ -2401,6 +2529,7 @@ async def validate_claim(
         "run_by": user["id"],
         "errors": result["errors"],
         "warnings": result["warnings"],
+        "by_category": result.get("by_category", {}),
         "passed": result["passed"],
         "from_status": claim["status"],
         "to_status": new_status,
@@ -2416,12 +2545,28 @@ async def validate_claim(
                   "from_status": claim["status"],
                   "to_status": new_status},
     )
+    await emit_claim_event(
+        db, ctx,
+        claim_id=claim_id,
+        event_type="validated",
+        actor_id=user["id"],
+        payload={"error_count": len(result["errors"]),
+                 "warning_count": len(result["warnings"]),
+                 "passed": result["passed"],
+                 "top_error_codes": [
+                     e.get("code") for e in result["errors"][:5]
+                 ]},
+        from_status=claim["status"],
+        to_status=new_status,
+        location_id=claim.get("location_id"),
+    )
     return {
         "claim_id": claim_id,
         "status": new_status,
         "errors": result["errors"],
         "warnings": result["warnings"],
         "passed": result["passed"],
+        "by_category": result.get("by_category", {}),
         "run_at": now,
     }
 
@@ -2451,7 +2596,10 @@ async def claim_detail(
     ctx: TenantContext = Depends(require_tenant),
 ):
     """Everything the UI needs on one page — header + diagnoses + lines
-    + modifiers + the most recent scrubber findings."""
+    + modifiers + the most recent scrubber findings + resolved names
+    for every foreign-key field so the UI never has to render a raw
+    UUID.
+    """
     db = tenant_db(ctx.tenant_id)
     claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
     if not claim:
@@ -2461,6 +2609,108 @@ async def claim_detail(
         {"tenant_id": ctx.tenant_id, "claim_id": claim_id},
         {"_id": 0}, sort=[("run_at", -1)],
     )
+
+    # --- Resolve foreign-key references to human-readable strings.
+    # Internal IDs stay in storage / transmission; only the display
+    # layer gets readable values. Fetch each ref at most once.
+    async def _resolve_patient(pid: str | None):
+        if not pid:
+            return None
+        p = await db.patients.find_one(
+            {"tenant_id": ctx.tenant_id, "id": pid},
+            {"_id": 0, "id": 1, "first_name": 1, "last_name": 1, "mrn": 1},
+        )
+        if not p:
+            return None
+        return {
+            "id": p["id"],
+            "name": (f"{p.get('first_name','')} {p.get('last_name','')}").strip()
+                    or None,
+            "mrn": p.get("mrn"),
+        }
+
+    async def _resolve_payer(pid: str | None):
+        if not pid:
+            return None
+        p = await db.billing_payers.find_one(
+            {"tenant_id": ctx.tenant_id, "id": pid},
+            {"_id": 0, "id": 1, "name": 1, "payer_type": 1,
+             "external_id": 1},
+        )
+        return p
+
+    async def _resolve_user(uid: str | None):
+        if not uid:
+            return None
+        u = await db.users.find_one(
+            {"id": uid},
+            {"_id": 0, "id": 1, "name": 1, "display_name": 1,
+             "first_name": 1, "last_name": 1, "email": 1, "role": 1},
+        )
+        if not u:
+            return None
+        name = (
+            u.get("display_name")
+            or f"{u.get('first_name','')} {u.get('last_name','')}".strip()
+            or u.get("name")
+            or u.get("email")
+        )
+        return {"id": u["id"], "name": name, "role": u.get("role"),
+                "email": u.get("email")}
+
+    async def _resolve_provider_row(pid: str | None, kind: str):
+        if not pid:
+            return None
+        hit = await db.providers.find_one(
+            {"tenant_id": ctx.tenant_id, "id": pid},
+            {"_id": 0, "id": 1, "name": 1, "npi": 1,
+             "taxonomy_code": 1, "kind": 1},
+        )
+        if hit:
+            return hit
+        # Legacy claims may reference a user id (the old doctor_id
+        # shortcut) — surface the user's display name so the UI still
+        # shows something meaningful instead of a raw UUID.
+        u = await _resolve_user(pid)
+        if u:
+            return {"id": pid, "name": u["name"], "npi": None,
+                    "kind": kind, "source": "user"}
+        return None
+
+    async def _resolve_facility(fid: str | None):
+        if not fid:
+            return None
+        f = await db.service_facilities.find_one(
+            {"tenant_id": ctx.tenant_id, "id": fid},
+            {"_id": 0, "id": 1, "name": 1, "npi": 1},
+        )
+        return f
+
+    async def _resolve_location(lid: str | None):
+        if not lid:
+            return None
+        loc = await db.locations.find_one(
+            {"id": lid},
+            {"_id": 0, "id": 1, "name": 1, "code": 1},
+        )
+        return loc
+
+    refs = {
+        "patient": await _resolve_patient(claim.get("patient_id")),
+        "payer": await _resolve_payer(claim.get("payer_id")),
+        "billing_provider": await _resolve_provider_row(
+            claim.get("billing_provider_id"), "billing",
+        ),
+        "rendering_provider": await _resolve_provider_row(
+            claim.get("rendering_provider_id"), "rendering",
+        ),
+        "facility": await _resolve_facility(claim.get("facility_id")),
+        "location": await _resolve_location(claim.get("location_id")),
+        "assignee": await _resolve_user(claim.get("assigned_to")),
+        "created_by": await _resolve_user(claim.get("created_by")),
+        "updated_by": await _resolve_user(claim.get("updated_by")),
+    }
+
     return {
         "claim": _public(claim),
         "diagnoses": scrub_ctx.diagnoses,
@@ -2470,6 +2720,7 @@ async def claim_detail(
             for ln in scrub_ctx.lines
         ],
         "latest_validation": latest,
+        "refs": refs,
     }
 
 
@@ -2680,7 +2931,11 @@ _OUTCOME_TO_STATUS: dict[str, str] = {
 
 
 async def _load_submission_context(db, ctx: TenantContext, claim: dict):
-    """Pull patient + payer + policy + dx + lines for payload builds."""
+    """Pull patient + payer + policy + dx + lines + resolved providers
+    for payload builds. Providers / service facility are resolved by
+    the claim's `billing_provider_id` / `rendering_provider_id` /
+    `facility_id` — first by collection `id`, then by NPI, so legacy
+    free-text NPI values continue to work."""
     tid = ctx.tenant_id
     patient = await db.patients.find_one(
         {"id": claim.get("patient_id"), "tenant_id": tid}, {"_id": 0},
@@ -2703,7 +2958,47 @@ async def _load_submission_context(db, ctx: TenantContext, claim: dict):
             {"tenant_id": tid, "claim_line_id": ln["id"]}, {"_id": 0},
         ).sort([("sequence", 1)])]
         ln["modifiers"] = [m["modifier_code"] for m in mods]
-    return patient, payer, policy, diagnoses, lines
+
+    # Phase 7 — resolve billing / rendering provider + service facility
+    # for the 837P Loop 2010AA / 2310B / 2310C. Resolution is best-
+    # effort: callers that haven't migrated to the providers collection
+    # still get a working claim (the wire builder falls back to the
+    # legacy `billing_provider_id` field carried on the claim).
+    async def _resolve_provider(ref: str | None, *, kind: str | None = None):
+        if not ref:
+            return None
+        q = {"tenant_id": tid, "id": ref}
+        if kind:
+            q["kind"] = kind
+        hit = await db.providers.find_one(q, {"_id": 0})
+        if hit:
+            return hit
+        by_npi = {"tenant_id": tid, "npi": ref}
+        if kind:
+            by_npi["kind"] = kind
+        return await db.providers.find_one(by_npi, {"_id": 0})
+
+    async def _resolve_facility(ref: str | None):
+        if not ref:
+            return None
+        hit = await db.service_facilities.find_one(
+            {"tenant_id": tid, "id": ref}, {"_id": 0},
+        )
+        if hit:
+            return hit
+        return await db.service_facilities.find_one(
+            {"tenant_id": tid, "npi": ref}, {"_id": 0},
+        )
+
+    billing_provider = await _resolve_provider(
+        claim.get("billing_provider_id"), kind="billing",
+    )
+    rendering_provider = await _resolve_provider(
+        claim.get("rendering_provider_id"), kind="rendering",
+    )
+    service_facility = await _resolve_facility(claim.get("facility_id"))
+    return (patient, payer, policy, diagnoses, lines,
+            billing_provider, rendering_provider, service_facility)
 
 
 @router.post(
@@ -2718,17 +3013,19 @@ async def create_claim_submission(
     user: dict = Depends(require_permission("claim", "submit")),
     ctx: TenantContext = Depends(require_tenant),
 ):
-    """Record a manual submission attempt. Advances the claim
-    `ready → submitted` (or `rejected → submitted` for resubmissions).
-    Persists both JSON export and 837P preview on the submission row."""
+    """Validate + submit a single claim.
+
+    Phase 8 — the scrubber runs before every submission attempt. A
+    claim that fails validation is auto-routed to `validation_failed`
+    (canonical "needs_fixes") and the endpoint returns 422 with the
+    structured findings. Only claims in `ready` that pass the scrubber
+    reach the clearinghouse adapter.
+    """
     db = tenant_db(ctx.tenant_id)
     claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
     if not claim:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
 
-    # Only certain statuses may be submitted. Use the canonical state
-    # machine so resubmissions from rejected are blocked unless caller
-    # first moved the claim back to ready.
     current = claim["status"]
     if current not in ("ready",):
         raise HTTPException(
@@ -2736,22 +3033,761 @@ async def create_claim_submission(
             f"Claim in status '{current}' cannot be submitted; "
             "transition to 'ready' first.",
         )
+
+    # Pre-submit validation gate (Phase 8).
+    gate = await _run_validation_gate(db, ctx, user, claim, request)
+    if not gate["passed"]:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": "Claim failed validation and cannot be submitted.",
+                "claim_id": claim_id,
+                "validation_run_id": gate["validation_run_id"],
+                "errors": gate["errors"],
+                "warnings": gate["warnings"],
+            },
+        )
+
+    submission = await _do_submit_claim(
+        db, ctx, user, claim, body, request,
+    )
+    out = {k: v for k, v in submission.items()
+           if k not in ("payload_json", "payload_x12")}
+    return out
+
+
+@router.post("/claims/submit-batch")
+async def submit_claim_batch(
+    body: ClaimBulkSubmitRequest,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "submit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Phase 8 — bulk validate + submit.
+
+    Processes up to 50 claim_ids in one call. Each claim is validated
+    first; failures are isolated to that claim only. Returns a
+    per-claim summary so the UI can drive a "queued N, failed M,
+    skipped K" status line and let operators drill into any row.
+
+    No job queue is involved — submissions run synchronously in
+    claim-id order so the response already carries every result.
+    """
+    db = tenant_db(ctx.tenant_id)
+    started = _now()
+    correlation_id = f"batch-{uuid.uuid4().hex[:12]}"
+
+    submitted: list[dict] = []
+    failed_validation: list[dict] = []
+    skipped: list[dict] = []
+
+    await audit_success(
+        user, "billing.claim.bulk_submit_started", request,
+        entity_type="claim_batch", entity_id=correlation_id,
+        metadata={"claim_count": len(body.claim_ids),
+                  "method": body.method,
+                  "strict": body.strict,
+                  "correlation_id": correlation_id},
+    )
+
+    for claim_id in body.claim_ids:
+        claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+        if not claim:
+            skipped.append({
+                "claim_id": claim_id,
+                "reason": "not_found",
+                "message": "Claim not found in tenant.",
+            })
+            continue
+        if claim["status"] != "ready":
+            skipped.append({
+                "claim_id": claim_id,
+                "reason": "wrong_status",
+                "message": (
+                    f"Claim status is '{claim['status']}'; "
+                    "only 'ready' claims are eligible for batch submission."
+                ),
+                "status": claim["status"],
+            })
+            continue
+
+        gate = await _run_validation_gate(db, ctx, user, claim, request)
+        if not gate["passed"]:
+            failed_validation.append({
+                "claim_id": claim_id,
+                "validation_run_id": gate["validation_run_id"],
+                "error_count": len(gate["errors"]),
+                "warning_count": len(gate["warnings"]),
+                "top_error_codes": [e.get("code") for e in gate["errors"][:5]],
+            })
+            continue
+
+        single_body = ClaimSubmissionCreate(
+            method=body.method,
+            external_reference=body.external_reference,
+            notes=body.notes,
+        )
+        try:
+            sub_doc = await _do_submit_claim(
+                db, ctx, user, claim, single_body, request,
+                correlation_id=correlation_id,
+            )
+        except HTTPException as exc:
+            # Adapter-level transport failure: log & continue. Other
+            # claims in the batch still get their shot.
+            skipped.append({
+                "claim_id": claim_id,
+                "reason": "adapter_error",
+                "message": exc.detail if isinstance(exc.detail, str)
+                           else "Clearinghouse submission failed.",
+                "status_code": exc.status_code,
+            })
+            continue
+        submitted.append({
+            "claim_id": claim_id,
+            "submission_id": sub_doc["id"],
+            "adapter_route": sub_doc.get("adapter_route"),
+            "adapter_status": sub_doc.get("adapter_status"),
+            "adapter_external_id": sub_doc.get("adapter_external_id"),
+            "trace_id": sub_doc.get("trace_id"),
+            "correlation_id": sub_doc.get("correlation_id"),
+            "sandbox": sub_doc.get("sandbox", False),
+        })
+
+    if body.strict and failed_validation and not submitted and not skipped:
+        # Every single claim failed validation and caller asked for
+        # strict mode — surface it as a 422 so the UI can prompt a
+        # batch-wide fix workflow instead of a silent "0 submitted".
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "BATCH_VALIDATION_FAILED",
+                "message": "Every claim in the batch failed validation.",
+                "correlation_id": correlation_id,
+                "failed_validation": failed_validation,
+            },
+        )
+
+    result = {
+        "correlation_id": correlation_id,
+        "started_at": started,
+        "completed_at": _now(),
+        "requested": len(body.claim_ids),
+        "submitted": submitted,
+        "failed_validation": failed_validation,
+        "skipped": skipped,
+    }
+    await audit_success(
+        user, "billing.claim.bulk_submit_completed", request,
+        entity_type="claim_batch", entity_id=correlation_id,
+        metadata={"submitted": len(submitted),
+                  "failed_validation": len(failed_validation),
+                  "skipped": len(skipped),
+                  "correlation_id": correlation_id},
+    )
+    return result
+
+
+@router.get("/clearinghouse/transmissions")
+async def list_clearinghouse_transmissions(
+    claim_id: str | None = Query(default=None),
+    adapter_route: str | None = Query(default=None),
+    adapter_status: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=500),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Phase 8 — unified transmission log.
+
+    Returns the N most recent claim submissions across the tenant with
+    filters by claim / adapter route / adapter status. This is the
+    read-side of Phase 8's "persist request/response artifacts and
+    submission history" requirement — `claim_submissions` is already
+    our transmission log, this endpoint just exposes it with the
+    operator-relevant fields projected.
+    """
+    db = tenant_db(ctx.tenant_id)
+    q = scoped_filter({}, ctx, location_scoped=False)
+    if q.get("__deny__"):
+        return []
+    if claim_id:
+        q["claim_id"] = claim_id
+    if adapter_route:
+        q["adapter_route"] = adapter_route
+    if adapter_status:
+        q["adapter_status"] = adapter_status
+    rows = [r async for r in db.claim_submissions.find(
+        q, {"_id": 0, "payload_json": 0, "payload_x12": 0},
+    ).sort([("submitted_at", -1)]).limit(limit)]
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Phase 10 — inbound response / report ingest + operational follow-up flag
+# ---------------------------------------------------------------------------
+# Canonical raw-status transitions driven by inbound artifacts. The
+# mapping is intentionally conservative: only `submitted` / `pending`
+# claims are moved by an ack. A claim already sitting in `paid` or
+# `closed` will NOT be flipped by a late-arriving 277CA rejection —
+# the operator must open it manually and retrigger.
+_ACK_STATUS_MAP: dict[tuple[str, str], str] = {
+    # (report_type, status): target raw claim status
+    ("999", "accepted"):         "accepted",
+    ("999", "rejected"):         "rejected",
+    ("277ca", "accepted"):       "accepted",
+    ("277ca", "rejected"):       "rejected",
+    # Portal confirmations + batch acks stamp `accepted` when the
+    # human (or EDI partner) confirmed receipt.
+    ("portal_confirmation", "accepted"): "accepted",
+    ("batch_ack",           "accepted"): "accepted",
+    # ERA receipt is an audit marker only — payment posting is
+    # handled by `services.billing.remittance_import` so we do NOT
+    # flip the claim status here.
+}
+
+
+def _report_event_type(report_type: str, status: str) -> str | None:
+    """Map (report_type, status) to a canonical `ClaimEventType`
+    so the timeline surfaces inbound acks alongside everything else."""
+    key = (report_type, status)
+    return {
+        ("999",   "accepted"): "ack_999_accepted",
+        ("999",   "rejected"): "ack_999_rejected",
+        ("277ca", "accepted"): "ack_277ca_accepted",
+        ("277ca", "rejected"): "ack_277ca_rejected",
+        ("era_835_receipt", "info"):     "era_posted",
+        ("era_835_receipt", "accepted"): "era_posted",
+        ("portal_confirmation", "accepted"): "ack_999_accepted",
+        ("batch_ack",           "accepted"): "ack_999_accepted",
+    }.get(key)
+
+
+@router.post(
+    "/clearinghouse/reports/ingest",
+    response_model=ClearinghouseReportPublic,
+    status_code=201,
+)
+async def ingest_clearinghouse_report(
+    body: ClearinghouseReportIngestRequest,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "submit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Phase 10 — accept an inbound artifact (999 / 277CA / ERA /
+    portal confirmation / batch ack / other) and tie it back to a
+    claim.
+
+    Resolution order for the owning claim:
+      1. `claim_id`
+      2. `submission_id` → `claim_submissions.claim_id`
+      3. `adapter_external_id` → most recent submission with that
+         adapter tracking id
+    Batch-level acks (`report_type == "batch_ack"` without any claim
+    link) are accepted and stored but skip status updates.
+    """
+    db = tenant_db(ctx.tenant_id)
+
+    # Resolve the owning claim and submission.
+    claim: dict | None = None
+    submission: dict | None = None
+    if body.claim_id:
+        claim = await _scoped_one(db.claims, {"id": body.claim_id}, ctx)
+    if body.submission_id and not submission:
+        submission = await db.claim_submissions.find_one(
+            {"id": body.submission_id, "tenant_id": ctx.tenant_id},
+            {"_id": 0},
+        )
+    if body.adapter_external_id and not submission:
+        submission = await db.claim_submissions.find_one(
+            {"adapter_external_id": body.adapter_external_id,
+             "tenant_id": ctx.tenant_id},
+            sort=[("submitted_at", -1)],
+            projection={"_id": 0},
+        )
+    if submission and not claim:
+        claim = await _scoped_one(
+            db.claims, {"id": submission["claim_id"]}, ctx,
+        )
+    if not claim and body.report_type != "batch_ack":
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "No claim matched the provided claim_id / submission_id / "
+            "adapter_external_id. Use report_type='batch_ack' for "
+            "batch-level acknowledgments without a claim link.",
+        )
+
+    now = _now()
+    received_at = body.received_at or now
+    raw_content = body.raw_content or ""
+    raw_hash = (
+        hashlib.sha256(raw_content.encode("utf-8")).hexdigest()
+        if raw_content else None
+    )
+
+    report_id = str(uuid.uuid4())
+    report_doc = stamp_for_write({
+        "id": report_id,
+        "clearinghouse": body.clearinghouse.strip(),
+        "report_type": body.report_type,
+        "status": body.status,
+        "claim_id": (claim or {}).get("id"),
+        "submission_id": (submission or {}).get("id"),
+        "external_id": (body.adapter_external_id
+                        or (submission or {}).get("adapter_external_id")),
+        "received_at": received_at,
+        "raw_content": raw_content or None,
+        "raw_hash": raw_hash,
+        "parsed": body.parsed,
+        "notes": body.notes,
+        "denial_code": body.denial_code,
+        "created_at": now,
+    }, ctx, location_id=(claim or {}).get("location_id"))
+    await db.clearinghouse_reports.insert_one(report_doc)
+
+    await audit_success(
+        user, "billing.clearinghouse.report_ingested", request,
+        entity_type="claim" if (claim or {}).get("id") else "clearinghouse_report",
+        entity_id=(claim or {}).get("id") or report_id,
+        metadata={"report_id": report_id,
+                  "report_type": body.report_type,
+                  "status": body.status,
+                  "clearinghouse": body.clearinghouse,
+                  "claim_id": (claim or {}).get("id"),
+                  "submission_id": (submission or {}).get("id")},
+    )
+
+    # Status update (only when we have a claim AND the map applies
+    # AND the current status is still eligible for an ack flip).
+    status_changed = False
+    if claim is not None:
+        target = _ACK_STATUS_MAP.get((body.report_type, body.status))
+        if target and claim["status"] in ("submitted", "pending"):
+            try:
+                new_raw = transitions.http_advance(
+                    "claim", claim["status"], target,
+                )
+            except HTTPException:
+                new_raw = claim["status"]
+            if new_raw != claim["status"]:
+                await db.claims.update_one(
+                    {"id": claim["id"], "tenant_id": ctx.tenant_id},
+                    {"$set": {
+                        "status": new_raw,
+                        "updated_at": now,
+                        "updated_by": user["id"],
+                     },
+                     "$push": {"history": _history_entry(
+                         user, "ack_received",
+                         report_type=body.report_type,
+                         status=body.status,
+                         report_id=report_id,
+                         from_status=claim["status"],
+                         to_status=new_raw,
+                     )}},
+                )
+                status_changed = True
+                claim["status"] = new_raw
+
+        # Timeline event.
+        event_type = _report_event_type(body.report_type, body.status)
+        if event_type:
+            await emit_claim_event(
+                db, ctx,
+                claim_id=claim["id"],
+                event_type=event_type,
+                actor_id=user["id"],
+                payload={"report_id": report_id,
+                         "clearinghouse": body.clearinghouse,
+                         "report_type": body.report_type,
+                         "report_status": body.status,
+                         "denial_code": body.denial_code,
+                         "notes": body.notes,
+                         "status_changed": status_changed},
+                submission_id=(submission or {}).get("id"),
+                adapter_route=body.clearinghouse,
+                denial_code=body.denial_code,
+                from_status=claim["status"] if not status_changed else None,
+                to_status=claim["status"] if status_changed else None,
+                occurred_at=received_at,
+                location_id=claim.get("location_id"),
+            )
+
+        # Rejected ack => auto-flag for follow-up so operators see it.
+        if body.status == "rejected" and body.report_type in ("999", "277ca"):
+            await _auto_flag_followup(
+                db, ctx, user, claim,
+                reason=f"{body.report_type.upper()} rejection: "
+                       f"{body.notes or 'see report'}"[:280],
+                source="inbound_rejection",
+            )
+
+    fresh = await db.clearinghouse_reports.find_one(
+        {"id": report_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    return fresh
+
+
+@router.get("/clearinghouse/reports")
+async def list_clearinghouse_reports(
+    claim_id: str | None = Query(default=None),
+    submission_id: str | None = Query(default=None),
+    report_type: str | None = Query(default=None),
+    status_: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=50, ge=1, le=500),
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """List recent inbound artifacts with payload trimming."""
+    db = tenant_db(ctx.tenant_id)
+    q = scoped_filter({}, ctx, location_scoped=False)
+    if q.get("__deny__"):
+        return []
+    if claim_id:
+        q["claim_id"] = claim_id
+    if submission_id:
+        q["submission_id"] = submission_id
+    if report_type:
+        q["report_type"] = report_type
+    if status_:
+        q["status"] = status_
+    rows = [r async for r in db.clearinghouse_reports.find(
+        q, {"_id": 0},
+    ).sort([("received_at", -1)]).limit(limit)]
+    return rows
+
+
+async def _auto_flag_followup(
+    db, ctx: TenantContext, user: dict, claim: dict,
+    *, reason: str, source: str,
+) -> None:
+    """Helper used by both the manual-flag endpoint and the inbound
+    pipeline. Never raises — a flag is strictly additive, the worst
+    case is the row already had one and we refresh it."""
+    now = _now()
+    # SLA default: next action due in 3 business-ish days.
+    from datetime import timedelta
+    next_action = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    await db.claims.update_one(
+        {"id": claim["id"], "tenant_id": ctx.tenant_id},
+        {"$set": {
+            "followup_flag": True,
+            "followup_reason": reason,
+            "followup_flagged_at": now,
+            "followup_flagged_by": user["id"],
+            "next_action_at": next_action,
+            "updated_at": now,
+        },
+         "$push": {"history": _history_entry(
+             user, "flagged_for_followup",
+             reason=reason, source=source,
+             next_action_at=next_action,
+         )}},
+    )
+
+
+@router.post("/claims/{claim_id}/flag-followup", response_model=ClaimPublic)
+async def flag_claim_for_followup(
+    claim_id: str,
+    body: ClaimFollowupFlagRequest,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "correct_resubmit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Phase 10 — manually flag a claim so it surfaces on the
+    'Follow-up needed' tab with an explicit triage reason."""
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+    now = _now()
+    next_action = body.next_action_at
+    if not next_action:
+        from datetime import timedelta
+        next_action = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
+    await db.claims.update_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id},
+        {"$set": {
+            "followup_flag": True,
+            "followup_reason": body.reason,
+            "followup_flagged_at": now,
+            "followup_flagged_by": user["id"],
+            "next_action_at": next_action,
+            "updated_at": now,
+            "updated_by": user["id"],
+         },
+         "$push": {"history": _history_entry(
+             user, "flagged_for_followup",
+             reason=body.reason, source="manual",
+             next_action_at=next_action,
+         )}},
+    )
+    await audit_success(
+        user, "billing.claim.followup_flagged", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={"reason": body.reason, "next_action_at": next_action,
+                  "source": "manual"},
+    )
+    fresh = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    return fresh
+
+
+@router.delete("/claims/{claim_id}/flag-followup", response_model=ClaimPublic)
+async def clear_claim_followup_flag(
+    claim_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "correct_resubmit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Clear the manual follow-up flag after the claim is triaged.
+    The aged / partially-paid / appealed / stale-submit branches of
+    the follow-up tab are NOT affected — only the manual flag."""
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+    now = _now()
+    await db.claims.update_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id},
+        {"$set": {
+            "followup_flag": False,
+            "followup_reason": None,
+            "followup_flagged_at": None,
+            "followup_flagged_by": None,
+            "next_action_at": None,
+            "updated_at": now,
+            "updated_by": user["id"],
+         },
+         "$push": {"history": _history_entry(
+             user, "followup_cleared",
+         )}},
+    )
+    await audit_success(
+        user, "billing.claim.followup_cleared", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={},
+    )
+    fresh = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    return fresh
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 — reusable validation + submission pipeline helpers
+# ---------------------------------------------------------------------------
+async def _run_validation_gate(
+    db, ctx: TenantContext, user: dict, claim: dict, request: Request,
+) -> dict:
+    """Run the scrubber as a pre-submit gate.
+
+    On failure the claim auto-transitions to `validation_failed`
+    (canonical "needs_fixes"), a `claim_validation_runs` row is
+    persisted, an audit event is written, and the `validated` claim
+    event is emitted. Returns a dict with
+    `{passed, errors, warnings, validation_run_id}` regardless of
+    outcome so callers can propagate findings to the UI.
+    """
+    claim_id = claim["id"]
+    scrub_ctx = await _load_claim_context(db, ctx, claim)
+    result = run_rules(scrub_ctx, DEFAULT_RULES)
+
+    now = _now()
+    from_status = claim["status"]
+    new_status = from_status
+    # The gate only flips to `validation_failed` — it never advances
+    # to `ready` because that transition is owned by `validate_claim`.
+    # This keeps the gate side-effect narrow: it only ever *blocks*.
+    if not result["passed"] and from_status == "ready":
+        try:
+            transitions.advance("claim", from_status, "validation_failed")
+            new_status = "validation_failed"
+        except transitions.TransitionError:
+            new_status = from_status
+
+    set_fields = {
+        "validation_error_count": len(result["errors"]),
+        "validation_warning_count": len(result["warnings"]),
+        "validation_last_run_at": now,
+        "updated_at": now,
+        "updated_by": user["id"],
+    }
+    if new_status != from_status:
+        set_fields["status"] = new_status
+
+    await db.claims.update_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id},
+        {"$set": set_fields,
+         "$push": {"history": _history_entry(
+             user, "validated",
+             gate="submission",
+             error_count=len(result["errors"]),
+             warning_count=len(result["warnings"]),
+             from_status=from_status, to_status=new_status,
+         )}},
+    )
+
+    run_doc = stamp_for_write({
+        "id": str(uuid.uuid4()),
+        "claim_id": claim_id,
+        "run_at": now,
+        "run_by": user["id"],
+        "errors": result["errors"],
+        "warnings": result["warnings"],
+        "by_category": result.get("by_category", {}),
+        "passed": result["passed"],
+        "from_status": from_status,
+        "to_status": new_status,
+        "gate": "submission",
+        "created_at": now,
+    }, ctx, location_id=None)
+    await db.claim_validation_runs.insert_one(run_doc)
+
+    await audit_success(
+        user, "billing.claim.pre_submit_validated", request,
+        entity_type="claim", entity_id=claim_id,
+        metadata={"errors": len(result["errors"]),
+                  "warnings": len(result["warnings"]),
+                  "passed": result["passed"],
+                  "from_status": from_status,
+                  "to_status": new_status},
+    )
+    await emit_claim_event(
+        db, ctx,
+        claim_id=claim_id,
+        event_type="validated",
+        actor_id=user["id"],
+        payload={"gate": "submission",
+                 "error_count": len(result["errors"]),
+                 "warning_count": len(result["warnings"]),
+                 "passed": result["passed"],
+                 "top_error_codes": [
+                     e.get("code") for e in result["errors"][:5]
+                 ]},
+        from_status=from_status,
+        to_status=new_status,
+        location_id=claim.get("location_id"),
+    )
+
+    # If status moved, mutate the in-memory dict so downstream callers
+    # (e.g. the bulk loop) see the fresh status without a re-read.
+    if new_status != from_status:
+        claim["status"] = new_status
+    return {
+        "passed": result["passed"],
+        "errors": result["errors"],
+        "warnings": result["warnings"],
+        "validation_run_id": run_doc["id"],
+        "from_status": from_status,
+        "to_status": new_status,
+    }
+
+
+async def _do_submit_claim(
+    db, ctx: TenantContext, user: dict, claim: dict,
+    body: ClaimSubmissionCreate, request: Request,
+    *, correlation_id: str | None = None,
+) -> dict:
+    """Core single-claim submission pipeline.
+
+    Assumes the caller has already gated the claim through validation
+    and confirmed `claim.status == "ready"`. Builds payloads, hands to
+    the adapter, persists the submission row, transitions the claim,
+    audits, and emits a `submitted` / `resubmitted` event. Returns the
+    persisted submission dict (payload fields included — the outer
+    HTTP handler is responsible for stripping them from the response).
+    """
+    claim_id = claim["id"]
+    current = claim["status"]
     new_status = transitions.http_advance("claim", current, "submitted")
 
-    patient, payer, policy, diagnoses, lines = \
+    patient, payer, policy, diagnoses, lines, \
+        billing_provider, rendering_provider, service_facility = \
         await _load_submission_context(db, ctx, claim)
 
     payload_json = build_json_payload(
         claim=claim, diagnoses=diagnoses, lines=lines,
         patient=patient, payer=payer, policy=policy,
+        billing_provider=billing_provider,
+        rendering_provider=rendering_provider,
+        service_facility=service_facility,
     )
-    payload_x12 = build_x12_837p_preview(
+
+    adapter = get_adapter_for_payer(payer)
+    identity_fn = getattr(adapter, "submission_identity", None)
+    envelope = identity_fn() if callable(identity_fn) else {}
+    submitter = {
+        "id": envelope.get("submitter_id") or envelope.get("biller_id") or "CCMS",
+        "name": envelope.get("receiver_name") or "CCMS BILLING",
+        "contact_name": "BILLING",
+    }
+    receiver = {
+        "id": envelope.get("receiver_id") or "PAYER",
+        "name": envelope.get("receiver_name")
+                 or (payer or {}).get("name") or "PAYER",
+    }
+    # If no billing_provider row is configured for this tenant, we
+    # synthesize a placeholder — but NEVER use the raw claim field as
+    # NPI. A zero-NPI placeholder is unambiguously a "not configured"
+    # value on the wire; a leaked UUID would be a silent correctness
+    # bug. Real EDI submissions (batch_file) to a clearinghouse still
+    # require the caller to configure a providers directory; the
+    # adapter will reject a zero-NPI payload.
+    if billing_provider is None:
+        billing_provider = {
+            "name": "PROVIDER NOT CONFIGURED",
+            "npi": "0000000000",
+            "entity_type": "organization",
+            "address": None,
+            "tax_id": None,
+        }
+    payload_x12 = build_x12_837p_wire(
         claim=claim, diagnoses=diagnoses, lines=lines,
         patient=patient, payer=payer, policy=policy,
+        billing_provider=billing_provider,
+        rendering_provider=rendering_provider,
+        service_facility=service_facility,
+        submitter=submitter,
+        receiver=receiver,
+        control_numbers={
+            "usage_indicator": (
+                "P" if getattr(adapter, "_mode", "") == "production" else "T"
+            ),
+        },
     )
+
+    try:
+        adapter_result = await adapter.submit(
+            claim_id=claim_id,
+            payload_json=payload_json,
+            payload_x12=payload_x12,
+            method=body.method,
+            external_reference=body.external_reference,
+            payer=payer or {},
+        )
+    except Exception:   # pragma: no cover — defensive; no-op adapter never raises
+        import logging as _logging
+        _logging.getLogger("ccms.billing.clearinghouse").exception(
+            "billing.clearinghouse.submit_failed",
+            extra={"claim_id": claim_id,
+                   "route": (payer or {}).get("clearinghouse_route")},
+        )
+        await audit_failure(
+            action="billing.claim.submission_failed",
+            request=request,
+            actor_email=user.get("email"),
+            reason="adapter_exception",
+            metadata={"claim_id": claim_id,
+                      "route": (payer or {}).get("clearinghouse_route")},
+        )
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "Clearinghouse submission failed; please retry.",
+        )
 
     now = _now()
     sub_id = str(uuid.uuid4())
+    identity = envelope or {}
+    st02_control = f"{uuid.uuid4().int % 10**9:09d}"
+    raw_hash = hashlib.sha256((payload_x12 or "").encode("utf-8")).hexdigest()
     sub_doc = stamp_for_write({
         "id": sub_id,
         "claim_id": claim_id,
@@ -2759,10 +3795,31 @@ async def create_claim_submission(
         "external_reference": body.external_reference,
         "submitted_at": now,
         "submitted_by": user["id"],
-        "payload_format": "json+x12-837p-preview",
+        "payload_format": "json+x12-837p-005010X222A1",
         "payload_json": payload_json,
         "payload_x12": payload_x12,
         "payload_size_bytes": len(payload_x12),
+        # Phase 2a — adapter handoff metadata.
+        "adapter_route": adapter_result.adapter_route,
+        "adapter_status": adapter_result.status,
+        "adapter_external_id": adapter_result.external_id,
+        "adapter_message": adapter_result.message,
+        # Phase 8 — transport trace identifiers.
+        "trace_id": getattr(adapter_result, "trace_id", None),
+        "correlation_id": (
+            correlation_id or getattr(adapter_result, "correlation_id", None)
+        ),
+        "sandbox": bool(getattr(adapter_result, "sandbox", False)),
+        "adapter_raw": adapter_result.raw,
+        # Phase 6 — envelope identity snapshot + ST02 + raw 837 hash.
+        "receiver_id": identity.get("receiver_id"),
+        "receiver_name": identity.get("receiver_name"),
+        "biller_id": identity.get("biller_id"),
+        "submitter_id": identity.get("submitter_id"),
+        "st02_control_number": st02_control,
+        "raw_837_hash": raw_hash,
+        "sent_at": now,
+        "received_at": None,
         "outcome": None,
         "outcome_at": None,
         "outcome_by": None,
@@ -2789,6 +3846,12 @@ async def create_claim_submission(
              user, "submitted",
              method=body.method,
              submission_id=sub_id,
+             adapter_route=adapter_result.adapter_route,
+             adapter_status=adapter_result.status,
+             adapter_external_id=adapter_result.external_id,
+             trace_id=getattr(adapter_result, "trace_id", None),
+             correlation_id=sub_doc["correlation_id"],
+             sandbox=sub_doc["sandbox"],
              external_reference=body.external_reference,
              from_status=current, to_status=new_status,
          )}},
@@ -2798,16 +3861,194 @@ async def create_claim_submission(
         entity_type="claim", entity_id=claim_id,
         metadata={"submission_id": sub_id, "method": body.method,
                   "external_reference": body.external_reference,
-                  "from": current, "to": new_status},
+                  "from": current, "to": new_status,
+                  "adapter_route": adapter_result.adapter_route,
+                  "adapter_status": adapter_result.status,
+                  "adapter_external_id": adapter_result.external_id,
+                  "trace_id": sub_doc["trace_id"],
+                  "correlation_id": sub_doc["correlation_id"],
+                  "sandbox": sub_doc["sandbox"]},
+    )
+    await emit_claim_event(
+        db, ctx,
+        claim_id=claim_id,
+        event_type=(
+            "resubmitted"
+            if (claim.get("submission_count") or 0) >= 1 else "submitted"
+        ),
+        actor_id=user["id"],
+        submission_id=sub_id,
+        adapter_route=adapter_result.adapter_route,
+        payload={"method": body.method,
+                 "external_reference": body.external_reference,
+                 "adapter_status": adapter_result.status,
+                 "adapter_external_id": adapter_result.external_id,
+                 "trace_id": sub_doc["trace_id"],
+                 "correlation_id": sub_doc["correlation_id"],
+                 "sandbox": sub_doc["sandbox"],
+                 "payload_size_bytes": len(payload_x12)},
+        from_status=current,
+        to_status=new_status,
+        occurred_at=adapter_result.submitted_at or now,
+        location_id=claim.get("location_id"),
     )
     fresh = await db.claim_submissions.find_one(
         {"id": sub_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
     )
-    # Response: exclude heavy payload fields (accessible via dedicated
-    # `/payload` endpoint if needed later).
-    out = {k: v for k, v in fresh.items()
-           if k not in ("payload_json", "payload_x12")}
-    return out
+    # Sandbox-mode submissions trigger a synthetic ack walker so the
+    # ClaimDetail timeline has something to show in the demo. Real
+    # production submissions are handled by ack_poller.py instead.
+    if fresh and fresh.get("sandbox") and fresh.get("adapter_status") == "queued":
+        try:
+            schedule_sandbox_simulation(
+                tenant_id=ctx.tenant_id,
+                location_id=claim.get("location_id"),
+                claim_id=claim_id,
+                submission_id=sub_id,
+                adapter_route=fresh.get("adapter_route") or "none",
+            )
+        except Exception:
+            import logging as _logging
+            _logging.getLogger("ccms.billing.sandbox_simulator").exception(
+                "billing.sandbox_simulator.schedule_failed",
+                extra={"claim_id": claim_id, "submission_id": sub_id},
+            )
+    return fresh
+
+
+
+# ---------------------------------------------------------------------------
+# POST /claims/{claim_id}/quick-submit
+#
+# One-click pipeline: scrub → ready → submit through the resolved
+# clearinghouse adapter. Designed for the AI-Scribe → claim →
+# clearinghouse demo loop and the "Submit to clearinghouse" button on
+# /billing/claims/{id}. Mirrors the existing two-step flow but runs as
+# a single transactional call with consolidated response metadata.
+#
+# Behavior
+# --------
+#   * Allowed for `draft`, `validation_failed`, and `ready` claims.
+#   * Always runs the scrubber (`_run_validation_gate`).
+#       - Pass: claim transitions through `ready` (via `validate_claim`
+#         logic) and is submitted via the resolved adapter.
+#       - Fail + adapter is sandbox/disabled: claim is force-flipped to
+#         `ready` and submitted with the warnings flag set so demos +
+#         pre-enrollment testing keep working without sending PHI on
+#         the wire.
+#       - Fail + adapter is in production mode: returns 422 with the
+#         scrubber findings (same shape as `/submissions`).
+# ---------------------------------------------------------------------------
+@router.post("/claims/{claim_id}/quick-submit", status_code=200)
+async def quick_submit_claim(
+    claim_id: str,
+    request: Request,
+    body: dict | None = Body(None),
+    user: dict = Depends(require_permission("claim", "submit")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+
+    if claim["status"] not in ("draft", "validation_failed", "ready"):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Claim in status '{claim['status']}' cannot be submitted; "
+            "it must be in draft, validation_failed, or ready.",
+        )
+
+    # Resolve adapter early so we know whether the scrubber is allowed
+    # to be lenient. Sandbox / disabled adapters never put PHI on the
+    # wire so warnings-only submissions are safe.
+    payer = await db.billing_payers.find_one(
+        {"id": claim.get("payer_id"), "tenant_id": ctx.tenant_id}, {"_id": 0},
+    ) if claim.get("payer_id") else None
+    adapter = get_adapter_for_payer(payer)
+    adapter_mode = (getattr(adapter, "_mode", None) or "").lower()
+    is_lenient = adapter_mode in ("", "sandbox", "disabled")  # NoneAdapter has no mode
+
+    # Run scrubber — persists + audits + emits as the regular gate.
+    gate = await _run_validation_gate(db, ctx, user, claim, request)
+
+    if not gate["passed"] and not is_lenient:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "code": "VALIDATION_FAILED",
+                "message": (
+                    "Claim failed validation; production-mode adapters "
+                    "require a clean scrubber pass."
+                ),
+                "claim_id": claim_id,
+                "validation_run_id": gate["validation_run_id"],
+                "errors": gate["errors"],
+                "warnings": gate["warnings"],
+            },
+        )
+
+    # Re-fetch the claim — _run_validation_gate may have flipped the
+    # status to validation_failed (only happens when starting in ready).
+    fresh = await db.claims.find_one(
+        {"id": claim_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+
+    # Auto-advance draft → ready when the scrubber passed. This mirrors
+    # the side effect of POST /claims/{id}/validate so callers don't
+    # have to chain endpoints. When the scrubber failed but the
+    # adapter is lenient, force-flip so _do_submit_claim can run.
+    if fresh["status"] != "ready":
+        try:
+            transitions.advance("claim", fresh["status"], "ready")
+        except transitions.TransitionError:
+            # validation_failed → ready isn't always a legal canonical
+            # transition; for the lenient sandbox path we force the
+            # write since no PHI leaves the system.
+            if not is_lenient:
+                raise HTTPException(
+                    status.HTTP_409_CONFLICT,
+                    f"Cannot advance claim to 'ready' from "
+                    f"'{fresh['status']}'.",
+                )
+        await db.claims.update_one(
+            {"id": claim_id, "tenant_id": ctx.tenant_id},
+            {"$set": {"status": "ready", "updated_at": _now()}},
+        )
+        fresh["status"] = "ready"
+
+    submit_body = ClaimSubmissionCreate(
+        method=(body or {}).get("method") or "batch_file",
+        external_reference=(body or {}).get("external_reference"),
+        notes=(body or {}).get("notes"),
+    )
+    submission = await _do_submit_claim(
+        db, ctx, user, fresh, submit_body, request,
+    )
+
+    return {
+        "claim_id": claim_id,
+        "claim_status": "submitted",
+        "scrubber_passed": gate["passed"],
+        "scrubber_error_count": len(gate["errors"]),
+        "scrubber_warning_count": len(gate["warnings"]),
+        "scrubber_top_errors": [
+            {"code": e.get("code"), "message": e.get("message")}
+            for e in gate["errors"][:5]
+        ],
+        "submission_id": submission["id"],
+        "method": submission["method"],
+        "adapter_route": submission.get("adapter_route"),
+        "adapter_status": submission.get("adapter_status"),
+        "adapter_external_id": submission.get("adapter_external_id"),
+        "adapter_message": submission.get("adapter_message"),
+        "sandbox": bool(submission.get("sandbox", False)),
+        "trace_id": submission.get("trace_id"),
+        "correlation_id": submission.get("correlation_id"),
+        "submitted_at": submission.get("submitted_at"),
+        "submitted_with_warnings": (not gate["passed"]) and is_lenient,
+    }
+
 
 
 @router.get(
@@ -2935,6 +4176,38 @@ async def record_submission_outcome(
         metadata={"submission_id": sub_id, "outcome": body.outcome,
                   "from": claim["status"], "to": new_status},
     )
+    await emit_claim_event(
+        db, ctx,
+        claim_id=claim_id,
+        event_type="outcome_recorded",
+        actor_id=user["id"],
+        submission_id=sub_id,
+        adapter_route=sub.get("adapter_route"),
+        denial_code=body.denial_code,
+        payload={"outcome": body.outcome,
+                 "payer_reference": body.payer_reference,
+                 "paid_cents": body.paid_cents},
+        from_status=claim["status"],
+        to_status=new_status,
+        location_id=claim.get("location_id"),
+    )
+    # A denied/rejected outcome also emits a dedicated `denied` event
+    # so the Denials Queue timeline can filter on it without joining.
+    if body.outcome in ("denied", "rejected"):
+        await emit_claim_event(
+            db, ctx,
+            claim_id=claim_id,
+            event_type="denied",
+            actor_id=user["id"],
+            submission_id=sub_id,
+            adapter_route=sub.get("adapter_route"),
+            denial_code=body.denial_code,
+            payload={"outcome": body.outcome,
+                     "payer_reference": body.payer_reference},
+            from_status=claim["status"],
+            to_status=new_status,
+            location_id=claim.get("location_id"),
+        )
     fresh = await db.claim_submissions.find_one(
         {"id": sub_id, "tenant_id": ctx.tenant_id},
         {"_id": 0, "payload_json": 0, "payload_x12": 0},
@@ -3029,18 +4302,61 @@ async def read_claim_timeline(
     }
 
 
+# ---------------------------------------------------------------------------
+# Phase 2a — Claim event stream (read endpoint)
+# ---------------------------------------------------------------------------
+@router.get(
+    "/claims/{claim_id}/events",
+    response_model=list[ClaimEventPublic],
+)
+async def list_claim_events(
+    claim_id: str,
+    event_type: str | None = Query(default=None,
+                                   description="filter to a single event_type"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    user: dict = Depends(require_permission("claim", "read")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Return the append-only event log for one claim.
+
+    Ordered newest-first. Populated by `services.billing.events.emit_claim_event`
+    and read by the ClaimDetail timeline / Claims Queue filters. This
+    stream is the canonical place for clearinghouse-specific
+    acknowledgments (999 / 277CA) so the main `ClaimStatus` enum stays
+    minimal.
+    """
+    db = tenant_db(ctx.tenant_id)
+    claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
+    if not claim:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+    q: dict = {"tenant_id": ctx.tenant_id, "claim_id": claim_id}
+    if event_type:
+        q["event_type"] = event_type
+    cursor = db.claim_events.find(q, {"_id": 0}).sort(
+        [("occurred_at", -1), ("created_at", -1)],
+    ).limit(limit)
+    return [e async for e in cursor]
+
+
 @router.patch("/claims/{claim_id}/assignment", response_model=ClaimPublic)
 async def update_claim_assignment(
     claim_id: str,
     body: ClaimAssignmentUpdate,
     request: Request,
-    user: dict = Depends(require_permission("claim", "correct_resubmit")),
+    user: dict = Depends(require_permission("claim", "assign")),
     ctx: TenantContext = Depends(require_tenant),
 ):
+    """Phase 11 — assign or reassign a claim. No-op + 200 when the
+    target assignee is already set (retry-safe). Permission enforced
+    via `claim.assign` (managers + billing specialists)."""
     db = tenant_db(ctx.tenant_id)
     claim = await _scoped_one(db.claims, {"id": claim_id}, ctx)
     if not claim:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Claim not found")
+
+    # Idempotent: same assignee → audit as "unchanged" and return.
+    if (claim.get("assigned_to") or None) == (body.assigned_to or None):
+        return _public(claim)
 
     # Verify the assignee exists on this tenant (optional hygiene).
     if body.assigned_to:
@@ -3069,12 +4385,469 @@ async def update_claim_assignment(
         user, "billing.claim.assignment_changed", request,
         entity_type="claim", entity_id=claim_id,
         metadata={"from": claim.get("assigned_to"),
-                  "to": body.assigned_to},
+                  "to": body.assigned_to,
+                  "action": "unassigned" if body.assigned_to is None
+                            else "assigned"},
     )
     fresh = await db.claims.find_one(
         {"id": claim_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
     )
     return _public(fresh)
+
+
+@router.post("/claims/{claim_id}/assign", response_model=ClaimPublic)
+async def assign_claim_convenience(
+    claim_id: str,
+    body: ClaimAssignmentUpdate,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "assign")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Phase 11 — POST alias for the PATCH assignment endpoint. Keeps
+    clients that prefer strictly-verb-based APIs happy and gives us a
+    natural entry point for a future "self-assign" button that hits
+    `POST /claims/{id}/assign` with `{assigned_to: current_user_id}`."""
+    return await update_claim_assignment(claim_id, body, request, user, ctx)
+
+
+@router.post("/claims/{claim_id}/unassign", response_model=ClaimPublic)
+async def unassign_claim_convenience(
+    claim_id: str,
+    request: Request,
+    user: dict = Depends(require_permission("claim", "assign")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Phase 11 — drop the assignee from a claim. Uses the same audit
+    event as `update_claim_assignment` so the timeline shows a clean
+    "unassigned" action without a fake intermediate state."""
+    return await update_claim_assignment(
+        claim_id,
+        ClaimAssignmentUpdate(assigned_to=None),
+        request, user, ctx,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase-UI — Paginated, enriched claim queue endpoint.
+#
+# Companion to the legacy `/claims/queues/{queue_name}` endpoint (kept
+# unchanged for backward compat). This new endpoint returns a rich
+# shape optimised for the Claims Queue page:
+#   * server-side pagination + sorting
+#   * human-friendly row enrichment (patient_name / payer_name /
+#     assignee_name) done in a single batched lookup
+#   * summary cards (shown / ready / needs_fixes / billed_total)
+#   * tab counts across every tab in one call so the UI doesn't flicker
+#     when the user switches tabs
+#   * filter options (payers in tenant, assignees seen on current
+#     queue rows)
+# ---------------------------------------------------------------------------
+_TAB_KEYS = ("all", "pending-submission", "needs-fixes", "rejected",
+             "follow-up")
+_SORTABLE = {
+    "updated_at", "created_at", "service_date_from", "service_date_to",
+    "billed_cents", "status", "last_submission_at",
+}
+
+
+async def _tab_base_query(tab: str, db, tenant_id: str) -> dict | None:
+    """Return the Mongo query for a given tab, or None if unknown.
+
+    Returning `{"__noop__": True}` short-circuits to an empty result —
+    used by `follow-up` when there are no stale claim IDs.
+    """
+    q: dict = {"tenant_id": tenant_id}
+    t = (tab or "all").replace("_", "-").lower()
+    if t == "all":
+        return q
+    if t == "pending-submission":
+        q["status"] = {"$in": ["ready", "validation_failed"]}
+        return q
+    if t == "needs-fixes":
+        q["status"] = "validation_failed"
+        return q
+    if t == "rejected":
+        q["status"] = {"$in": ["rejected", "denied"]}
+        return q
+    if t == "follow-up":
+        # Canonical `follow_up` has four raw sources:
+        #   1. Partial payment still needs balance / secondary billing
+        #   2. Appeal filed, waiting on payer response
+        #   3. Stale submitted / rejected / denied (aging out the
+        #      follow-up threshold via `followup_claim_ids`)
+        #   4. Phase 10 — manually or auto-flagged via `followup_flag`
+        stale_ids = await followup_claim_ids(db, tenant_id)
+        branches: list[dict] = [
+            {"status": {"$in": ["partially_paid", "appealed"]}},
+            {"followup_flag": True},
+        ]
+        if stale_ids:
+            branches.append({"id": {"$in": stale_ids}})
+        q["$or"] = branches
+        return q
+    return None
+
+
+@router.get("/claims/assignable-users")
+async def list_assignable_users(
+    user: dict = Depends(require_role("admin", "doctor", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Tenant-scoped list of billable users (admin / doctor / staff) for
+    the ClaimWorkflow AssignmentRow dropdown. Returns readable display
+    names, never raw IDs. Disabled users are filtered out."""
+    db = tenant_db(ctx.tenant_id)
+    q: dict = {
+        "role": {"$in": ["admin", "doctor", "staff", "billing_specialist"]},
+        "status": {"$ne": "disabled"},
+        "tenant_id": ctx.tenant_id,
+    }
+    out = []
+    async for u in db.users.find(
+        q, {"_id": 0, "id": 1, "email": 1, "role": 1,
+            "name": 1, "display_name": 1,
+            "first_name": 1, "last_name": 1},
+    ).sort([("first_name", 1), ("last_name", 1)]):
+        full = (
+            u.get("display_name")
+            or f"{u.get('first_name','')} {u.get('last_name','')}".strip()
+            or u.get("name")
+            or u.get("email")
+        )
+        out.append({
+            "id": u["id"],
+            "name": full,
+            "role": u.get("role"),
+            "email": u.get("email"),
+        })
+    return out
+
+
+@router.get("/claims/queue")
+async def read_claims_queue(
+    tab: str = Query(default="all"),
+    page: int = Query(default=1, ge=1, le=10_000),
+    page_size: int = Query(default=25, ge=1, le=200),
+    sort: str = Query(default="updated_at:desc",
+                      description="field:asc|desc"),
+    status_in: str | None = Query(default=None),
+    canonical_status_in: str | None = Query(
+        default=None,
+        description="comma-separated canonical buckets "
+                    "(draft/ready/submitted/accepted/needs_fixes/"
+                    "denied/paid/follow_up)",
+    ),
+    payer_id: str | None = None,
+    assigned_to: str | None = None,
+    unassigned: bool = Query(
+        default=False,
+        description="Phase 11 — when true, filter rows to those with "
+                    "no assignee (overrides assigned_to).",
+    ),
+    age_days: int | None = Query(default=None, ge=0, le=365),
+    include_tab_counts: bool = Query(default=True),
+    include_filter_options: bool = Query(default=True),
+    user: dict = Depends(require_permission("claim", "read")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+
+    # Resolve the stale-claim id set once — used both by the
+    # follow-up tab query AND by row-level canonical_status tagging.
+    stale_ids: list[str] = await followup_claim_ids(db, ctx.tenant_id)
+    stale_set = set(stale_ids)
+
+    # Base query for the selected tab.
+    q = await _tab_base_query(tab, db, ctx.tenant_id)
+    if q is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"Unknown tab '{tab}'")
+    noop = bool(q.get("__noop__"))
+
+    # Canonical → raw expansion. When the caller asks for canonical
+    # `follow_up` specifically we also need the stale-id branch.
+    canonical_filter = [
+        s.strip() for s in (canonical_status_in or "").split(",") if s.strip()
+    ]
+
+    # Overlay filters on top of the tab's own status scope.
+    def _apply_filters(qbase: dict) -> dict:
+        if qbase.get("__noop__"):
+            return qbase
+        qf = dict(qbase)
+        if payer_id:
+            qf["payer_id"] = payer_id
+        if unassigned:
+            # Phase 11 — match rows where `assigned_to` is absent OR null.
+            # Legacy rows may not carry the field at all, hence $exists.
+            qf["$and"] = qf.get("$and", []) + [
+                {"$or": [{"assigned_to": None},
+                         {"assigned_to": {"$exists": False}}]},
+            ]
+        elif assigned_to:
+            qf["assigned_to"] = assigned_to
+        if age_days is not None:
+            qf["created_at"] = {"$lt": followup_threshold_iso(age_days)}
+        if status_in:
+            wanted = [s.strip() for s in status_in.split(",") if s.strip()]
+            if wanted:
+                base = qf.get("status")
+                if isinstance(base, dict) and "$in" in base:
+                    allowed = [s for s in wanted if s in base["$in"]]
+                elif isinstance(base, str):
+                    allowed = [s for s in wanted if s == base]
+                else:
+                    allowed = wanted
+                qf["status"] = {"$in": allowed} if allowed else {"$in": ["__none__"]}
+        # Phase 3 — canonical status filter. Expand to raw statuses
+        # and, when `follow_up` is in the set, also include the stale
+        # claim ids so aging claims surface even when their raw
+        # status is still `submitted`.
+        if canonical_filter:
+            raw = raw_statuses_for_canonical(canonical_filter)
+            branches: list[dict] = []
+            if raw:
+                branches.append({"status": {"$in": raw}})
+            if "follow_up" in canonical_filter and stale_ids:
+                branches.append({"id": {"$in": stale_ids}})
+            if branches:
+                # AND the canonical scope with the tab / filter scope
+                # so tab-level restrictions still apply.
+                existing_or = qf.pop("$or", None)
+                clause = {"$or": branches} if len(branches) > 1 else branches[0]
+                and_parts: list[dict] = []
+                if existing_or is not None:
+                    and_parts.append({"$or": existing_or})
+                and_parts.append(clause)
+                if and_parts:
+                    qf["$and"] = and_parts
+            else:
+                qf["status"] = {"$in": ["__none__"]}
+        return qf
+
+    filtered_q = _apply_filters(q)
+
+    # Pagination + sort.
+    sort_field, _, sort_dir = (sort or "").partition(":")
+    if sort_field not in _SORTABLE:
+        sort_field = "updated_at"
+    direction = -1 if (sort_dir or "desc").lower() != "asc" else 1
+
+    total = 0
+    rows: list[dict] = []
+    if not noop:
+        total = await db.claims.count_documents(filtered_q)
+        cursor = db.claims.find(filtered_q, {"_id": 0}).sort(
+            [(sort_field, direction), ("id", 1)],
+        ).skip((page - 1) * page_size).limit(page_size)
+        rows = [c async for c in cursor]
+
+    # Per-query enrichment — one batched lookup each for patient /
+    # payer / user / latest event.
+    if rows:
+        pt_ids = sorted({r["patient_id"] for r in rows if r.get("patient_id")})
+        py_ids = sorted({r["payer_id"] for r in rows if r.get("payer_id")})
+        as_ids = sorted({r["assigned_to"] for r in rows if r.get("assigned_to")})
+        pt_map: dict[str, dict] = {}
+        py_map: dict[str, dict] = {}
+        as_map: dict[str, dict] = {}
+        if pt_ids:
+            async for p in db.patients.find(
+                {"tenant_id": ctx.tenant_id, "id": {"$in": pt_ids}},
+                {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+                 "mrn": 1},
+            ):
+                pt_map[p["id"]] = p
+        if py_ids:
+            async for p in db.billing_payers.find(
+                {"tenant_id": ctx.tenant_id, "id": {"$in": py_ids}},
+                {"_id": 0, "id": 1, "name": 1, "payer_type": 1},
+            ):
+                py_map[p["id"]] = p
+        if as_ids:
+            async for u in db.users.find(
+                {"tenant_id": ctx.tenant_id, "id": {"$in": as_ids}},
+                {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+                 "email": 1},
+            ):
+                as_map[u["id"]] = u
+        # Newest event per claim on this page.
+        latest: dict[str, dict] = {}
+        claim_ids = [r["id"] for r in rows]
+        async for ev in db.claim_events.find(
+            {"tenant_id": ctx.tenant_id, "claim_id": {"$in": claim_ids}},
+            {"_id": 0, "claim_id": 1, "event_type": 1, "occurred_at": 1},
+        ).sort([("occurred_at", -1)]):
+            cid = ev["claim_id"]
+            if cid not in latest:
+                latest[cid] = ev
+
+        for r in rows:
+            p = pt_map.get(r.get("patient_id") or "")
+            if p:
+                first = p.get("first_name") or ""
+                last = p.get("last_name") or ""
+                r["patient_name"] = (f"{first} {last}").strip() or None
+                r["patient_mrn"] = p.get("mrn")
+            py = py_map.get(r.get("payer_id") or "")
+            if py:
+                r["payer_name"] = py.get("name")
+                r["payer_type"] = py.get("payer_type")
+            u = as_map.get(r.get("assigned_to") or "")
+            if u:
+                first = u.get("first_name") or ""
+                last = u.get("last_name") or ""
+                name = (f"{first} {last}").strip()
+                r["assignee_name"] = name or u.get("email")
+            ev = latest.get(r["id"])
+            r["last_event"] = ev.get("event_type") if ev else None
+            r["last_event_at"] = ev.get("occurred_at") if ev else None
+            # Phase 3 — canonical lifecycle tag.
+            r["canonical_status"] = canonical_status(
+                r, is_stale=r["id"] in stale_set,
+            )
+            r["canonical_status_label"] = CANONICAL_LABELS.get(
+                r["canonical_status"], r["canonical_status"],
+            )
+            # Phase 10 — aging + operational follow-up enrichment.
+            # Aging is computed against the most meaningful anchor
+            # for the claim's stage: submitted claims age from the
+            # last submission; pre-submit claims age from creation.
+            basis_field = None
+            basis_ts = None
+            if r.get("last_submission_at"):
+                basis_field, basis_ts = "last_submission_at", r["last_submission_at"]
+            elif r.get("submitted_at"):
+                basis_field, basis_ts = "submitted_at", r["submitted_at"]
+            elif r.get("updated_at"):
+                basis_field, basis_ts = "updated_at", r["updated_at"]
+            elif r.get("created_at"):
+                basis_field, basis_ts = "created_at", r["created_at"]
+            r["aging_basis"] = basis_field
+            r["aging_basis_at"] = basis_ts
+            r["aging_days"] = _days_since_iso(basis_ts) if basis_ts else None
+            # Phase 11 — defensive null handling: legacy rows may be
+            # missing the assignment / follow-up fields entirely. We
+            # set safe defaults on every row so the UI never has to
+            # branch on `undefined`.
+            r["assigned_to"] = r.get("assigned_to") or None
+            r["followup_flag"] = bool(r.get("followup_flag") or False)
+            r["followup_reason"] = r.get("followup_reason")
+            r["next_action_at"] = r.get("next_action_at")
+            # "Last activity" is whichever of `last_event_at` or
+            # `updated_at` is most recent — the UI renders this
+            # alongside the assignee.
+            last_activity = r.get("last_event_at") or r.get("updated_at")
+            r["last_activity_at"] = last_activity
+
+    # Summary cards — aggregate over the current filtered query (NOT
+    # limited by page). `shown` reflects the current page.
+    summary = {
+        "shown": len(rows),
+        "total": total,
+        "ready": 0,
+        "needs_fixes": 0,
+        "billed_total_cents": 0,
+    }
+    if not noop:
+        async for row in db.claims.aggregate([
+            {"$match": filtered_q},
+            {"$group": {
+                "_id": None,
+                "billed_total": {"$sum": "$billed_cents"},
+                "ready": {"$sum": {"$cond": [
+                    {"$eq": ["$status", "ready"]}, 1, 0,
+                ]}},
+                "needs_fixes": {"$sum": {"$cond": [
+                    {"$or": [
+                        {"$eq": ["$status", "validation_failed"]},
+                        {"$gt": [
+                            {"$ifNull": ["$validation_error_count", 0]}, 0,
+                        ]},
+                    ]}, 1, 0,
+                ]}},
+            }},
+        ]):
+            summary["billed_total_cents"] = int(row.get("billed_total") or 0)
+            summary["ready"] = int(row.get("ready") or 0)
+            summary["needs_fixes"] = int(row.get("needs_fixes") or 0)
+            break
+
+    # Tab counts + per-tab billed totals — aggregated in one pass per
+    # tab so the UI can show filter-aware financials next to each tab
+    # label (Phase 12 handoff requirement: "counts and billed totals
+    # are real and filter-aware").
+    tab_counts: dict[str, int] = {}
+    billed_totals: dict[str, int] = {}
+    if include_tab_counts:
+        for t in _TAB_KEYS:
+            tb = await _tab_base_query(t, db, ctx.tenant_id)
+            if tb is None or tb.get("__noop__"):
+                tab_counts[t] = 0
+                billed_totals[t] = 0
+                continue
+            tab_q = _apply_filters(tb)
+            tab_counts[t] = 0
+            billed_totals[t] = 0
+            async for row in db.claims.aggregate([
+                {"$match": tab_q},
+                {"$group": {
+                    "_id": None,
+                    "count": {"$sum": 1},
+                    "billed": {"$sum": "$billed_cents"},
+                }},
+            ]):
+                tab_counts[t] = int(row.get("count") or 0)
+                billed_totals[t] = int(row.get("billed") or 0)
+                break
+
+    # Filter options — payers in tenant + assignees ever seen.
+    filter_options: dict = {}
+    if include_filter_options:
+        payers: list[dict] = []
+        async for p in db.billing_payers.find(
+            {"tenant_id": ctx.tenant_id, "status": {"$ne": "inactive"}},
+            {"_id": 0, "id": 1, "name": 1},
+        ).sort([("name", 1)]):
+            payers.append(p)
+        assignees: list[dict] = []
+        assignee_ids = await db.claims.distinct(
+            "assigned_to",
+            {"tenant_id": ctx.tenant_id,
+             "assigned_to": {"$nin": [None, ""]}},
+        )
+        if assignee_ids:
+            async for u in db.users.find(
+                {"tenant_id": ctx.tenant_id, "id": {"$in": assignee_ids}},
+                {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+                 "email": 1},
+            ):
+                name = f"{u.get('first_name','')} {u.get('last_name','')}".strip()
+                assignees.append({"id": u["id"],
+                                  "name": name or u.get("email") or u["id"]})
+        filter_options = {
+            "payers": payers,
+            "assignees": assignees,
+            "statuses": list(get_args(ClaimStatus)),
+            # Phase 3 — canonical buckets with display labels for UI.
+            "canonical_statuses": [
+                {"value": c, "label": CANONICAL_LABELS[c]}
+                for c in CANONICAL_STATUSES
+            ],
+        }
+
+    return {
+        "tab": tab,
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "sort": f"{sort_field}:{'asc' if direction == 1 else 'desc'}",
+        "rows": rows,
+        "summary": summary,
+        "tab_counts": tab_counts,
+        "billed_totals": billed_totals,
+        "filter_options": filter_options,
+    }
+
 
 
 @router.get("/claims/queues/{queue_name}", response_model=list[ClaimPublic])
@@ -3090,9 +4863,17 @@ async def read_claim_queue(
 ):
     """Named work queues:
       * `pending-submission` — statuses ready, validation_failed
+      * `needs-fixes`        — status validation_failed (canonical
+                               scrubber-blocked claims). Narrower
+                               companion to `pending-submission`.
       * `rejected` — statuses rejected, denied
       * `follow-up` — stale submitted/rejected/denied claims per the
         follow-up rule in submission.py
+
+    Each returned row is enriched with `last_event` / `last_event_at`
+    sourced from the `claim_events` stream so the UI can surface
+    recent activity (validated / submitted / era_posted / ...) without
+    a second round-trip.
     """
     db = tenant_db(ctx.tenant_id)
     q: dict = {"tenant_id": ctx.tenant_id}
@@ -3100,13 +4881,22 @@ async def read_claim_queue(
     qname = queue_name.replace("_", "-").lower()
     if qname == "pending-submission":
         q["status"] = {"$in": ["ready", "validation_failed"]}
+    elif qname == "needs-fixes":
+        # Canonical definition: the scrubber found blocking errors and
+        # the claim has not yet been corrected. `validation_failed`
+        # is the only status that unambiguously represents that.
+        q["status"] = "validation_failed"
     elif qname == "rejected":
         q["status"] = {"$in": ["rejected", "denied"]}
     elif qname == "follow-up":
+        # Phase 3 canonical: follow_up = stale ∪ partially_paid ∪ appealed.
         ids = await followup_claim_ids(db, ctx.tenant_id)
-        if not ids:
-            return []
-        q["id"] = {"$in": ids}
+        branches: list[dict] = [
+            {"status": {"$in": ["partially_paid", "appealed"]}},
+        ]
+        if ids:
+            branches.append({"id": {"$in": ids}})
+        q["$or"] = branches
     else:
         raise HTTPException(status.HTTP_404_NOT_FOUND,
                             f"Unknown queue '{queue_name}'")
@@ -3120,6 +4910,8 @@ async def read_claim_queue(
         if wanted:
             # Intersect with any queue-provided status filter.
             base = q.get("status", {}).get("$in") if isinstance(q.get("status"), dict) else None
+            if isinstance(q.get("status"), str):
+                base = [q["status"]]
             q["status"] = {"$in": [s for s in wanted if (base is None or s in base)]}
     if age_days is not None:
         q["created_at"] = {"$lt": followup_threshold_iso(age_days)}
@@ -3127,7 +4919,27 @@ async def read_claim_queue(
     cursor = db.claims.find(q, {"_id": 0}).sort(
         [("updated_at", -1)]
     ).limit(limit)
-    return [c async for c in cursor]
+    rows = [c async for c in cursor]
+
+    # Phase 2b — enrich each row with the latest claim_events entry.
+    # Single round-trip: pull newest events for the returned claim
+    # ids, keep the first one per claim (cursor sorted DESC).
+    if rows:
+        claim_ids = [r["id"] for r in rows]
+        latest: dict[str, dict] = {}
+        async for ev in db.claim_events.find(
+            {"tenant_id": ctx.tenant_id, "claim_id": {"$in": claim_ids}},
+            {"_id": 0, "claim_id": 1, "event_type": 1, "occurred_at": 1},
+        ).sort([("occurred_at", -1)]):
+            cid = ev["claim_id"]
+            if cid not in latest:
+                latest[cid] = ev
+        for r in rows:
+            ev = latest.get(r["id"])
+            r["last_event"] = ev.get("event_type") if ev else None
+            r["last_event_at"] = ev.get("occurred_at") if ev else None
+
+    return rows
 
 
 
@@ -3168,6 +4980,24 @@ async def create_and_post_remittance(
             "payment_id": result["payment_id"],
         },
     )
+    # Phase 2a — one `era_posted` event per claim covered by this
+    # remittance. Adapters that poll ERAs upstream will fill in the
+    # `adapter_route` field once Phase 2c lands; for manually-posted
+    # remittances the field remains null.
+    for c in body.claims:
+        await emit_claim_event(
+            db, ctx,
+            claim_id=c.claim_id,
+            event_type="era_posted",
+            actor_id=user["id"],
+            remittance_id=result["remittance_id"],
+            denial_code=c.denial_code,
+            payload={"billed_cents": int(c.billed_cents),
+                     "paid_cents": int(c.paid_cents),
+                     "contractual_cents": int(c.contractual_cents),
+                     "patient_resp_cents": int(c.patient_resp_cents),
+                     "denied_cents": int(c.denied_cents)},
+        )
     remit = await db.remittances.find_one(
         {"id": result["remittance_id"], "tenant_id": ctx.tenant_id},
         {"_id": 0},
@@ -3334,6 +5164,122 @@ async def read_ar_aging_by_payer(
 # ---------------------------------------------------------------------------
 # Statements — scaffolding (no PDF / no email yet)
 # ---------------------------------------------------------------------------
+async def _build_statement_for_patient(
+    db, ctx: TenantContext, user: dict, patient: dict, request: Request,
+) -> dict:
+    """Generate, persist, and audit a statement for a single patient.
+
+    Creates a statement row even if the patient has no open invoices
+    (zero-balance statement), matching the legacy per-patient POST
+    behaviour.
+    """
+    patient_id = patient["id"]
+    open_invoices = [i async for i in db.invoices.find(
+        {"tenant_id": ctx.tenant_id, "patient_id": patient_id,
+         "balance_cents": {"$gt": 0}},
+        {"_id": 0},
+    ).sort([("issued_at", 1)])]
+
+    enriched_invoices: list[dict] = []
+    for inv in open_invoices:
+        ins_paid = 0
+        pt_paid = 0
+        async for alloc in db.payment_allocations.find(
+            {"tenant_id": ctx.tenant_id, "invoice_id": inv["id"]},
+            {"_id": 0, "payment_id": 1, "amount_cents": 1},
+        ):
+            pmt = await db.payments.find_one(
+                {"id": alloc["payment_id"], "tenant_id": ctx.tenant_id},
+                {"_id": 0, "status": 1, "payer_id": 1},
+            )
+            if not pmt or pmt.get("status") in ("void", "failed"):
+                continue
+            amt = int(alloc.get("amount_cents") or 0)
+            if pmt.get("payer_id"):
+                ins_paid += amt
+            else:
+                pt_paid += amt
+        adjustments = 0
+        async for adj in db.adjustments.find(
+            {"tenant_id": ctx.tenant_id, "invoice_id": inv["id"]},
+            {"_id": 0, "amount_cents": 1},
+        ):
+            adjustments += int(adj.get("amount_cents") or 0)
+        enriched_invoices.append({
+            **inv,
+            "billed_cents": int(inv.get("total_cents") or 0),
+            "insurance_paid_cents": ins_paid,
+            "patient_paid_cents": pt_paid,
+            "adjustments_cents": adjustments,
+        })
+
+    now = _now()
+    body_text = render_statement_body(
+        patient=patient, invoices=enriched_invoices, as_of_iso=now,
+    )
+    total = sum(int(i.get("balance_cents") or 0) for i in enriched_invoices)
+
+    stmt_id = str(uuid.uuid4())
+    doc = stamp_for_write({
+        "id": stmt_id,
+        "patient_id": patient_id,
+        "generated_at": now,
+        "generated_by": user["id"],
+        "as_of_date": now[:10],
+        "total_balance_cents": total,
+        "invoice_count": len(enriched_invoices),
+        "invoice_ids": [i["id"] for i in enriched_invoices],
+        "invoice_breakdown": [
+            {
+                "invoice_id": i["id"],
+                "issued_at": i.get("issued_at"),
+                "billed_cents": i["billed_cents"],
+                "insurance_paid_cents": i["insurance_paid_cents"],
+                "patient_paid_cents": i["patient_paid_cents"],
+                "adjustments_cents": i["adjustments_cents"],
+                "balance_cents": int(i.get("balance_cents") or 0),
+            }
+            for i in enriched_invoices
+        ],
+        "body": body_text,
+        "sent_at": None,
+        "sent_via": None,
+        "sent_to": None,
+        "created_at": now,
+        "updated_at": now,
+    }, ctx, location_id=None)
+    await db.statements.insert_one(doc)
+    await audit_success(
+        user, "billing.statement.generated", request,
+        entity_type="statement", entity_id=stmt_id,
+        metadata={"patient_id": patient_id,
+                  "total_balance_cents": total,
+                  "invoice_count": len(open_invoices)},
+    )
+    # Statement auto-pay hook — fire-and-forget creation of a one-shot
+    # `statement_autopay` schedule when the tenant has the toggle on AND the
+    # patient has opted in AND has a saved card on file. Failures are logged
+    # but never block statement generation.
+    if total > 0:
+        try:
+            from services.billing.helcim.statement_autopay import (
+                maybe_create_statement_autopay,
+            )
+            await maybe_create_statement_autopay(
+                ctx.tenant_id, patient_id=patient_id,
+                statement_id=stmt_id, total_cents=total, actor=user,
+            )
+        except Exception as e:  # noqa: BLE001
+            import logging
+            logging.getLogger("ccms.billing").warning(
+                "statement_autopay hook failed for stmt=%s: %s", stmt_id, e,
+            )
+    fresh = await db.statements.find_one(
+        {"id": stmt_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    return fresh
+
+
 @router.post(
     "/patients/{patient_id}/statements",
     response_model=StatementPublic, status_code=201,
@@ -3352,43 +5298,7 @@ async def create_statement(
     )
     if not patient:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
-    open_invoices = [i async for i in db.invoices.find(
-        {"tenant_id": ctx.tenant_id, "patient_id": patient_id,
-         "balance_cents": {"$gt": 0}},
-        {"_id": 0},
-    ).sort([("issued_at", 1)])]
-
-    now = _now()
-    body_text = render_statement_body(
-        patient=patient, invoices=open_invoices, as_of_iso=now,
-    )
-    total = sum(int(i.get("balance_cents") or 0) for i in open_invoices)
-
-    stmt_id = str(uuid.uuid4())
-    doc = stamp_for_write({
-        "id": stmt_id,
-        "patient_id": patient_id,
-        "generated_at": now,
-        "generated_by": user["id"],
-        "as_of_date": now[:10],
-        "total_balance_cents": total,
-        "invoice_count": len(open_invoices),
-        "invoice_ids": [i["id"] for i in open_invoices],
-        "body": body_text,
-        "created_at": now,
-        "updated_at": now,
-    }, ctx, location_id=None)
-    await db.statements.insert_one(doc)
-    await audit_success(
-        user, "billing.statement.generated", request,
-        entity_type="statement", entity_id=stmt_id,
-        metadata={"patient_id": patient_id,
-                  "total_balance_cents": total,
-                  "invoice_count": len(open_invoices)},
-    )
-    fresh = await db.statements.find_one(
-        {"id": stmt_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
-    )
+    fresh = await _build_statement_for_patient(db, ctx, user, patient, request)
     return _public(fresh)
 
 
@@ -3426,6 +5336,82 @@ async def read_statement(
     if not row:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Statement not found")
     return _public(row)
+
+
+async def _load_statement_and_patient(db, ctx, patient_id, stmt_id):
+    row = await db.statements.find_one(
+        {"id": stmt_id, "patient_id": patient_id,
+         "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    if not row:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Statement not found")
+    patient = await db.patients.find_one(
+        {"id": patient_id, "tenant_id": ctx.tenant_id},
+        {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+         "email": 1, "phone": 1},
+    )
+    if not patient:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Patient not found")
+    return row, patient
+
+
+# ---------------------------------------------------------------------------
+# Patient self-service — /api/billing/me/statements
+# Accessible to any authenticated user; rows are filtered to the caller's
+# own patient record.
+# ---------------------------------------------------------------------------
+
+async def _resolve_my_patient(user: dict, db_patients) -> dict | None:
+    """Find the patient record owned by the calling user.
+
+    Matches on:
+      1. `patients.user_id == user.id`  (preferred link)
+      2. `patients.email == user.email` (fallback for legacy data)
+    """
+    q: dict = {"tenant_id": user.get("tenant_id"),
+               "$or": [{"user_id": user["id"]}]}
+    if user.get("email"):
+        q["$or"].append({"email": user["email"]})
+    return await db_patients.find_one(q, {"_id": 0})
+
+
+@router.get("/me/statements", response_model=list[StatementPublic])
+async def my_statements(
+    user: dict = Depends(get_current_user),
+):
+    db = tenant_db(user.get("tenant_id"))
+    me = await _resolve_my_patient(user, db.patients)
+    if not me:
+        return []
+    rows = [_public(s) async for s in db.statements.find(
+        {"tenant_id": user.get("tenant_id"), "patient_id": me["id"]},
+        {"_id": 0},
+    ).sort([("generated_at", -1)])]
+    return rows
+
+
+@router.get("/me/statements/{stmt_id}.pdf", response_class=Response)
+async def my_statement_pdf(
+    stmt_id: str,
+    user: dict = Depends(get_current_user),
+):
+    db = tenant_db(user.get("tenant_id"))
+    me = await _resolve_my_patient(user, db.patients)
+    if not me:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Statement not found")
+    stmt = await db.statements.find_one(
+        {"id": stmt_id, "patient_id": me["id"],
+         "tenant_id": user.get("tenant_id")}, {"_id": 0},
+    )
+    if not stmt:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Statement not found")
+    pdf = render_statement_pdf(patient=me, statement=stmt)
+    filename = f"statement-{stmt_id[:8]}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"inline; filename=\"{filename}\""},
+    )
 
 
 
@@ -3666,6 +5652,24 @@ async def commit_remittance_import(
                   "claim_count": len(claims_payload),
                   "denial_count": result["denial_count"]},
     )
+    # Phase 2a — emit `era_posted` events for each matched claim so
+    # the claim-level timeline reflects clearinghouse-imported ERAs
+    # identically to manually-posted remittances.
+    for c in claims_payload:
+        await emit_claim_event(
+            db, ctx,
+            claim_id=c["claim_id"],
+            event_type="era_posted",
+            actor_id=user["id"],
+            remittance_id=result["remittance_id"],
+            denial_code=c.get("denial_code"),
+            payload={"billed_cents": c["billed_cents"],
+                     "paid_cents": c["paid_cents"],
+                     "contractual_cents": c["contractual_cents"],
+                     "patient_resp_cents": c["patient_resp_cents"],
+                     "denied_cents": c["denied_cents"],
+                     "import_staged_id": staged_id},
+        )
     return {
         "import_id": staged_id, "status": "committed",
         **result,
@@ -3718,59 +5722,99 @@ async def download_statement_pdf(
                     headers=headers)
 
 
+class SendStatementPayload(BaseModel):
+    channel: Literal["email", "mail", "portal"] = "email"
+    to: str | None = None  # override recipient email
+
+
 @router.post(
     "/patients/{patient_id}/statements/{stmt_id}/send",
 )
 async def email_statement(
     patient_id: str, stmt_id: str, request: Request,
+    payload: SendStatementPayload | None = None,
     user: dict = Depends(require_role("admin", "staff")),
     ctx: TenantContext = Depends(require_tenant),
 ):
+    """Deliver a statement via one of three channels:
+
+      - email:  sends via Resend (or log-only fallback). Attaches PDF.
+                Inserts a row into `statement_deliveries`.
+      - mail:   stamps the statement as "queued for physical mail" so
+                the staff UI can surface a Ready-to-Mail state. The
+                actual print/mail workflow is operational.
+      - portal: marks the statement as visible on the patient portal.
+                It already is, so this is a bookkeeping signal for
+                staff.
+    """
+    channel = (payload and payload.channel) or "email"
     db = tenant_db(ctx.tenant_id)
     stmt, patient = await _load_statement_with_patient(
         db, ctx, patient_id, stmt_id,
     )
-    to = (patient or {}).get("email")
-    if not to:
-        raise HTTPException(422, "Patient has no email on file")
-
-    pdf = render_statement_pdf(statement=stmt, patient=patient)
-    html = render_statement_email_html(patient=patient, statement=stmt)
-    try:
-        sent = await send_statement_email(
-            to=to, subject="Your patient statement",
-            html_body=html, pdf_bytes=pdf,
-            pdf_filename=f"statement-{stmt_id[:8]}.pdf",
-        )
-    except Exception as exc:
-        raise HTTPException(502, f"Email send failed: {exc}")
-
     now = _now()
-    delivery = stamp_for_write({
-        "id": str(uuid.uuid4()),
-        "statement_id": stmt_id,
-        "patient_id": patient_id,
-        "to_email": to,
-        "provider": sent["provider"],
-        "message_id": sent.get("message_id"),
-        "sent_by": user["id"],
-        "sent_at": now,
-        "created_at": now,
-        "updated_at": now,
-    }, ctx, location_id=None)
-    await db.statement_deliveries.insert_one(delivery)
-    await audit_success(
-        user, "billing.statement.emailed", request,
-        entity_type="statement", entity_id=stmt_id,
-        metadata={"to_email": to, "provider": sent["provider"],
-                  "message_id": sent.get("message_id"),
-                  "patient_id": patient_id},
-    )
-    return {"sent": True,
-            "provider": sent["provider"],
+    sent_to: str | None = None
+    provider: str = ""
+    delivery_id: str | None = None
+
+    if channel == "email":
+        to = (payload and payload.to) or (patient or {}).get("email")
+        if not to or "@" not in str(to):
+            raise HTTPException(422, "Patient has no email on file")
+        pdf = render_statement_pdf(statement=stmt, patient=patient)
+        html = render_statement_email_html(patient=patient, statement=stmt)
+        try:
+            sent = await send_statement_email(
+                to=to, subject="Your patient statement",
+                html_body=html, pdf_bytes=pdf,
+                pdf_filename=f"statement-{stmt_id[:8]}.pdf",
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(502, f"Email send failed: {exc}") from exc
+        provider = sent["provider"]
+        sent_to = to
+
+        delivery = stamp_for_write({
+            "id": str(uuid.uuid4()),
+            "statement_id": stmt_id,
+            "patient_id": patient_id,
+            "to_email": to,
+            "provider": provider,
             "message_id": sent.get("message_id"),
-            "to": to,
-            "delivery_id": delivery["id"]}
+            "sent_by": user["id"],
+            "sent_at": now,
+            "created_at": now,
+            "updated_at": now,
+        }, ctx, location_id=None)
+        await db.statement_deliveries.insert_one(delivery)
+        delivery_id = delivery["id"]
+    elif channel == "mail":
+        provider = "queued-for-mail"
+        sent_to = "postal"
+    else:  # portal
+        provider = "patient-portal"
+        sent_to = patient.get("id") if patient else None
+
+    # Stamp the statement so the UI shows sent_at / sent_via.
+    await db.statements.update_one(
+        {"id": stmt_id, "tenant_id": ctx.tenant_id},
+        {"$set": {
+            "sent_at": now, "sent_via": channel,
+            "sent_to": sent_to, "updated_at": now,
+        }},
+    )
+
+    await audit_success(
+        user, "billing.statement.sent", request,
+        entity_type="statement", entity_id=stmt_id,
+        metadata={"channel": channel, "provider": provider,
+                  "patient_id": patient_id, "to": sent_to,
+                  "delivery_id": delivery_id},
+    )
+    return {
+        "sent": True, "channel": channel, "provider": provider,
+        "to": sent_to, "delivery_id": delivery_id,
+    }
 
 
 @router.get(
@@ -3788,3 +5832,689 @@ async def list_statement_deliveries(
     ).sort([("sent_at", -1)])]
     return rows
 
+
+
+# ---------------------------------------------------------------------------
+# Bulk — regenerate and dispatch statements for every patient with an
+# outstanding balance whose balance has moved since their last statement.
+# Month-end workflow for billing staff.
+# ---------------------------------------------------------------------------
+class BulkSendOutstandingPayload(BaseModel):
+    # Reserved for future filters (location_id, min_balance_cents, …)
+    # so the request signature is stable.
+    dry_run: bool = False
+
+
+@router.post("/statements/send-outstanding")
+async def send_outstanding_statements(
+    request: Request,
+    payload: BulkSendOutstandingPayload | None = None,
+    user: dict = Depends(require_role("admin", "staff")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Regenerate and dispatch statements for every patient with a
+    non-zero outstanding balance whose balance has changed since their
+    most recent statement.
+
+    Dispatch channel:
+      - email  -> patient.email present
+      - mail   -> otherwise (queued for physical mail)
+
+    Returns a summary: generated, sent_email, queued_mail,
+    skipped_unchanged, skipped_no_contact.
+    """
+    dry_run = bool(payload and payload.dry_run)
+    db = tenant_db(ctx.tenant_id)
+
+    patient_ids = await db.invoices.distinct(
+        "patient_id",
+        {"tenant_id": ctx.tenant_id, "balance_cents": {"$gt": 0}},
+    )
+
+    generated = 0
+    sent_email = 0
+    queued_mail = 0
+    skipped_unchanged = 0
+    skipped_no_contact = 0
+    errors: list[dict] = []
+    details: list[dict] = []
+
+    for pid in patient_ids:
+        patient = await db.patients.find_one(
+            {"id": pid, "tenant_id": ctx.tenant_id},
+            {"_id": 0, "id": 1, "first_name": 1, "last_name": 1,
+             "email": 1, "phone": 1, "deleted_at": 1},
+        )
+        if not patient or patient.get("deleted_at"):
+            continue
+
+        current_balance_cents = 0
+        async for inv in db.invoices.find(
+            {"tenant_id": ctx.tenant_id, "patient_id": pid,
+             "balance_cents": {"$gt": 0}},
+            {"_id": 0, "balance_cents": 1},
+        ):
+            current_balance_cents += int(inv.get("balance_cents") or 0)
+        if current_balance_cents <= 0:
+            continue
+
+        latest_stmt = await db.statements.find_one(
+            {"tenant_id": ctx.tenant_id, "patient_id": pid},
+            {"_id": 0, "total_balance_cents": 1, "id": 1},
+            sort=[("generated_at", -1)],
+        )
+        if latest_stmt and int(latest_stmt.get("total_balance_cents") or 0) == current_balance_cents:
+            skipped_unchanged += 1
+            continue
+
+        if dry_run:
+            generated += 1
+            details.append({
+                "patient_id": pid,
+                "balance_cents": current_balance_cents,
+                "channel": "email" if patient.get("email") else "mail",
+            })
+            continue
+
+        try:
+            fresh = await _build_statement_for_patient(
+                db, ctx, user, patient, request,
+            )
+        except Exception as exc:  # noqa: BLE001
+            errors.append({"patient_id": pid, "error": str(exc)})
+            continue
+        generated += 1
+        stmt_id = fresh["id"]
+        now = _now()
+
+        # Dispatch
+        to = (patient or {}).get("email")
+        channel: str
+        sent_to_value: str | None
+        provider: str = ""
+        delivery_id: str | None = None
+
+        if to and "@" in str(to):
+            try:
+                pdf = render_statement_pdf(statement=fresh, patient=patient)
+                html = render_statement_email_html(
+                    patient=patient, statement=fresh,
+                )
+                sent = await send_statement_email(
+                    to=to, subject="Your patient statement",
+                    html_body=html, pdf_bytes=pdf,
+                    pdf_filename=f"statement-{stmt_id[:8]}.pdf",
+                )
+                provider = sent["provider"]
+                delivery = stamp_for_write({
+                    "id": str(uuid.uuid4()),
+                    "statement_id": stmt_id,
+                    "patient_id": pid,
+                    "to_email": to,
+                    "provider": provider,
+                    "message_id": sent.get("message_id"),
+                    "sent_by": user["id"],
+                    "sent_at": now,
+                    "created_at": now,
+                    "updated_at": now,
+                }, ctx, location_id=None)
+                await db.statement_deliveries.insert_one(delivery)
+                delivery_id = delivery["id"]
+                sent_email += 1
+                channel = "email"
+                sent_to_value = to
+            except Exception as exc:  # noqa: BLE001
+                errors.append({"patient_id": pid, "stmt_id": stmt_id,
+                               "error": f"email_failed: {exc}"})
+                channel = "mail"
+                provider = "queued-for-mail-fallback"
+                sent_to_value = "postal"
+                queued_mail += 1
+        else:
+            if not (patient.get("phone") or to):
+                skipped_no_contact += 1
+            channel = "mail"
+            provider = "queued-for-mail"
+            sent_to_value = "postal"
+            queued_mail += 1
+
+        await db.statements.update_one(
+            {"id": stmt_id, "tenant_id": ctx.tenant_id},
+            {"$set": {
+                "sent_at": now, "sent_via": channel,
+                "sent_to": sent_to_value, "updated_at": now,
+            }},
+        )
+        await audit_success(
+            user, "billing.statement.sent", request,
+            entity_type="statement", entity_id=stmt_id,
+            metadata={"channel": channel, "provider": provider,
+                      "patient_id": pid, "to": sent_to_value,
+                      "delivery_id": delivery_id, "bulk": True},
+        )
+
+    await audit_success(
+        user, "billing.statement.bulk_send_outstanding", request,
+        entity_type="statement", entity_id=None,
+        metadata={
+            "generated": generated,
+            "sent_email": sent_email,
+            "queued_mail": queued_mail,
+            "skipped_unchanged": skipped_unchanged,
+            "skipped_no_contact": skipped_no_contact,
+            "errors": len(errors),
+            "dry_run": dry_run,
+        },
+    )
+
+    return {
+        "generated": generated,
+        "sent_email": sent_email,
+        "queued_mail": queued_mail,
+        "skipped_unchanged": skipped_unchanged,
+        "skipped_no_contact": skipped_no_contact,
+        "errors": errors,
+        "dry_run": dry_run,
+        "details": details if dry_run else [],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Phase 2c — Clearinghouse configuration + enrollments
+# ---------------------------------------------------------------------------
+# All routes below are admin-gated via `clinic_settings.update` — the
+# same permission already protecting the Payers settings page. No new
+# permission introduced in this phase.
+@router.get(
+    "/clearinghouse/config",
+    response_model=list[ClearinghouseConfigSummary],
+)
+async def read_clearinghouse_config(
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Return a secret-free summary of every registered clearinghouse
+    adapter's env-sourced configuration.
+
+    Never returns secrets. `has_client_id` / `has_client_secret` + a
+    redacted `client_id_hint` are the only knobs the UI exposes —
+    operators configure actual credentials via env vars managed by
+    operations, not the UI.
+    """
+    return config_summaries()
+
+
+@router.get(
+    "/clearinghouse/enrollments",
+    response_model=list[ClearinghouseEnrollmentPublic],
+)
+async def list_clearinghouse_enrollments(
+    clearinghouse: str | None = Query(default=None),
+    payer_id: str | None = Query(default=None),
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    q = scoped_filter({}, ctx, location_scoped=False)
+    if q.get("__deny__"):
+        return []
+    if clearinghouse:
+        q["clearinghouse"] = clearinghouse
+    if payer_id:
+        q["payer_id"] = payer_id
+    cursor = db.clearinghouse_enrollments.find(q, {"_id": 0}).sort(
+        [("updated_at", -1)],
+    )
+    return [d async for d in cursor]
+
+
+@router.post(
+    "/clearinghouse/enrollments",
+    response_model=ClearinghouseEnrollmentPublic, status_code=201,
+)
+async def upsert_clearinghouse_enrollment(
+    payload: ClearinghouseEnrollmentCreate,
+    request: Request,
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    """Create an enrollment row, or update the existing one if the
+    (tenant, payer, clearinghouse) triple already exists.
+
+    Idempotent upsert: operators can POST the same payload safely
+    during onboarding / import runs without race conditions.
+    """
+    if not ctx.tenant_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Tenant context required")
+    db = tenant_db(ctx.tenant_id)
+
+    payer = await _scoped_one(db.billing_payers, {"id": payload.payer_id}, ctx)
+    if not payer:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Payer not found")
+
+    now = _now()
+    existing = await db.clearinghouse_enrollments.find_one(
+        {"tenant_id": ctx.tenant_id,
+         "payer_id": payload.payer_id,
+         "clearinghouse": payload.clearinghouse},
+        {"_id": 0},
+    )
+    if existing:
+        updates = {
+            "status": payload.status,
+            "submitter_id": payload.submitter_id,
+            "trading_partner_id": payload.trading_partner_id,
+            "notes": payload.notes,
+            "updated_at": now,
+            "updated_by": user["id"],
+        }
+        await db.clearinghouse_enrollments.update_one(
+            {"id": existing["id"], "tenant_id": ctx.tenant_id},
+            {"$set": updates},
+        )
+        # Mirror to the payer row (same progression rule as insert).
+        _STATE_RANK_U = {"not_started": 0, "in_progress": 1,
+                         "enrolled": 2, "suspended": 1}
+        cur = _STATE_RANK_U.get(
+            payer.get("enrollment_status") or "not_started", 0,
+        )
+        new = _STATE_RANK_U.get(payload.status, 0)
+        if new >= cur:
+            payer_set = {
+                "enrollment_status": payload.status,
+                "clearinghouse_route": payload.clearinghouse,
+                "updated_at": now,
+                "updated_by": user["id"],
+            }
+            if payload.trading_partner_id is not None:
+                payer_set["trading_partner_id"] = payload.trading_partner_id
+            await db.billing_payers.update_one(
+                {"id": payload.payer_id, "tenant_id": ctx.tenant_id},
+                {"$set": payer_set},
+            )
+        fresh = await db.clearinghouse_enrollments.find_one(
+            {"id": existing["id"], "tenant_id": ctx.tenant_id}, {"_id": 0},
+        )
+        await audit_success(
+            user, "billing.clearinghouse.enrollment_updated", request,
+            entity_type="clearinghouse_enrollment", entity_id=existing["id"],
+            metadata={"payer_id": payload.payer_id,
+                      "clearinghouse": payload.clearinghouse,
+                      "status": payload.status},
+        )
+        return _public(fresh)
+
+    eid = str(uuid.uuid4())
+    doc = stamp_for_write({
+        "id": eid,
+        "payer_id": payload.payer_id,
+        "clearinghouse": payload.clearinghouse,
+        "status": payload.status,
+        "submitter_id": payload.submitter_id,
+        "trading_partner_id": payload.trading_partner_id,
+        "notes": payload.notes,
+        "created_at": now,
+        "updated_at": now,
+        "created_by": user["id"],
+        "updated_by": user["id"],
+    }, ctx, location_id=None)
+    await db.clearinghouse_enrollments.insert_one(doc)
+    # Mirror back to the payer row so the claims submission path can
+    # gate on a single field without joining against enrollments. Only
+    # updates the payer if the incoming state is an improvement
+    # (e.g. `enrolled` beats `in_progress`) OR if the payer's current
+    # enrollment state is `not_started` (the default).
+    _STATE_RANK = {"not_started": 0, "in_progress": 1, "enrolled": 2, "suspended": 1}
+    cur = _STATE_RANK.get(payer.get("enrollment_status") or "not_started", 0)
+    new = _STATE_RANK.get(payload.status, 0)
+    if new >= cur:
+        await db.billing_payers.update_one(
+            {"id": payload.payer_id, "tenant_id": ctx.tenant_id},
+            {"$set": {
+                "clearinghouse_route": payload.clearinghouse,
+                "enrollment_status": payload.status,
+                "trading_partner_id": payload.trading_partner_id
+                    or payer.get("trading_partner_id"),
+                "updated_at": now,
+                "updated_by": user["id"],
+            }},
+        )
+    await audit_success(
+        user, "billing.clearinghouse.enrollment_created", request,
+        entity_type="clearinghouse_enrollment", entity_id=eid,
+        metadata={"payer_id": payload.payer_id,
+                  "clearinghouse": payload.clearinghouse,
+                  "status": payload.status},
+    )
+    return _public(doc)
+
+
+@router.patch(
+    "/clearinghouse/enrollments/{enrollment_id}",
+    response_model=ClearinghouseEnrollmentPublic,
+)
+async def update_clearinghouse_enrollment(
+    enrollment_id: str,
+    payload: ClearinghouseEnrollmentUpdate,
+    request: Request,
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    existing = await _scoped_one(
+        db.clearinghouse_enrollments, {"id": enrollment_id}, ctx,
+    )
+    if not existing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Enrollment not found")
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return _public(existing)
+    updates["updated_at"] = _now()
+    updates["updated_by"] = user["id"]
+    await db.clearinghouse_enrollments.update_one(
+        {"id": enrollment_id, "tenant_id": ctx.tenant_id},
+        {"$set": updates},
+    )
+    fresh = await db.clearinghouse_enrollments.find_one(
+        {"id": enrollment_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    # If status moved, mirror to the payer row (same rule as upsert).
+    if "status" in updates:
+        _STATE_RANK = {"not_started": 0, "in_progress": 1,
+                       "enrolled": 2, "suspended": 1}
+        payer = await db.billing_payers.find_one(
+            {"id": existing["payer_id"], "tenant_id": ctx.tenant_id},
+            {"_id": 0},
+        )
+        if payer:
+            cur = _STATE_RANK.get(
+                payer.get("enrollment_status") or "not_started", 0,
+            )
+            new = _STATE_RANK.get(updates["status"], 0)
+            if new >= cur:
+                payer_set = {
+                    "enrollment_status": updates["status"],
+                    "clearinghouse_route": existing["clearinghouse"],
+                    "updated_at": updates["updated_at"],
+                    "updated_by": user["id"],
+                }
+                if "trading_partner_id" in updates:
+                    payer_set["trading_partner_id"] = updates["trading_partner_id"]
+                await db.billing_payers.update_one(
+                    {"id": existing["payer_id"], "tenant_id": ctx.tenant_id},
+                    {"$set": payer_set},
+                )
+    await audit_success(
+        user, "billing.clearinghouse.enrollment_updated", request,
+        entity_type="clearinghouse_enrollment", entity_id=enrollment_id,
+        metadata={"fields": sorted(list(updates.keys())),
+                  "payer_id": existing["payer_id"]},
+    )
+    return _public(fresh)
+
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Provider directory (billing / rendering / referring)
+# ---------------------------------------------------------------------------
+# These rows hold the real NPI, Tax-ID, and address data required for
+# 837P submission. Claims still keep free-text provider IDs; when a
+# matching row exists here the payload builder will resolve it. Admin-
+# gated via the existing `clinic_settings.update` permission — no new
+# permission introduced.
+@router.get("/providers", response_model=list[ProviderPublic])
+async def list_providers(
+    kind: str | None = Query(default=None),
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    q = scoped_filter({}, ctx, location_scoped=False)
+    if q.get("__deny__"):
+        return []
+    if kind:
+        q["kind"] = kind
+    cursor = db.providers.find(q, {"_id": 0}).sort([("name", 1)])
+    return [d async for d in cursor]
+
+
+@router.post("/providers", response_model=ProviderPublic, status_code=201)
+async def create_provider(
+    payload: ProviderCreate,
+    request: Request,
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    # Uniqueness on (tenant, kind, npi) — clinic-wide NPI catalog.
+    dup = await db.providers.find_one(
+        {"tenant_id": ctx.tenant_id, "kind": payload.kind, "npi": payload.npi},
+        {"_id": 0, "id": 1},
+    )
+    if dup:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Provider already exists for kind={payload.kind} / npi={payload.npi}",
+        )
+    now = _now()
+    pid = str(uuid.uuid4())
+    doc = stamp_for_write({
+        "id": pid,
+        "kind": payload.kind,
+        "name": payload.name,
+        "npi": payload.npi,
+        "tax_id": payload.tax_id,
+        "taxonomy_code": payload.taxonomy_code,
+        "phone": payload.phone,
+        "address": payload.address,
+        "status": "active",
+        "notes": payload.notes,
+        "created_at": now, "updated_at": now,
+        "created_by": user["id"], "updated_by": user["id"],
+    }, ctx, location_id=None)
+    await db.providers.insert_one(doc)
+    await audit_success(
+        user, "billing.provider.created", request,
+        entity_type="provider", entity_id=pid,
+        metadata={"kind": payload.kind, "npi": payload.npi},
+    )
+    return _public(doc)
+
+
+@router.patch("/providers/{provider_id}", response_model=ProviderPublic)
+async def update_provider(
+    provider_id: str,
+    payload: ProviderUpdate,
+    request: Request,
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    existing = await _scoped_one(db.providers, {"id": provider_id}, ctx)
+    if not existing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Provider not found")
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return _public(existing)
+    updates["updated_at"] = _now()
+    updates["updated_by"] = user["id"]
+    await db.providers.update_one(
+        {"id": provider_id, "tenant_id": ctx.tenant_id},
+        {"$set": updates},
+    )
+    fresh = await db.providers.find_one(
+        {"id": provider_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    await audit_success(
+        user, "billing.provider.updated", request,
+        entity_type="provider", entity_id=provider_id,
+        metadata={"fields": sorted(updates.keys())},
+    )
+    return _public(fresh)
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Service Facility directory (837P loop 2310C)
+# ---------------------------------------------------------------------------
+@router.get("/service-facilities", response_model=list[ServiceFacilityPublic])
+async def list_service_facilities(
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    q = scoped_filter({}, ctx, location_scoped=False)
+    if q.get("__deny__"):
+        return []
+    cursor = db.service_facilities.find(q, {"_id": 0}).sort([("name", 1)])
+    return [d async for d in cursor]
+
+
+@router.post(
+    "/service-facilities",
+    response_model=ServiceFacilityPublic, status_code=201,
+)
+async def create_service_facility(
+    payload: ServiceFacilityCreate,
+    request: Request,
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    now = _now()
+    fid = str(uuid.uuid4())
+    doc = stamp_for_write({
+        "id": fid,
+        "name": payload.name,
+        "npi": payload.npi,
+        "address": payload.address,
+        "phone": payload.phone,
+        "status": "active",
+        "notes": payload.notes,
+        "created_at": now, "updated_at": now,
+        "created_by": user["id"], "updated_by": user["id"],
+    }, ctx, location_id=None)
+    await db.service_facilities.insert_one(doc)
+    await audit_success(
+        user, "billing.service_facility.created", request,
+        entity_type="service_facility", entity_id=fid,
+        metadata={"name": payload.name, "npi": payload.npi},
+    )
+    return _public(doc)
+
+
+@router.patch(
+    "/service-facilities/{facility_id}",
+    response_model=ServiceFacilityPublic,
+)
+async def update_service_facility(
+    facility_id: str,
+    payload: ServiceFacilityUpdate,
+    request: Request,
+    user: dict = Depends(require_permission("clinic_settings", "update")),
+    ctx: TenantContext = Depends(require_tenant),
+):
+    db = tenant_db(ctx.tenant_id)
+    existing = await _scoped_one(db.service_facilities, {"id": facility_id}, ctx)
+    if not existing:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Service facility not found")
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items()}
+    if not updates:
+        return _public(existing)
+    updates["updated_at"] = _now()
+    updates["updated_by"] = user["id"]
+    await db.service_facilities.update_one(
+        {"id": facility_id, "tenant_id": ctx.tenant_id},
+        {"$set": updates},
+    )
+    fresh = await db.service_facilities.find_one(
+        {"id": facility_id, "tenant_id": ctx.tenant_id}, {"_id": 0},
+    )
+    await audit_success(
+        user, "billing.service_facility.updated", request,
+        entity_type="service_facility", entity_id=facility_id,
+        metadata={"fields": sorted(updates.keys())},
+    )
+    return _public(fresh)
+
+
+
+
+# ---------------------------------------------------------------------------
+# WebSocket: live ClaimDetail timeline
+# ---------------------------------------------------------------------------
+# Pushes new `claim_events` rows to subscribed UIs as they are emitted.
+# Falls back to client polling on `/claims/{claim_id}/events` when the
+# socket is unavailable (older browsers, transient infra issues).
+#
+# Auth: cookie-based access_token, identical to HTTP routes. Tenant
+# isolation is enforced — a user can only subscribe to claims in
+# their own tenant.
+#
+# Heartbeat: 25 s server-side ping. Clients should treat 30 s of no
+# traffic as "stale" and reconnect.
+# ---------------------------------------------------------------------------
+from services.billing.timeline_pubsub import (  # noqa: E402
+    subscribe as _ws_subscribe,
+    unsubscribe as _ws_unsubscribe,
+)
+
+_WS_HEARTBEAT_SECONDS = 25
+
+
+@router.websocket("/ws/claims/{claim_id}/events")
+async def claim_events_ws(websocket: WebSocket, claim_id: str):
+    # Re-use the same cookie-based auth path. We can't call Depends
+    # in a websocket handler so we mock a Request-like wrapper.
+    class _ReqShim:
+        def __init__(self, ws):
+            self.cookies = ws.cookies
+            self.headers = ws.headers
+    try:
+        user = await get_current_user(_ReqShim(websocket))
+    except HTTPException:
+        await websocket.close(code=4401)
+        return
+
+    tenant_id = user.get("tenant_id")
+    if not tenant_id and not (
+        user.get("is_platform_admin") or user.get("role") == "platform_admin"
+    ):
+        await websocket.close(code=4403)
+        return
+
+    # Validate the claim exists in the user's tenant before opening
+    # the stream — keeps a tenant from peeking at sibling tenants by
+    # guessing claim ids.
+    db = tenant_db(tenant_id) if tenant_id else None
+    if db is not None:
+        claim = await db.claims.find_one(
+            {"id": claim_id, "tenant_id": tenant_id}, {"_id": 0, "id": 1},
+        )
+        if not claim:
+            await websocket.close(code=4404)
+            return
+
+    await websocket.accept()
+    queue = _ws_subscribe(claim_id)
+    try:
+        # Initial hello carries the subscriber count so the UI can
+        # show a "connected" indicator without polling.
+        await websocket.send_json({"type": "hello", "claim_id": claim_id})
+        while True:
+            try:
+                event = await asyncio.wait_for(
+                    queue.get(), timeout=_WS_HEARTBEAT_SECONDS,
+                )
+            except asyncio.TimeoutError:
+                # Heartbeat — keeps proxies from idling the socket.
+                await websocket.send_json({"type": "ping"})
+                continue
+            await websocket.send_json({"type": "event", "event": event})
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        _log = logging.getLogger("ccms.billing.timeline.ws")
+        _log.exception("billing.timeline.ws_error",
+                       extra={"claim_id": claim_id, "user_id": user.get("id")})
+    finally:
+        _ws_unsubscribe(claim_id, queue)

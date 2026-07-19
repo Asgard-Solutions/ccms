@@ -1,0 +1,34 @@
+{
+  "summary": "Validated the new doctor-only AI scribe surface (P1). Backend 100% green: (a) regression of /app/backend/tests/test_scribe.py = 7/7 pass (role gates, SOAP draft happy path + 422 + 404, list-audio). (b) NEW /app/backend/tests/test_scribe_iter82.py = 2/2 pass, covering audio upload happy-path (multipart webm) → list-includes-chunk → soft-delete → list-omits-chunk, AND auto-delete-on-sign (upload chunk → reauth → sign follow-up → chunks=[]). (c) Cross-suite AI regression 18/18 pass (test_ai_context_documentation.py + test_portal_visit_brief.py). Frontend verified end-to-end: doctor login → follow-up note editor mounts ScribePanel with all expected testids (scribe-panel, scribe-record-btn, scribe-addendum-input, scribe-draft-btn); after typing into addendum and clicking Draft, scribe-drafts container and all four scribe-draft-{subjective,objective,assessment,plan} nodes populate within ~8s; clicking scribe-apply-subjective-btn populates the Subjective interval_history textarea (492 chars of drafted text); clicking scribe-apply-all-btn completes cleanly. Verified ScribePanel sits BELOW EncounterAssistPanel on the follow-up editor (sp_top=914, ea_top=128) and ABOVE section cards on the initial-exam editor (sp_top=310). Admin login → ScribePanel correctly DOES NOT mount on either editor (doctor-only gate works). EncounterAssistPanel regression still green. Synthetic webm upload is accepted (transcribe_status in {ok,error,empty} as expected), rows persist, soft-delete works, and signing triggers auto-cleanup of all chunks.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_scribe.py",
+    "/app/backend/tests/test_scribe_iter82.py",
+    "/app/test_reports/pytest/iter82_scribe.xml",
+    "/app/test_reports/pytest/iter82_scribe_extended.xml",
+    "/app/test_reports/pytest/iter82_ai_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ScribePanel.jsx: testids are comprehensive and per-section apply buttons expose data-testid=scribe-apply-{section}-btn as documented. Works cleanly end-to-end.",
+    "Role gate is enforced on BOTH client (user.role === 'doctor' conditional mount in FollowUpNoteEditor.jsx & InitialExamEditor.jsx) AND server (require_role('doctor') on POST /api/scribe/audio and /scribe/.../soap/draft). Confirmed via admin login: ScribePanel is hidden AND backend returns 403 for admin/staff.",
+    "Auto-delete-on-sign via delete_audio_for_note('follow_up') works — GET /scribe/encounters/follow_up/{nid}/audio returns chunks=[] immediately after signing a note that had an uploaded chunk. Verified via /app/backend/tests/test_scribe_iter82.py::TestScribeAutoDeleteOnSign.",
+    "Whisper row persistence on synthetic audio: service correctly stores the row with transcribe_status ∈ {ok,error,empty,skipped} even when the audio is unintelligible. Good defensive behavior.",
+    "SOAP draft endpoint returns proper 422 for empty transcript + empty addendum (tested) and 404 for unknown note (tested)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_scribe_iter82.py (new)"
+  ],
+  "success_rate": {"backend": "100% (7/7 + 2/2 + 18/18 = 27/27)", "frontend": "100% of testable flows: scribe-panel mount, addendum input, draft generation, apply-subjective, apply-all, position ordering, admin role gate"},
+  "test_credentials": "doctor@ccms.app / Doctor@ComplianceClinic1, admin@ccms.app / Admin@ComplianceClinic1 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. The backend test helper _doctor_draft_note() auto-resets the first follow-up note in the doctor's tenant to draft status when needed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "AI scribe (P1) is fully shipped and green. Canonical regression files: /app/backend/tests/test_scribe.py (7 tests: role enforcement + SOAP draft + list-audio) and /app/backend/tests/test_scribe_iter82.py (2 tests: upload+list+delete round-trip, auto-delete-on-sign). Both files use the _doctor_draft_note() helper which finds the first follow-up note in doctor's tenant and resets it to draft. If you need to regression-test ScribePanel UI in the browser, login as doctor and navigate to the follow-up note at /patients/fe9612a2-6f11-4306-9ca6-d0121962ec67/clinical/follow-up/07f84321-1b77-4ddd-b205-8924e4cd871b — scribe-drafts populate in under 10 seconds on a typical run.",
+  "rca of the issue": "No bugs. Everything green."
+}

@@ -1,0 +1,64 @@
+{
+  "summary": "Comprehensive Riverbend demo walkthrough audit (admin + staff). All 17 top-level pages load without 5xx at the browser layer. Scheduling calendar renders correctly with human-readable patient/provider names (no useEffect crash). 8/8 personas load and tabs render. HOWEVER, 5 material bugs were surfaced: (P0) raw tenant/location UUID leaks into the 'Preferred location' field on EVERY patient Overview, (P0) Claims Queue returns 401 for admin and 403 for staff, so the entire claim-detail / scrubber / denial-reason / follow-up-flag branch of the audit could not be exercised and the UI silently falls back to a misleading 'No claims yet' empty state, (P0) /api/billing/patients/{id}/statements returns 500 for Jaxon Morgan and Aria Johnson, (P1) raw internal tag 'demo_seed' is printed verbatim below intake forms for Derrick/Isabella/Jaxon/Hannah/Marcus, (P1) the appointment workflow panel is missing the required 'Check in' button and 'Room selector' (only Launch encounter / Reschedule / Save / Close / Open intake render).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/billing/claims/queue", "issue": "Returns 401 for admin@ccms.app (Ava Bennett, role=admin) and 403 for staff@ccms.app. Frontend swallows the error and renders 'No claims yet. Create one from a patient\u2019s encounter to get started.' This blocks the entire claim-detail / Run-Scrubber / denial-reason / follow-up-flag portion of the audit (Stone WC denial, Cho PIP partial-pay, Morgan rejected-subscriber-mismatch, Johnson paid, Parker self-pay, etc.). Worked in iter 64 per prior reports \u2014 likely a regression in the billing/claims queue authz layer or a missing reauth-scope requirement that the frontend is not satisfying.", "priority": "P0"},
+      {"endpoint": "GET /api/billing/patients/{id}/statements", "issue": "Returns 500 for Jaxon Morgan (47b65ff4-f15c-449b-955c-fc816de6524e) and Aria Johnson (473165a5-61d6-4df1-98ce-53969ec880ac) when opening their Billing & Ledger tab. Other personas are fine. Likely an unseeded/None-typed field for pediatric-guarantor or a specific Aria claim row; backend stack-trace needed.", "priority": "P0"}
+    ],
+    "minor": [
+      {"endpoint": "Redis cache", "issue": "backend.err.log still noisy with 'invalidate_prefix(patients:) failed: Error 111 connecting to 127.0.0.1:6379' (carried over from iter 66, non-blocking)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "PatientOverview > Preferred location field", "issue": "Raw UUID '775775d1-7955-4553-b506-2bc89f877e1f' is rendered verbatim instead of the location/clinic name. Reproduces on ALL 8 personas (Derrick, Isabella, Ethan, Jaxon, Claire, Hannah, Marcus, Aria). DOM path: div.mt-1.text-sm.text-foreground inside the 'PREFERRED LOCATION' grid cell. Expected value: location display_name (probably 'Riverbend Chiropractic & Wellness' main location).", "selector": "section:has-text('ASSIGNED PROVIDER') div:has-text('PREFERRED LOCATION') + div", "priority": "P0"},
+      {"component": "IntakeTab > intake form card footer", "issue": "Raw internal provenance tag 'demo_seed' is printed below every intake form as plain text (last <p class='mt-3 whitespace-pre-wrap text-sm text-muted-foreground'>). Visible for Derrick, Isabella, Jaxon, Hannah, Marcus. Should either be suppressed in UI or shown only in a dev/debug mode.", "selector": "p.mt-3.whitespace-pre-wrap:has-text('demo_seed')", "priority": "P1"},
+      {"component": "ClaimsQueue", "issue": "When claims/queue endpoint fails with 401/403, the UI shows the misleading 'No claims yet. Create one from a patient\u2019s encounter to get started.' empty state instead of surfacing the permission error or correlation id. Stats show 0 / 0 / 0 / $0.00 which is factually wrong (demo has 11 claims seeded).", "selector": "[data-testid='claims-queue'] .empty-state", "priority": "P1"},
+      {"component": "AppointmentWorkflowPanel / Reschedule modal", "issue": "Clicking an appointment opens a 'Reschedule appointment' modal that exposes Launch encounter, Save changes, Close and 'Open intake' \u2014 but the required 'Check in' button and a 'Room selector' control are absent. Per the review request all four (Check in / Launch encounter / Reschedule / Room) must render.", "selector": "[role='dialog'] >> text=/Check in|Room/", "priority": "P1"}
+    ],
+    "integration_issues": [
+      {"flow": "Claims queue \u2192 claim detail \u2192 Run Scrubber", "issue": "Not reachable \u2014 queue is empty for both admin and staff due to backend 401/403. Unable to verify: (a) provider/facility/assignee render as human names, (b) CPT/modifier/dx rendering, (c) 'Run Scrubber: 0 errors / 0 warnings' on payable claims, (d) intentional-teaching warnings on the 3 denial claims, (e) Stone-WC denied claim shows denial reason + follow-up flag, (f) Cho PIP partial-paid $80/$65 breakdown, (g) Morgan PacificCare rejected (subscriber mismatch), (h) Claire Morgan paid 95d ago. ALL of these audit items are currently blocked.", "affected_selectors": ["[data-testid='claim-row-*']", "button:has-text('Run Scrubber')"]},
+      {"flow": "Patient \u2192 Billing & Ledger (Jaxon, Aria)", "issue": "Statements API 500 leaves the Billing & Ledger tab partially populated / erroring for these two personas.", "affected_selectors": ["[data-testid='patient-statements']"]}
+    ],
+    "design_issues": [
+      {"screen": "PatientProfile header", "issues": ["Masked initials 'C. M.', 'D. S.' etc shown by default is correct HIPAA behaviour, but the 'PATIENT PROFILE \u00b7 MASKED' badge could be more visible; admins may not realise they need to click 'Unmask (audited)' to get full name."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/iter67_claims_queue.jpg",
+    "/app/test_reports/iter67_claims_blocked.jpg",
+    "/app/test_reports/iter67_derrick.jpg",
+    "/app/test_reports/iter67_claim_detail.jpg",
+    "/app/test_reports/iter67_sched.jpg",
+    "/app/test_reports/iter67_sched_panel.jpg",
+    "/app/test_reports/iter67_uuid_leak_overview.jpg"
+  ],
+  "action_items": [
+    "P0 \u2014 Fix /api/billing/claims/queue 401 for admin (and decide whether 403 for staff is intentional RBAC). This is the single biggest blocker; it re-opens the entire downstream audit (scrubber, denial reasons, follow-up flags, Stone-WC / Cho-PIP / Morgan-pediatric / Johnson / Parker / Claire closed episode).",
+    "P0 \u2014 Resolve raw UUID in PREFERRED LOCATION field on PatientOverview. Resolve the location_id \u2192 location.display_name (Riverbend Chiropractic & Wellness or the seeded clinic location) before rendering. Same fix pattern likely exists on other patient profile fields \u2014 grep for any remaining *_id consumed directly in JSX without a resolver.",
+    "P0 \u2014 Fix /api/billing/patients/{id}/statements 500 for Jaxon Morgan and Aria Johnson. Likely an unset guarantor/charge field. Grab the server correlation id from backend.err.log around the 5xx.",
+    "P1 \u2014 Suppress (or gate behind debug) the 'demo_seed' provenance tag on the IntakeForm card \u2014 it is leaking an internal seed marker into user-facing output on 5 personas.",
+    "P1 \u2014 Add missing 'Check in' and 'Room selector' controls to the appointment workflow panel (per the acceptance criteria).",
+    "P1 \u2014 When claims/queue returns 401/403, show a permission / error state (with correlation id) instead of the misleading 'No claims yet' empty state."
+  ],
+  "critical_code_review_comments": [
+    "PatientOverview 'PREFERRED LOCATION' field renders location_id unresolved \u2014 either the backend should hydrate the display name or the frontend should look it up via the tenancy/locations map it already fetches.",
+    "IntakeTab trusts whatever is in intake.notes|source|provenance and prints it verbatim \u2014 need a 'developer-only' guard or a server-side strip for demo_seed-style markers.",
+    "Claims queue swallows non-200 responses into the generic empty-state branch. Recommend: if queue.status in (401,403,5xx) \u2192 render an <ErrorState correlationId=\u2026/> with a link to open a ticket, never the 'No claims yet' copy.",
+    "Appointment workflow panel still diverges from the spec (missing Check in + Room). Consider a single source of truth for the action row derived from appointment.status."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "~80% (top-level pages load, claims queue 401 + statements 500 are the failures)", "frontend": "~70% (scheduling calendar + persona profiles render, but UUID + demo_seed leakage and missing workflow-panel controls are visible on every relevant screen)"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (no MFA, hit reauth PIN prompt on claims queue but that does not fix the 401 \u2014 after dismissing, the endpoint still 401s). staff@ccms.app / Staff@ComplianceClinic1 (returns 403 on claims/queue).",
+  "seed_data_creation": "None \u2014 used existing Riverbend seed.",
+  "retest_needed": true,
+  "main_agent_can_self_test": false,
+  "context_for_next_testing_agent": "The single most impactful retest is /api/billing/claims/queue as admin \u2014 once it returns 200 and the queue populates, the full claim-detail / scrubber / denial-reason / follow-up-flag audit (Stone WC denied 'missing case number', Cho PIP partially-paid $80/$65 split, Morgan PacificCare subscriber-mismatch rejection, Johnson paid, Claire paid 95d ago) can finally be exercised. Second-most-impactful is the PatientOverview 'PREFERRED LOCATION' UUID leak \u2014 it affects ALL 8 personas (Derrick, Isabella, Ethan, Jaxon, Claire, Hannah, Marcus, Aria) and is the canonical example of raw-ID leakage the review request is specifically asking to eliminate. /api/billing/patients/{id}/statements 500 is deterministic for Jaxon Morgan and Aria Johnson (not other personas). Appointment workflow-panel selectors: clicking an appointment opens a [role='dialog'] labelled 'Reschedule appointment' \u2014 verify presence of buttons 'Check in' and a room <select> inside it.",
+  "rca of the issue": {
+    "preferred_location_uuid_leak": "Single-line fix on the client: in PatientOverview.jsx the field reads patient.preferred_location_id directly. Either (a) swap to patient.preferred_location?.display_name, or (b) hydrate via the tenancy/locations list already loaded for the app sidebar.",
+    "claims_queue_401": "All other endpoints (auth/me, authz/me/permissions, patients, scheduling, settings, reports) return 200 for admin. Only /api/billing/claims/queue is 401. Likely added a new permission check (e.g., billing:claims.read) that is not granted to the admin role seed or is gated by a reauth-scope the admin session never obtained. Compare to iter 64 report where claims queue was populated.",
+    "statements_500": "Only Jaxon and Aria 500 \u2014 both have pediatric-guarantor / special-payer rows. Likely None-dereference in a template / amount formatter. Should reproduce by curl as admin and inspect the backend stack-trace.",
+    "demo_seed_leak": "IntakeForm card appends a 'source' or 'provenance' field as plain text; seed script writes source='demo_seed'. Either filter out 'demo_seed' in the IntakeTab renderer or exclude that field from the API response serializer.",
+    "workflow_panel_missing_controls": "AppointmentWorkflowPanel.jsx currently renders only reschedule fields + Launch encounter + Open intake. Add explicit <CheckInButton> (calls POST /api/appointments/{id}/check-in) and a <RoomSelect> bound to appointment.room_id using the /api/rooms list."
+  }
+}

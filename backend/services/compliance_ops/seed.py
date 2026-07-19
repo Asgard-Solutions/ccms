@@ -287,7 +287,8 @@ async def seed_compliance_ops() -> None:
                     defaults={"owner_user_id": None, "linked_control_ids": [],
                               "linked_risk_ids": [], "approved_at": _now(),
                               "approved_by": "seed"})
-        await _seed("compliance_incidents", INCIDENTS, key_field="title")
+        await _seed("compliance_incidents", INCIDENTS, key_field="title",
+                    defaults={"owner_user_id": None})
         await _seed("compliance_vendors", VENDORS,
                     defaults={"status": "active", "next_review_at": _add_days(365),
                               "last_reviewed_at": None, "contract_end_date": None,

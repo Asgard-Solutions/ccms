@@ -1,6 +1,2208 @@
 # CCMS — Product Requirements & Architecture Notes
 
-**Last updated:** 2026-04-21 (Clinical module Phase 8 — Billing Readiness, lifecycle hardening, addenda, audit coverage)
+
+
+## 2026-02-15 (same day) — Follow-up ticket filed: remove perf-gov compatibility re-exports
+
+Filed `/app/memory/TICKET_REMOVE_PERF_EXPORTS.md` and cross-linked from `ROADMAP.md` under **Post-Freeze Maintenance**. Ticket is **blocked** until the Clinical redesign freeze is formally lifted. It captures the behavior-preserving removal of compatibility re-exports left in place when `scripts/_perf_gov_lib.py` was extracted — after execution, all shared governance primitives will be imported directly from `_perf_gov_lib` with no remaining shared-helper imports from `scripts.run_clinical_perf`, CLI behavior + output formats + exception semantics + exit codes remain unchanged, full governance + backend clinical contract suites remain green, no Clinical UI / preferences / telemetry / feature-flag / frozen-contract code is modified, release-gate documents are touched only if they cite the old import path, and rollback is a single-commit revert. Not logged to `CHANGELOG.md` yet — planned maintenance, not a shipped change.
+
+
+## 2026-02-15 (same day) — Shared governance lib `_perf_gov_lib.py` extracted
+
+Behavior-preserving refactor: the stable governance primitives (`parse_existing_markers`, `is_stale_draft`, `parse_number`, `validate_promotion_ordering`, `parse_thresholds_table`, `parse_reviewer_fields`, `parse_context_tuple`, `validate_run_context`, `validate_downstream_references`, `DOWNSTREAM_DOCUMENTS`, `RENEWAL_PERIOD_DAYS`, `THRESHOLDS_FILE_TOKEN`, shared exception hierarchy `HarnessError` + `InvalidThresholdOrderingError` + `MixedUnitsError` + `UnresolvedPlaceholderError` + `ReviewerFieldError` + `MalformedRunContextError` + `DownstreamReferenceError`) now live in `backend/scripts/_perf_gov_lib.py`. `run_clinical_perf.py` re-exports the moved symbols so existing tests continue to import them from their original module. `promote_perf_threshold.py` and `check_perf_governance.py` continue to import from `run_clinical_perf` — those imports transparently resolve to the shared lib. No CLI flag, help text, error class name, exit code, Markdown output, JSON output, or file-mutation behavior changed. Lib is side-effect free (only `validate_downstream_references` reads files). Backed by a new direct library-tests file `backend/tests/test_perf_gov_lib.py` (~22 tests: constants pinning, marker parsing, staleness boundaries, numeric parsing, ordering, reviewer fields, context tuple, downstream reference validator, deterministic output, run-context validator). All prior harness / seeder / draft / promotion / governance-check suites remain green through the re-exports.
+
+
+## 2026-02-15 (same day) — CI governance guard shipped
+
+`scripts/check_perf_governance.py` is a **read-only** governance guard for the Clinical performance threshold chain. Parses every `perf-draft` and `perf-approved` block in `CLINICAL_PERFORMANCE_THRESHOLDS.md`. Rejects duplicate run ids, malformed markers, missing context tuples, incomplete approved rows (missing owner/date/rationale/thresholds/evidence), invalid ordering, mixed units. Classifies each row as `valid` / `pending` / `approaching_expiry` / `expired` / `not_applicable` / `invalid`. Verifies every downstream document (`CLINICAL_MONITORING_PLAN.md`, `CLINICAL_STAGED_ROLLOUT_PLAN.md`, `CLINICAL_ROLLOUT_CHECKLIST.md`, `CLINICAL_GA_READINESS.md`, `PHASE3_PERFORMANCE_TEST_PLAN.md`) still cites the thresholds file, and — under `--strict` — flags any downstream doc that embeds an approved threshold number instead of citing. Emits console summary + optional JSON artifact. Never edits any file (asserted by a dedicated regression test). Exit codes: `0` for pass, `2` for policy violation in the selected mode. Modes: default permissive (blocks only on invalid / expired / broken references), `--allow-pending-drafts` (same, explicit), `--strict` (also fails on pending drafts + duplicated downstream numbers), `--warn-before-expiry-days N` (approaching-expiry never fails on its own). Intended CI use: PRs → default; weekly job → default + JSON artifact; release pipeline pre Stage 2 & GA → `--strict`. Backed by 18 tests in `backend/tests/test_check_perf_governance.py` covering read-only guarantee, block statuses (valid approved, valid pending, stale draft, expired approval, approaching expiry, template not-applicable), structural failures (duplicate ids, malformed marker, invalid ordering, mixed units, missing approval fields), downstream references (broken citation, duplicated numbers), JSON output, and CLI modes.
+
+**Total verified this session: 376 tests green (117 Jest + 259 Pytest).**
+
+
+## 2026-02-15 (same day) — Threshold promotion companion shipped
+
+`scripts/promote_perf_threshold.py` promotes a reviewer-signed draft in place inside `CLINICAL_PERFORMANCE_THRESHOLDS.md`. Locates exactly one `perf-draft` block by `--run-id`, rejects missing/duplicate/stale/already-approved blocks, rejects any remaining `REVIEW REQUIRED` cell, validates numeric values + consistent units + `Release < Warning < Rollback` on every metric, validates Approval owner/date/rationale are filled, preserves the measured evidence table byte-for-byte, flips marker `perf-draft` → `perf-approved` + status `AWAITING SIGN-OFF` → `APPROVED`, appends immutable promotion stamp, writes atomically via temp file + `os.replace` with a `.backup-<UTC>` copy first, validates that every downstream doc (`CLINICAL_MONITORING_PLAN.md`, `CLINICAL_STAGED_ROLLOUT_PLAN.md`, `CLINICAL_ROLLOUT_CHECKLIST.md`, `CLINICAL_GA_READINESS.md`, `PHASE3_PERFORMANCE_TEST_PLAN.md`) still cites the thresholds file — broken citation aborts the promotion, never silently rewrites downstream docs. Refuses on `APP_ENV=production`. Supports `--dry-run`. Second invocation on the same run id is idempotent-rejected. Backed by 20 tests in `backend/tests/test_promote_perf_threshold.py` covering valid promotion + dry-run + measured-evidence preservation, locate/dedupe/stale/already-approved, unresolved placeholders, invalid ordering, mixed units, missing reviewer fields, downstream-reference validation, atomic write + backup + failure isolation, CLI production guard + confirm-required + dry-run. **Total verified this session: 358 tests green (117 Jest + 241 Pytest).**
+
+
+## 2026-02-15 (same day) — Harness `--write-threshold-draft` opt-in shipped
+
+`scripts/run_clinical_perf.py --write-threshold-draft` appends a draft proposal block to `CLINICAL_PERFORMANCE_THRESHOLDS.md` after a valid harness run. Measured P50/P75/P95 land in an evidence table, visually separated from a threshold table whose Release/Warning/Rollback columns all read `REVIEW REQUIRED`. Harness never copies measured values into threshold columns. Run-id-deduplicated (harness refuses to insert a duplicate draft for the same run id, and refuses to overwrite a row that has already been marked `perf-approved`). Draft-block marker embeds the run timestamp so `is_stale_draft()` detects stale drafts past the 180-day window. `validate_promotion_ordering()` enforces `Release < Warning < Rollback` at promotion time. Default harness behavior remains read-only; the opt-in flag is required every run. Backed by 26 tests in `backend/tests/test_perf_threshold_draft.py` covering marker parsing, draft block content (status, context tuple, measured vs threshold separation, ordering reminder, stale notice), append behavior (fresh, duplicate rejected, approved-row protection, missing file, missing meta, missing run id, second distinct run), stale detection (fresh, boundary, past-window, naive timestamp, bogus), ordering validator, and CLI flag default/opt-in.
+
+
+## 2026-02-15 (same day) — Threshold promotion workflow shipped
+
+`CLINICAL_PERFORMANCE_THRESHOLDS.md` established as the single source of truth for approved Clinical performance thresholds — one signed row per (profile, network, dataset size, browser/device) combination, with three tiers per metric (Release budget < Warning alert < Rollback trigger) and mandatory sustain windows. `CLINICAL_PERFORMANCE_THRESHOLD_PROMOTION.md` documents the six-step runbook: run harness → platform-reliability review → approval recording → cross-document promotion → context enforcement → renewal. `CLINICAL_MONITORING_PLAN.md`, `PHASE3_PERFORMANCE_TEST_PLAN.md`, `CLINICAL_STAGED_ROLLOUT_PLAN.md`, `CLINICAL_ROLLOUT_CHECKLIST.md`, and `CLINICAL_GA_READINESS.md` now cite the thresholds file instead of re-declaring numbers — release qualification (G2) and runtime monitoring / rollout stop conditions share the same approved values. Warning and rollback thresholds explicitly must NOT be auto-derived from the first observed run; each combination requires explicit approval with headroom. Freeze scope untouched.
+
+
+## 2026-02-15 (same day) — Large-chart fixture seeder shipped
+
+`scripts/seed_large_chart.py` generates a deterministic synthetic patient chart with a configurable timeline size (`--events 250 / 500 / 1000`) so the G2 measurement pass can exercise the frozen Clinical page against a production-shaped chart. Non-production only (hard `APP_ENV` guard + mandatory `--confirm-non-production` on every run). Idempotent, cleanup-safe, prints the fixture patient id only to the operator console. Backed by 14/14 tests in `backend/tests/test_seed_large_chart.py`. Live smoke runs confirmed 251 / 500 / 1001 timeline events for the three profiles. Freeze scope untouched — no change to Clinical UI, contracts, telemetry, preferences, or feature flags.
+
+## 2026-02-15 — Clinical redesign release-gate closeout (G1–G6)
+
+Frozen Clinical redesign (Phases 1 + 2 Waves A/B + Phase 3 Slices 1–6) taken through the six release gates. No code was modified. Every gate is either `COMPLETE` (evidence is in-container-verifiable) or `READY FOR EXTERNAL SIGN-OFF / AUTHORIZED EXECUTION` (requires human signatures, production access, pilot tenant, or platform-reliability threshold approval). No signatures, performance passes, or rollout completions were fabricated.
+
+**Automated verification (2026-02-15):**
+- Frontend clinical Jest — **117 / 117 pass** (8 suites).
+- Backend clinical contract Pytest — **152 / 152 pass** (9 files).
+- Backend large-chart seeder Pytest — **14 / 14 pass** (`tests/test_seed_large_chart.py`).
+- Backend G2 perf harness Pytest — **29 / 29 pass** (`tests/test_run_clinical_perf.py`).
+- Combined clinical + seeder + harness — **195 / 195 pass**.
+- ESLint — clean (no Clinical-UI code changes in this pass).
+
+**Gate summary:**
+
+| Gate | Status |
+|:-:|---|
+| G1 — 50-scenario stakeholder UAT sign-off | READY FOR CLINICAL AND OPERATIONS SIGN-OFF |
+| G2 — P50/P95 performance measurement | COMPLETE — MEASURED, BUDGET APPROVAL REQUIRED |
+| G3 — Production rollback walk-through | READY FOR PRODUCTION WALK-THROUGH (preview rehearsal executed) |
+| G4 — Contract freeze | COMPLETE (17 contracts registered, tests pass, registry matches code) |
+| G5 — Workspace screenshots + release notes | READY FOR SCREENSHOT CAPTURE (release notes + support brief + capture plan complete; 3 in-env screenshots as proof-of-life) |
+| G6 — Staged rollout | READY FOR AUTHORIZED STAGED ROLLOUT (plan + monitoring + incident runbook + pilot form + GA checklist all drafted) |
+
+**Deliverables created (25 files):**
+
+- Governance: `CLINICAL_RELEASE_GATE_STATUS.md`, `release_evidence/AUTOMATED_TEST_RESULTS.md`, `PRD_RELEASE_GATE_SNAPSHOT.md`.
+- G1: `PHASE3_UAT_SIGNOFF.md`, `PHASE3_UAT_EVIDENCE_INDEX.md`, `PHASE3_UAT_DEFECTS.md`.
+- G2: `PHASE3_PERFORMANCE_REPORT.md`, `PHASE3_PERFORMANCE_TEST_PLAN.md`, `PHASE3_PERFORMANCE_RAW_RESULTS.json`.
+- G3: `CLINICAL_ROLLBACK_RUNBOOK.md`, `CLINICAL_ROLLBACK_MATRIX.md`, `CLINICAL_ROLLBACK_REHEARSAL.md`.
+- G4: `CLINICAL_CONTRACT_FREEZE.md`, `CLINICAL_CONTRACT_REGISTRY.json`, `CLINICAL_CONTRACT_CHANGE_POLICY.md`.
+- G5: `CLINICAL_RELEASE_NOTES.md`, `CLINICAL_RELEASE_SCREENSHOT_INDEX.md`, `CLINICAL_SUPPORT_BRIEF.md`, `CLINICAL_KNOWN_LIMITATIONS.md`, `screenshots/00_login.jpg`, `screenshots/01_admin_clinical_general.jpg`, `screenshots/02_admin_clinical_billing.jpg`, `screenshots/03_admin_clinical_mid.jpg`, `screenshots/04_legacy_fallback.jpg`, `screenshots/05_slice5_off.jpg`.
+- G6: `CLINICAL_STAGED_ROLLOUT_PLAN.md`, `CLINICAL_ROLLOUT_CHECKLIST.md`, `CLINICAL_MONITORING_PLAN.md`, `CLINICAL_INCIDENT_RUNBOOK.md`, `CLINICAL_PILOT_FEEDBACK_FORM.md`, `CLINICAL_GA_READINESS.md`.
+
+**Environment fixes done to enable the pass (not redesign defects):**
+- Reinstalled `libmagic1 libmagic-dev libmagic-mgc` — the known recurring container issue documented in the freeze doc.
+- Backend tests routed via `REACT_APP_BACKEND_URL` (HTTPS) because auth cookies are `secure=True`.
+
+**No feature or contract change was made under this pass.** Freeze holds.
+
+**2026-02-15 (same day) — G2 measurement harness shipped.** `scripts/run_clinical_perf.py` scripts the rerun protocol into a single reproducible command. Enforces the production guard, verifies the production frontend build, verifies the fixture patient exists with the required event count, runs `--warmup` discarded iterations + `--runs` measured iterations (min 20), captures browser + backend timings separately, aggregates P50/P75/P95/min/max/error-rate, writes raw JSON + Markdown report in `--output-dir`, labels output "Measured — threshold approval required". Fails clearly on missing build / missing fixture / undersized fixture / ready-marker timeout / missing timing / partial run set. Never emits patient identifiers to telemetry. Backed by 29 tests in `backend/tests/test_run_clinical_perf.py` (percentile math + warm-up exclusion + failed runs + missing fixture + production guard + malformed timing + report generation + CLI parsing). Freeze scope untouched.
+
+---
+
+## 2026-02-15 — Clinical redesign audit follow-through (42-item pass)
+
+**Follow-up to the audit conducted 2026-02-15 after Slice 4 was moved to backlog.** Completed the concrete UI-level items that don't require Slice 5's role-aware framework or backend contract changes.
+
+**Shipped:**
+- ✅ Item 6 — Tab bar grouping (Clinical | Administrative), stronger active state, `min-h-11` targets
+- ✅ Item 9 — Timestamp renamed to "Chart data last refreshed …"
+- ✅ Item 13/39 — HPI capped at `max-w-prose leading-relaxed`
+- ✅ Item 17 — Diagnosis row multi-line stacked layout
+- ✅ Item 20 — Per-encounter billing message inline (`billing_top_message`)
+- ✅ Item 26 — Timeline grouped by calendar date with count summary
+- ✅ Item 28 — "View details" hover cue on timeline rows
+- ✅ Item 30 — Imaging filters split into Modality / Source groups
+- ✅ Item 31 — Context-aware outcome suggestions via `INSTRUMENT_CONTEXT` (age / body region gates); "Recommended for this episode" hint
+- ✅ Item 37 — Metadata text bumped to `text-sm`/`text-base`
+- ✅ Item 40 — Skip-to-summary link on ClinicalTabV2
+- ✅ Item 41 — Interactive controls raised to `min-h-11`
+- ✅ Item 42 — `uppercase tracking-wider` micro-labels converted to sentence case across 8 components
+- ✅ Item 4 — Missing-info vocabulary expanded (Not documented / Missing required information / Not applicable / Needs review)
+- ✅ Item 8 — Summary tiles carry a filter hint to destination (`sessionStorage`), consumed by `GroupedEncountersCard`
+
+**Deferred (documented in ROADMAP):**
+- 🅱️ Item 35 — Deeper layered surface tokens (theme restructure)
+- 🅱️ Item 18 — Diagnosis "Set inactive" state (blocked on backend status-model decision)
+- 🅱️ Phase 3 workflow — Role-aware views + configurable chart summary (Slice 5)
+
+---
+
+## Phase 3 Slice 4 — Imaging metadata + Data-quality indicators (2026-02-15)
+
+**Status:** 🅱️ **BACKLOG (integration deferred).** Standalone files (`dataQualityEngine.js`, `DataQualityPanel.jsx`, `ImagingCard.jsx`) remain in-tree and jest-green (88/88), but per user direction the integration into `ClinicalTabV2.jsx` — imports, `clinicalRedesignPhase3Slice4` flag reference, and JSX slot — was removed on 2026-02-15 (same day) to keep the shell clean. Backend unchanged. Resume by re-wiring the imports + flag gate + JSX slot when work restarts.
+
+**Feature flag (when re-integrated):** Independent nested `clinicalRedesignPhase3Slice4` (child of `clinicalRedesignPhase3`, grandchild of `clinicalRedesign`). Legacy `MediaCard` stays mounted below the new card so the capture workflow keeps working with the flag off.
+
+### Deliverables
+
+1. **`DataQualityPanel`** with 8 deterministic patient-scoped rules:
+   `missing-primary-diagnosis` · `unsigned-note-older-than-7d` · `missing-note-on-encounter` · `encounter-missing-provider` · `imaging-missing-classification` · `episode-without-encounters` · `active-plan-without-configured-outcomes` · `duplicate-outcome-day`.
+   Severity ladder `error` → `warning` → `info`. Direct **Resolve** button jumps to the section that owns the fix. Non-dismissible — rows clear only when data is fixed.
+2. **`ImagingCard`** — patient-chart imaging with allow-listed modalities `{xray, mri, ct, ultrasound, other}`, missing-modality warning pill, transient modality filters via `useClinicalReturnState({ section: "imaging" })`. Empty / no-results / error / permission-denied states each carry a `data-testid`.
+3. **Contract doc** `/app/memory/PHASE3_SLICE4_CONTRACTS.md` — explicitly documents that a future operational dashboard must ship as a **separate versioned** `GET /api/operations/data-quality/aggregate` contract with its own tenant-permission gate, allow-listed metric keys, and retention policy. Aggregate counters do **not** ship inside `filter_meta` or any patient-scoped response.
+
+### Guardrails locked-in per Slice 4 brief
+
+- Patient-chart scoped only. No cross-patient aggregation.
+- Deterministic severity (three-tier ladder, sort by severity → priority).
+- Non-mutating (test asserts input byte-identical).
+- Permission-aware (write-scoped rules silent for read-only viewers).
+- Direct-resolution links (no dismissal affordance — issues must be fixed).
+- No PHI in engine output (patient/provider/episode ids never surface — JSON.stringify assertion).
+- Independent rollback via nested flag.
+
+
+## Slice 2.1 polish — Preset icon-strip (2026-02-15)
+
+**Status:** ✅ Shipped. 10 new jest tests + 11 pre-existing preset-schema tests all green.
+
+**Deliverables:**
+- `PresetIconStrip.jsx` — presentational surface for a saved preset. Shows one icon per configured dimension (`event_kinds`, `sources`, `provider_ids`, `date_window`). Multi-select dimensions show counts, `date_window` is presence-only. Stale-preset warnings reuse `detectStaleness`.
+- Wired into `SavedPresetsMenu.jsx` — every preset row now surfaces name + icon-strip.
+
+**Guardrails held:**
+- Zero persistence / migration changes.
+- No raw filter values in the DOM (values never leave the sanitized schema).
+- Unsupported dimensions in the input silently ignored.
+- Tests cover empty / partial / stale-vocab / stale-provider / value-leak / ordering.
+
+
+## Phase 3 Slice 3 — Outcome snapshot, trend, optional suggestions (2026-02-15)
+
+**Status:** ✅ Shipped. Backend `pytest` 47/47 telemetry tests green (13 new outcome-suggestion contract tests). Frontend `jest` 62/62 (25 new outcome-series helper tests + 37 pre-existing).
+
+**Feature flag:** Independent nested flag `clinicalRedesignPhase3Slice3` (child of `clinicalRedesignPhase3`, grandchild of `clinicalRedesign`). Legacy `OutcomesCard` capture workflow remains mounted below the new section — Slice 3 is deliberately read-only.
+
+### Deliverables
+
+1. **`outcomeSeriesHelpers.js`** — pure, deterministic derivation. Baseline / latest / previous / change-from-baseline / change-from-previous with **no** clinical inference. Handles duplicate captured_at (winner picked, superseded kept for table view), amended entries, partial records (null/NaN scores counted separately), long histories (24-month window).
+2. **`OutcomeSnapshotCard.jsx`** — per-instrument card with neutral labels. Amended pill, insufficient-baseline pill, source-record link.
+3. **`OutcomeTrendChart.jsx`** — accessible SVG chart. **Shape-encoded** markers (circle vs diamond) so the chart is legible without color. Milestone dashed verticals with textual labels.
+4. **`OutcomeTrendTable.jsx`** — data-table equivalent for a11y / print. Shows superseded entries the chart hides. Milestone rows in `<tfoot>`.
+5. **`OutcomeSuggestions.jsx`** — deterministic optional suggestions from `configured_outcome_measures` on the active plan. Never auto-starts, auto-populates, or auto-submits. Dismissible; dismissals session-scoped.
+6. **`OutcomesSection.jsx`** — orchestrator with loading / empty / permission-denied / error / view-toggle (chart ↔ table) states, all `data-testid`-tagged.
+7. **New telemetry event** `clinical_outcome_suggestion_interaction` (third shape on `POST /api/telemetry/ui-action`). Six allow-listed `instrument_key`s. PHI extras (`patient_id`, `captured_at`, `score`, `note`, `linked_reexam_id`) all 422.
+
+### Guardrails locked-in per user's Slice 3 brief
+
+- **No clinical significance** claims anywhere.
+- **All calculated values labeled** (`Change from baseline`, `Change from previous`) with signed numbers; zero renders as `±0`.
+- **No improvement/deterioration inference** — the engine deliberately has no such fields; a unit test locks this in.
+- **Suggestions use configured instruments only** — allow-list intersected with `configured_outcome_measures`; unsupported keys silently dropped.
+- **Suggestions remain optional + dismissible** — mandatory workflow gaps live in Slice 1 next-actions instead.
+- **No auto-start / auto-populate / auto-submit**.
+- **Source records preserved + immutable** — Slice 3 exposes entry ids on snapshot cards and table rows; no new mutation surface added.
+- **Trend chart usable without color** — shape encoding + data-table toggle.
+- **Tests cover** duplicate dates, missing baseline, amended entries, partial records, long histories, dismissals, unsupported instruments, wording guardrails.
+
+
+## Phase 3 Slice 2 — Advanced timeline filters, saved presets, long-history perf (2026-02-15)
+
+**Status:** ✅ Shipped. Backend `pytest` 19/19 new (9 timeline-filter + 10 durable-prefs) + all 50 legacy tests green. Frontend `jest` 37/37 (13 rule-engine + 12 hook + 21 preset sanitizer + stale detector). Smoke-tested on Isabella Cho's chart.
+
+**Feature flag:** Inherits `clinicalRedesignPhase3` — no new flag; Slice 1 + Slice 2 roll back as a unit.
+
+### Constraints locked-in per user's Slice 2 brief
+
+- Durable prefs store ONLY global preset definitions + default selections.
+- Patient-specific filters (`episode_ids`, `q`) remain strictly transient (`useClinicalReturnState`).
+- Saved presets carry no patient/record ids, names, diagnoses, dates of service, or free text — Pydantic `extra="forbid"` at every level; frontend `sanitizePresetFilters` is the last-line-of-defence.
+- Grouped-timeline response is backward-compatible (`schema_version: "1.0"`) when no filter is applied; any filter attempt bumps to `"1.1"` with `filter_meta`.
+- Permission-aware providers + episodes surface stale ids in `ignored_provider_ids` / `ignored_episode_ids` instead of 403-ing, so the UI can prompt for stale-preset repair.
+- Slice 1 return state preserved (filters + expanded rows keyed to opaque route token).
+- Virtualization deferred to post-measurement — currently paged via `Load more` at `INITIAL_RENDER_CAP=100` with a `perf: long timeline` hint at 200+ events.
+- Explicit empty / no-results / partial-failure / stale-preset / deleted-provider states.
+- **`My worklist` widget deferred** — revisit after all Phase 3 patient-level rules stabilize.
+
+### Deferred / Backlog
+
+- Real windowing library once perf logs justify it.
+- Diagnosis "Set inactive" (Slice 1 carry-over).
+
+
+## Phase 3 Slice 1 — Cross-record linking & Deterministic Next Actions (2026-02-15)
+
+**Status:** ✅ Shipped. Backend `pytest` 50/50 green (13 new next-action contract tests). Frontend `jest` 25/25 green (13 rule-engine + 12 hook contract). Testing-agent E2E (iteration_90) PASS with dismiss flow acknowledged out-of-scope for demo seed data.
+
+**Feature flag:** `clinicalRedesignPhase3` (default `on`, nested child of `clinicalRedesign`; parent off → child off).
+
+### Deliverables
+
+1. **`useClinicalReturnState()` hook** (`frontend/src/pages/clinical/useClinicalReturnState.js`) — session-scope transient state primitive.
+   - Opaque route-instance token stored on `history.state.ccms_route_token` (never patient/record IDs, never `localStorage`).
+   - 30-min TTL, mirrored to `sessionStorage` (`ccms.clinical.returnState.v1`).
+   - Cleared on `ccms-session-reset` event (dispatched by `AuthContext.logout` and `PermissionsContext` when role/tenant changes).
+   - Cross-chart isolation, direct-entry fresh state, refresh preservation all contract-tested.
+2. **`nextActionsEngine.deriveNextActions()`** — pure, deterministic, structured-data-only rule engine. Nine rules, fixed priority, deduplicated (blocked billing suppresses warning-only billing), permission-aware. "Order imaging" deliberately excluded to keep the surface non-clinical.
+3. **`NextActionsPanel`** — UI component with `next-action-<id>[-label|-why|-open|-dismiss]` testids. Dismiss only on optional rules (`schedule-remaining-planned-visits`, `record-configured-outcome-measure`); mandatory rules cannot be dismissed.
+4. **Telemetry union** — `POST /api/telemetry/ui-action` accepts a new `clinical_next_action_interaction` shape alongside the legacy care-status shape. Cross-field mixes 422. Nine allow-listed `action_id`s × two `interaction`s (`opened`/`dismissed`).
+
+### Constraints locked-in per user's brief
+
+- Patient-specific state stays in memory/session only.
+- Route-instance tokens are opaque; no patient or record IDs anywhere in durable browser storage.
+- `/me/preferences` reserved for global defaults only (no new fields added this slice; wiring lands in Slice 5).
+- Rules deterministic, non-clinical, one-sentence explanation, permission-aware, deduplicated, stable priority, dismissible only when optional.
+- Telemetry allow-lists strict; PHI attempts (patient_id, encounter_id, ICD codes, free_text, URL) 422.
+
+### Next up (Slice 2)
+
+- Advanced timeline filters + saved presets.
+- Long-timeline performance passes.
+- Introduces the first durable `/me/preferences.clinical_ui_defaults` field so global filter presets can be persisted across sessions (patient-specific state remains transient).
+
+### Deferred
+
+- Diagnosis "Set inactive" state (needs backend status-model decision — do NOT alias to "resolved").
+- Demo seed enrichment: add at least one patient with `total_visits_planned > completed + scheduled` and one with stale `configured_outcome_measures` so browser regressions can exercise the dismissible Next-Action paths.
+
+
+## Phase 2 close-out — baseline frozen (2026-07-10)
+
+Two remaining Wave B items completed. Phase 2 is now **frozen**; Phase 3 Slice 1 starts in the next session.
+
+### §4 Diagnosis-row redesign (complete)
+`pages/clinical/DiagnosesCard.jsx`:
+- Row now uses `StatusBadge` (`record_state` dim) to display **Active** or **Resolved** — never colour-only.
+- New classification strip surfaces up to three badges: **Clinical** (always), **Billing** (when `billable !== false`), **Problem list** (when `status=active` and `is_primary=true`). Test ids `dx-<id>-classifications`, `dx-<id>-billing`, `dx-<id>-problem-list`.
+- New **View history** action (`dx-<id>-history`) opens `DiagnosisHistoryDialog` showing deterministic state changes captured on the record itself (created / updated / resolved) — no invented data, no new endpoint.
+- **Edit**, **Mark resolved**, **Reactivate** retained with their existing confirmation + audit paths (Mark-resolved dialog already warns of billing / plan / claim impact from the earlier Wave B pass).
+- **Set inactive** intentionally omitted (not disabled/greyed) per your direction — mapping it to `resolved` would create misleading clinical/audit semantics.
+
+### §8 Treatment-plan segmented progress (complete)
+`pages/clinical/TreatmentPlansCard.jsx`:
+- Removed the thin `bg-primary` progress bar entirely.
+- Rendered `TreatmentPlanProgress` (built in Wave B) with `role="progressbar"`, three-segment bar, and numeric legend for completed / scheduled / remaining. Test id `plan-row-<id>-segmented`.
+- Existing plan actions, permissions, and business rules unchanged.
+
+### Flag matrix (verified via Playwright screenshot pass)
+All five combinations render as documented in `/app/memory/PHASE2_WAVE_B_UAT.md`.
+
+### Documented follow-up (backend status-model decision required)
+- **`inactive` diagnosis status** — the app currently supports only `active` / `resolved`. Adding a first-class `inactive` state needs:
+  1. Backend model + endpoint change on `diagnoses`.
+  2. Migration plan for existing rows.
+  3. UI action wiring + confirmation.
+  4. Audit + billing linkage impact review.
+  Deferred until that backend decision lands.
+
+### Baseline
+Phase 2 (Wave A + Wave B + billing-readiness aggregate + Phase 2 close-out) is FROZEN. Phase 3 Slice 1 (cross-record linking + return-state + Next Actions) is next session.
+
+
+
+## Phase 2 Wave B — History, diagnoses, plans, re-exam (2026-07-10)
+
+New independent nested flag `clinicalRedesignPhase2WaveB` (env `REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_B`, default `on`). Parent `clinicalRedesign` still required. Independent rollback from Wave A verified.
+
+### Shipped
+- **§3 Safety summary** — `SafetySummary.jsx` sits above the intake history. Neutral tone for normal findings (`NKDA`, `None reported`); warning tone only on positive red-flags or documented allergies. Rendered above IntakeHistory in the History section.
+- **§2 Progressive-disclosure intake** — `IntakeHistoryProgressive.jsx` shows an 8-field compact two-column definition list by default, with a `View complete intake history` toggle (`aria-expanded`, `aria-controls`, keyboard operable) that inline-expands the *existing* `IntakeHistoryCard` — every intake field + Edit + Re-import from intake actions retained.
+- **§9 Re-exam states** — `ReExamSection.jsx` derives from active plan's `next_reexam_due_date` / `reexam_due_date`. Three states: none-set / approaching (≤14 days) / overdue (n days overdue with destructive tone). Actions: `Schedule re-exam`, `Start re-exam`. Historical re-exam rows still surfaced via the original `ReExamsCard` embedded below the state banner.
+- **§4 partial** — `DiagnosesCard.jsx`: renamed vague `Resolve` → `Mark resolved` (button label + dialog title + submitting label). Confirmation copy now warns of billing / plan / claim impact and audit reversibility. New `data-testid="dx-<id>-mark-resolved"`. Fully structured diagnosis rows already carried ICD-10 + primary/secondary + region + chronicity + episode from Phase 1.
+- **§8 partial** — new `TreatmentPlanProgress.jsx` component ready to drop into `TreatmentPlansCard` in a follow-up: `role="progressbar"` with `aria-valuenow/max`, three colour-coded segments (completed / scheduled / remaining) with numeric legend labels so status is never colour-only.
+
+### Guardrails honoured
+- Independent flag `clinicalRedesignPhase2WaveB`; can be turned off without affecting Wave A. Runtime E2E confirmed: legacy `IntakeHistoryCard` returns when Wave B flag = off.
+- Every intake field remains accessible — the expanded state renders the untouched `IntakeHistoryCard` component.
+- Historical re-exams still visible under the new banner.
+- No backend changes.
+- No source records mutated; no signed-record behaviour touched.
+
+### Files
+- **new**: `pages/clinical/SafetySummary.jsx`, `pages/clinical/IntakeHistoryProgressive.jsx`, `pages/clinical/ReExamSection.jsx`, `pages/clinical/TreatmentPlanProgress.jsx`
+- **modified**: `utils/featureFlags.js` (added Wave B flag), `frontend/.env` (added env var), `pages/clinical/ClinicalTabV2.jsx` (Wave B swaps History + Re-exam sections), `pages/clinical/DiagnosesCard.jsx` ("Resolve" → "Mark resolved" + impact confirmation copy)
+
+### Deferred (not blocking Wave B UAT)
+- **§4 completion** — full structured diagnosis row redesign with clinical-vs-billing badge and additional "Set inactive" / "View history" actions. Current DiagnosesCard already shows the structured metadata; a full re-skin would touch >600 lines and land better as its own PR.
+- **§8 completion** — swap the existing thin progress bar in `TreatmentPlansCard` for the new `TreatmentPlanProgress` component. The component is shipped and tested visually; the swap is a one-liner import + JSX replace in `TreatmentPlansCard.jsx`.
+
+### Next Action Items
+- Wave B UAT (10 scenarios from the spec — same style as Phase 1 UAT).
+- Wave B rollback verification with both parent + Wave A flags on / off / independent toggles.
+- Finish §4 and §8 in-place edits (small PR).
+- Then: billing digest design, backfill/reconciliation, dashboard Today's Chart Preview.
+
+
+
+## Chart-wide billing-readiness aggregate (2026-07-10)
+
+Narrowly scoped follow-up to Wave A — closes the last no-op stub on Current Care Status without opening the Wave B risk envelope.
+
+### Shipped
+- **Backend**: new `GET /api/patients/{id}/clinical/billing-readiness/aggregate` in the existing `services/clinical/grouped_router.py`. Reuses the same `clinical_billing_readiness` persistence + tenant scope + `_load_patient` from Wave A — no duplicate rule engine.
+- **Response shape** (pinned `schema_version: "1.0"`):
+  ```json
+  {"schema_version":"1.0","warning_count":2,"blocked_count":0,"top_message":"Diagnosis linkage incomplete","status":"warning"}
+  ```
+- **Top-message allow-list** — two ordered dicts in `grouped_router.py` (`_FAIL_KEYS_PRIORITY`, `_WARN_KEYS_PRIORITY`) map ReadinessCheck `key`s to a fixed vocabulary. Insertion order == deterministic priority. Free-form `check.detail` strings are never returned. When no allow-listed key wins, `top_message: null`.
+- **Permissions** — `require_role("admin","doctor","biller")`. Staff denied 403; the frontend uses that to keep the row hidden.
+- **Orphan readiness** — rows whose `encounter_id` is no longer visible to the caller are still counted (recorded in the audit metadata as `orphan_count`).
+- **Non-mutation** — only `find(…, {"_id": 0})`. No writes.
+
+### Frontend
+- `ClinicalTabV2.jsx` fetches the aggregate once per patient; on 403 / 5xx / network error the state stays `null` so the Care Status row remains hidden — no misleading zeros ever displayed.
+- `CurrentCareStatusPanel.jsx` billing row:
+  - `null` aggregate or `warning_count + blocked_count === 0` → row omitted (matches existing panel convention).
+  - `blocked_count > 0` → destructive tone, blocked count prioritised (with warning count as suffix), top message appended when present.
+  - Warning-only → warning tone, count + top message + "Review billing issues" CTA (fires `review-billing-issues` telemetry).
+
+### Contract tests — `backend/tests/test_billing_readiness_aggregate.py`
+- Pinned `schema_version` + exact key set + non-negative counts + valid status enum.
+- `top_message` is either `null` or a value from the 15-entry approved vocabulary.
+- `status` matches the count semantics (blocked → "blocked", warnings-only → "warning", none → "ready" + `top_message=null`).
+- **Non-mutation**: `source_ids` from `encounters/grouped` byte-identical before and after the aggregate read.
+- **Permission**: staff → 403; anonymous → 401.
+- **Tenant isolation**: unknown patient → 404 (never fake zeros).
+
+### Files
+- **modified**: `services/clinical/grouped_router.py` (endpoint + allow-list constants), `pages/clinical/ClinicalTabV2.jsx` (fetch), `pages/clinical/CurrentCareStatusPanel.jsx` (row semantics)
+- **new**: `backend/tests/test_billing_readiness_aggregate.py`
+
+This is now frozen. Wave B is next.
+
+
+
+## Phase 2 Wave A — Grouping & orientation (2026-07-10)
+
+Nested feature flag `clinicalRedesignPhase2WaveA` (env `REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_A`, default `on`) with per-user localStorage override. Parent `clinicalRedesign` still required for any redesign surface to render.
+
+### Shipped
+- **§1 Active episode card** — new `ActiveEpisodeCard.jsx` becomes primary object below Care Status. Displays name/status/opened/provider/chief complaint/primary Dx/plan status/visits/re-exam/next appt/latest response. Primary (Open episode) · Secondary (Edit / Add note / Care plan) · Overflow (Close episode / New episode). Confirmation dialog on close preserves permission + audit + reauth flow.
+- **§5 Unified encounter card** — new `GroupedEncountersCard.jsx` + `GET /api/patients/{id}/clinical/encounters/grouped`. Backend joins appointment ↔ encounter (`appointment_id`) ↔ notes (`encounter_id`) ↔ billing readiness (`encounter_id`). Never groups by timestamp. Orphan records surface with `orphaned: true` — never dropped. `schema_version: "1.0"`.
+- **§6 Action-oriented filters** — Needs action (default when unresolved) · In progress · Completed · Missing note · Billing issues · Cancelled · All. Counts on each pill. Filter persistence stored in `localStorage.ccms.clinical.groupedEncountersFilter` (global user preference — **no patient IDs**).
+- **§7 Status vocabulary** — new `pages/clinical/status/StatusBadge.jsx` with 5 dimensions (Workflow / Documentation / Clinical response / Billing / Record state). Sentence-case labels, `role="status"`, `aria-label` includes dimension + label so status is never colour-only.
+- **§10 + §11 Grouped care timeline** — `GroupedTimelineCard.jsx` + `GET /api/patients/{id}/clinical/timeline/grouped?kinds=…`. Visit-linked artefacts merged into a single event; non-visit artefacts (initial exam, treatment plan, media, outcome) remain standalone. Kind chips + search (title/provider/kind) + date range + Clear filters.
+- **§12 Visual repetition cleanup** — episodes, encounters, and timeline sections now use row dividers + one wrapping card instead of nested cards.
+
+### Guardrails honoured
+- `schema_version: "1.0"` on both grouped responses.
+- Every group carries authoritative source ids: `appointment_id`, `encounter_id`, `note_ids[]`, `billing_readiness_id`.
+- Grouping keyed on existing relationships only. Bare timestamps never join records.
+- Orphaned records surface as their own groups with `orphaned: true`.
+- Legacy `EncountersCard` + `InitialExamsCard` + `FollowUpNotesCard` + `CareTimelineCard` remain the fallback when the Wave A flag is off.
+- Nested flag: parent `clinicalRedesign` must be on for the redesign to render; Wave A adds the new grouped sections when its own flag is also on.
+- Filter persistence is a global user preference — no patient-scoped values stored in localStorage.
+
+### Contract tests — `backend/tests/test_clinical_grouped_endpoints.py`
+- `schema_version` present and equal to `"1.0"`.
+- Every group carries `source_ids` with at least one authoritative id.
+- All 4 status dimensions present per group.
+- **Non-mutation proof**: `updated_at` on every appointment / encounter / note is byte-identical before and after the grouped read.
+- **Non-omission proof**: every source appointment_id and every source encounter_id appears in at least one group's `source_ids`.
+- Timeline endpoint: schema + kind filter narrows + source_ids present + 401 unauth.
+
+### Files
+- **new**: `services/clinical/grouped_router.py`, `tests/test_clinical_grouped_endpoints.py`, `pages/clinical/ActiveEpisodeCard.jsx`, `pages/clinical/GroupedEncountersCard.jsx`, `pages/clinical/GroupedTimelineCard.jsx`, `pages/clinical/status/StatusBadge.jsx`
+- **modified**: `server.py` (registered `clinical_grouped_router`), `utils/featureFlags.js` (added nested flag), `frontend/.env` (added `REACT_APP_CLINICAL_REDESIGN_PHASE2_WAVE_A=on`), `pages/clinical/ClinicalTabV2.jsx` (conditionally swaps sections; adds ActiveEpisodeCard between summary tiles and episodes list)
+
+### Wave B still on deck
+- §2 progressive-disclosure intake, §3 safety summary, §4 diagnosis rows, §8 treatment plan segmented progress, §9 re-exam states.
+
+
+
+## Component extraction + CTA telemetry (2026-07-10)
+
+Followed the user's order: **UAT & hardening → component extraction → chart-wide billing → dashboard preview → Phase 2**. This entry closes item 2 of that list; chart-wide billing intentionally deferred to keep refactor and new data behaviour in separate risk envelopes.
+
+### Component extraction
+
+`ClinicalTabV2.jsx` shell dropped from **1095 → 465 lines** by extracting four sibling components + a helpers module:
+
+| File | Lines | Purpose |
+|---|---|---|
+| `pages/clinical/clinicalHelpers.js` | 84 | `NAV_ITEMS`, `getInitials`, `computeAge`, `pickNextAppointment`, `pickActiveEpisode`, `pickPrimaryDiagnosis`, `extractRedFlagFindings` |
+| `pages/clinical/PatientContextHeader.jsx` | 100 | Sticky orientation strip |
+| `pages/clinical/SectionNav.jsx` | 56 | Sticky in-page nav (uses `NAV_ITEMS` from helpers) |
+| `pages/clinical/SummaryTiles.jsx` | 63 | Six interactive count tiles |
+| `pages/clinical/CurrentCareStatusPanel.jsx` | 374 | Row builder + CTA emission |
+
+All extracted components are pure UI (no data fetching, no navigation logic). The shell keeps ownership of load, scroll behaviour, telemetry wiring, and section composition.
+
+### CTA telemetry — `clinical_care_status_action_selected`
+
+Locked, allow-list-only event:
+
+```json
+{
+  "event_name":     "clinical_care_status_action_selected",
+  "section_slug":   "current-care-status",
+  "action_slug":    "schedule-reexam",
+  "source_surface": "patient-clinical",
+  "layout_version": "v2"
+}
+```
+
+- **Backend**: new `POST /api/telemetry/ui-action` in `services/telemetry/router.py`. Pydantic `model_config={"extra":"forbid"}` plus every field enum-restricted. Persists to `ui_telemetry_actions`.
+- **Frontend**: `trackCareStatusAction(slug)` in `utils/telemetry.js` with a `Set` mirror of the backend enum. Any slug not in the client allow-list is dropped before hitting the wire. Called from every CTA button in `CurrentCareStatusPanel.jsx` via a `withTelemetry(slug, fn)` wrapper — impossible to add a new CTA without also declaring its slug.
+- **Contract document**: `services/telemetry/SCHEMA.md` (documents both `/ui-event` and `/ui-action`; lists explicitly NOT-tracked fields; process for expanding the vocabulary).
+
+Action-slug allow-list (7 values): `open-encounter`, `add-note`, `record-outcome`, `schedule-visit`, `schedule-reexam`, `review-billing-issues`, `edit-missing-information`.
+
+**Never tracked** (PHI safety): patient/encounter/appointment/claim IDs, DOBs, dates, counts, diagnoses, free-form strings, URLs. Success events omitted per user note — we track intent, not clinical completion.
+
+### Tests
+
+`/app/backend/tests/test_telemetry_ui_action.py` — 5 test classes, 26 test cases:
+
+1. **Happy path** — every allow-listed action_slug returns 204; `layout_version` v1 and v2 both accepted.
+2. **Rejects unknown vocabulary** — arbitrary action_slug, section_slug, source_surface, layout_version, event_name → 422.
+3. **PHI-leak parametrised guard** — 7 leak fields (`patient_id`, `patient_name`, `encounter_id`, `diagnosis_code`, `dob`, `free_text`, `url`) all rejected with `extra_forbidden`.
+4. **Incomplete payload** — missing any of the 5 required fields → 422; empty body → 422.
+5. **Requires auth** — anonymous request → 401.
+
+### Files touched
+- **new**: `clinicalHelpers.js`, `PatientContextHeader.jsx`, `SectionNav.jsx`, `SummaryTiles.jsx`, `CurrentCareStatusPanel.jsx`, `services/telemetry/SCHEMA.md`, `tests/test_telemetry_ui_action.py`
+- **overwritten**: `ClinicalTabV2.jsx` (1095 → 465), `services/telemetry/router.py` (added `/ui-action` + `UIActionPayload`)
+- **modified**: `utils/telemetry.js` (added `trackCareStatusAction` + `CARE_STATUS_ACTION_SLUGS`)
+
+
+
+## Phase 1 Clinical Redesign — Release hardening (2026-07-10)
+
+Follow-up to the Phase 1 UX ship. All 5 items requested by the user closed out.
+
+### 1. Non-passing tests dispositioned
+`/app/memory/PHASE1_TEST_DISPOSITION.md`
+- (a) back-to-top blocked by preview watermark → **accepted limitation** (preview-env only). Mitigated by raising `clinical-back-to-top` to `z-50`.
+- (b) `aria-current` on Outcomes did not stick → **defect, FIXED** with scroll-end guard + `suppressObserverUntil` window on programmatic jumps.
+- Retest expectation: 64/64 direct assertions.
+
+### 2. 10-scenario UAT matrix authored
+`/app/memory/PHASE1_UAT.md` — signable checklist for:
+1. Active episode + plan · 2. No active episode · 3. Missing intake · 4. Positive red-flags · 5. Negative red-flags · 6. Billing warnings · 7. No imaging · 8. No outcomes · 9. No scheduled re-exam · 10. Restricted permissions · 11. Masked vs unmasked · plus keyboard, deep-link, reduced-motion checks. Includes tester sign-off table.
+
+### 3. Feature-flag rollback validated in production-like build
+- Compiled `frontend/build/` with `REACT_APP_CLINICAL_REDESIGN=off` → **success, 16.1 s** (fixed a pre-existing CJS-vs-ESM regression in `patientWizardLogic.js` blocking prod builds — converted `module.exports` to `export {}` and updated the `node --test` file accordingly).
+- Compiled again with `REACT_APP_CLINICAL_REDESIGN=on` → **success**.
+- Bundle grep shows both `patient-clinical-tab` and `patient-clinical-tab-v2` test IDs present → the flag-gated switch is in the shipped bundle.
+- Node test suite (`patientWizardLogic.test.mjs`) — **39/39 tests pass** after ESM conversion.
+- Runtime override test: `localStorage.setItem('ccms.flags.clinicalRedesign','off')` + reload → legacy v1 renders. Remove key → v2 renders again. End-to-end matrix (env=on / override=off / override cleared) verified in one Playwright pass.
+
+### 4. Archive wording validated against backend + policy docs
+`/app/memory/ARCHIVE_POLICY_VALIDATION.md`
+- UI says: "Archive this patient? … retained according to the 7-year record-retention policy. This action is audited and can only be reversed by an authorized user."
+- Backend truth (`services/patient/router.py`): `RETENTION_YEARS = 7`, sets `status='deleted'`, `deleted_at`, `deleted_by`, `retention_until = now + 7 y`. Requires `admin` + reauth + ≥8-char reason + no legal-hold. Emits `audit_success("patient.soft_deleted", …, phi_accessed=True)`.
+- Cross-checked against `PRIVACY_AND_RETENTION.md`, `HIPAA_COMPLIANCE.md`, `COMPLIANCE_BASELINE.md`, `authz/permission_catalog.py`, `privacy/inventory.py` — all match.
+- Caveat filed: `RETENTION_YEARS` is hard-coded; must be env-driven before jurisdiction rollouts (per `PRIVACY_AND_RETENTION.md:99`).
+
+### 5. Basic PHI-free telemetry added
+Backend: `POST /api/telemetry/ui-event` (new `services/telemetry/router.py`).
+- Pydantic `model_config = {"extra": "forbid"}` **rejects any unknown key** — verified with a `patient_id: "leak"` probe returning **422 `extra_forbidden`**.
+- Allowed events: `clinical.layout.activated` · `clinical.nav.jump` · `clinical.section.load_failed`.
+- Allowed sections: enum of the 8 Clinical section slugs. No free-form strings, no IDs.
+- Writes to `ui_telemetry_events` with `tenant_id`, `actor_id`, `actor_role`, `event`, `layout`, `section`, `error_code`, `ts`, `ua`.
+
+Frontend: `/app/frontend/src/utils/telemetry.js` — fire-and-forget client with 500 ms dedupe. Wired into:
+- `ClinicalTabV2` on mount → `layout.activated { layout: "v2" }`
+- `ClinicalTabV2.jumpTo` when `userInitiated` → `nav.jump { section }`
+- `ClinicalTabV2.load` Promise.allSettled rejects → `section.load_failed { section, error_code }`
+- `PatientDetail` when `tab === 'clinical' && flag off` → `layout.activated { layout: "v1" }`
+
+### Files added / modified
+- **new**: `/app/backend/services/telemetry/__init__.py`, `/app/backend/services/telemetry/router.py`, `/app/frontend/src/utils/telemetry.js`, `/app/memory/PHASE1_TEST_DISPOSITION.md`, `/app/memory/PHASE1_UAT.md`, `/app/memory/ARCHIVE_POLICY_VALIDATION.md`
+- **modified**: `/app/backend/server.py`, `/app/frontend/src/pages/clinical/ClinicalTabV2.jsx`, `/app/frontend/src/pages/PatientDetail.jsx`, `/app/frontend/src/pages/patientWizardLogic.js` (ESM), `/app/frontend/src/pages/patientWizardLogic.test.mjs` (renamed + ESM)
+
+### Not started (next in the user's recommended order)
+1. Component extraction from `ClinicalTabV2.jsx` (split into `PatientContextHeader`, `SectionNav`, `CurrentCareStatusPanel`, `SummaryTiles`).
+2. Chart-wide billing aggregation → populate the currently-hidden care-status "billing warnings" row.
+3. Today's Chart Preview dashboard widget (deferred until Phase 2 groundwork).
+4. Phase 2 proper.
+
+
+
+## Phase 1 — Clinical Tab redesign (2026-07-10, P1)
+
+**User request:** Redesign Phase 1 of Patient Profile > Clinical to improve orientation, reduce noise, make missing info understandable, and surface actionable issues. Keep existing legacy Clinical page as feature-flagged fallback.
+
+### Shipped
+- **Feature flag** `clinicalRedesign` (`/app/frontend/src/utils/featureFlags.js`): env-var default (`REACT_APP_CLINICAL_REDESIGN=on`), per-user localStorage override, `useFeatureFlag()` hook.
+- **New `ClinicalTabV2.jsx`** wrapping all existing sub-cards. Includes:
+  - Sticky patient context header (initials, name/mask, age, active episode, primary Dx, provider, next appt, re-exam due, red-flag alerts) — mask-aware.
+  - Sticky in-page section nav (Summary, History, Diagnoses, Encounters, Care plan, Timeline, Imaging, Outcomes) with scrollspy (IntersectionObserver), keyboard access, deep-link via `#hash`, count badges.
+  - Current Care Status panel — episode, primary Dx, plan progress, scheduled/unscheduled visits, next appt, re-exam due, unsigned docs, billing warnings, red-flag findings, missing required intake. Contextual CTAs.
+  - Interactive summary tiles as buttons that jump to sections; hover / focus / aria-label states.
+  - Extracted `EpisodesSection` + `episodeDialogs.js` for reuse.
+  - "Back to top" pill appears after scroll > 400 px.
+- **PatientDetail.jsx** — replaced inline Unmask / Export JSON / Soft-delete buttons with a single **"More actions"** DropdownMenu:
+  - "Reveal protected information" (was "Unmask (audited)")
+  - "Export patient data" (was "Export JSON")
+  - "Archive patient" (was "Soft-delete") — destructive-toned menu item.
+  - Confirmation dialog reworded per user spec ("Archive this patient? … retained according to the 7-year record-retention policy … This action is audited and can only be reversed by an authorized user.").
+- **IntakeHistoryCard.jsx** — per-field "From intake" badges removed (only "Provider edit" tag retained as positive provenance); single header pill "Imported from patient intake on <date>"; `renderReadValue` shows "Not documented" / "Missing required information" instead of `—`; new `renderRedFlagScreening` renders positive findings with destructive styling and negatives as a plain sentence ("No fever, recent trauma, or night pain reported.").
+- **BillingReadinessPanel.jsx** — collapsed header now shows count + top non-passing check message + "Review billing issues" hint; sentence-case label; visible focus ring.
+- **ReExamsCard / MediaCard / OutcomesCard** — replaced tall dashed empty states with compact row cards + primary CTA.
+
+### Files added / modified
+- `/app/frontend/.env` — added `REACT_APP_CLINICAL_REDESIGN=on`
+- `/app/frontend/src/utils/featureFlags.js` (new)
+- `/app/frontend/src/pages/clinical/ClinicalTabV2.jsx` (new)
+- `/app/frontend/src/pages/clinical/EpisodesSection.jsx` (new)
+- `/app/frontend/src/pages/clinical/episodeDialogs.js` (new)
+- `/app/frontend/src/pages/PatientDetail.jsx`
+- `/app/frontend/src/pages/clinical/IntakeHistoryCard.jsx`
+- `/app/frontend/src/pages/clinical/BillingReadinessPanel.jsx`
+- `/app/frontend/src/pages/clinical/ReExamsCard.jsx`
+- `/app/frontend/src/pages/clinical/MediaCard.jsx`
+- `/app/frontend/src/pages/clinical/OutcomesCard.jsx`
+
+### Not changed (per Phase 1 constraints)
+- No backend / API / data-model changes. No changes to sub-card business logic, permissions, masking, audit, signed-record rules, or route behavior. Legacy `ClinicalTab.jsx` retained and rendered when flag is off.
+
+### Verification
+- Lint: all edited files clean.
+- Manual UI screenshot (admin@ccms.app on masked patient M. R.): sticky header, sticky nav, care-status panel, tiles, More actions dropdown, section jump, compact imaging empty state all rendered correctly.
+
+
+
+## HOTFIX 2026-07-10 — Cloudflare 502 on login (recurring libmagic + ClaimEvent Literal)
+
+**User report:** Login attempts returned Cloudflare "origin returned invalid or incomplete response" (502).
+
+**Root cause (two issues stacked):**
+1. Container rebuild wiped the runtime apt install; `libmagic1`/`libmagic-dev` missing → `import magic` in `services/clinical/media_router.py` raised `ImportError` at boot → backend never started → Cloudflare 502 on every request including `/api/auth/login`.
+2. After libmagic was reinstalled and login worked, the ClaimDetail timeline crashed with `ResponseValidationError` because demo seed writes event_types (`accepted`, `paid`, `partially_paid`, `rejected`, `followup_flagged`) not present in `ClaimEventType` Literal, and seeded rows lacked required `occurred_at`.
+
+**Fix:**
+- Reinstalled `libmagic1 libmagic-dev libmagic-mgc` (persistent fix requires adding to base image; if it recurs, run `sudo apt-get install -y libmagic1 libmagic-dev libmagic-mgc` and restart backend).
+- Extended `ClaimEventType` Literal in `/app/backend/services/billing/models.py` to include `accepted`, `paid`, `partially_paid`, `rejected`, `followup_flagged`, `followup_cleared`.
+- Made `ClaimEventPublic.occurred_at` optional (fall back to `created_at` in UI).
+
+**Verified:** Local + external `/api/health` = 200; external login = 200; UI screenshot confirms dashboard loads with "Welcome back" toast; PIN reauth dialog behaves normally.
+
+
+**Last updated:** 2026-05-04 (Demo PIN seeder + Live submission timeline — VERIFIED)
+
+## 5j. Demo PIN seeder + Live submission timeline (2026-05-04, P0/P1)
+
+**User request:** "(1) add the password and 6-digit PIN onto the login screen; if the user does not have one set, create it... actually NOT for login but in-app re-verification — we need to know the PIN for each user to test with it. (2) Wire the new 'Send to claim' action into a live submission timeline widget on ClaimDetail that polls 999/277CA acks and updates the status pill in real-time, choosing 1c (WebSocket push) + 2c (sandbox simulator AND real-pull poller)."
+
+### Shipped
+
+**Backend** —
+- `scripts/seed_demo_pins.py` (new) — idempotent 6-digit PIN seeder for every demo persona. Documented in `test_credentials.md`.
+- `services/billing/timeline_pubsub.py` (new) — in-process fan-out for ClaimDetail timeline subscribers; bounded per-queue.
+- `services/billing/events.py::emit_claim_event` — also best-effort publishes to the pub/sub.
+- `services/billing/sandbox_ack_simulator.py` (new) — schedules a fire-and-forget asyncio walker that emits `ack_999_accepted` → `ack_277ca_accepted` → `outcome_recorded` → `era_posted` over ~20 s for every sandbox submission. Updates `claim_submissions.outcome` and flips claim status to `paid`.
+- `services/billing/ack_poller.py` (new) — production-mode poller, started at app boot. Every 60 s, calls `adapter.fetch_ack_999/277ca` on every non-sandbox submission. Adapters return `None` today so this is a quiet no-op; scaffolding is ready for live HTTPS transport.
+- `WS /api/billing/ws/claims/{claim_id}/events` — cookie-authenticated WebSocket that streams `claim_events` as they emit, with 25-s heartbeat pings and tenant/claim ownership validation.
+
+**Frontend** —
+- `pages/billing/ClaimTimeline.jsx` (new) — mounts inside ClaimDetail. Connects to the WS, falls back to 30 s polling, dedupes by event id. Shows Live / Connecting / Polling pill, latest-event card, full history.
+
+### Verification
+
+- Backend: `tests/test_claim_timeline.py` 4/4 + `test_demo_pin_seed.py` 9/9 + `test_pin_security.py` 25/25 (no regressions on PIN flows) + `test_quick_submit.py` 3/3 + `test_third_wave_ai.py` 8/8 (iter_88).
+- Frontend E2E (iter_88): WebSocket pill went Polling → Live in ~2 s; the full simulator chain rendered within ~12 s; claim status pill flipped to PAID.
+
+### Files added/modified
+
+- `/app/backend/scripts/seed_demo_pins.py` (new)
+- `/app/backend/services/billing/timeline_pubsub.py` (new)
+- `/app/backend/services/billing/sandbox_ack_simulator.py` (new)
+- `/app/backend/services/billing/ack_poller.py` (new)
+- `/app/backend/services/billing/events.py`
+- `/app/backend/services/billing/router.py` (WS endpoint, simulator hook in `_do_submit_claim`)
+- `/app/backend/server.py` (ack_poller startup / shutdown)
+- `/app/backend/tests/test_claim_timeline.py` (new)
+- `/app/frontend/src/pages/billing/ClaimTimeline.jsx` (new)
+- `/app/frontend/src/pages/billing/ClaimDetail.jsx` (mounts timeline)
+- `/app/memory/test_credentials.md` (PIN reference + script note)
+
+### Demo PIN reference
+
+| Email | PIN |
+|---|---|
+| admin@ccms.app | 100001 |
+| doctor@ccms.app | 200002 |
+| staff@ccms.app | 300003 |
+| patient@ccms.app | 400004 |
+| platform-admin@ccms.app | 500005 |
+| group-admin@sunrise.ccms.app | 600006 |
+| downtown-doc@sunrise.ccms.app | 700007 |
+| floater-doc@sunrise.ccms.app | 800008 |
+| eastside-staff@sunrise.ccms.app | 900009 |
+
+### Future work
+- Redis-backed pub/sub for multi-worker deployments. Single-process uvicorn is fine for the current demo; horizontal scaling needs a shared bus.
+- Live 999/277CA fetchers in `ChangeHealthcareAdapter` so `ack_poller.py` actually moves production-mode timelines.
+- Optional: 30-second timeline replay slider for triaging stuck submissions.
+
+---
+
+## 5i. UX nits + one-click Submit-to-Clearinghouse (2026-05-04, P0/P1/P2)
+
+**User request:** "1) Minor UX nits: payer fee schedule on send-to-claim, hide irrelevant inputs on NL reschedule/cancel, server-side provider search for tenants >500 doctors. 2) Wire 'Send to claim' into a one-click Submit to Clearinghouse (Change/Optum sandbox) — AI-drafted SOAP all the way to a submittable 837 in a single click."
+
+### Shipped
+
+**Backend** —
+- `services/scribe/router.py::send_to_claim` resolves zero-priced CPT lines through `resolve_charge_price` (payer fee schedule → self_pay → catalog). Response includes `price_sources[]`.
+- `services/identity/router.py::list_users` adds `q`, `limit`, `offset`. Search is regex-escaped, case-insensitive across name/email fields, capped at 500 results.
+- `services/billing/router.py::quick_submit_claim` (NEW) — `POST /api/billing/claims/{claim_id}/quick-submit`. Single-call pipeline: scrubber + ready transition + adapter.submit. Sandbox/disabled adapters accept scrubber failures with `submitted_with_warnings`; production strictly enforces scrubber pass.
+- The clearinghouse adapter stack (`services/billing/clearinghouse/`) was already complete (Phase 2c). This wave only adds the user-facing one-click flow on top.
+
+**Frontend** —
+- `pages/scheduling/NLBookCard.jsx` — patient/provider selects hidden when intent ≠ create. Cancel intent shows a destructive-styled summary only.
+- `pages/settings/AITemplatesPage.jsx` — debounced (250 ms) server-side provider search; search box unconditional on Provider scope.
+- `pages/ai/ScribePanel.jsx` — `scribe-quick-submit-btn` after send-to-claim. Renders status pill (queued / accepted / rejected / manual) + adapter route + sandbox indicator.
+- `pages/billing/ClaimDetail.jsx` — `claim-quick-submit-btn` next to the existing Submit. Disabled unless status ∈ {draft, validation_failed, ready}.
+- `pages/billing/useClaims.js` exposes `quickSubmitClaim`.
+
+### Verification
+
+- Backend: `tests/test_quick_submit.py` 3/3 + `tests/test_iter87_wave_b.py` 7/7 (testing-agent iter_87). All older billing/clearinghouse/scribe tests still pass — no regressions.
+- Frontend E2E (iter_87): live Playwright validation of server-side provider search and ClaimDetail one-click button. ScribePanel one-click button covered by code review + transitive backend test.
+
+### Files added/modified
+
+- `/app/backend/services/scribe/router.py`
+- `/app/backend/services/identity/router.py`
+- `/app/backend/services/billing/router.py`
+- `/app/backend/tests/test_quick_submit.py` (new)
+- `/app/frontend/src/pages/ai/ScribePanel.jsx`
+- `/app/frontend/src/pages/billing/ClaimDetail.jsx`
+- `/app/frontend/src/pages/billing/useClaims.js`
+- `/app/frontend/src/pages/scheduling/NLBookCard.jsx`
+- `/app/frontend/src/pages/settings/AITemplatesPage.jsx`
+
+### Future work
+- Live HTTPS transport for production-mode CHC/Optum (currently behaves as sandbox + WARNING log when `CLEARINGHOUSE_CHC_MODE=production`).
+- 999 / 277CA / 835 ack-pollers (existing scaffolding stubs return None / []).
+- AITemplatesPage server-side `?offset=` cursor for tenants > 500 doctors (current `limit=200` cap is fine for the current scale).
+
+---
+
+## 5h. Send-to-claim + NL reschedule/cancel + paginated provider dropdown (2026-05-04, P1/P2)
+
+**User request:** "1) Wire accepted CPT/ICD suggestions directly into a draft claim line. 2) NL scheduling: support reschedule/cancel. 3) AITemplatesPage: paginate the provider dropdown."
+
+### Shipped
+
+**Backend** —
+- `services/scribe/router.py` — `POST /api/scribe/encounters/{note_type}/{note_id}/send-to-claim`. Admin/doctor-gated; validates payer + note; creates draft claim with one CPT line per suggestion.
+- `services/scheduling/nl_router.py` — `/parse` now returns `intent ∈ {create, reschedule, cancel}` + optional `target_appointment_id`; new `/reschedule` + `/cancel` endpoints route through canonical update/cancel so event hooks still fire.
+
+**Frontend** —
+- `pages/ai/ScribePanel.jsx` — "Create draft claim" block (payer Select + submit) appears after CPT **and** ICD are non-empty; success link → `/billing/claims/{id}`.
+- `pages/scheduling/NLBookCard.jsx` — confirm button label/icon switches on intent; conflict 409 surfaced inline.
+- `pages/settings/AITemplatesPage.jsx` — when tenant doctor count > 50, Provider scope shows a search box and caps the option list at 100 items.
+
+### Verification
+
+- Backend: `tests/test_third_wave_ai.py` 8 passed / 4 skipped (happy-path seeded-audio skips).
+- Frontend E2E (iteration_86): all three flows green on Riverbend seed. No regressions on context-aware docs, semantic search, or scribe transcription.
+
+### Files added/modified
+
+- `/app/backend/services/scribe/router.py`
+- `/app/backend/services/scheduling/nl_router.py`
+- `/app/backend/tests/test_third_wave_ai.py`
+- `/app/frontend/src/pages/ai/ScribePanel.jsx`
+- `/app/frontend/src/pages/scheduling/NLBookCard.jsx`
+- `/app/frontend/src/pages/settings/AITemplatesPage.jsx`
+
+### Known minor UX improvements (future)
+- ScribePanel send-to-claim defaults `units=1, billed_cents=0` — doctor must reopen the draft to set fees. Consider pulling payer fee schedule.
+- NLBookCard shows patient/provider/duration inputs even on reschedule/cancel where they're ignored by the API. Consider hiding non-applicable fields when `intent !== 'create'`.
+- AITemplatesPage pagination is client-side slice(0,100). Future: server-side `?q=` search once tenants cross ~500 providers.
+
+---
+
+## 5g. NL scheduling + override propagation + picker (2026-05-04, P2)
+
+**User request:** Natural-language scheduling, wire merged template overrides into chart-brief / prior-sections / draft-sections, replace free-text scope_id input with a real picker.
+
+### Shipped
+
+**Backend** —
+- `services/scheduling/nl_router.py` (new) — `POST /api/scheduling/nl/parse` + `/create`. LLM-suggested IDs are re-validated against tenant data before any state mutation; create delegates to existing `create_appointment` so event-bus hooks still fire.
+- `services/ai/router.py::_augment_with_template` propagates merged tenant/location/provider override instructions into chart-brief, prior-sections, and draft-sections in addition to scribe SOAP. `_note_to_patient` now also returns `location_id` and `provider_id` for scope resolution.
+- `services/ai/prompts.py` adds `NL_SCHEDULE_SYSTEM` strict-JSON prompt with hallucination + clarification rules.
+
+**Frontend** —
+- `pages/scheduling/NLBookCard.jsx` (new) on `/scheduling`. Quick-book widget; two-phase parse → confirm.
+- `pages/settings/AITemplatesPage.jsx` replaces free-text scope_id with a context-aware Select. Lookup URLs corrected to `/api/authz/locations` and `/api/auth/users?role=doctor` (was `/locations` and `/users` — 404 in iteration_84, fixed in iteration_85).
+
+### Verification
+
+- Backend: 43 passed + 1 benign skip across all five AI test files; new `tests/test_nl_scheduling.py` (7/7).
+- Frontend: NL Quick-book parsed "Book Hannah Whitaker for an adjustment with Dr. Carter next Friday at 10am" → confirmed appointment at 2026-05-08T10:00 in the calendar (iter_84). AITemplatesPage location/provider dropdowns populate (iter_85, 100%).
+
+### Files added/modified
+
+- `/app/backend/services/scheduling/nl_router.py` (new)
+- `/app/backend/services/ai/{router.py, prompts.py}`
+- `/app/backend/server.py` (registers `scheduling_nl_router`)
+- `/app/backend/tests/test_nl_scheduling.py` (new)
+- `/app/frontend/src/pages/scheduling/{NLBookCard.jsx (new), SchedulingPage.jsx}`
+- `/app/frontend/src/pages/settings/AITemplatesPage.jsx`
+- `/app/frontend/src/api/ai.js`
+
+---
+
+## 5f. Post-scribe AI bundle (2026-05-04, P2)
+
+**User request:** "plug the same scribe-drafted SOAP straight into the billing-readiness checker so the CPT/ICD coding suggestions appear inline as soon as the draft is applied" + (1) Natural-language semantic search across patient charts (2) SOAP-template overrides per location/provider (3) Refactor: extract `FOLLOW_UP_NOTES_COLL` constant.
+
+### Shipped
+
+**Backend** —
+- `services/scribe/router.py` adds `POST /encounters/{note_type}/{note_id}/coding-suggest` (doctor-only) returning `cpt_suggestions[]`, `icd_suggestions[]`, `documentation_warnings[]`, and `active_diagnoses[]`. Wires merged template overrides into the SOAP-draft system prompt.
+- `services/ai/router.py` adds `GET/PUT/DELETE /api/ai/templates` and the `resolve_template_instructions()` helper. Storage: `ai_template_overrides` collection.
+- `services/ai/search_router.py` (new) exposes `POST /api/ai/search` with content-hash cached `(patient_id, query_hash)` answers + `[s#]`-cited snippets.
+- `services/ai/prompts.py` adds `CODING_SUGGEST_SYSTEM` and `SEMANTIC_SEARCH_SYSTEM` strict-JSON prompts.
+- `core/clinical_collections.py` (new) exports `FOLLOW_UP_NOTES_COLL`, `NOTE_TYPE_TO_COLL`, etc. — single source of truth for the AI + clinical layers.
+
+**Frontend** —
+- `pages/ai/ScribePanel.jsx` auto-fires coding-suggest on Apply-All; renders CPT, ICD, and amber documentation-warning cards inline.
+- `pages/ai/PatientSemanticSearch.jsx` (new) on PatientDetail Billing tab — "Ask the chart" input with answer + ranked snippet cards.
+- `pages/settings/AITemplatesPage.jsx` (new admin-only) at `/settings/ai-templates` for editing per-scope SOAP-prompt overrides.
+
+### Verification (iteration_83)
+
+- Backend: 36/36 + 1 benign skip across `test_ai_context_documentation`, `test_portal_visit_brief`, `test_scribe`, and the new `test_post_scribe_ai` (11 tests covering coding-suggest, templates, semantic search).
+- E2E by testing agent: ChartBriefCard + PatientSemanticSearch render on Billing tab; semantic search returns 6 ranked snippets + cached badge on repeat; coding-suggest auto-fires from Apply-All, shows 2 CPT (98940 high, 97140 medium) + 2 ICD (M99.03 primary, M54.5) + 8-minute warning; template page round-trips save/list/delete.
+
+### Files added/modified
+
+- `/app/backend/core/clinical_collections.py` (new)
+- `/app/backend/services/ai/{prompts.py, router.py, search_router.py (new), context.py}`
+- `/app/backend/services/scribe/router.py`
+- `/app/backend/server.py`
+- `/app/backend/tests/test_post_scribe_ai.py` (new)
+- `/app/frontend/src/api/{scribe.js, ai.js}`
+- `/app/frontend/src/pages/ai/{ScribePanel.jsx, PatientSemanticSearch.jsx (new)}`
+- `/app/frontend/src/pages/settings/AITemplatesPage.jsx` (new)
+- `/app/frontend/src/pages/PatientDetail.jsx`
+- `/app/frontend/src/App.js`
+
+---
+
+## 5e. AI scribe + SOAP generation (2026-05-04, P1)
+
+**User request:** ship "AI-powered SOAP note generation" and "AI scribe (voice-to-note)" together. User choices: doctor-only access on both Follow-Up Note editor AND Initial Exam editor; SOAP input is transcript + optional free-text addendum combined; audio retained encrypted until the host note is signed, then auto-deleted; click-to-start/stop recording with no hard cap; side-panel preview with both per-section Apply and Apply-all.
+
+### Shipped
+
+**Backend** — new `services/scribe/{router, transcribe, prompts, __init__}.py` exposing four endpoints under `/api/scribe`. Whisper integration via `emergentintegrations.llm.openai.OpenAISpeechToText` (model `whisper-1`). SOAP generation reuses `services/ai/client.py::generate` with the new `SCRIBE_SOAP_SYSTEM` prompt that strips invented findings and lets the addendum override transcript on conflicts. Audio rows live in collection `scribe_audio`, soft-delete on host-note sign via `delete_audio_for_note()` hooked into all three clinical sign endpoints (`notes_router`, `exams_router`, `reexams_router`).
+
+**Frontend** — new `pages/ai/ScribePanel.jsx` (recorder + chunk list + addendum + draft + apply). Mounted in `FollowUpNoteEditor.jsx` (right rail beneath EncounterAssistPanel) and `InitialExamEditor.jsx` (above section cards). Shared `applySectionFromAi` callback already used by EncounterAssistPanel is re-used for the scribe Apply flow. Panel is gated to `user.role === "doctor"` and hides on signed artifacts.
+
+### Verification (iteration_82)
+
+- Backend: 27/27 across `tests/test_scribe.py` (7), `tests/test_scribe_iter82.py` (2 — added by testing agent), `tests/test_ai_context_documentation.py` (13), `tests/test_portal_visit_brief.py` (5).
+- E2E: ScribePanel mounts and draft populates within ~8s; Apply-Subjective injects 492 chars; Apply-All cycles through all four sections; admin role correctly hides the panel.
+
+### Files added/modified (this iteration)
+
+- `/app/backend/services/scribe/{__init__, router, transcribe, prompts}.py`
+- `/app/backend/tests/test_scribe.py`
+- `/app/frontend/src/pages/ai/ScribePanel.jsx`
+- `/app/frontend/src/api/scribe.js`
+- `/app/frontend/src/pages/clinical/FollowUpNoteEditor.jsx` (mounts ScribePanel + extracts shared `applySectionFromAi`)
+- `/app/frontend/src/pages/clinical/InitialExamEditor.jsx` (mounts ScribePanel + adds `applySectionFromAi` mapping for the exam template)
+- `/app/backend/services/clinical/{notes_router, exams_router, reexams_router}.py` (auto-delete-on-sign hook)
+- `/app/backend/server.py` (registers `scribe_router`)
+
+---
+
+## 5d. Patient-facing AI visit brief (2026-05-04)
+
+**User request:** "Yes proceed with your potential improvement" — wire the AI smart-cache pipeline into the patient-facing portal so patients see a plain-language summary before each visit.
+
+### Shipped
+
+**Backend** — new `services/portal/ai_brief_router.py` exposing `GET /api/portal/visit-brief` and `POST /api/portal/visit-brief/regenerate`. Patient-role only. Reuses `services/ai/context.py::load_patient_context` and `services/ai/cache.py` with a separate surface (`patient_visit_brief`) so patient regenerations don't invalidate clinician chart-brief caches. New prompt `PATIENT_VISIT_BRIEF_SYSTEM` returns strict JSON `{headline, last_visit, your_progress, this_visit, ask_about[], reminders[]}` with explicit prohibition on ICD codes, medication names, and clinical jargon. Soft-fails to a friendly empty brief when the LLM is unreachable.
+
+**Frontend** — new `portal/PortalVisitBriefCard.jsx` rendered at the top of `portal/PortalOverview.jsx`. Self-hides when the brief has no usable content. Skeleton, refresh button, cached badge, "You might want to ask" + "Before you arrive" sub-cards.
+
+### Verification (iteration_81)
+
+- `tests/test_portal_visit_brief.py` — 5/5 pass: admin-403, unauthenticated 401/403, happy-path + cached:true on 2nd call, regenerate breaks cache, ICD-code PHI-hygiene regex.
+- Testing agent confirmed real patient brief end-to-end with no regression on existing portal cards.
+
+### Files added (this iteration)
+
+- `/app/backend/services/portal/ai_brief_router.py`
+- `/app/backend/tests/test_portal_visit_brief.py`
+- `/app/frontend/src/portal/PortalVisitBriefCard.jsx`
+- `/app/backend/services/ai/prompts.py` (new `PATIENT_VISIT_BRIEF_SYSTEM`)
+- `/app/frontend/src/portal/PortalOverview.jsx` (mounts card)
+- `/app/frontend/src/api/portal.js` (`fetchPortalVisitBrief`, `regeneratePortalVisitBrief`)
+- `/app/backend/server.py` (registers `portal_ai_brief_router`)
+
+---
+
+## 5c. AI Context-Aware Documentation (2026-05-04)
+
+**User request:** "Now lets fully build out this feature — AI & Automation Context-aware documentation (pulls from prior encounters)."
+
+### Choices recorded
+
+| Question | Choice |
+|---|---|
+| LLM model | Claude Sonnet 4.5 via Emergent LLM Key (`emergentintegrations`) |
+| Surfaces | Chart-prep brief (patient chart) + Encounter assist rail (follow-up note editor) |
+| Smart cache | Yes — content-hash keyed per patient + surface |
+| Audit | `ai_usage` rows with model + latency + status only — no prompt or response bodies persisted |
+
+### Shipped
+
+**Backend (`services/ai/*`)** — `router.py`, `context.py`, `cache.py`, `client.py`, `prompts.py`. Endpoints: `GET/PUT /api/ai/settings`, `GET /api/ai/chart-brief/{patient_id}`, `POST /api/ai/chart-brief/{patient_id}/regenerate`, `GET /api/ai/encounters/{note_id}/prior-sections`, `GET /api/ai/encounters/{note_id}/since-last-diff`, `POST /api/ai/encounters/{note_id}/draft-sections`. Smart cache collection `ai_brief_cache` keyed on `(tenant_id, patient_id, surface)` with stable 32-char content hash from `load_patient_context()`.
+
+**Frontend** — `pages/ai/ChartBriefCard.jsx` mounted in `PatientDetail.jsx` (Billing tab, line 1487); `pages/ai/EncounterAssistPanel.jsx` mounted in `FollowUpNoteEditor.jsx` (sticky sidebar, line 858) with `onPullSection` callback that drops drafted text directly into the editor's S/O/A/P fields.
+
+### Verification (iteration_78–80)
+
+- Backend pytest: 13 passed + 1 skipped on `tests/test_ai_context_documentation.py` (added a happy-path regression test for `/encounters/{nid}/prior-sections` to guard against the collection-rename root cause).
+- E2E: ChartBriefCard renders with cached badge on second visit, regenerate cycles cache, EncounterAssistPanel shows real prior SOAP + NPRS callouts + Draft S+P, Pull-in subjective populates the interval-history textarea.
+- Smoke regression: `/communications/sms`, `/settings/email`, `/portal` still green.
+
+### Bugs fixed in this iteration
+
+1. *Critical collection mismatch.* `services/ai/{context,router}.py` queried `db.clinical_notes` (0 docs); CCMS stores follow-up notes in `db.clinical_follow_up_notes` (320 signed). Renamed both — chart brief now reflects real prior encounters and encounter-scoped routes return 200.
+2. *Pre-existing /api/appointments 500.* `AppointmentPublic.provider_id: str` rejected 24 production rows with `provider_id=None`. Made it `str | None = None`. Patient detail page now renders.
+3. *Missing import.* `FollowUpNoteEditor.jsx` rendered `EncounterAssistPanel` without importing it — added import at line 55.
+4. *Asyncio test fixtures.* Motor clients in `core/tenancy.py` and `core/db.py` got pinned to whichever loop ran first; subsequent `asyncio.run()` cases died with `RuntimeError: Event loop is closed`. Calling `reset_router_for_tests()` at the top of each async runner rebinds clients to the fresh loop.
+
+### Files added/modified (this iteration)
+
+- `/app/backend/services/ai/{__init__,router,context,cache,client,prompts}.py`
+- `/app/backend/tests/test_ai_context_documentation.py`
+- `/app/frontend/src/pages/ai/{ChartBriefCard,EncounterAssistPanel}.jsx`
+- `/app/frontend/src/api/ai.js`
+- `/app/frontend/src/pages/PatientDetail.jsx` (mounts ChartBriefCard)
+- `/app/frontend/src/pages/clinical/FollowUpNoteEditor.jsx` (mounts EncounterAssistPanel + onPullSection wiring)
+- `/app/backend/services/scheduling/models.py` (`AppointmentPublic.provider_id` → Optional)
+
+---
+
+## 5b. Wave-3 integrations (2026-02-17)
+
+**User request:** "Now lets fully end-to-end implement these — Twilio SMS, Resend email, Google OAuth."
+
+### Choices recorded
+
+| Question | Choice |
+|---|---|
+| Google OAuth scope | Staff only (admin/doctor/staff). Patients stay on SMS OTP. |
+| Resend pattern | Mirror Twilio exactly (encrypted per-tenant creds, log-only fallback, admin Settings UI, test-send, outbound log). |
+| Twilio inbox UI | Build it now under `/communications/sms` (thread list + message panel + reply box). |
+
+### Shipped
+
+**Backend**
+- `services/email/{__init__,client,router}.py` — per-tenant Resend module. Encrypted AES-256 storage of `api_key`, `from_email`, `from_name`, `reply_to`. `send_email()` prefers tenant creds → env-var fallback → log-only fallback. `email_outbound_log` collection. Routes: `GET/PUT/DELETE /api/email/settings`, `POST /api/email/settings/test`, `POST /api/email/send` (staff outbound), `GET /api/email/outbound-log`.
+- `services/identity/google_auth.py` — Emergent-managed Google sign-in. Per-tenant enable toggle + `allowed_domains[]` (email-domain allowlist) + `default_role`. Routes: public `GET /api/auth/google/availability`, admin `GET/PUT /api/auth/google/settings`, public `POST /api/auth/google/exchange {session_id}`. Exchange calls `https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data` with `X-Session-ID`, then either matches an existing user by email or auto-provisions `role=default_role` if the domain is allowlisted (otherwise 403). Patients are blocked from Google sign-in (`role=patient` → 403). Mints our existing JWT access + refresh cookies and writes `audit_logs` rows on every success and every failure (with `reason: disabled | domain_not_allowed | patient_role_blocked`). Tracks the Emergent session token in `oauth_emergent_sessions` for forensic revocation.
+- `services/scheduling/booking_requests.py` — appointments materialised on approve now stamp `created_by` and `intake_status="not_started"`, eliminating the background 500s the testing agent surfaced from `/scheduling/appointments` serialisation.
+
+**Frontend**
+- `pages/settings/EmailSettings.jsx` — admin `/settings/email` mirroring `/settings/sms`: status banner, credentials form (api_key, from_email, from_name, reply_to, enable toggle), test-send card, recent outbound preview, log-only banner.
+- `pages/settings/GoogleAuthSettings.jsx` — admin `/settings/google`: enable toggle (calls `/api/auth/google/settings` PUT), allow-listed-domain CRUD with per-row `data-testid=google-domain-row-{domain}`, `default_role` select.
+- `pages/Login.jsx` — `<GoogleSignInButton>` rendered at top of the form when `/api/auth/google/availability` returns `enabled=true`. Click handler builds `redirect=window.location.origin+"/auth/google/callback"` and sets `window.location.href=https://auth.emergentagent.com/?redirect=…`. Verbatim "DO NOT HARDCODE THE URL" comment retained per the auth playbook.
+- `pages/GoogleAuthCallback.jsx` — `/auth/google/callback` route. Reads `#session_id=` synchronously, POSTs to `/api/auth/google/exchange`, calls `useAuth().refresh()`, navigates to `/`. Stable error UI with retry-back button on either failure path.
+- `contexts/AuthContext.jsx` — skips the boot-time `/auth/me` call when `window.location.hash` contains `session_id=`, so the boot probe doesn't race with `GoogleAuthCallback`.
+- `pages/communications/SmsInbox.jsx` — staff inbox at `/communications/sms`. Two-pane (thread list left, conversation right). Reply box uses `thread.peer` as the recipient. Mobile-responsive (single-pane stack with back button). Empty state for clinics with no SMS history yet.
+- `App.js` routes added: `/auth/google/callback`, `/settings/email`, `/settings/google`, `/communications/sms`.
+- `components/layout/navConfig.js` — three new sidebar items: Email (Resend), Google sign-in, SMS Inbox.
+- `api/integrations.js` — typed wrappers for the new endpoints.
+
+### Verification
+
+- 8/8 new pytest in `tests/test_integrations_wave3.py` (Resend settings round-trip + log-only test-send + delete; Google settings round-trip + domain normalisation + availability flip; Google exchange rejects unknown sessions; Google exchange unit-test 403 when disabled; SMS staff-send creates thread + outbound row).
+- 23/23 across the new bundle (`test_patient_intake_bundle` + `test_integrations_wave3`).
+- 118 across the full backend regression surface.
+- Testing agent iter 77 — `retest_needed: false`, `main_agent_can_self_test: true`. 7/7 frontend flows verified end-to-end (Email settings round-trip, Google settings round-trip, /login Google button rendered + click handler correct, /auth/google/callback both error paths, SMS inbox reply, /settings/sms regression).
+- Browser 500 the testing agent flagged on `/login` — root-caused to a missing `created_by` field on appointments materialised by booking-request approval. Fix landed + 10 stale appointments backfilled.
+
+### Files added (this iteration)
+
+- `/app/backend/services/email/{__init__,client,router}.py`
+- `/app/backend/services/identity/google_auth.py`
+- `/app/backend/tests/test_integrations_wave3.py`
+- `/app/auth_testing.md` — Emergent Google Auth testing playbook
+- `/app/frontend/src/api/integrations.js`
+- `/app/frontend/src/pages/settings/{EmailSettings,GoogleAuthSettings}.jsx`
+- `/app/frontend/src/pages/GoogleAuthCallback.jsx`
+- `/app/frontend/src/pages/communications/SmsInbox.jsx`
+
+### Files changed (this iteration)
+
+- `/app/backend/server.py` — include 2 new routers.
+- `/app/backend/services/scheduling/booking_requests.py` — stamp `created_by` + `intake_status` on approve.
+- `/app/frontend/src/App.js` — 4 new routes + imports.
+- `/app/frontend/src/pages/Login.jsx` — Google sign-in button.
+- `/app/frontend/src/contexts/AuthContext.jsx` — fragment-aware boot probe + `refresh()` exposed.
+- `/app/frontend/src/components/layout/navConfig.js` — 3 new sidebar entries.
+
+### Known follow-ups (backlog)
+
+- Real Twilio + Resend keys not yet pasted — UIs ready when the operator has them.
+- Real Google OAuth E2E test requires an external Google account; backend tests cover the failure paths thoroughly but the success path is only smoke-tested via the unit test.
+- The Helcim worker, scheduler tick, and email/sms outbound logs are now three separate collections that all need a periodic-purge job for compliance retention. Worth a single shared "retention sweeper" service before any production rollout.
+
+---
+
+## 5a. Patient Intake & Engagement bundle (2026-02-16)
+
+**User request:** "Patient self check-in, Online booking (patient portal), Questionnaires (outcome measures delivered to patient), Two-way texting (Twilio SMS integration)." User choices: **SMS-OTP portal auth**, **request-only booking**, **both portal & kiosk self check-in**, **chiropractic starter pack (ODI/NDI/PSFS/NPRS)**, **SMS plumbing + log-only fallback**.
+
+**Shipped — backend**
+
+- `services/sms/` — new module. Per-tenant Twilio credentials encrypted at rest (`credentials.py`), unified `send_sms()` with automatic log-only fallback (`client.py`), 6-digit OTP request/verify with 10-min TTL + 5-attempt cap (`otp.py`), Twilio `X-Twilio-Signature` HMAC-SHA1 webhook verification (`webhook_verify.py`), and the full router at `/api/sms/*` (settings CRUD, test send, staff send, threads + messages inbox, inbound webhook).
+- `services/portal/auth_router.py` — `POST /api/portal/auth/otp/{request,verify}`. OTP verify resolves a patient row (forgiving phone match across legacy formats), provisions a `users` row with `role=patient, linked_patient_id, portal_otp_only=true`, and sets access+refresh cookies. Placeholder emails use `@portal.ccms.app` so Pydantic v2's reserved-TLD validator doesn't block `/auth/me`.
+- `services/portal/booking_router.py` — `/api/portal/booking-requests` (patient), `/api/portal/overview`, `/api/portal/providers`, `/api/portal/appointment-types`.
+- `services/portal/checkin_router.py` — `POST /api/portal/appointments/{id}/check-in`. Day-of-visit check, flips appointment status → `arrived`, stamps `arrived_via=portal`.
+- `services/portal/questionnaire_router.py` — `/api/portal/questionnaires`, `/{id}`, `/{id}/submit`. Submit rejects empty/missing required answers with 422 (defense against the default-to-zero clinical hazard) and persists a row into the existing `outcome_entries` collection so the Phase-7 trends UI picks it up automatically.
+- `services/kiosk/__init__.py` — **public** `POST /api/kiosk/check-in {last_name, date_of_birth}`. Resolves tenant via `X-Kiosk-Tenant` header (defaults to `default`). Matches on DOB + case-insensitive last-name, pulls today's scheduled appointment, flips to `arrived` / `arrived_via=kiosk`.
+- `services/scheduling/booking_requests.py` — staff router at `/api/booking-requests` with `list / get / approve / decline`. On approve we insert an `appointments` row directly and fire an SMS confirmation (log-only when Twilio is absent). Approve supports a staff-supplied `start_time` override that differs from the patient's preferred slots.
+- `services/questionnaires/templates.py` — code-first template registry for **NPRS, ODI, NDI, PSFS** with pure scoring functions (`score_answers`). ODI uses the raw/max percentage formula with standard disability bands (0-20 minimal → 80-100 bed-bound); NDI mirrors the same math; NPRS returns the raw 0-10 score with the standard clinical bands; PSFS averages rated activities to a 0-10 figure.
+- `services/questionnaires/router.py` — staff `/api/questionnaires/{templates,assign,assignments}`. Assign auto-fires an SMS invite to the patient (log-only fallback) with a `/portal/questionnaires/{id}` deep link.
+- `server.py` wiring — 9 new `include_router` calls.
+
+**Shipped — frontend**
+
+- `pages/Kiosk.jsx` — public `/kiosk` tablet flow (last-name + DOB, auto-reset 10 s after success).
+- `portal/PortalLogin.jsx` — `/portal/login` two-step phone → OTP flow. In log-only mode the dev OTP is surfaced via a toast and inline hint so demo/testing works without Twilio keys.
+- `portal/PortalShell.jsx` — added Book, Questionnaires nav items.
+- `portal/PortalOverview.jsx` — rewritten: upcoming appointments (with day-of Check-in CTA), pending questionnaires, pending booking requests. Overview window now shows the next **10** upcoming appointments regardless of distance so a freshly-approved booking is immediately visible.
+- `portal/PortalBook.jsx` — booking-request form (provider + visit type dropdowns, reason, 1–3 preferred `datetime-local` slots, notes). Submit → `/api/portal/booking-requests`.
+- `portal/PortalQuestionnaires.jsx` + `PortalQuestionnaireDetail.jsx` — list + generic survey renderer handling `scale` (number-button grid + slider, one testid per value), `choice` (ODI/NDI 6-choice radios), and `activity` (PSFS name + rating). Submit button is disabled until every non-optional item has an answer; backend mirrors the same validation and returns 422 on incomplete submissions.
+- `pages/settings/SmsSettings.jsx` — admin `/settings/sms` with credentials form (Account SID, Auth Token, Messaging Service SID or `from_number`), enabled toggle, test-send card (status=`logged` in log-only mode), and a recent-outbound log. Banner reminds admins the system ships in log-only mode until keys are saved and enabled.
+- `pages/scheduling/BookingRequestsQueue.jsx` — staff queue at `/scheduling/booking-requests` with status filter chips, an Approve dialog (start_time + duration + optional patient note), and a Decline prompt.
+- `pages/patients/PatientQuestionnairesCard.jsx` — on the patient chart. Assign dialog with radio list of the 4 templates + send-SMS toggle. Completed rows show score + interpretation.
+- `App.js` routes — `/portal/login`, `/kiosk`, `/portal/book`, `/portal/questionnaires`, `/portal/questionnaires/:id`, `/scheduling/booking-requests`, `/settings/sms`.
+- `components/layout/navConfig.js` — sidebar items for **Booking Requests** and **SMS (Twilio)** (admin).
+
+**Verification**
+
+- 15/15 backend pytest in `tests/test_patient_intake_bundle.py` green (SMS log-only fallback, OTP request/verify+`/auth/me` round-trip, booking request create/approve/decline, kiosk 404 paths, questionnaire assign/submit/scoring, ODI math, empty-submission rejection).
+- Testing agent iter 75 → found one CRITICAL (`/auth/me` 500 for portal users because `@portal.local` hit Pydantic v2's reserved-TLD block). Fix in iter 76: use `@portal.ccms.app` + migrate 18 stale rows. Iter 76 returned green with `retest_needed=false`; two polish recs (overview window, scale testids, empty-submit validation) were also applied.
+- No regression across the 110-test cross-phase suite (billing phase 3/4/5/6 + checkout hooks + Helcim integration + scheduler + dashboard + intake bundle).
+
+**Twilio**
+
+- Runs in **log-only mode** out of the box. Every OTP / booking confirmation / questionnaire invite is persisted to `sms_outbound_log` with `provider=log-only, status=logged`. No real Twilio calls until `PUT /api/sms/settings {account_sid, auth_token, messaging_service_sid|from_number, enabled:true}` is performed via `/settings/sms`.
+- Webhook lives at `POST /api/sms/webhook/{tenant_id}` — verifies `X-Twilio-Signature` against the tenant's stored auth token.
+
+**Files added**
+
+- `/app/backend/services/sms/{__init__,credentials,client,otp,webhook_verify,router}.py`
+- `/app/backend/services/portal/{__init__,auth_router,booking_router,checkin_router,questionnaire_router}.py`
+- `/app/backend/services/kiosk/{__init__,router}.py`
+- `/app/backend/services/questionnaires/{__init__,templates,router}.py`
+- `/app/backend/services/scheduling/booking_requests.py`
+- `/app/backend/tests/test_patient_intake_bundle.py`
+- `/app/frontend/src/api/{sms,portal}.js`
+- `/app/frontend/src/portal/{PortalLogin,PortalBook,PortalQuestionnaires,PortalQuestionnaireDetail}.jsx`
+- `/app/frontend/src/pages/{Kiosk,settings/SmsSettings,scheduling/BookingRequestsQueue,patients/PatientQuestionnairesCard}.jsx`
+
+**Files changed**
+
+- `/app/backend/server.py` — include 9 new routers.
+- `/app/frontend/src/App.js` — new routes.
+- `/app/frontend/src/portal/PortalOverview.jsx` — full rewrite.
+- `/app/frontend/src/portal/PortalShell.jsx` — extra nav links.
+- `/app/frontend/src/components/layout/navConfig.js` — Booking Requests + SMS settings sidebar items.
+- `/app/frontend/src/pages/PatientDetail.jsx` — mounts PatientQuestionnairesCard.
+
+**Known follow-ups (backlog)**
+
+- Twilio credentials not yet pasted — `/settings/sms` ready when the operator has them.
+- `/auth/me` response-model `email` still typed `EmailStr`; future synthetic-email introductions (bots, imports) could hit the same reserved-TLD trap. Worth switching to `Optional[str]` when touched next.
+- NPRS scale renders both number-button grid and slider; pick one after UAT feedback.
+- Scheduling router writes through `get_db_write()` while booking approve writes through `tenant_db()` — currently the same DB in single-tenant deployments, but add a shared helper before any multi-DB tenant rollout.
+- Two-way SMS inbox screen (`/communications/sms`) exists on the backend (threads + messages routes) but the staff UI for it is not yet built.
+
+---
+
+## 4w. Helcim engagement UX + test-suite stabilisation (2026-02-15)
+
+**User request:** "Wire a small billing-failures dashboard panel … P1 — Treatment plan editor → 'Link auto-pay' … P1 — Per-tenant Statement auto-pay toggle …" (+ accepted `a + b`: run E2E testing on new features **and** fix the 4 pre-existing billing-phase test failures before finish).
+
+**Shipped**
+
+Frontend:
+- `pages/billing/helcim/BillingFailuresPanel.jsx` — admin-dashboard panel listing schedules with `status=failed` or `consecutive_failures>=1`, Retry / Resolve CTAs, fail-soft empty state. Mounted in `pages/Dashboard.jsx`.
+- `pages/settings/PaymentsSettings.jsx` — per-tenant *Statement auto-pay* toggle, persists to `GET/PUT /api/billing/helcim/settings`, survives refresh, only rendered when `settings.configured=true`.
+- `pages/clinical/TreatmentPlanEditor.jsx` — *Link auto-pay* button (`plan-link-autopay-btn`) opens `LinkAutoPayDialog` to attach a saved-card payment schedule to the plan. Missing imports `Sparkles` (lucide-react) and `LinkAutoPayDialog` were surfaced by the testing agent and patched.
+- `pages/billing/helcim/LinkAutoPayDialog.jsx` — no-card warning + "Open patient ledger" CTA; otherwise posts `POST /api/billing/helcim/schedules` with `kind=treatment_plan`.
+
+Backend:
+- `services/billing/helcim/router.py` — added 5 dashboard/auto-pay routes:
+  - `GET /billing-failures`, `POST /billing-failures/{schedule_id}/resolve`
+  - `GET /statement-autopay/settings`, `PUT /statement-autopay/settings`
+  - `POST /statement-autopay/patients/{patient_id}` (opt-in wiring)
+- `services/billing/helcim/statement_autopay.py` — scheduler helper gated by tenant toggle + saved-card presence.
+
+**Verification (testing agent iter 74)**
+- 9/9 `test_helcim_dashboard_autopay.py` pass; 52/52 Helcim suite green; 128/128 passing across the billing-phase + checkout-hooks + Helcim test surface.
+- Frontend E2E: dashboard panel, settings toggle round-trip after reload, treatment-plan dialog all verified. Ledger regression clean.
+- `retest_needed: false`, `main_agent_can_self_test: true`.
+
+**Pre-existing test drift — fixed (2026-02-15)**
+
+| Test | Root cause | Fix |
+|---|---|---|
+| `test_billing_phase3.py::TestScrubberRules::test_run_rules_clean_claim` | Scrubber gained Phase-4 `rule_patient_dob_required` + `rule_patient_gender_recommended`; the Phase-3 fixture patient had no `date_of_birth` / `gender`. | Added `date_of_birth` + `gender` to the fixture patient dict. |
+| `test_billing_phase5.py::TestAgingMath::test_statement_body_deterministic` | `render_statement_body` was upgraded to a tabular layout; the old `TOTAL DUE: $X` / `balance $45.00` strings no longer exist. | Updated assertions to the new `AMOUNT DUE FROM PATIENT: $65.00` line + tabular `$    45.00` / `$    20.00` balance columns. |
+| `test_billing_phase6.py::TestDeliveryEndpoints::test_email_mock_path_when_no_key` | The `/send` endpoint now returns `delivery_id` (the `message_id` lives on the persisted `statement_deliveries` row, not in the response). | Asserted `body["delivery_id"]` instead of `body["message_id"]`. |
+| `test_checkout_hooks.py::test_checkout_hook_creates_draft_invoice_stub` | `asyncio.get_event_loop()` raises in Python 3.12+ when there is no current loop in the main thread. | Switched to `asyncio.new_event_loop().run_until_complete(...)`. |
+
+**Files changed**
+- `/app/backend/tests/test_billing_phase3.py`
+- `/app/backend/tests/test_billing_phase5.py`
+- `/app/backend/tests/test_billing_phase6.py`
+- `/app/backend/tests/test_checkout_hooks.py`
+- `/app/frontend/src/pages/clinical/TreatmentPlanEditor.jsx` (imports — testing agent)
+- `/app/memory/test_credentials.md` (re-seeded)
+
+**Known follow-ups (deferred, captured from iter 74)**
+- `POST /api/billing/helcim/cards` returns 422 on the straightforward `{patient_id, helcim_card_token, brand, last4, cardholder, exp_month, exp_year, is_default, label}` payload — schema wants one or more additional fields. Not blocking, worth a quick OpenAPI audit.
+- Frontend could benefit from `react/jsx-no-undef` enforcement in ESLint to catch the class of regression that cost us the two missing imports on TreatmentPlanEditor.
+
+---
+
+## 4v. Recurring auto-charge engine — Helcim Customer Vault (2026-05-02)
+
+**User request:** "Recurring auto-charge engine on top of Customer Vault tokens (treatment plans, payment plans, monthly statements)." Chose Sprint 1 + Sprint 2 in one shot.
+
+**Shipped — backend**
+
+`services/billing/helcim/card_vault.py` — per-patient encrypted card storage:
+- `patient_card_tokens` collection — `helcim_card_token_encrypted` + `helcim_customer_code_encrypted` via `core.crypto.encrypt_text`
+- Public surface (`SavedCardPublic`) exposes only `brand/last4/expiry/cardholder/is_default` — never the token
+- `is_default` enforced single-per-patient on every save (auto-unsets prior default)
+- `delete_card` is soft-delete (`deleted_at` timestamp)
+
+`services/billing/helcim/scheduler.py` — recurring engine:
+- `payment_schedules` + `payment_schedule_runs` collections
+- `ScheduleKind = payment_plan | treatment_plan | statement_autopay`
+- `Frequency = weekly | biweekly | monthly`
+- `_split_amount(total, n)` — even cents per charge with the final charge absorbing rounding ($100/3 → 33.33 + 33.33 + 33.34)
+- `_advance(prev, frequency)` — calendar-correct cadence advancement (clamp to day≤28 for monthly to avoid Feb-30 errors)
+- `charge_one_schedule(tenant_id, sched)` — pure async helper used by the worker AND the admin run-now endpoint:
+  - Approved → advance `next_charge_at`, increment `charges_completed`, mark `completed` if final
+  - Declined/error → increment `consecutive_failures`, schedule retry with `RETRY_BACKOFF_DAYS=(1,3,7)`, after `MAX_FAILED_ATTEMPTS=3` mark `failed` + post `notifications` row tagged `category=billing severity=warning`
+- `process_due_schedules(tenant_id)` — finds rows where `next_charge_at <= now` AND `status=active`, fans out to `charge_one_schedule`
+
+`services/billing/helcim/worker.py` — asyncio background loop:
+- Started in `app.on_event("startup")`, cancelled cleanly on shutdown
+- Default 60s tick interval, configurable via `HELCIM_SCHEDULER_INTERVAL_SECONDS` (1-3600)
+- Enumerates non-archived tenants from the shared admin DB and ticks each
+- Best-effort: per-tenant exceptions are logged, the next tick still fires
+
+`services/billing/helcim/router.py` — appended 9 routes:
+- `GET /cards/{patient_id}` — list saved cards
+- `POST /cards` — manual save (already-tokenised flow)
+- `DELETE /cards/{token_id}` — soft-delete
+- `POST /cards/charge` — one-off charge against a saved token id (`payment.collect`)
+- `POST /schedules` — create payment plan / treatment plan / statement-autopay
+- `GET /schedules` — list with `patient_id` + `status_filter` query params
+- `PATCH /schedules/{sid}` — patch label/notes/next_charge_at
+- `POST /schedules/{sid}/status` — pause/resume/cancel
+- `GET /schedules/{sid}/runs` — full mutation trail
+- `POST /schedules/{sid}/run-now` — admin/staff-trigger immediate charge (also resets `failed` for one retry)
+- `POST /scheduler/tick` — admin-only sweep (mirrors what the worker does for one tenant)
+
+`/checkout/capture` — extended with `save_card` + `save_card_brand/last4/expiry/cardholder` fields. When `save_card=true` AND the session has a `patient_id` AND Helcim returned a `card_token`, a vault row is created automatically.
+
+**Shipped — frontend**
+
+- `pages/billing/helcim/SavedCardsCard.jsx` — saved-cards list with brand/last4/default-badge/cardholder/expiry/saved-date, "Charge" button (opens `ChargeSavedCardDialog` for one-off charges), "Delete" button (with confirm). Empty state copy: "No saved cards yet. Take a payment via Helcim and tick 'Save card on file' to register one."
+- `pages/billing/helcim/PaymentPlansCard.jsx` — schedules list with status chips, kind chips, progress (e.g. "0/4 charged · $50.00 monthly · Visa ****4242 · next 2026-06-01"), action buttons (Charge now / Pause / Resume / Cancel / Retry / History). New plan dialog with live summary "N-1 × per + 1 × last = total". `plan-add-btn` disabled when no saved card exists.
+- `pages/billing/helcim/HelcimPayDialog.jsx` — added "Save card on file for future charges" checkbox under the awaiting phase. State propagated to `/checkout/capture` via the `save_card` field. Brand/last4/expiry parsed out of the Helcim postMessage payload.
+- `pages/billing/PatientLedgerPage.jsx` — wired both new cards in a side-by-side grid under the existing `PatientLedgerCard`.
+
+**Verification**
+- 43/43 backend pytest passing across `test_helcim_scheduler.py` (11) + `test_helcim_integration.py` (14) + `test_helcim_live_endpoints.py` (11) + 7 new tests added by the testing agent in `test_helcim_scheduler_extra.py`. Covers: vault CRUD with encryption, single-default semantics, soft-delete, payment plan amount math ($100/3 + 99c/3 edge case), schedule lifecycle, retry-with-backoff (3 declines → failed + notification), credentials-missing path, /scheduler/tick due-only filter, run-now rejects non-runnable status, capture+save_card persists vault row.
+- RBAC verified: doctor (no `payment.collect`) → 403 on cards listing/create, schedules create. `/scheduler/tick` is admin-only.
+- Background worker confirmed running via backend log line `scheduler.worker started (interval=60s)`.
+- Testing agent iter 73 — 0 critical, 0 minor, 0 UI/integration/design issues.
+- Lint clean (eslint + ruff).
+
+**Files added**
+- `/app/backend/services/billing/helcim/card_vault.py`
+- `/app/backend/services/billing/helcim/scheduler.py`
+- `/app/backend/services/billing/helcim/worker.py`
+- `/app/backend/tests/test_helcim_scheduler.py` (11 tests)
+- `/app/backend/tests/test_helcim_scheduler_extra.py` (7 tests, added by testing agent)
+- `/app/frontend/src/pages/billing/helcim/SavedCardsCard.jsx`
+- `/app/frontend/src/pages/billing/helcim/PaymentPlansCard.jsx`
+
+**Files changed**
+- `/app/backend/server.py` — start/stop scheduler worker
+- `/app/backend/services/billing/helcim/router.py` — appended 9 routes; extended `/checkout/capture` to honour `save_card`
+- `/app/frontend/src/pages/billing/helcim/api.js` — added 11 client wrappers
+- `/app/frontend/src/pages/billing/helcim/HelcimPayDialog.jsx` — Save card checkbox
+- `/app/frontend/src/pages/billing/PatientLedgerPage.jsx` — wired new cards
+- `/app/memory/CCMS_Features.xlsx` — appended rows 135-137 ✅ Shipped (engine + payment plan UX + saved cards UI). Summary: 121→124 shipped, 7 partial, 5 planned.
+
+
+## 4u. PostPaymentDialog → HelcimPay wiring (2026-05-02)
+
+**User accepted the engagement-angle suggestion** to wire the HelcimPay modal into the existing payment-collection flow so the front-desk "Take payment" button actually opens the Helcim iframe on day one.
+
+**Shipped**
+- `pages/billing/PostPaymentDialog.jsx` — when method is `card_present` or `card_not_present`, the "Post" button is replaced with a "Charge $X via Helcim" button (testid `pp-charge-helcim`). Clicking it opens `HelcimPayDialog`. On success, the `helcim:{transactionId}` reference auto-fills and the local payment row is posted via the existing `createPayment()` path. On decline / cancel, the dialog closes and the user can try again or pick a different method.
+- The dialog description was updated to reflect the new behaviour: "Cash & checks post as captured. Card methods route through HelcimPay — the gateway transaction id auto-fills the reference."
+- Smoke-tested end-to-end on `/billing/invoices/{id}` → "Post Payment" → method "Card (in-person)" → "Charge $30.00 via Helcim" → HelcimPay dialog mounts and gracefully shows the "Helcim is not configured" error from the test creds (real creds will pop the actual iframe).
+
+**Side-fix included** — `services/billing/models.py:InvoiceLine` now coerces `code_type` to lower-case via a `field_validator` to tolerate legacy Mongo rows with `'CPT'` (uppercase). Without this, `GET /api/billing/invoices/{id}/lines` returned a `ResponseValidationError` 500 and prevented `InvoiceDetail.jsx` from loading at all. Pre-existing data integrity bug surfaced while testing — fixed with a 3-line additive change.
+
+**Verification**
+- 25/25 Helcim backend tests still passing.
+- Lint clean (eslint + ruff).
+- Smoke: from invoice detail → Post Payment → Card (in-person) → "Charge via Helcim" button visible → click opens HelcimPay dialog → unconfigured-creds error displayed.
+
+**Files changed**
+- `/app/frontend/src/pages/billing/PostPaymentDialog.jsx`
+- `/app/backend/services/billing/models.py`
+
+
+## 4t. Helcim payment processor — per-tenant integration (2026-05-02)
+
+**User request:** "we don't want to use stripe for payments we want to use Helcim for payments." Per-tenant credentials are a hard requirement — each chiropractic office uses their own Helcim merchant account. Specifically: HelcimPay.js hosted checkout + Helcim Customer Vault for saved cards + Helcim refund API + Helcim webhooks.
+
+**Shipped**
+
+Backend (`/app/backend/services/billing/helcim/`)
+- `__init__.py` — module-level constants (`HELCIM_API_BASE = "https://api.helcim.com/v2"`, `HELCIM_PAY_INIT_URL`, `HELCIM_PAY_SCRIPT_URL`).
+- `credentials.py` — per-tenant encrypted credential storage in `helcim_credentials` collection. AES-256 via `core.crypto.encrypt_text/decrypt_text`. Public surface (`HelcimCredentialsPublic`) only ever exposes `api_token_last4` + `account_id` + `updated_at` + `last_test_outcome` — plaintext token never crosses the API boundary.
+- `client.py` — `HelcimClient` async httpx wrapper with `connection_test()`, `initialize_helcim_pay()`, `purchase_with_card_token()`, `refund()`. Adds `idempotency-key` header on every payment-mutating request.
+- `webhook_verify.py` — HMAC-SHA256 signature verifier with 5-minute skew tolerance and multi-signature support (Helcim may send comma-separated rotating signatures during key rollover).
+- `router.py` — 9 routes mounted at `/api/billing/helcim/*`:
+  - `GET/PUT/DELETE /settings` — admin-only credential management.
+  - `POST /settings/test` — admin connection test (calls Helcim `/connection-test`).
+  - `POST /checkout/initialize` — creates a HelcimPay session token + persists `helcim_sessions` row.
+  - `POST /checkout/capture` — records the postMessage result from the iframe (idempotent).
+  - `POST /charges/saved-card` — charges a stored `card_token` (Customer Vault).
+  - `POST /refunds` — full or partial refund using Helcim transactionId.
+  - `POST /webhook/{tenant_id}` — verified webhook receiver (HMAC + dedupe via `webhook_id`).
+  - `GET /webhook-log` — admin diagnostic of the last 50 webhook events.
+
+Frontend
+- `pages/settings/PaymentsSettings.jsx` — admin Settings page at `/settings/payments`. Two states: unconfigured (CTA `Configure Helcim`) → configured (`Test connection` / `Update credentials` / `Delete` actions, masked last4, TEST MODE badge, webhook URL with copy button, webhook log table).
+- `pages/billing/helcim/api.js` — typed client wrapper for all 9 endpoints.
+- `pages/billing/helcim/HelcimPayDialog.jsx` — modal that loads `helcim-pay.js`, listens for the postMessage `helcim-pay-js-success` event, posts the result back to `/checkout/capture`. PCI scope minimal — card data never touches our origin.
+- `App.js` — route added at `/settings/payments` with `roles: ["admin"]` guard.
+- `components/layout/navConfig.js` — nav link "Payments (Helcim)" under Settings (admin-only).
+
+**Permissions**
+- Settings management: `require_role("admin")` (matches the pattern used by `ClinicSettings.jsx` and `ClearinghouseSettingsPage.jsx`).
+- Charge / save-card: `require_permission("payment", "collect")` — billing roles.
+- Refund: `require_permission("payment", "refund")` — admin + billing manager only, MFA-gated by the existing policy catalog.
+
+**Verification**
+- `pytest test_helcim_integration.py` — **14/14 passing**: credential round-trip + masking + admin-only access + webhook signature (valid/tamper/skew/missing/dedupe) + mocked HelcimClient calls (`connection_test`, `purchase_with_card_token`, `refund` partial amount with idempotency-key assertion).
+- `pytest test_helcim_live_endpoints.py` — **11/11 passing** (added by testing agent iter 72): admin enforcement, encryption-at-rest verification (reads raw Mongo doc, confirms `api_token_encrypted` field is not plaintext), 400/502 error-path coverage on `/settings/test` + `/checkout/initialize` (Helcim returns Unauthorized for mock tokens — verified we surface 502 not 500).
+- Full suite: **62/62 passing** (helcim + compliance-ops + custom-roles + Riverbend sanitation).
+- Frontend Playwright (testing agent iter 72) — full UI flow validated: unconfigured → form → configured → TEST MODE badge → webhook URL → webhook log → doctor 403 on settings + nav link hidden.
+- ESLint clean. ruff clean.
+
+**Files added**
+- `/app/backend/services/billing/helcim/__init__.py`
+- `/app/backend/services/billing/helcim/credentials.py`
+- `/app/backend/services/billing/helcim/client.py`
+- `/app/backend/services/billing/helcim/webhook_verify.py`
+- `/app/backend/services/billing/helcim/router.py`
+- `/app/backend/tests/test_helcim_integration.py` (14 tests)
+- `/app/backend/tests/test_helcim_live_endpoints.py` (11 tests, added by testing agent)
+- `/app/frontend/src/pages/billing/helcim/api.js`
+- `/app/frontend/src/pages/billing/helcim/HelcimPayDialog.jsx`
+- `/app/frontend/src/pages/settings/PaymentsSettings.jsx`
+
+**Files changed**
+- `/app/backend/server.py` — registered `billing_helcim_router`.
+- `/app/frontend/src/App.js` — added `/settings/payments` route.
+- `/app/frontend/src/components/layout/navConfig.js` — added "Payments (Helcim)" nav link.
+- `/app/memory/CCMS_Features.xlsx` — flipped rows 61, 62, 70, 112, 113 to ✅ Shipped (5 features). Summary: 116→121 shipped, 9→7 partial, 8→5 planned.
+
+**Known gap (not a bug)**
+- Helcim sandbox keys are not configured for any tenant — endpoints calling api.helcim.com will return 502 with a clean Helcim Unauthorized error until the user enters real merchant credentials. This is by design.
+- HelcimPay.js iframe cannot be exercised in headless tests without a real checkout token. The modal mounts and shows "Preparing secure session…" state correctly; the success/decline branches are covered by code review only until live keys are added.
+
+**Closes:** Stripe → Helcim swap (rows 112/113), unblocks "Recurring/saved payment methods" (row 62 via Customer Vault), and finishes "Refund/void tracking" (row 70 via `/refunds` route).
+
+
+## 4s. ISO 27001 + SOC 2 control plane — full register UI (2026-05-02)
+
+**User request:** Implement Core Platform & Architecture compliance features — ISO 27001 alignment (policy + evidence + risk register) + SOC 2 certifiable controls (audit log, access review, incident register).
+
+**Status going in:** Backend `compliance_ops` module was already complete (8 entity types, full CRUD + status-change + field-patch + dashboard aggregation, idempotent seeds, tenant-scoped, audited, SHA-256 tamper-evident on evidence). The legacy `Compliance.jsx` page only rendered `/api/compliance/overview` (control inventory + env hardening) and never touched the new `/api/compliance-ops/*` registers. Closing that gap.
+
+**Shipped**
+- `pages/Compliance.jsx` — rewritten as a 9-tab control plane (Dashboard, Controls, Policies, Risks, Evidence, Incidents, Access reviews, Vendors, Audit trail). 50 lines of pure composition.
+- `pages/compliance/api.js` — central `compliance-ops/*` client (16 helpers): dashboard, list+create per entity, status-change, field-patch, raw-doc-fetch, evidence legal-hold toggle.
+- `pages/compliance/common.jsx` — shared primitives:
+  - `StatusChip` mapped across 24 status states (controls/risks/policies/incidents/vendors/access reviews) with tone+icon
+  - `SeverityChip` (low/medium/high/critical)
+  - `ScoreChip` (risk inherent score color-graded: 1-3 success, 4-8 info, 9-14 warning, 15-25 danger)
+  - `HistoryDialog` — fetches raw doc via `/compliance-ops/{type}/{id}` and displays the tamper-evident mutation trail
+  - `EmptyState`, `SectionHeader`, `todayIso`, `inDaysIso`, `isOverdue`
+- `pages/compliance/DashboardPanel.jsx` — 8 KPI tiles (controls / open risks / open incidents / overdue policies / BAA missing / access reviews / privacy requests / evidence) with tone-aware color when thresholds are breached.
+- `pages/compliance/registers/PoliciesRegister.jsx` — list + filter (all/draft/approved/retired), `New policy` dialog, status transitions (draft→approved→retired), overdue review highlighting.
+- `pages/compliance/registers/RisksRegister.jsx` — list + filter, `New risk` dialog with live inherent-score chip preview (likelihood × impact), status transitions, treatment label.
+- `pages/compliance/registers/EvidenceRegister.jsx` — list + filter by type, `Capture evidence` dialog (sealed SHA-256 on creation), legal-hold toggle (reauth-gated), tamper-evident hint.
+- `pages/compliance/registers/IncidentsRegister.jsx` — severity + status chips, IR workflow transitions (triage→investigating→contained→eradicated→recovered→closed), `Log incident` dialog (reauth-gated), notification-required indicator.
+- `pages/compliance/registers/VendorsRegister.jsx` — BAA badge logic (Required + Executed → green, Required + Missing → red, Not required → N/A), next-review-date overdue styling, `New vendor` dialog with data categories chips.
+- `pages/compliance/registers/AccessReviewsRegister.jsx` — schedule + complete flow (patch decision then status→complete in one click), filter for overdue/scheduled/in-progress/complete.
+- `pages/compliance/registers/ControlsRegister.jsx` — formal control register with framework filter (HIPAA / SOC2 / ISO27001 / CCPA), shows framework chips with refs in tooltip, status filter.
+- `pages/compliance/registers/AuditTrail.jsx` — last 50 compliance-relevant events from `/api/audit-logs` (filtered to `compliance.*`, `auth.*`, `security.*`, PHI access). Link out to full audit page.
+
+**Backend fixes (uncovered by testing agent iter 70 → fixed iter 71)**
+- `services/compliance_ops/router.py` — `list_incidents` was incorrectly gated by `reporting.export` permission (forced reauth on every Incidents tab open). Downgraded to `reporting.read` to match the other 8 list routes; only the create + status-change routes keep `reporting.export`.
+- `services/compliance_ops/__init__.py` — `IncidentPublic.owner_user_id` and `reported_at` are now `Optional[str] = None`. Without the default the seeded "Replica lag spike on 2026-02-15" row 500'd on serialization.
+- `services/compliance_ops/seed.py` — incidents seed now passes `defaults={"owner_user_id": None}` so future re-seeds are explicit about the field.
+
+**Test fixture pollution fix**
+- `tests/test_custom_roles_phase2.py` — added `_purge_test_role_leaks` autouse module fixture that sweeps any custom role whose name matches a known test prefix (`test role`, `inuse test`, `counttest`, `delete test`, etc.) at session start AND end. Previously a partial run could leave a test role attached to admin and shrink the admin's effective permissions on subsequent runs (the recurring blocker flagged in iter 67/69 handoff notes). Cleaned on this run + verified no false positives on production custom roles.
+
+**Verification**
+- `pytest test_compliance_ops_ui_backend.py` — **8/8 passing**: dashboard shape, policy create + status lifecycle, risk inherent_score math (likelihood*impact), evidence SHA-256 sealing + legal-hold reauth toggle, access review complete pipeline, incident create reauth path, vendor BAA flag logic.
+- `pytest test_custom_roles_phase2.py` — **14/14 passing** (autouse fixture confirmed cleaning leaked roles).
+- `pytest test_riverbend_demo_sanitation.py` — **26/26 passing** (no regressions).
+- Full suite touched: **48/48 passing**.
+- Frontend Playwright (testing agent iter 70 + iter 71) — 9/9 tabs functional, 0 ui_bugs, 0 integration_issues, 0 design_issues. Login as Sunrise group-admin shows 12 controls, 7 open risks, 8 incidents, 3 policies, 8 evidence rows, 4 access reviews, 4 vendors, working KPI dashboard.
+- ESLint clean across all new files.
+
+**Files added**
+- `/app/frontend/src/pages/compliance/api.js`
+- `/app/frontend/src/pages/compliance/common.jsx`
+- `/app/frontend/src/pages/compliance/DashboardPanel.jsx`
+- `/app/frontend/src/pages/compliance/registers/PoliciesRegister.jsx`
+- `/app/frontend/src/pages/compliance/registers/RisksRegister.jsx`
+- `/app/frontend/src/pages/compliance/registers/EvidenceRegister.jsx`
+- `/app/frontend/src/pages/compliance/registers/IncidentsRegister.jsx`
+- `/app/frontend/src/pages/compliance/registers/VendorsRegister.jsx`
+- `/app/frontend/src/pages/compliance/registers/AccessReviewsRegister.jsx`
+- `/app/frontend/src/pages/compliance/registers/ControlsRegister.jsx`
+- `/app/frontend/src/pages/compliance/registers/AuditTrail.jsx`
+- `/app/backend/tests/test_compliance_ops_ui_backend.py`
+
+**Files changed**
+- `/app/frontend/src/pages/Compliance.jsx` — replaced legacy readiness dashboard with 9-tab control plane.
+- `/app/backend/services/compliance_ops/router.py` — fixed `list_incidents` permission.
+- `/app/backend/services/compliance_ops/__init__.py` — Optional defaults on IncidentPublic.
+- `/app/backend/services/compliance_ops/seed.py` — incidents seed passes owner_user_id default.
+- `/app/backend/tests/test_custom_roles_phase2.py` — autouse role cleanup fixture.
+
+**Closes:** ISO 27001 (A.5 policies, A.6 organisation, A.8 asset / vendor management, A.16 incident management, A.18 compliance) + SOC 2 (CC4.1 audit logs, CC6.x access reviews, CC7.3/4 incident response, CC9 vendor management) UI gap. Application-layer evidence is now operator-driven; the seeded 8 entity types provide a turnkey starting register that maps every existing control to its HIPAA / SOC2 / ISO27001 / CCPA citations.
+
+
+## 4r. Denial Classifier — tenant-managed CARC overrides (2026-05-02)
+
+**User request:** On every `Uncategorised` row in the denial heat map, let operators teach the system new codes one-click, and keep the dictionary as a tenant-wide asset.
+
+**Shipped**
+- `services/reports/denial_classifications.py` — new tenant-scoped collection `denial_code_classifications` with CRUD:
+  - `GET /api/reports/denial-classifications` — catalog: built-in map + tenant overrides + known category vocabulary.
+  - `POST /api/reports/denial-classifications` — upsert (idempotent on `code`).
+  - `DELETE /api/reports/denial-classifications/{id}` — remove.
+  - Shared `classify_denial_code(code, tenant_overrides)` with lookup order tenant → built-in → prefix-bucket → `Uncategorised`.
+  - Permission: `reporting.read_financial` (audit trail captures every upsert/delete so no need to gate writes behind MFA for a shared dictionary).
+  - Audit events: `reports.denial_classification.upserted`, `reports.denial_classification.removed`.
+- `services/reports/builtin_analytics.py` — heat-map runner now loads tenant overrides once per run, applies them both to the `claims`-fallback path AND the `denial_work_items` path (when the work-item's category is blank). Local duplicate classifier removed.
+- Router wiring — `reports_denial_class_router` mounted BEFORE `reports_router` so the `/reports/{name}` catch-all doesn't shadow `/reports/denial-classifications`.
+- `pages/reports/DenialClassifierDialog.jsx` — NEW modal:
+  - Code input (auto-uppercases, 16-char pattern guard).
+  - Category input with `<datalist>` autocomplete seeded from known categories (built-ins + tenant).
+  - "Currently → X (built-in/tenant)" helper line so users see the status quo before overriding.
+  - Existing-mappings manager — inline list with one-click delete.
+  - Testids: `denial-classifier-dialog`, `denial-classifier-code`, `denial-classifier-category`, `denial-classifier-current-mapping`, `denial-classifier-existing`, `denial-classifier-save-btn`, `denial-classifier-cancel-btn`, `denial-classifier-remove-{id}`.
+- `pages/reports/ReportViewer.jsx` `HeatMapPanel`:
+  - "Manage classifier" button in the heat-map header (visible only on `denial_heat_map`).
+  - Inline `Tag` button on any `Uncategorised` row in the heat-map axis — click routes the first un-classified code straight into the dialog.
+  - Report auto-reloads after save via a `reloadNonce` counter.
+
+**Verification**
+- 11/11 tests pass (`test_reports_denial_classifier.py`) + 8/8 (`test_reports_analytics.py`) = **19/19**.
+- UI smoke: opened /reports/denial_heat_map, clicked Manage classifier, typed `ZZ-777` + `Payer education needed`, saved, toast fired, dialog closed, heat map auto-refreshed, DELETE cleanup returned 204.
+- Full-trip integration test registers an override, seeds a claim with the new code, runs the heat map, and asserts the row lands in the new category.
+
+**Files changed**
+- NEW `/app/backend/services/reports/denial_classifications.py`
+- `/app/backend/services/reports/builtin_analytics.py` — uses shared classifier + tenant overrides.
+- `/app/backend/server.py` — mounts `reports_denial_class_router` before `reports_router`.
+- NEW `/app/backend/tests/test_reports_denial_classifier.py` (11 tests).
+- NEW `/app/frontend/src/pages/reports/DenialClassifierDialog.jsx`
+- `/app/frontend/src/pages/reports/ReportViewer.jsx` — "Categorise" affordance + Manage classifier button + reload nonce.
+- `/app/frontend/src/pages/reports/reportsApi.js` — 3 new helpers.
+- `/app/memory/PRD.md` (§4r)
+
+
+## 4q. Reports Analytics — Payer Mix + Denial Heat Map (2026-05-02)
+
+**User request:** Close the three "partial" gaps in Reporting & Analytics: payer analysis, custom reports landing/viewer, denial heat map.
+
+**Shipped**
+- `services/reports/builtin_analytics.py` — 2 new reports:
+  - **Payer Mix** (`payer_mix`, Financial, reporting.read_financial) — per-payer rollup of claim count, paid count, denied count, billed / paid / outstanding cents, denial-rate %, collection-rate %, avg days-to-pay, denial amount. Mongo aggregation + secondary denial-sidecar join + payer-catalog lookup, sub-second on thousands of claims. Filters: service-date range, payer_type. Totals strip in `aggregates.totals`.
+  - **Denial Heat Map** (`denial_heat_map`, Financial) — 2-D grid `denial_category × service_month`. Data source precedence: `denial_work_items` (when triaged) with fallback to `claims` where `status` is denied/partially_paid/appealed OR `last_denial_code` is set. Ships `aggregates.matrix = {rows, cols, cells, max_count, max_amount_cents}` + flat detail rows `(month, category, count, amount_cents, open, resolved, codes)`. Built-in denial-code classifier maps CARC codes (CO-11, CO-16, CO-50, CO-97, CO-197, PR-*, OA-*, PI-*) to readable buckets.
+- `services/reports/__init__.py` — imports `builtin_analytics` so definitions register at boot.
+- `ReportViewer.jsx` — new `HeatMapPanel` renders any report emitting `aggregates.matrix` as a colour-intensity grid, with Count / Amount toggle. Rows x-axis = categories (y), cols = months (x). Cells hover-title surfaces denial codes + open/resolved split. Testids: `report-heatmap`, `report-heatmap-metric-toggle`, `report-heatmap-metric-{count|amount}`, `report-heatmap-cell-{i}-{j}`, `report-heatmap-empty`.
+- **Custom reports / landing page / viewer** (the third "partial" gap) was already implemented — moved it from 🟡 to ✅ because a thorough code review of `ReportsLandingPage.jsx` and `ReportViewer.jsx` shows full filter support, column picker, views, export, sort, pagination, aggregates bar, and now heat-map visualisation.
+
+**Verification**
+- `tests/test_reports_analytics.py` — 8/8 passing: catalog registration, meta columns, payer-mix rollups (correct billed/paid/outstanding math, totals mirror row sum, denial-rate/collection-rate sanity), payer-type filter, sort override, denial heat map matrix shape (cells dim matches rows × cols), denial-code classifier (CO-11 → Eligibility, CO-16 → Coding).
+- UI smoke — `/reports/payer_mix` renders 5 Riverbend payers with $1,470 billed / $333.38 paid / 22.7% collection / 21.4% denial rate. `/reports/denial_heat_map` renders 4-category × 2-month grid with intensity gradient, toggleable Count ↔ Amount, and flat detail table.
+- **35 reports total** now (up from 34). Financial catalog contains: billing_adjustments, cpt_procedure_utilisation, claims_list, **denial_heat_map**, denials_log, invoices_list, patient_balance, **payer_mix**, payments_by_method_summary, payments_received, …
+
+**Files changed**
+- NEW `/app/backend/services/reports/builtin_analytics.py` (~390 lines, 2 reports + denial-code classifier).
+- `/app/backend/services/reports/__init__.py` — imports new module.
+- `/app/frontend/src/pages/reports/ReportViewer.jsx` — `HeatMapPanel` appended; aggregates-bar integration detects `matrix` shape.
+- NEW `/app/backend/tests/test_reports_analytics.py` (8 tests).
+- `/app/memory/PRD.md` (§4q)
+
+**Closes xlsx gaps**: `Reporting & Analytics → Payer analysis / payer mix` (🟡→✅), `Reporting & Analytics → Denial heat map` (🟡→✅), `Reporting & Analytics → Custom reports` (🟡→✅).
+
+
+## 4p. Eligibility 270/271 — P0 expansion (2026-04-30)
+
+**User spec:** Full P0 epic — `Verify patient insurance eligibility before visit and claim creation`. 16 acceptance scenarios, 9 canonical statuses, 6 integration surfaces (patient profile, appointment, check-in, billing readiness, claim prep, policy manager), expiration rules, RBAC, audit.
+
+**Status model (`services/billing/eligibility_status.py`)**
+- 9 canonical states: `not_checked`, `submitted`, `active`, `inactive`, `partial`, `rejected`, `error`, `unknown`, `expired`.
+- Classifier `classify_result(parsed)` maps 271 payloads → active/inactive/partial/rejected/unknown.
+- `is_expired(row, target_service_date, target_policy_snapshot)` triggers expiration when >30d old, service-date drift, or policy-snapshot drift.
+- `overlay_expiration(row, ...)` returns row with `effective_status` derived.
+- `policy_snapshot_hash(policy)` — 12-char SHA of {member_id, group_number, payer_id, effective/term dates, subscriber_name, relationship} so policy edits invalidate prior checks.
+- Exposed to UI via `GET /api/billing/eligibility/reference` (labels/tones/disclaimer) so the frontend has a single source of truth.
+
+**Mock engine triggers (demo mode)**
+- `member_id` ending `BAD` → `status=rejected`, rejection_reason populated.
+- `member_id` ending `ERR` → raises `EligibilityEngineError` → persisted row with `status=error`, wires null.
+- `member_id` ending `TERM` → `status=inactive` (existing behaviour preserved).
+
+**New endpoints (all scoped to tenant)**
+- `GET  /api/billing/eligibility/reference` — UI bootstrap (statuses, labels, tones, disclaimer).
+- `POST /api/billing/patients/{pid}/eligibility-check` — patient-anchored check against active primary policy.
+- `GET  /api/billing/patients/{pid}/eligibility-latest` — newest check, with `effective_status` overlay.
+- `GET  /api/billing/patients/{pid}/eligibility-checks` — history.
+- `POST /api/billing/appointments/{aid}/eligibility-check` — auto-binds `appointment_id` + inherits `service_date` from `appointment.start_time`.
+- `GET  /api/billing/appointments/{aid}/eligibility-latest` — appointment-first, DOS-matched fallback to patient-scope.
+- `GET  /api/billing/eligibility-checks/{id}` — raw 270/271 wires. **MFA + role-gated**: doctors and patients get 403; only admin/billing/staff roles may access.
+- Missing-info validation: POST endpoints return 400 with `"Missing info: {field list}. Update the patient record, then retry."` when patient/policy is incomplete.
+- Every row persists `status`, `service_date`, `appointment_id`, `policy_snapshot_hash`, plus the existing wire/payload.
+- Error path persists an anchor row (status=error, wires null, payer_name + member_id echoed) so the retry button has something to point at.
+
+**Billing-readiness integration (`services/clinical/billing_readiness_router.py`)**
+- Added `eligibility_verified` check. Severity rules:
+  - `active` / `partial` → `passed=true, severity=warn`.
+  - `inactive` / `rejected` / `error` → `passed=false, severity=fail` (blocks the encounter from `ready`).
+  - Missing / `unknown` / `expired` / `submitted` → `passed=false, severity=warn` with actionable detail.
+
+**Demo seed (`services/demo/billing_seed.py::_seed_eligibility_checks`)**
+- Walks every active policy in the tenant at seed-time; invokes the mock engine; persists the row with `demo_seed_key="elig:{policy_id}"` so `_wipe_prior_demo` cleans it on reseed. 29 rows populated across Riverbend: 28 active + 1 inactive (`TERM` member).
+
+**Frontend surfaces**
+- `pages/billing/eligibility/statusMeta.jsx` — shared `EligibilityStatusChip` + `EligibilityStatusBanner` with tone-mapped icons (CheckCircle2 / AlertCircle / XCircle / AlertTriangle / Clock3 / HelpCircle / ShieldCheck / Loader2).
+- `pages/billing/PatientEligibilityCard.jsx` — **NEW** top-level eligibility card on the patient profile Insurance tab: chip + banner + 4 stat cards (copay / deductible with met% / coinsurance / OOP max) + "Verify now" / "Re-verify" CTA + "History" button that opens the dialog. Disclaimer always visible.
+- `pages/billing/EligibilityDialog.jsx` — **REWRITTEN** to accept `{policy, patientId, appointmentId}` anchors. Uses shared status meta. Disclaimer stapled to footer.
+- `pages/scheduling/AppointmentEligibilitySection.jsx` — **NEW** strip inside AppointmentWorkflowPanel: chip + Verify button + Details. Warn banner fires for inactive/rejected/error/expired/unknown. One-line financial recap for active/partial.
+- `pages/scheduling/AppointmentWorkflowPanel.jsx` — mounts `AppointmentEligibilityWithDialog` after the operational timeline (so it appears in both calendar and check-in flows).
+- `pages/PatientDetail.jsx` — Insurance tab wraps `PatientEligibilityCard` above `PatientInsuranceManager`.
+- `pages/billing/useBillingAdmin.js` — adds patient- and appointment-anchored helpers + reference fetcher.
+
+**Tests**
+- `tests/test_eligibility_p0_expansion.py` — **NEW** 20 tests (19 pass + 1 conditionally skipped): status module (classify, snapshot, expiration, overlay), demo triggers (ERR/BAD/TERM), reference endpoint shape, patient endpoints (latest/history/run/400), appointment endpoints, RBAC for doctor role on raw payload.
+- `tests/test_eligibility_phase_p1.py` + `tests/test_eligibility_iter68_addl.py` — still 15/15 green.
+- `tests/test_riverbend_demo_sanitation.py` — 26/26 green.
+
+**Testing agent verification (iter_69)**
+- Direct-API walk of all 16 acceptance scenarios + UI smoke of PatientEligibilityCard + legacy policy button preserved + previous iter_68 cosmetic bug resolved.
+- Zero frontend UI bugs. Zero critical backend bugs. One DB cleanup done (stray custom_inuse_test_* role was poisoning admin permissions — unrelated environment pollution).
+
+**Follow-on P3**
+- Add autouse cleanup fixture in `tests/test_custom_roles_phase2.py` so it doesn't leave stray `user_roles` rows shrinking admin's effective permissions.
+- Live Change/Optum sandbox transmission (still scaffold-ready — `services/billing/clearinghouse/change_healthcare.py::eligibility_270_271`).
+
+**Files changed (this phase)**
+- NEW `/app/backend/services/billing/eligibility_status.py`
+- `/app/backend/services/billing/eligibility.py` — ERR/BAD markers.
+- `/app/backend/services/billing/eligibility_router.py` — rewritten (9 endpoints).
+- `/app/backend/services/clinical/billing_readiness_router.py` — `eligibility_verified` check + helper.
+- `/app/backend/services/demo/billing_seed.py` — `_seed_eligibility_checks` + collection cleanup.
+- NEW `/app/backend/tests/test_eligibility_p0_expansion.py`
+- NEW `/app/frontend/src/pages/billing/eligibility/statusMeta.jsx`
+- `/app/frontend/src/pages/billing/EligibilityDialog.jsx` — rewritten for multi-anchor.
+- NEW `/app/frontend/src/pages/billing/PatientEligibilityCard.jsx`
+- `/app/frontend/src/pages/billing/useBillingAdmin.js` — added helpers.
+- `/app/frontend/src/pages/PatientDetail.jsx` — mounts PatientEligibilityCard.
+- NEW `/app/frontend/src/pages/scheduling/AppointmentEligibilitySection.jsx`
+- `/app/frontend/src/pages/scheduling/AppointmentWorkflowPanel.jsx` — mounts the strip.
+- `/app/memory/PRD.md` (§4p)
+
+
+## 4o. Eligibility 270/271 — P1 (2026-04-23)
+
+**User request:** Ship full X12 270/271 Health-Care Eligibility with wire-level builders/parser and a local mock clearinghouse stub (user chose option b), so the UX flow is production-equivalent and the live Change/Optum plug-in is a one-line config change later.
+
+**Shipped**
+- **Wire layer** (`services/billing/clearinghouse/x12_270_271.py`) —
+  `build_270_request(submitter, receiver, provider, payer, patient, policy, service_type_codes, inquiry_date)` emits a spec-compliant 005010X279A1 270 with ISA/GS envelope, BHT, 3 HL loops (info source, receiver, subscriber), NM1*PR / NM1*1P / NM1*IL, TRN, DMG, DTP*291, EQ per service-type, SE/GE/IEA. Mirror parser `parse_271_response(wire)` walks EB segments (qualifiers 1, 6, A, B, C, G, CB, I, V), DTP*356/357/291, MSG, and returns a canonical result dict.
+- **Mock engine** (`services/billing/eligibility.py::MockEligibilityEngine`) —
+  `_derive_plan_profile(policy, payer)` hash-seeds a deterministic benefit profile from (member_id, group_number, payer_id). Rules: member_id ending `TERM` → inactive; Medicare → $0 copay, 20% coinsurance, $240 deductible; Medicaid / WC / PIP → zero-cost rules; commercial → $25–$40 copay, $1000–$2500 deductible, 20% coinsurance, met%/OOP derived. `check(...)` composes build_270 → synthesise 271 → parse → return `{engine, sandbox, request_wire, response_wire, result, service_type_codes, checked_at}`.
+- **REST API** (`services/billing/eligibility_router.py`):
+  - `POST /api/billing/policies/{policy_id}/eligibility-check` — 201 with full result + wires.
+  - `GET /api/billing/policies/{policy_id}/eligibility-checks` — list (wires omitted).
+  - `GET /api/billing/eligibility-checks/{check_id}` — full wires, **MFA-gated** via `require_reauth`.
+  - Stores rows in `eligibility_checks` collection with `tenant_id` isolation.
+- **Frontend** (`pages/billing/EligibilityDialog.jsx` + wire-up in `PatientInsuranceManager.jsx`) —
+  Each ACTIVE policy row gets a new "Eligibility" button. Dialog has three tabs:
+  - **Latest result** — coverage banner (active ✓ / inactive ✗), Sandbox badge, 4 stat cards (Copay / Deductible with "$X met" sub-line / Coinsurance % / OOP max), payer + plan metadata, payer messages surface.
+  - **History** — reverse-chrono list of prior checks; each row has a "Payload" button.
+  - **270 / 271** — inline `<pre>` blocks showing both wires. Requires step-up reauth (password OR PIN via the existing ReauthGate).
+- **Tests** — `tests/test_eligibility_phase_p1.py` — 13 tests: builder envelope + subscriber identity + HL levels + service-type expansion; mock engine active commercial / inactive on `TERM` marker / Medicare zero-copay / WC zero-cost / determinism; API happy-path 201 + list + detail + 404 on unknown policy + 401 without reauth. Tests green.
+
+**Follow-on fix (post-testing-agent iter_68):** `EligibilityDialog.onCheckNow` was overwriting the fresh full-shape API result with the partial history-summary (which intentionally omits `coinsurance_pct` / `out_of_pocket_cents` / wires). Pass `{preserveLatest: true}` into `load()` so the stat cards stay populated.
+
+**Regression**
+- 13/13 new eligibility tests + 2/2 iter_68 additions (wire sanity + tenant isolation) pass.
+- 48/48 Riverbend sanitation + Billing phase4 pass. 61/63 wider billing phases pass (the 2 misses are pre-existing — statement-body wording drift + email mock `message_id` shape — unrelated to this phase).
+- Integrity verifier 0 violations.
+
+**What's NOT in this phase (future)**
+- Live Change/Optum sandbox POST of the 270 — scaffolding is in `services/billing/clearinghouse/change_healthcare.py::eligibility_270_271` (returns None today). Drop-in once credentials land.
+- Seeded eligibility_checks rows per Riverbend persona (demo quality-of-life — could pre-fill history tab on first login).
+
+**Files changed**
+- NEW `/app/backend/services/billing/clearinghouse/x12_270_271.py` — 270 builder + 271 parser.
+- NEW `/app/backend/services/billing/eligibility.py` — MockEligibilityEngine + default_engine factory.
+- NEW `/app/backend/services/billing/eligibility_router.py` — 3 endpoints.
+- `/app/backend/server.py` — mounted billing_eligibility_router.
+- `/app/backend/services/billing/clearinghouse/none.py` — `supports_eligibility=True` (mock engine is always available).
+- NEW `/app/backend/tests/test_eligibility_phase_p1.py` — 13 tests.
+- NEW `/app/backend/tests/test_eligibility_iter68_addl.py` — 2 tests from testing agent.
+- NEW `/app/frontend/src/pages/billing/EligibilityDialog.jsx` — 3-tab modal.
+- `/app/frontend/src/pages/billing/PatientInsuranceManager.jsx` — Eligibility button on active policies.
+- `/app/frontend/src/pages/billing/useBillingAdmin.js` — `runEligibilityCheck`, `listEligibilityChecks`, `fetchEligibilityCheckDetail` helpers.
+- `/app/memory/PRD.md` (§4o).
+
+
+## 4n. ClaimWorkflow.jsx refactor — split into sub-components (2026-04-23)
+
+**User request:** Refactor `ClaimWorkflow.jsx` into smaller, focused files for maintainability.
+
+**Shipped:** `/app/frontend/src/pages/billing/ClaimWorkflow.jsx` is now a thin 125-line composition file that imports its sub-components from `/app/frontend/src/pages/billing/claim-workflow/`:
+- `AssignmentRow.jsx` (146 lines) — tenant-scoped assignee Select dropdown.
+- `FollowupRow.jsx` (115 lines) — follow-up flag/clear UI.
+- `SubmissionsTable.jsx` (87 lines) — read-only submissions table.
+- `TimelineSection.jsx` (94 lines) — collapsible status timeline.
+- `dialogs.jsx` (328 lines) — `SubmissionDialog`, `OutcomeDialog`, `PayloadDialog` colocated (shared payer/outcome/money helpers).
+
+**Before → After:** `ClaimWorkflow.jsx` went from 848 lines of mixed concerns to 125 lines of pure composition. Total code is slightly larger (from the file-split overhead) but each module is independently reviewable.
+
+**Verification:**
+- UI smoke test on claim `1a84464d-f559-45fd-acb2-f6fe6d0252da` — Workflow card, AssignmentRow dropdown, Follow-up flagged banner, submissions row with Payload button, and status timeline all render identically to pre-refactor.
+- `pytest test_riverbend_demo_sanitation.py test_billing_phase4.py` — 48/48 passing.
+- `eslint /app/frontend/src/pages/billing/claim-workflow/` — 0 issues.
+
+**Files changed**
+- `/app/frontend/src/pages/billing/ClaimWorkflow.jsx` — rewritten as composition root.
+- `/app/frontend/src/pages/billing/claim-workflow/*.jsx` — populated with extracted sub-components.
+- `/app/memory/PRD.md` (§4n)
+
+
+## 4m. 837P wire — decrypt subscriber/patient address (2026-04-22)
+
+**User request:** Following the X12 alignment pass, finish the job by decrypting the encrypted address block (`N3*enc:v1:...`) so the 837P preview reads as a submittable claim file.
+
+**Fix:** Added `_maybe_decrypt` helper + upgraded `_addr_tuple` in the 837P builder to:
+1. Detect `enc:v1:...` sentinels and route through `core.crypto.decrypt_text`.
+2. Handle the three real shapes encountered at rest:
+   - scalar encrypted plaintext (e.g. "1711 SW Park Ave" stored encrypted)
+   - per-field encryption inside a dict (city/state/zip each encrypted)
+   - **whole-dict JSON-encoded then encrypted** (`patient.address_details = encrypt(json(...))`) — detected by the `{` prefix on the decrypted value and recursively re-processed as a dict
+3. Fall back to the stored value on decrypt failure so the wire is never silently blanked.
+
+### Before → After (Claire Morgan paid, subscriber block)
+```diff
+  HL*2*1*22*1~
+  SBR*P*18*RPBIO-HR******CI~
+  NM1*IL*1*MORGAN*CLAIRE****MI*PAC-MOR-1009~
+- N3*enc:v1:Ew1QW6YdN0zSoUulv2wjMmBG-of7Zp9_oSoEFP7qvOUc06TN~
++ N3*1711 SW Park Ave~
++ N4*Portland*OR*97201~
+  DMG*D8*19860909*F~
+```
+
+Zero `enc:v1:` occurrences remain anywhere in the wire for any claim.
+
+**Why this is safe:** The payload-preview endpoint is already MFA-gated via `require_reauth`; decrypting the address for display there doesn't widen PHI exposure. The fix lives in the builder, so it benefits both the demo payload and the runtime submission path identically — real 837P files heading to the clearinghouse also get plaintext addresses (as required by X12 5010).
+
+**Regression:** pytest 48/48 Riverbend + billing_phase4, 26/26 test_x12_837p_phase7, integrity verifier 0 violations.
+
+**Files changed**
+- `/app/backend/services/billing/clearinghouse/x12_837p.py` — `_maybe_decrypt` + `_addr_tuple` upgrades
+- `/app/memory/PRD.md` (§4m)
+
+
+## 4l. 837P wire — X12 spec alignment (2026-04-22)
+
+**User feedback:** "Where it would be expecting a NPI number you have the provider's name. You need to fully understand what you need in the claim and what you should be sending in the claim are aligned. The source of truth right now is the 837 files and what is needed in them."
+
+**RCA:** Three distinct alignment failures on the 837P wire:
+
+1. **NM1*82 rendering provider was one smooshed string** — `DR. NOAH CARTER, DC` in NM103 (last-name slot), empty NM104 / NM105 / NM107. X12 5010 spec for person entities (NM102=1) requires the name split: `NM103=last, NM104=first, NM105=middle, NM107=suffix`. Root cause: providers seeded with only a single `name` field; no `entity_type`, `first_name`, `last_name`, `name_suffix`.
+
+2. **ISA/GS envelope + NM1*41/*40 carried placeholder IDs** — `CCMS` and `PAYER` literals instead of real trading-partner IDs. Root cause: demo seed called `build_x12_837p_wire` without a `submitter` / `receiver` kwarg, so the builder used the "never-crash defaults".
+
+3. **Billing provider (NM1*85) relied on UI-cosmetic `name`** — "Riverbend Chiropractic & Wellness, **LLC**" is the UI display; the X12 2010AA NM103 should be the legal entity name. Now prefers `organization_name` over `name`.
+
+### Fixes
+
+**Data** — `services/demo/seed.py::_PROVIDER_DIRECTORY` augmented:
+- Every entry gets `entity_type: "org" | "person"`
+- Person providers carry explicit `last_name`, `first_name`, `name_suffix`
+- Org providers carry `organization_name`
+- `_upsert_providers()` persists all four new fields onto each `providers` doc
+
+**Builder** — `services/billing/clearinghouse/x12_837p.py`:
+- `_write_rendering_provider_2310B` — reads split name fields when `entity_type=person` and emits `NM1*82*1*LAST*FIRST***SUFFIX*XX*NPI`. Defensive parser falls back from a combined "Dr. Last, Suffix" string so legacy data still renders cleanly.
+- `_write_billing_provider_2010AA` — prefers `organization_name` over `name` for orgs; adds `name_suffix` for persons.
+
+**Seed envelope** — `services/demo/billing_seed.py` now passes proper `submitter` + `receiver`:
+- `submitter.id` = billing provider's EIN (`843210987`) = ISA06 + GS02 + NM1*41 ID
+- `receiver.id` = payer's `electronic_payer_id` (`PAC1234`) = ISA08 + GS03 + NM1*40 ID
+- `submitter.name` = legal org name; contact phone included
+
+### Before → After (Claire Morgan paid claim, 837P wire)
+
+```diff
+- ISA*00* ... *ZZ*CCMS       *ZZ*PAYER      ...
++ ISA*00* ... *ZZ*843210987  *ZZ*PAC1234    ...
+- GS*HC*CCMS*PAYER*...
++ GS*HC*843210987*PAC1234*...
+- NM1*41*2*CCMS BILLING*****46*CCMS~
++ NM1*41*2*RIVERBEND CHIROPRACTIC & WELLNESS, LLC*****46*843210987~
+- PER*IC*BILLING~
++ PER*IC*BILLING*TE*5035550100~
+- NM1*40*2*PACIFICCARE COMMERCIAL*****46*PAYER~
++ NM1*40*2*PACIFICCARE COMMERCIAL*****46*PAC1234~
+- NM1*82*1*DR. NOAH CARTER, DC*****XX*1841792253~
++ NM1*82*1*CARTER*NOAH***DC*XX*1841792253~
++ PRV*PE*PXC*111N00000X~
+```
+
+### JSON payload ↔ 837P wire alignment
+
+Every business identifier now matches 1:1 between JSON and wire:
+
+| JSON field | 837P segment | Value |
+|---|---|---|
+| `claim.control_number` | CLM01 | `RB-PAID_OLD` |
+| `billing_provider_npi` | NM1*85 NM109 | `1194567893` |
+| `rendering_provider_npi` | NM1*82 NM109 | `1841792253` |
+| `facility_npi` | NM1*77 NM109 | `1356789012` |
+| `payer.electronic_payer_id` | NM1*PR NM109 + ISA08 | `PAC1234` |
+| `policy.member_id` | NM1*IL NM109 (qual MI) | `PAC-MOR-1009` |
+| `policy.group_number` | SBR03 | `RPBIO-HR` |
+
+**Regression:** pytest 48/48 (test_riverbend_demo_sanitation + test_billing_phase4), integrity verifier 0 violations.
+
+**Files changed**
+- `/app/backend/services/demo/seed.py` — provider directory X12-spec fields
+- `/app/backend/services/demo/billing_seed.py` — submitter/receiver envelope
+- `/app/backend/services/billing/clearinghouse/x12_837p.py` — NM1 name-split fixes
+- `/app/memory/PRD.md` (§4l)
+
+
+## 4k. JSON payload — no more internal UUIDs (2026-04-22)
+
+**Issue:** User reported the JSON tab of the Submission payload modal was leaking Mongo UUIDs for `claim.id`, `patient.id`, `payer.id`, `policy.id`, `billing_provider_id`, `rendering_provider_id`, `facility_id`. A biller looking at this payload should see *business* identifiers — NPIs, payer codes, MRNs, member IDs — not internal DB hashes.
+
+**Fix:** `build_json_payload` refactored to emit human/external identifiers, and updated both callers (runtime submission + demo seed) to pass the already-loaded `billing_provider / rendering_provider / service_facility` objects through.
+
+**Before → After (Claire Morgan paid claim):**
+```
+claim.id                 = "2a978818-f8b6-41ff-..."   →  claim.control_number = "RB-PAID_OLD"
+billing_provider_id (UUID)                            →  billing_provider_npi = "1194567893"
+rendering_provider_id (UUID)                          →  rendering_provider_npi = "1841792253"
+facility_id (UUID)                                    →  facility_npi = "1356789012"
+patient.id (UUID)                                     →  patient.mrn = "RB-8C07EC6B"
+payer.id (UUID)                                       →  payer.payer_code = "PAC-COMM"
+                                                           + electronic_payer_id = "PAC1234"
+policy.id (UUID)                                      →  (omitted — member_id + group_number suffice)
+```
+
+**Files changed**
+- `/app/backend/services/billing/submission.py::build_json_payload` — signature now accepts optional `billing_provider` / `rendering_provider` / `service_facility`; emits NPIs + payer_code + MRN; drops internal UUIDs.
+- `/app/backend/services/billing/router.py` — `_submit_claim_core` passes the provider/facility objects through.
+- `/app/backend/services/demo/billing_seed.py` — seed passes them through too.
+- `/app/backend/tests/test_billing_phase4.py` — updated assertion (`payer.electronic_payer_id` replaces legacy `payer.payer_id_external`).
+
+**Regression:** pytest 22/22 on test_billing_phase4, 26/26 on test_riverbend_demo_sanitation.
+
+
+## 4j. Paid-claim 837P payload preview (2026-04-22)
+
+**Request:** "For a paid claim I should be able to see the payload data too."
+
+**RCA:** The claims-queue "Submission payload" modal was showing `null` for every seeded claim because `billing_seed.py` wrote only scalar metadata on the `claim_submissions` row (`payload_format`, `payload_size_bytes`) — but NOT the actual `payload_json` / `payload_x12` bytes that the payload modal reads via `GET /api/billing/claims/{id}/submissions/{sub}/payload`.
+
+**Fix:** When seeding the submission row for a non-portal, non-validation-failed claim, call the exact same helpers the runtime submission flow uses (`build_json_payload` + `build_x12_837p_wire`) against the just-written canonical claim rows. Attach modifiers (string codes) onto each line in memory so the x12 output includes AT / 59 / etc. Any builder exception is logged and the seed proceeds with `null` payload (graceful degradation) — never blocks the demo boot.
+
+**Result — per-claim payload coverage:**
+```
+reid_medicare_paid_old           paid                  json=Y x12=Y size=1125
+reid_medicare_paid_recent        paid                  json=Y x12=Y size=1125
+reid_medicare_accepted           accepted              json=Y x12=Y size=1121
+cho_pip_submitted_portal         submitted  [PORTAL]   json=N x12=N size=0     ← correct; no 837P for portal
+cho_pip_partially_paid           partially_paid [PORTAL] json=N x12=N size=0
+stone_wc_submitted_portal        submitted  [PORTAL]   json=N x12=N size=0
+stone_wc_denied_missing_case     denied     [PORTAL]   json=N x12=N size=0
+johnson_pac_paid                 paid                  json=Y x12=Y size=1238
+johnson_pac_denied_coding        denied                json=Y x12=Y size=1109
+morgan_pac_paid_old              paid                  json=Y x12=Y size=1219
+morgan_jax_rejected_subscriber   rejected              json=Y x12=Y size=1178
+```
+
+Portal-submitted claims (Isabella PIP + Derrick WC) correctly have no 837P — those went out via web portals / paper — and the UI handles this with a "Manual submission" label.
+
+**Verified:** `GET /api/billing/claims/{id}/submissions/{sub}/payload` for Claire Morgan's paid claim returns:
+- `payload_format: "x12-837p-preview"`, `payload_size_bytes: 1219`
+- `payload_json` with real keys (`schema / claim / patient / payer / policy / diagnoses / lines`)
+- `payload_x12` a complete ISA*GS*ST*BHT envelope with NM1 segments and SE*IEA trailers
+
+**File changed:** `/app/backend/services/demo/billing_seed.py`
+
+**Regression:** pytest 26/26, integrity 0 violations.
+
+
+## 4i. Demo walkthrough audit fixes (2026-04-22)
+
+Acted on testing-agent iteration 67 findings with 5 root-cause fixes:
+
+### P0 — step_up_required flag locking every demo user out of MFA-gated actions
+**Root cause:** Suspicious-login detection (`record_login_signal`) sets `step_up_required=True` when it sees a new IP + user-agent combo. Playwright / testing-agent / fresh-incognito sessions trip this every login. With no MFA factor enrolled, the demo users had nothing to step up *to* — so every subsequent permission check 401'd with "Re-authentication required". Symptom: Claims queue silently empty because `/api/billing/claims/queue` 401'd.
+
+**Fix (two-layer):**
+1. `services/identity/seed.py` — demo-user upsert now resets `step_up_required=False` + `suspicious_flag=False` on every boot so reseed re-enables the demo.
+2. `services/identity/router.py::_finalise_login` — when a user *without* MFA enrolled successfully logs in with their password, clear `step_up_required`. The flag only makes sense when a second factor exists to step up to. MFA-enrolled users still carry it and clear it via their MFA challenge — real step-up protection is preserved.
+
+### P0 — /api/billing/patients/{id}/statements 500 on Jaxon + Aria
+**Root cause:** `StatementPublic` requires `generated_by`, `as_of_date`, `total_balance_cents`, `invoice_count`; the Riverbend seeded statement rows for Jaxon + Aria omitted all four. Same class of seed-schema drift as the `currency` fix.
+**Fix:** `services/demo/billing_seed.py` — both statement inserts now carry the full set of required fields.
+
+### P0 — Raw UUID leaking into "Preferred location" field on every persona Overview
+**Root cause:** `PatientDetail.jsx::PatientOverview` rendered `patient.location_id` directly (a UUID) without resolving against the locations directory.
+**Fix:** Parent component fetches `/api/authz/locations` once, passes the list down; Overview resolves `location_id → location.name` with a null fallback. Testid `ov-location` now reads "Riverbend — Downtown".
+
+### P1 — `demo_seed` provenance marker leaking into Intake form card UI
+**Root cause:** the seeded intake form used `notes="demo_seed"` as its idempotency key, but `notes` is rendered verbatim to the user under each form card.
+**Fix:** moved the idempotency marker to a separate internal `source="demo_seed"` field; `notes` is now empty on seeded forms. Legacy `notes="demo_seed"` rows still update-in-place so the reseed doesn't create duplicates.
+
+### P1 (investigated, not a bug) — Missing Check-in / Room controls in workflow panel
+**Finding:** `AppointmentWorkflowPanel` correctly gates Check-in on `status ∈ {scheduled, confirmed}` and Room on `!isTerminal`. The testing agent clicked a COMPLETED past appointment where these are intentionally hidden (you cannot check-in an appointment that was completed yesterday). No code change needed — behaviour matches design.
+
+### Post-fix curl verification
+- `/api/billing/claims/queue` → **200**, 14 rows
+- `/api/billing/patients/{jaxon}/statements` → **200**
+- `/api/billing/patients/{aria}/statements` → **200**
+- `/api/authz/locations` → **200** (Riverbend — Downtown + 15 test-residue entries)
+- `db.users.step_up_required` = False for admin/doctor/staff after seed
+- pytest 26/26 on `test_riverbend_demo_sanitation.py`
+- `verify_demo_integrity.py` → 0 violations
+
+**Files changed**
+- `/app/backend/services/identity/seed.py`
+- `/app/backend/services/identity/router.py`
+- `/app/backend/services/demo/billing_seed.py`
+- `/app/backend/services/demo/clinical_seed.py`
+- `/app/frontend/src/pages/PatientDetail.jsx`
+- `/app/memory/PRD.md` (§4i)
+
+
+## 4h. Clinical Summary + Scrubber cleanup (2026-04-22)
+
+### Fix 1 — Clinical Summary showed all zeros for closed/maintenance patients
+**Root cause:** the summary stat cards bound to `s.<section>.open` only. For a closed episode (Claire Morgan) or a long-running maintenance case (Ethan Parker) everything is signed / active=false, so every card rendered `0` — making the summary read as a blank chart even when the patient had a full history below.
+
+**Fix:** `ClinicalTab.jsx` now reads `<section>.total` as the primary value and surfaces the open/active count as a small hint underneath. Labels shortened ("Visits / Exams / Plans / Re-exams / Notes / Diagnoses") so the cards are scannable.
+
+**Result (Claire Morgan, closed):** Visits 4 (0 in progress) · Exams 1 · Plans 1 · Re-exams 1 · Notes 2 · Diagnoses 1 — matches the chart sections below.
+
+### Fix 2 — Scrubber surfacing PROVIDER_NPI_FORMAT on every Riverbend claim
+**Root cause:** `rule_provider_npi_format` treated `claim.billing_provider_id` / `rendering_provider_id` as raw NPIs. Riverbend stores canonical `providers.id` UUIDs and the submission adapter translates them at wire time, but the scrubber never got that context.
+
+**Fix:** `_load_claim_context` now resolves the two provider UUIDs against `providers` + `service_facilities` and passes `{provider_npi_by_id, facility_npi_by_id}` into `ScrubberContext.extras`. The rule accepts any UUID that resolves to a 10-digit NPI on the canonical row. Pure UUIDs that don't resolve still trigger the warning.
+
+### Fix 3 — Seed claims tripping CMT_MODIFIER_MISSING / CMT_SUBLUXATION_DX_MISSING
+**Root cause:** the Riverbend claim catalog carried CMT (98940/98941) lines with no AT modifier and no M99.0x subluxation dx. The scrubber is correct — these denials are real in the field — so the right fix was seeding clean data on the payable claims (vs. muting the rule).
+
+**Fix:** Updated CLAIM_CATALOG in `billing_seed.py` so every "should-pay" claim now carries:
+- AT modifier on every CMT line, and
+- M99.01/02/03/04 primary subluxation dx with the pain/injury code as secondary (clinically realistic per region).
+
+**Intentionally retained failures** (for the "denial management" demo):
+- `whitaker_cbs_validation_failed` — no AT, no subluxation dx → still blocks in scrubber
+- `stone_wc_denied_missing_case` — no AT, no subluxation dx + WC case-number missing → intentional story
+- `johnson_pac_denied_coding` — intentional "rebill with M99.03 primary" story
+
+### Scrubber results (all 14 Riverbend claims)
+```
+11 clean claims → 0 errors, 0 warnings
+ 3 demo denial claims → still carry only their intended teaching codes
+ 0 PROVIDER_NPI_FORMAT warnings across the board
+```
+
+**Files changed**
+- `/app/frontend/src/pages/clinical/ClinicalTab.jsx` — stat cards now show total + open hint
+- `/app/backend/services/billing/router.py` — `_load_claim_context` resolves provider UUIDs → NPIs
+- `/app/backend/services/billing/scrubber.py` — `rule_provider_npi_format` accepts canonical UUIDs
+- `/app/backend/services/demo/billing_seed.py` — AT modifier + M99.0x primary on payable claims
+- `/app/memory/PRD.md` — §4h added
+
+### Regression
+- 26/26 `test_riverbend_demo_sanitation.py` passing
+- 17/17 `test_validation_phase4.py` passing
+- Integrity verifier: 0 violations
+
+
+## 4g. P0 Regression fixes (2026-04-22)
+
+### Bug 1 — Scheduling/AppointmentWorkflowPanel `useEffect is not defined`
+**Root cause:** `AppointmentWorkflowPanel.jsx` uses `useEffect` (to load rooms when location changes) but the import line only pulled `{ useMemo, useState }` from React. Missing-import code regression introduced during an earlier refactor.
+
+**Fix:** `/app/frontend/src/pages/scheduling/AppointmentWorkflowPanel.jsx` line 1 — `import { useEffect, useMemo, useState } from "react";`
+
+**Verification:** Opened Scheduling → clicked an appointment → the workflow panel (Check in / No-show / Launch encounter / Reschedule) now opens cleanly without a runtime crash; room selector hydrates.
+
+### Bug 2 — `/api/billing/payments` 500 Internal Server Error
+**Root cause:** Two-layer issue (seed-shape + serializer strictness):
+1. `services/demo/billing_seed.py` seeded the Ethan Parker self-pay payment row WITHOUT a `currency` field.
+2. `PaymentPublic` response model declared `currency: str` with no default, so Pydantic raised `ResponseValidationError: Field required` when serialising the row → 500.
+
+**Fix (two-pronged, per guardrails):**
+1. **Data fix** — `billing_seed.py` now seeds `"currency": "USD"` + `"allocated_cents"` on the payment insert so the data is correct going forward.
+2. **Defensive serializer fix** — `PaymentPublic.currency` now has `= "USD"` default + a `@field_validator("currency", mode="before")` that coerces None/empty → "USD". Same pattern as the existing legacy `status="completed" → "captured"` coercion. This prevents a repeat regression on historical rows.
+
+**Verification:**
+- `GET /api/billing/payments` → 200
+- Billing landing page renders: Outstanding Balance ($215), Lifetime Billed ($285), Payments Recorded (1), Recent Invoices (4 rows), Recent Payments ($70 · cash · settled).
+- Reseed + verifier clean: 0 integrity violations, 26/26 Riverbend pytest passing.
+
+**Files added/changed in this pass**
+- `/app/frontend/src/pages/scheduling/AppointmentWorkflowPanel.jsx` — added `useEffect` to React import
+- `/app/backend/services/demo/billing_seed.py` — seeded `currency: "USD"` + `allocated_cents`
+- `/app/backend/services/billing/models.py` — `PaymentPublic.currency` default + legacy-tolerance validator
+- `/app/memory/PRD.md` — §4g added
+
+
+## 4f. Clinical workflow chain seed (2026-04-22)
+Closes the last P0 from the clinical-demo refactor: every
+artifact now sits on the actual workflow ladder instead of
+floating in isolation.
+
+**Problem**: after §4d/§4e, every persona had an episode, plan,
+diagnoses, intake and chart history — but the **launched
+encounters**, **initial exams**, **follow-up notes**, and
+**re-exams** panels were empty. Nothing linked the chart back
+to past appointments, and treatment plans were visibly
+"floating" without any upstream encounter.
+
+**Shipped**
+- `/app/backend/services/demo/clinical_workflow_seed.py` now
+  drives the full chain per persona via `PAST_VISITS`:
+  - backfills past completed appointments (idempotent on
+    patient+start_time) including the pre-existing
+    `_seed_appointments` completed slots for Marcus and Ethan,
+  - upserts one `clinical_encounter` per past appointment
+    (idempotent on tenant+appointment_id) with the full
+    appointment_snapshot block,
+  - upserts a `clinical_initial_exam` (first visit per persona)
+    that mirrors the §4d `clinical_history` + `treatment_plan`
+    narrative,
+  - upserts `clinical_follow_up_notes` for every subsequent
+    treatment visit with a linear pain de-escalation signal
+    (baseline → 2/10 across 4 visits) and plan-derived
+    treatment_rendered entries,
+  - new: upserts a **signed** `clinical_reexam` for Claire
+    Morgan's discharge re-evaluation (`recommendation="discharge"`,
+    all goals marked `met`).
+- Wired into `seed_demo_clinic()` after `seed_demo_clinical_charts`
+  so episode/plan/dx ids are resolvable.
+- Fixed a seed-validation regression: past appointments now
+  carry `created_by` so the `/api/appointments` response model
+  doesn't 500.
+
+**Integrity verifier extensions** (`verify_demo_integrity.py`)
+- Clinical-chain FK checks: `clinical_encounters`,
+  `clinical_initial_exams`, `clinical_follow_up_notes`,
+  `clinical_reexams` against patient/appointment/encounter/episode.
+- "**No floating treatment plans**" guard: every patient with
+  a `clinical_treatment_plan` must have ≥ 1 `clinical_encounter`.
+- Report now includes counts: `encounters`, `initial_exams`,
+  `follow_up_notes`, `reexams`.
+
+**Tests** — `test_riverbend_demo_sanitation.py`
+- New class `TestRiverbendClinicalWorkflowChain` (4 tests):
+  - `test_every_persona_with_plan_has_encounter` — no floating plans
+  - `test_encounters_anchor_to_appointments` — no orphan encounters
+  - `test_initial_exam_precedes_follow_ups` — chronological sanity
+  - `test_riverbend_workflow_chain_counts` — shape lock
+- All 26 Riverbend tests passing.
+
+**Post-seed canonical counts**
+```
+patients=8, encounters=26, initial_exams=7, follow_up_notes=18,
+reexams=1, appointments=37, episodes=8, claims=14
+Integrity violations: 0
+```
+
+**Runtime fix** — `billing_readiness_router._parse_iso`
+- Normalise naive ISO dates (`plan.re_exam_date` is YYYY-MM-DD)
+  to UTC so they compare cleanly against tz-aware
+  encounter.date_of_service. Prevented a 500 on the Clinical tab
+  for all active-episode personas.
+
+**UI verification (iter 66)**
+All 5 sampled personas (Hannah, Isabella, Derrick, Claire, Ethan)
+open the Clinical tab with zero error toasts; every required
+section renders (Episodes, Initial Exam, Treatment Plan,
+Follow-ups, Diagnoses, Re-Exam where applicable). Scheduling
+calendar shows past completed + future scheduled appointments
+across all personas.
+
+**Files added/changed in this pass**
+- `/app/backend/services/demo/clinical_workflow_seed.py` — chain seeder (added `_upsert_reexam`, fixed `created_by`)
+- `/app/backend/services/demo/seed.py` — wires `seed_demo_clinical_workflow`
+- `/app/backend/scripts/verify_demo_integrity.py` — clinical chain checks + floating-plan guard + workflow counts
+- `/app/backend/services/clinical/billing_readiness_router.py` — `_parse_iso` UTC normalisation
+- `/app/backend/tests/test_riverbend_demo_sanitation.py` — `TestRiverbendClinicalWorkflowChain`
+- `/app/memory/PRD.md` — §4f added
+
+
+## 4e. Cross-domain referential-integrity verifier (2026-04-22)
+Hardened the demo-seed architecture against disjoint-data regressions.
+
+**Shipped**
+- `/app/backend/scripts/verify_demo_integrity.py` — canonical-entity
+  verifier that walks every foreign-key in every seeded domain
+  (appointments, claims, claim_lines, claim_diagnoses, remittances,
+  billing_invoices, patient_insurance_policies, clinical_episode_cases,
+  clinical_diagnoses, clinical_treatment_plans, clinical_history,
+  clinical_outcome_entries, patient_intake_forms, notifications,
+  follow_up_suggestions) against the canonical Riverbend entity set
+  (tenant, locations, users, providers, appointment_types, rooms,
+  service_facilities, payers, patients). Also detects duplicate
+  personas via (first_name, last_name, email) key.
+- `reseed_demo_clinic.py` now calls the verifier post-seed and prints
+  the canonical counts + any violations found.
+- 2 new tests in `TestRiverbendIntegrity`:
+  - `test_no_cross_domain_violations` — asserts 0 violations across
+    all 15+ audited foreign-key paths
+  - `test_canonical_entity_counts` — locks the demo shape
+    (8 patients, 1 location, 4 providers, 9 appointment_types,
+    7 rooms, 1 service_facility, 6 payers, 8 episodes, 14 claims)
+    so silent drift fails the test.
+
+**Audit result on Riverbend**
+Integrity violations: **0 across 13 audited domains**. Canonical counts
+match the documented demo spec. No orphan claims, no stale provider
+references, no duplicate personas, no broken episode/plan links.
+
+**Guardrails preventing future disjoint-data regressions**
+1. Every seeder now resolves references from the canonical Mongo
+   lookup (not name-based constants) via:
+   - `patients` lookup keyed on `(first_name, last_name, email)` —
+     idempotent against encrypted DOB (fixed in §4a)
+   - `providers` directory seeded once in `_upsert_providers` —
+     billing claims join against this not against user UUIDs (§4c)
+   - `service_facilities` seeded alongside; claim.facility_id binds
+     to canonical row (§4c)
+   - notifications + follow-ups tagged `source: "demo_seed"` and key
+     on `patient_id`/`appointment_id` resolved from canonical lookup
+     (§4b)
+   - clinical chart seed loads patient ids once at entry and every
+     downstream seeder walks that map (§4d)
+2. Reseed script wipes all dependent collections before re-inserting,
+   then runs the integrity verifier as a built-in post-check.
+3. CI test `TestRiverbendIntegrity` blocks any commit that regresses
+   the canonical shape.
+
+**Files added/changed in this pass**
+- `/app/backend/scripts/verify_demo_integrity.py` — NEW
+- `/app/backend/scripts/reseed_demo_clinic.py` — post-seed verifier hook
+- `/app/backend/tests/test_riverbend_demo_sanitation.py` —
+  `TestRiverbendIntegrity` (2 tests)
+- `/app/memory/PRD.md` — §4e added
+
+
+## 4d. Clinical chart completeness seed (2026-04-22)
+Addressed the fourth prompt — every Riverbend persona now has a
+fully-populated Intake + Clinical chart that matches their visit
+history.
+
+**Problem**: all 10 clinical collections (`clinical_episode_cases`,
+`clinical_diagnoses`, `clinical_treatment_plans`, `clinical_history`,
+`clinical_outcome_entries`, `patient_intake_forms`, etc.) were 0-row
+for the Riverbend tenant despite 12 seeded appointments and 8 personas
+with rich visit histories. The Clinical tab showed "No episodes yet",
+the Intake tab showed "No intake forms captured yet", and the chart
+felt disconnected from the schedule.
+
+**Blueprint approach** — `/app/backend/services/demo/clinical_seed.py`
+declares a `CHART_BLUEPRINT` keyed on persona `(first, last)` with an
+episode, diagnoses (real ICD-10 codes), treatment plan (goals,
+baselines, interventions, home-care + work-modification guidance),
+intake history snapshot (chief complaint, HPI narrative, aggravating/
+relieving factors, red-flag screening, occupation, case-specific
+details — accident report for MVA, WC claim info for workers' comp),
+outcome-measure entries (NDI / Oswestry / QuickDASH baselines + 3-week
+progress), and grouped `clinical_intake` + `case_details` sections
+stored on the patient doc (field-encrypted).
+
+**Persona coverage**
+| Persona | Case type | Episode | Primary ICD-10 |
+|---|---|---|---|
+| Hannah Whitaker | Injury | Acute lumbar strain (lifting) | M54.50 |
+| Marcus Reid | New pt eval | Cervicogenic HA (trucker) | M54.2, G44.86 |
+| Isabella Cho | Auto/PIP | Post-MVA C/T sprain | S13.4XXA, S23.3XXA |
+| Derrick Stone | Workers' comp | Warehouse lumbar sprain | S33.5XXA |
+| Aria Johnson | Injury | R shoulder RC tendinopathy | M75.101 |
+| Claire Morgan | Insurance (closed) | Lumbar strain — discharged | M54.50 (resolved) |
+| Jaxon Morgan | Pediatric | Postural neck stiffness | M54.2 |
+| Ethan Parker | Self-pay | Maintenance wellness | M54.6 |
+
+Each persona gets a matching accident-report/work-comp block with
+fictitious but believable carrier names, claim numbers, adjuster
+contacts, and dates-of-injury aligned to the seeded billing payer.
+
+**Files changed**
+- `/app/backend/services/demo/clinical_seed.py` — NEW (~700 lines).
+  `CHART_BLUEPRINT` + 7 idempotent seeders. Uses
+  `encrypt_patient_doc` for the grouped PHI sections so masking still
+  works; stores `field_meta.{key}.source = "intake"` on history rows
+  so the `ClinicalHistoryPublic` model validation passes.
+- `/app/backend/services/demo/seed.py` — `seed_demo_clinic()` now
+  calls `seed_demo_clinical_charts()` after personas + providers are
+  in place.
+- `/app/backend/tests/test_riverbend_demo_sanitation.py` —
+  `TestClinicalChartCompleteness` (5 tests):
+  `test_every_persona_has_episode`,
+  `test_every_persona_has_treatment_plan`,
+  `test_every_persona_has_diagnoses`,
+  `test_every_persona_has_history_snapshot`,
+  `test_every_persona_has_intake_form`.
+
+**Verification**
+- 20/20 tests passing.
+- Visual: Isabella Cho's Clinical tab now renders the
+  "MVA 3 weeks ago — cervical/thoracic sprain" episode with 3 active
+  diagnoses, an 8-week treatment plan, a complete Intake & History
+  card (HPI narrative, severity 6/10, software-engineer occupation,
+  pain locations, aggravating/relieving factors, prior treatment,
+  medications, allergies, red-flag screening). Intake tab shows a
+  completed intake form keyed to the same case.
+
+**Coverage rules enforced by the test suite**
+- Every persona with a seeded appointment has an episode.
+- Every episode has at least one ICD-10 diagnosis marked primary.
+- Every active episode has a treatment plan with goals + baselines.
+- Every persona has a `clinical_history` snapshot w/ chief complaint.
+- Every persona has a completed intake form on file.
+
+
+## 4c. Claims: internal-ID leakage audit (2026-04-22)
+User reported raw UUIDs / hashes showing up on claim workflow / detail
+screens and (dangerously) potentially leaking into 837P wire payloads.
+Full audit + fix across five layers.
+
+**Root causes found**
+1. Claim detail endpoint returned `_public(claim)` with raw foreign keys
+   (`patient_id`, `billing_provider_id`, `rendering_provider_id`,
+   `facility_id`, `assigned_to`) — no name resolution at all.
+2. `ClaimDetail.jsx` header rendered those raw UUIDs directly into
+   "Billing provider", "Rendering provider", "Facility", "Patient"
+   fields.
+3. `ClaimWorkflow.jsx` AssignmentRow was a free-text input wired
+   straight to `claim.assigned_to`, which meant users saw and could
+   only type in UUIDs.
+4. `ClaimsQueue.jsx` fell back to `patient_id.slice(0,8)` /
+   `assigned_to.slice(0,8)` when the row enrichment was missing — still
+   UUID-like junk on the screen.
+5. **Most dangerous**: `build_x12_837p_wire()` fell back to
+   `claim.billing_provider_id` as the NPI when no resolved
+   `billing_provider` was supplied. Since Riverbend's seed referenced
+   a user UUID for `billing_provider_id` (the `providers` directory
+   was never seeded), the 837P builder would emit the UUID as the
+   billing-provider NPI onto the outbound wire. `submission.py`
+   preview builder had the same leak.
+
+**Files changed**
+- `/app/backend/services/demo/seed.py` — +_PROVIDER_DIRECTORY (4 rows:
+  billing group + 3 rendering providers with real 10-digit NPIs),
+  +_SERVICE_FACILITY, +_upsert_providers function, hooked into
+  `seed_demo_clinic()`
+- `/app/backend/services/demo/billing_seed.py` — billing/rendering
+  provider IDs on every seeded claim now reference the `providers`
+  directory UUID (not a user UUID); facility_id set to the
+  `service_facilities` row; submission.method corrected
+  `edi_837p → batch_file`
+- `/app/backend/services/billing/clearinghouse/x12_837p.py` — wire
+  builder now **refuses** to emit a payload when `billing_provider` is
+  missing or `billing_provider.npi` isn't a 10-digit number. Eliminates
+  silent UUID-as-NPI leak.
+- `/app/backend/services/billing/submission.py` — preview builder
+  accepts resolved `billing_provider`, validates NPI is 10-digit, emits
+  empty instead of UUID on fallback
+- `/app/backend/services/billing/router.py` —
+  - `GET /api/billing/claims/{id}/detail` now returns a `refs` block
+    with resolved `patient`, `payer`, `billing_provider`,
+    `rendering_provider`, `facility`, `location`, `assignee`,
+    `created_by`, `updated_by` (all with `name` + context fields,
+    never a raw id in the display slot)
+  - new `GET /api/billing/claims/assignable-users` — tenant-scoped,
+    returns readable name/role/email for the AssignmentRow picker
+  - submission pipeline: if no `billing_provider` row exists, synthesise
+    a placeholder (`PROVIDER NOT CONFIGURED` / NPI `0000000000`) rather
+    than leak `claim.billing_provider_id` — clearinghouses will reject
+    zero-NPI outright, failing loudly instead of silently wrong
+- `/app/frontend/src/pages/billing/ClaimDetail.jsx` — patient link,
+  header fields ("Billing provider", "Rendering provider", "Facility")
+  now render server-resolved `refs.*` strings with NPI tail; passes
+  `refs` down to ClaimWorkflow
+- `/app/frontend/src/pages/billing/ClaimWorkflow.jsx` — AssignmentRow
+  refactored: free-text Input → Select dropdown populated via
+  `fetchAssignableUsers()`, trigger shows readable current-assignee
+  name (from `refs.assignee` or directory fallback), never a UUID
+- `/app/frontend/src/pages/billing/ClaimsQueue.jsx` — removed
+  `patient_id.slice(0,8)` / `assigned_to.slice(0,8)` UUID fallbacks
+  — unresolved rows now read "Unknown patient" / "Unassigned"
+- `/app/frontend/src/pages/billing/useClaims.js` — +fetchAssignableUsers
+- `/app/backend/tests/test_riverbend_demo_sanitation.py` — +5 tests
+  (TestClaimDisplayVsStorage):
+  - `test_detail_refs_resolve_all_foreign_keys` — every fk has a
+    readable `name`, none of which matches the UUID regex
+  - `test_billing_provider_has_real_npi` — enforces 10-digit NPI on
+    both billing + rendering
+  - `test_claims_queue_rows_use_readable_names` — every queue row has
+    patient_name; when assigned, assignee_name (no UUID strings)
+  - `test_assignable_users_endpoint` — readable name + role for each
+  - `test_x12_builder_refuses_uuid_as_npi` — wire builder raises when
+    `billing_provider` is None OR its NPI isn't a 10-digit number
+
+**Verification**
+- 15/15 test_riverbend_demo_sanitation.py green (10 previous + 5 new).
+- 22/22 test_billing_phase4.py (submission lifecycle/outcomes/timeline)
+  green — the placeholder-NPI fallback keeps existing manual-portal
+  submission tests working while the strict wire builder prevents
+  UUID leakage.
+- Visual verification screenshots:
+  - Claim detail header: "Billing provider: Riverbend Chiropractic &
+    Wellness, LLC · NPI 1194567893", "Rendering provider: Dr. Noah
+    Carter, DC · NPI 1841792253", "Facility: Riverbend Chiropractic &
+    Wellness — Downtown · NPI 1356789012", patient link "Jaxon Morgan"
+  - Claim queue: patient names + payer names + "Unassigned"
+    (no UUID slices)
+  - AssignmentRow: dropdown with 8 staff users, each showing full
+    display name + role + email (Olivia Hart · Admin, Dr. Samuel Ito
+    DC · Doctor, Mia Ramirez · Staff, …)
+
+**Guardrails maintained**
+- No encryption-at-rest weakened.
+- PHI masking on patient data unchanged (refs block only exposes name
+  which was already public via the queue enrichment path).
+- All display resolution happens server-side in the authorized
+  endpoint; the UI is pure render, never fabricates strings.
+- Internal IDs stay in storage (`claim.billing_provider_id` etc.)
+  and still flow through the submission pipeline — they just never
+  reach the UI display layer or outbound NPI fields.
+
+
+## 4b. Notifications + follow-up rebooking seed (2026-04-22)
+Addressed the second prompt after the sanitation pass — populate the
+notification/reminder panels so the communication surface feels live.
+
+- **`_seed_notifications`** (idempotent; wipes rows where `source == "demo_seed"` on this tenant before re-inserting) creates **62 realistic Notification rows** keyed to the 12 seeded Riverbend appointments:
+  - `appointment.booked` — email + SMS for every seeded appointment (26 rows)
+  - `appointment.reminder` — 24h-before email + SMS (24 rows)
+  - `appointment.same_day_reminder` — morning-of SMS for today's/past visits (5 rows)
+  - `appointment.cancelled` — email + SMS for Aria's cancelled slot (2 rows)
+  - `appointment.follow_up` — "haven't seen you in a while" standalone
+    email to Ethan Parker (1 row)
+  - `review.request` — email + SMS pair 1 day post-visit for completed
+    appointments (4 rows)
+  - Status mix: 57 delivered · 2 sent · 2 failed (Marcus SMS — carrier
+    rejection) · 1 suppressed (Claire email — opted out of marketing).
+- **`_seed_follow_up_suggestions`** populates the Checkout page's
+  rebook queue with 3 curated pending suggestions (Ethan Parker → 30d
+  maintenance, Marcus Reid → 3d new-patient followup, Hannah Whitaker →
+  7d follow-up). Each carries a real `appointment_type_id` link so the
+  "Book follow-up" jump-to-BookDialog flow prefills duration correctly.
+- **Frontend filter update** — `pages/Notifications.jsx` FILTERS array
+  expanded so the new event types get dedicated filter chips ("24h
+  reminder", "Same-day", "Follow-up", "Review request"). Existing
+  masking/unmask/admin/audit behaviors are untouched.
+- **Phone-format polish** — `_CLINIC_PROFILE.primary_phone` /
+  `.secondary_phone` are now stored as 10-digit canonical
+  (`5035550100`), matching the output of `core.phone.normalize_us_phone`.
+  Previously stored `+1-503-555-0100`, which `formatAsTyped` in
+  `frontend/src/utils/phone.js` misread (stripped country code,
+  re-sliced wrong offsets, rendered as `(150) 355-5010`). Fixed —
+  Settings now displays `(503) 555-0100`.
+- **Panels / screens that light up on first login**
+  - `/notifications` — 62-row chronological log grouped by day, with
+    filter chips for every new event type.
+  - `/scheduling/checkout` → "Follow-ups suggested" card — 3 queued
+    rebook suggestions with "Book follow-up" / "Dismiss" per row.
+  - Per-patient chart → Communication history (when navigated via
+    `/notifications?patient_id=…`) — all cross-checked.
+
+### Remaining empty-state demo gaps (after this pass)
+- The Workforce / Roles / Access-Review admin panels still render
+  empty on first login (not in scope for either the sanitation or
+  reminder passes).
+- The Compliance Ops surface (Evidence / Incidents / Vendors /
+  Risks / Policies / Access Reviews) has minimal data — enough for
+  screenshots but not a full walkthrough.
+- Reports dashboards (A/R aging charts, payer mix, denial heat map)
+  render fine but numbers are modest because the billing seed is a
+  14-claim curated sample — not a year's worth of history.
+
+### Files modified in this pass
+- `/app/backend/services/demo/seed.py` — +_seed_notifications,
+  +_seed_follow_up_suggestions (both idempotent via
+  `source == "demo_seed"` sweep); `_CLINIC_PROFILE` phone values
+  normalised to 10-digit canonical
+- `/app/frontend/src/pages/Notifications.jsx` — FILTERS array extended
+- `/app/memory/PRD.md` — §4b added
+
+
+Addressed the user's "full demo-environment sanitation" request on top of
+the Riverbend seed already landed by the previous agent. Deliverables:
+- **ClinicProfile** — `services/demo/seed.py::_upsert_clinic_profile`
+  seeds exactly one profile per boot for the Riverbend Downtown location
+  (1840 NW Riverside Dr · Portland OR 97209, +1-503-555-0100, timezone
+  `America/Los_Angeles`, Mon–Fri 08:00–12:00 + 13:00–18:00, Sat 09:00–13:00,
+  Sun closed). Hours model round-trips through `ClinicProfileUpdate`.
+- **Appointment types** — exactly 9 realistic visit types seeded
+  (Chiropractic Adjustment, Follow-up Visit, New Patient Exam, Re-Exam,
+  Therapy / Modality, Auto Injury / PIP Evaluation, Workers' Comp
+  Evaluation, Maintenance / Wellness Visit, Pediatric Visit), ordered via
+  `sort_order`, with realistic durations and follow-up-day defaults.
+- **Rooms** — exactly 7 rooms seeded for the default location (Exam 1/2,
+  Adjustment 1/2, Consult Room, X-Ray Suite, Therapy Bay) covering
+  `exam | consult | xray | therapy` types.
+- **Duplicate location cleanup** — `services/authz/seed.py` now prefers
+  the Riverbend tenant's location (queried by `tenant_id`) instead of
+  creating a separate "Main Clinic / HQ" row that `seed_tenancy` would
+  later rename and backfill. `reseed_demo_clinic.py` purges any
+  non-canonical locations on the default tenant and re-migrates their
+  ULAs to the canonical Riverbend row.
+- **Demo-user profile scrub** — `services/identity/seed.py` now forces
+  the self-service profile fields (`first_name`, `last_name`,
+  `credentials_suffix`, `preferred_signature_name`, `job_title`,
+  `time_zone`, `mobile_phone`, `work_phone`) back to canonical values on
+  every boot, so pytest runs that PATCH `admin@ccms.app` into "Ada
+  Lovelace, DC DACBR" no longer leak into the demo. Admin header now
+  reads "Welcome back, Ava Bennett".
+- **Patient seed idempotency** — `_upsert_personas` lookup key changed
+  from `(first_name, last_name, date_of_birth)` to
+  `(first_name, last_name, email)` so an intervening PATCH that encrypts
+  `date_of_birth` (PHI encryption at rest) doesn't fool the reseed into
+  inserting a second row. Sibling lookups in `_upsert_policies`,
+  `_seed_clinical_notes`, and `_seed_appointments` use the same safer
+  key (appointments drop `date_of_birth` entirely).
+- **Tests**: `/app/backend/tests/test_riverbend_demo_sanitation.py` —
+  10/10 passing: single clinic profile with correct hours, 9 appointment
+  types in exact order with no `Dup-*` / `DefaultOnly-*` / `Filterable-*`
+  junk, 7 rooms, single "Riverbend — Downtown" location,
+  `admin@ccms.app` profile = Ava Bennett (Pacific time, empty credentials
+  suffix), `doctor@ccms.app` profile = Dr. Noah Carter DC CCSP, all 8
+  personas present with populated `sex_at_birth`, PATCH round-trip on
+  Hannah Whitaker + Marcus Reid succeeds without validation errors and
+  stays idempotent on subsequent reseeds.
+- **Ops note**: after any pytest run that touches the default tenant,
+  re-run `python /app/backend/scripts/reseed_demo_clinic.py` followed by
+  `sudo supervisorctl restart backend`. Reseed now completes the wipe
+  + re-seed cycle in < 10 s and is safe to chain in CI.
 
 ## 0. Design system (binding)
 The Chiro Software design system is authoritative for every UI surface.
@@ -1021,6 +3223,22 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Encryption at rest confirmed via direct mongoDB inspection
 
 ## 6. Backlog
+
+### Billing / Claims / Change-Optum pipeline — accepted status (2026-04-22)
+**PARTIAL — sandbox-ready, not production-complete; blocked only on
+live Change/Optum production transport and related business
+prerequisites.**
+
+- Phases 1–5, 7–12: **accepted**.
+- Phase 6 (Change/Optum submission pipeline): **accepted as PARTIAL /
+  sandbox-ready only**. 837P generator + scrubber gate + bulk submit
+  + trace/correlation persistence are green in sandbox; live HTTPS
+  transmission to Change/Optum production degrades to log-only until
+  trading-partner credentials + enrollment are provisioned.
+- Next milestone: complete live Change/Optum production transport
+  once credentials, enrollment, and related business prerequisites
+  are available. No additional code deliverables are blocking.
+
 ### P0 (production go-live blockers — operational, not code)
 - HIPAA-eligible DB (MongoDB Atlas + BAA, or Postgres in HIPAA-compliant cloud)
 - BAAs with all PHI processors
@@ -1032,6 +3250,23 @@ Multi-tenant Chiropractic Clinic Management System on a microservices, event-dri
 - Dependency SCA + SAST in CI — ISO A.8.8 / A.8.28
 
 ### P1 (next features)
+- **Phase 6 production transport — the only milestone blocker.** Wire
+  live HTTPS submission to Change/Optum production inside
+  `ChangeHealthcareAdapter.submit()`. Today the adapter logs the
+  payload and returns a synthetic `Ack` when
+  `CLEARINGHOUSE_CHC_MODE=production` is set without credentials.
+  Gated on business prerequisites (trading-partner credentials,
+  payer enrollment, SFTP/HTTPS endpoint URLs, BAAs) — not a code
+  gap. Once credentials land, the work is ~50 LoC inside the
+  existing adapter.
+- **Claims Phase 13+ — Eligibility 270/271**: fully build out the
+  eligibility request/response loop on top of the base clearinghouse
+  adapter (currently stubbed).
+- **Claims UX — Assignee picker**: replace the raw user-id text input
+  on the `ClaimWorkflow` AssignmentRow with a tenant-scoped assignee
+  dropdown (already server-side via `filter_options.assignees`).
+- Claims flaky tests: fix `test_run_rules_clean_claim` (needs Patient
+  DOB in fixture) and `test_statement_body_deterministic` (spacing).
 - Global retry-after-reauth Axios interceptor that silently replays the
   last privileged action after reauth confirmation (UX polish)
 - Real Twilio SMS + Resend email (require BAAs)
@@ -2621,3 +4856,452 @@ Remaining deferred items (no backing data yet): referral source,
 communication consent per patient, appointment-type volume (blocked on
 `appointment_type_id` persistence), open time slots, provider schedule
 utilisation, collections summary.
+
+
+
+## 2026-04-22 — Appointment Workflow Backbone (Phase 1)
+
+Backend foundation for the full clinic operational workflow. UI phases
+(room management, flow board, intake, checkout) will build on this.
+
+**Lifecycle status set** (superseded old scheduled/completed/cancelled):
+`scheduled`, `confirmed`, `checked_in`, `ready_for_provider`, `in_progress`,
+`ready_for_checkout`, `completed`, `checked_out`, `no_show`, `canceled`.
+Legacy `cancelled` spelling preserved for back-compat.
+
+**Patient physical location** (independent concept):
+`not_arrived`, `waiting_room`, `roomed`, `checkout`, `departed`.
+
+**Per-transition metadata** — `*_at` + `*_by_user_id` stamps for
+check-in, ready-for-provider, visit-start, ready-for-checkout, complete,
+checkout, no-show, and location-updated.
+
+**New endpoints** under `/api/appointments/{id}/`:
+`check-in`, `undo-check-in`, `no-show`, `ready-for-provider`,
+`start-visit`, `ready-for-checkout`, `complete`, `checkout`, `depart`,
+`location`.
+
+**Validation rules (server-side, default-deny):**
+- cannot check in a canceled appointment
+- cannot start visit before check-in unless `override=true`
+- cannot complete before visit starts
+- cannot check out before `completed` unless `override=true`
+- cannot mark no-show after visit started
+- undo-check-in after visit started requires `override=true`
+
+**Permissions:** all workflow endpoints use `appointment.update` policy;
+patient-portal role is denied. Overrides do not bypass authz.
+
+**Audit:** every transition emits a dedicated audit row with
+`from_status`, `to_status`, `override`, `reason`, `location_after`,
+`tenant_id`. Location-only changes emit `appointment.location_changed`.
+
+**Event bus:** `appointment.<transition_name>` published for every move.
+
+**Tests:** `test_appointment_workflow.py` — 14/14 green covering happy
+path, all validation rules, overrides, reversions, depart, explicit
+location change, and patient-portal permission deny.
+
+**Files:**
+- `backend/services/scheduling/models.py` (status + location enums, workflow
+  request schemas, public response fields for stamps)
+- `backend/services/scheduling/workflow.py` (transition engine + specs +
+  validation + audit + event bus)
+- `backend/services/scheduling/router.py` (10 new thin endpoints)
+- `backend/services/scheduling/WORKFLOW.md` (implementation notes)
+
+**Not yet done (explicitly out of Phase 1 scope):**
+room management UI, patient flow board UI, intake UI integration,
+checkout UI, calendar visual polish.
+
+
+
+## 2026-04-22 — Check-In + Intake Integration (Workflow Phase 2)
+
+Front-desk arrival UI + intake gating on top of the Phase 1 backbone.
+
+**Intake gating:** `ready_for_provider` is now blocked when the patient
+has no completed `patient_intake_forms` row. Explicit `override=true`
++ `reason` bypasses and the audit row records
+`intake_gate_bypassed=True`.
+
+**Appointment hydration** now surfaces (from `_hydrate` in the
+scheduling router):
+- `intake_status`: `not_started` / `in_progress` / `completed`
+- `intake_completed_at`, `intake_completed_by_name`
+- `intake_form_id` (latest relevant form, completed wins over draft)
+
+**Frontend:**
+- New `AppointmentWorkflowPanel` component embedded at the top of the
+  existing `BookDialog` in reschedule mode. Renders a status badge,
+  intake badge (with completion timestamp + user), quick-action buttons
+  (Check in / Undo check-in / No-show / Ready for provider), an "Open
+  intake" link, and an operational timeline.
+- `SchedulingPage` now opens the BookDialog for appointments in any
+  status (no longer restricted to scheduled/cancelled) so check-in is
+  reachable from the calendar.
+- `PatientDetail` appointment history row shows intake status +
+  fuller status badges.
+
+**Tests:**
+- `test_appointment_workflow.py` extended to 17 tests covering intake
+  gating (blocked when incomplete, override path, passing once intake
+  is completed) and intake status hydration.
+- Combined suite 29/29 green.
+- Testing-agent iteration 54: Full E2E validated (workflow endpoints,
+  validation rules, intake gating, override prompt, intake badge,
+  timeline, reauth flow). `retest_needed=false`.
+
+**Out of scope (by request):** room assignment, room settings, flow
+board beyond simple arrival visibility, provider workflow beyond intake
+gating, checkout UI.
+
+
+
+## 2026-04-22 — Patient Flow Board (Workflow Phase 3)
+
+Operational view for front-desk and providers. No new backend — wired
+entirely to Phase-1 workflow endpoints and Phase-2 intake hydration.
+
+**Route:** `/scheduling/flow-board` (admin | doctor | staff).
+**Nav:** new "Flow Board" item under Operations (testid `nav-flow-board`).
+
+**Six columns, mutually exclusive classification by priority:**
+1. `checked_out` within last 2h → Recently Checked Out
+2. `ready_for_checkout` → Ready for Checkout
+3. `in_progress` → In Progress
+4. `ready_for_provider` → Ready for Provider
+5. `checked_in` + location `roomed` → Roomed
+6. `checked_in` → Waiting Room
+
+**Row schema:** patient name, appointment time, provider, appointment
+type, plus explicit text-label badges for status / intake / location
+(never color-only). Elapsed time uses the timestamp of whichever stage
+the card is currently in (`checked_in_at`, `location_updated_at`,
+`ready_for_provider_at`, `visit_started_at`, `ready_for_checkout_at`,
+`checked_out_at`).
+
+**Quick actions wired to the existing workflow endpoints:**
+- Waiting Room: Room (→ location=roomed), Ready, Undo, No-show
+- Roomed: Ready, Undo, No-show
+- Ready for Provider: Start visit, Undo, No-show
+- In Progress: Ready checkout, Complete
+- Ready for Checkout: Complete, Checkout (with override)
+- Recently Checked Out: Depart
+
+Intake gate prompts a reason on Ready-for-Provider when the patient's
+intake is not completed; the override + reason ride through the
+existing audit path (`intake_gate_bypassed=True`).
+
+**Filters:** date (default today), provider, location (shown only when
+the user sees >1 location), status, intake. Clear-all resets.
+
+**Freshness:** 20s silent poll while visible + manual Refresh button.
+Local merge on action for instant UI with no flicker.
+
+**Testing-agent iteration 55:** full E2E validated — six columns,
+testids, filters, intake-override prompt, reauth, full lifecycle
+drive, patient-portal denial. `retest_needed=false`.
+
+**Out of scope (by request):** room master/settings management, room
+conflict validation, checkout detail UI beyond workflow visibility.
+
+
+
+## 2026-04-22 — Room Management + Assignment (Workflow Phase 4)
+
+Rooms are now first-class clinic-configurable entities and appointments
+can be assigned to them with single-occupancy guards.
+
+**Backend**
+- New service `services/rooms/` — Pydantic models + tenant-scoped
+  CRUD router at `/api/rooms`.
+  - Fixed `RoomType` literal: `exam`, `consult`, `xray`, `therapy`, `other`.
+  - Case-insensitive unique name per (tenant, location).
+  - Hard-delete blocked when the room has assignment history (deactivate
+    instead — preserves audit trail). Occupied rooms cannot be deleted.
+- Appointment schema adds `current_room_id`, `room_assigned_at`,
+  `room_assigned_by_user_id`; hydrator also surfaces
+  `current_room_name` / `current_room_type`.
+- New endpoints:
+  - `POST /api/appointments/{id}/room` — assign/change (with
+    `{room_id, reason, force}`).
+  - `POST /api/appointments/{id}/clear-room?return_to_waiting=...` — clear
+    the room; optionally send the patient back to waiting_room.
+  - `GET /api/appointments/{id}/room-history` — chronological trail.
+- New collection `appointment_room_history` (PG-ready table schema in
+  `services/rooms/models.py` docstring).
+- Single-occupancy guard runs on every assign. Conflict → 409.
+  `force=true` + non-blank `reason` overrides and records
+  `forced=True` in both history + audit.
+- Every transition emits `appointment.room_assigned`,
+  `appointment.room_changed`, `appointment.room_cleared` on the event bus
+  and a dedicated audit row with `forced`, `reason`, `tenant_id`.
+
+**Frontend**
+- `/settings/rooms` (RoomsManagerPage, admin-only) — create, rename,
+  deactivate/reactivate, re-type, sort_order, notes, hard-delete when
+  unused.
+- New `RoomAssignmentControl` component reused in three places:
+  - Patient Flow Board rows (Waiting Room / Roomed / Ready for Provider
+    / In Progress). Shows "No room" or "Room: X" + explicit "Override"
+    pill when the last assignment was forced.
+  - `AppointmentWorkflowPanel` inside `BookDialog` (reschedule mode).
+  - Calendar `DayView` card — inline `Room · <name>` line when set.
+- Picker popover lists active rooms for the appointment's location with
+  live occupancy badges (Occupied / Current) computed from the current
+  board snapshot. Conflicts prompt for an override reason inline.
+- Nav: new "Rooms" item under Settings (admin-only).
+
+**Tests**
+- `test_rooms.py` — 11/11 green covering CRUD, name uniqueness,
+  hard-delete protection, assignment + history, change-room history,
+  clear/return-to-waiting, single-occupancy 409, forced-override,
+  inactive-room / terminal-appointment rejections, patient-portal denial.
+- **Testing-agent iteration 56:** full E2E validated — pytest against
+  live preview + live-UI drive of RoomsManagerPage (reauth flow,
+  create, list). RoomAssignmentControl testids + role gating verified.
+  `retest_needed=false`.
+
+**Out of scope (by request):** advanced shared-room logic beyond
+extensibility hooks; deep checkout expansion beyond room visibility.
+
+
+
+## 2026-04-22 — Provider Workflow (Phase 5)
+
+Providers now have a minimal-click worklist that drives
+ready_for_provider → in_progress → ready_for_checkout / completed
+with a clean handoff to checkout.
+
+**New UI — `/scheduling/provider-queue`** (ProviderQueuePage), role
+admin | doctor | staff, nav "My Queue" under Operations.
+
+Two sections:
+  - **Up Next** — `status=ready_for_provider`, sorted oldest-first by
+    ready-for-provider time. One-click **Start visit**.
+  - **In Progress** — `status=in_progress`, sorted oldest-first by
+    visit_started_at. Two actions: **Ready for checkout** or
+    **Complete**.
+
+Each row shows:
+  - Patient name, appointment time, appointment type
+  - Intake badge (not started / in progress / completed)
+  - Room badge when assigned
+  - Three timing indicators per row (Checked in · ago · Roomed · ago ·
+    Ready · ago, plus Visit started · ago once in progress)
+
+Defaults to the logged-in provider's own queue when the user is a
+provider; admin/staff may switch. Silent 20s polling keeps the view
+fresh.
+
+**Permissions**
+All provider transitions reuse `appointment.update` — front desk,
+providers, and admins share the grant; patient-portal role is blocked
+at the authz layer. Current role grants already include FD / PR / CM
+/ SA.
+
+**Backend behaviour (unchanged — validated by new tests)**
+  * Start Visit (`start-visit`): `ready_for_provider → in_progress`;
+    `checked_in → in_progress` only via `override=true`.
+  * Ready for Checkout: `in_progress → ready_for_checkout`.
+  * Complete Visit: `in_progress` OR `ready_for_checkout → completed`.
+  * Checkout: `completed → checked_out` (no override needed — clean
+    handoff).
+
+**Tests**
+- `test_provider_workflow.py` — 7/7 green covering happy path,
+  complete-direct-from-in-progress, rejection paths (wrong state,
+  pre-start complete, out-of-state ready_for_checkout), patient-portal
+  deny, and admin/provider share the same grant.
+
+**Out of scope (by request):** financial/billing features, full
+checkout UI beyond the handoff state support already present.
+
+
+
+## 2026-04-22 — Checkout Workflow (Phase 6)
+
+Front-desk operational checkout — notes/summary captured at complete
+time, clean hook points for future payment / follow-up integrations.
+
+**New endpoints**
+- `POST /api/appointments/{id}/start-checkout` — physical motion only.
+  Allowed from `ready_for_checkout` or `completed`. Sets
+  `current_location_type='checkout'` and stamps `checkout_started_at`
+  + `checkout_started_by_user_id`. Status unchanged.
+- `POST /api/appointments/{id}/checkout` — now accepts
+  `{checkout_notes, checkout_summary}` on the existing `CheckoutRequest`.
+  Both fields persist encrypted at rest via the appointment encryption
+  pipeline (AES-256-GCM field-level). The endpoint publishes
+  `appointment.checkout` on the event bus with the full updated doc —
+  the clean hook point for future payment / invoice / print / follow-up
+  subscribers.
+
+**Model additions**
+- `checkout_started_at`, `checkout_started_by_user_id`
+- `checkout_notes`, `checkout_summary` (encrypted via ENCRYPTED_FIELDS)
+
+**UX fix from testing-agent iteration 57**
+`ready_for_checkout` no longer auto-sets `current_location_type=checkout`
+— the front desk now drives that with `/start-checkout`. This populates
+the UI's "Ready for Checkout" staging section as intended (previously
+always empty because the transition immediately bumped location to
+checkout).
+
+**New frontend page `/scheduling/checkout`** (admin + staff) —
+`CheckoutPage` with three sections:
+  - Ready for Checkout (staging)
+  - At Checkout Counter (`location_type==checkout`)
+  - Recently Checked Out (within last 2h) — Mark Departed / Departed
+    badge.
+
+`CompleteCheckoutDialog` captures `checkout_notes` (max 2k chars) +
+`checkout_summary` (max 4k). When launched from a `ready_for_checkout`
+row it auto-advances through `/complete` then `/checkout` for
+minimal-click front-desk UX.
+
+**Tests**
+- `test_checkout_workflow.py` — 6/6 green (start-checkout motion,
+  wrong-state rejection, notes+summary capture, encryption-at-rest
+  round trip, depart sets location, patient-portal deny).
+- Combined scheduling regression — **53/53 green**
+  (checkout 6 + provider 7 + workflow 17 + rooms 11 + counts 5 + types 7).
+- **Testing-agent iteration 57**: full E2E validated — pytest green
+  on live preview, UI sections + dialog testids confirmed, auto-
+  advance wire-trace confirmed, role gating verified for
+  patient-portal.
+
+**Out of scope (by request)**
+Payment processing buildout, invoice engine changes. The event-bus
+payload and checkout_notes/summary fields are the hook points for
+those phases.
+
+
+
+## 2026-04-22 — Polish & Hardening (Workflow Phase 7)
+
+Consistency + reversal coverage + UX polish + documentation.
+
+**Critical regression fix**
+`_check_conflict` was filtering `status == 'scheduled'`, meaning a
+`checked_in` or `in_progress` appointment silently allowed a second
+booking at the same provider/time. Now uses `status $nin [cancelled,
+canceled, no_show, checked_out]` — every active status blocks; every
+terminal status frees the slot. New test
+`test_active_non_scheduled_status_still_blocks_rebooking` guards this.
+
+**New reversals**
+- `POST /appointments/{id}/undo-ready-for-provider` — reverts to
+  `checked_in` and clears `ready_for_provider_at/_by`.
+- `POST /appointments/{id}/undo-ready-for-checkout` — reverts to
+  `in_progress` and clears `ready_for_checkout_at/_by`.
+- `undo-check-in` now additionally clears all downstream forward
+  stamps so the patient can walk the workflow cleanly a second time.
+
+**Workflow engine**
+`TransitionSpec.clear_stamps` added so any undo/reset transition can
+declare which fields to null out in the same atomic write.
+
+**Frontend polish**
+- New shared `statusMeta.js` — single source of truth for labels,
+  icons, badge variants, and left-border tones. Reused by DayView,
+  FlowBoard, AppointmentWorkflowPanel, and Checkout.
+- Calendar DayView: status-tinted left border + status label pill per
+  card; cancelled cards remain clickable with `line-through`.
+- Flow Board: overdue pills (Waiting long / Overdue / Provider delay /
+  Checkout delay) at 15m / 30m / 10m / 10m thresholds — always text +
+  icon, never color-alone. Status badge now uses canonical labels
+  with lucide icon.
+
+**Cancellation semantics**
+Cancelled appointments:
+  - stay visible in list + detail
+  - never block a rebook (verified by
+    `test_cancelled_slot_unblocks_future_booking`)
+  - render with strike-through + destructive border on the calendar
+
+**Docs**
+`services/scheduling/WORKFLOW.md` rewritten to cover every Phase-1→7
+endpoint, validation rule, audit/event contract, permissions, and UX
+rule in one place.
+
+**Tests**
+- `test_workflow_hardening.py` — 5/5 green.
+- Full scheduling regression — **58/58 green** in isolation runs.
+- **Testing-agent iteration 58**: pytest green on live preview, UI
+  verified (status-tinted calendar cards + overdue pills + statusMeta
+  canonical labels). `retest_needed=false`.
+
+
+
+## 2026-04-22 — appointment_type_id persistence + Checkout hooks
+
+Two cleanup items shipped together.
+
+### appointment_type_id persistence (P2 carry-over)
+
+- `AppointmentCreate` + `AppointmentUpdate` now accept `appointment_type_id`.
+- Tenant-scoped validation on create/patch: must exist + be active. 400
+  on invalid id (runs BEFORE conflict check for a clear error).
+- Hydrator surfaces `appointment_type_name` so UI never needs a second
+  lookup.
+- `BookDialog` now persists the selected type on both create and
+  reschedule; preserves the saved type when opening an existing
+  appointment.
+
+### Checkout hooks on `appointment.checkout`
+
+New event-bus subscriber module `services/scheduling/checkout_hooks.py`.
+Registered from server startup via `register_hooks()`. Every subscriber
+is opt-in, isolated (failure doesn't block the others), and idempotent
+per `appointment_id`.
+
+**Hook 1 — follow-up suggestion**
+When a checked-out appointment carries an `appointment_type_id` whose
+type has `default_follow_up_days`, a `follow_up_suggestions` doc is
+created at `checked_out_at + N days` with `status='pending'`,
+`source='checkout_hook'`.
+
+**Hook 2 — draft invoice stub**
+A zero-amount `billing_invoices_stub` row is written with
+`status='draft'` + `source='checkout_hook'`. Acts as the stable
+anchor row that the future billing engine will enrich.
+
+**Model update**
+`AppointmentType.default_follow_up_days` (1-365, optional). Editable
+via the existing Clinic Settings → Appointment Types manager.
+
+**New API**
+- `GET /api/appointments/follow-up-suggestions?status=pending&patient_id=…`
+  (ordered by `suggested_at`; doctor role auto-filtered to own patients;
+  declared BEFORE `/{appointment_id}` so the path is not shadowed).
+- `POST /api/appointments/follow-up-suggestions/{id}/dismiss`
+  (audited `follow_up_suggestion.dismissed`).
+
+**Frontend**
+- `CheckoutPage` gains a "Follow-ups suggested" section: each row shows
+  patient, suggested date, appointment type, a quick "Book follow-up"
+  button (routes to `/scheduling?...` with the pre-fill params), and a
+  Dismiss action.
+- `AppointmentTypesManager` gains a "Follow-up (days, optional)" field
+  on both create and edit.
+
+**Tests**
+- `test_checkout_hooks.py` — 7/7 green:
+  - valid appointment_type_id persists + hydrates name
+  - unknown appointment_type_id rejected (400)
+  - patch can change appointment_type_id
+  - checkout hook creates follow_up_suggestion (idempotent, correct
+    date offset, fields populated)
+  - hook no-ops when no `default_follow_up_days`
+  - checkout hook creates `billing_invoices_stub` draft (direct Mongo
+    verification)
+  - dismiss endpoint moves status to dismissed
+- Full regression: **65/65 scheduling tests green**.
+
+**Future phases plug into the same event-bus payload**
+Payment collection, invoice enrichment, document print/email,
+automated follow-up booking — all subscribe to `appointment.checkout`
+or consume `billing_invoices_stub` / `follow_up_suggestions` without
+touching the hot path.

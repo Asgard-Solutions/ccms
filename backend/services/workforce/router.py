@@ -18,6 +18,7 @@ from core.repository import TenantScopedRepository
 from core.security import hash_password
 from core.tenancy import TenantContext, get_tenant_context, tenant_db
 from services.authz.policy import require_permission
+from services.notifications import send_email
 from services.workforce.models import (
     AdminSessionAction, BreakGlassAttest, BreakGlassStart,
     DeprovisionReport, DeprovisionRequest, InviteAccept, InviteCreate,
@@ -145,6 +146,28 @@ async def create_invitation(
             "location_ids": payload.location_ids,
             "expires_at": stored["expires_at"],
         },
+    )
+    # Send the invite email. Falls back to log-only when Resend isn't
+    # configured; dev_token is still returned for local testing.
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    activate_link = (f"{frontend}/invitation?token={raw_token}"
+                     if frontend else f"(token: {raw_token})")
+    await send_email(
+        to=email,
+        subject=f"You've been invited to {stored.get('organization_name') or 'CCMS'}",
+        html_body=(
+            f"<p>You've been invited to join the clinic team as "
+            f"<strong>{payload.role}</strong>.</p>"
+            f"<p>Click the link below to activate your account:</p>"
+            f"<p><a href='{activate_link}'>Activate my account</a></p>"
+            f"<p>This invitation expires on {stored['expires_at']}.</p>"
+        ),
+        text_body=(
+            f"You've been invited to join CCMS.\n"
+            f"Activate here: {activate_link}\nExpires {stored['expires_at']}."
+        ),
+        event_type="workforce_invitation",
+        correlation_id=stored["id"],
     )
     stored["dev_token"] = raw_token
     stored.pop("token_hash", None)

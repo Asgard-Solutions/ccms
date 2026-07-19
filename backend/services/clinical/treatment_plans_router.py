@@ -117,11 +117,35 @@ async def _compute_progress(db, ctx: TenantContext, plan: dict) -> dict:
     if start:
         q["date_of_service"] = {"$gte": start}
     visits = await db.clinical_follow_up_notes.count_documents(q)
+
+    # Phase 3 Slice 1 — count *future* booked appointments on the same
+    # patient/episode so the NextActionsPanel can reason about how many
+    # planned visits are still un-scheduled. Read-only aggregation; no
+    # writes.
+    now = now_iso()
+    appt_q: dict = {
+        "tenant_id": ctx.tenant_id,
+        "patient_id": plan["patient_id"],
+        "status": {"$in": ["booked", "confirmed"]},
+        "start_time": {"$gte": now},
+    }
+    if plan.get("episode_id"):
+        # Some appointments carry episode_id, most don't yet. Count both.
+        appt_q_ep = {**appt_q, "episode_id": plan["episode_id"]}
+        scheduled = await db.appointments.count_documents(appt_q_ep)
+        if scheduled == 0:
+            scheduled = await db.appointments.count_documents(appt_q)
+    else:
+        scheduled = await db.appointments.count_documents(appt_q)
+
     pct = None
     if total and total > 0:
         pct = min(100, round((visits / total) * 100))
     return TreatmentPlanProgress(
-        visits_completed=visits, total_visits=total, percent=pct,
+        visits_completed=visits,
+        visits_scheduled=scheduled,
+        total_visits=total,
+        percent=pct,
     ).model_dump()
 
 
@@ -216,6 +240,7 @@ async def create_treatment_plan(
         "activity_work_recommendations": payload.activity_work_recommendations,
         "discharge_criteria": payload.discharge_criteria,
         "maintenance_transition_notes": payload.maintenance_transition_notes,
+        "configured_outcome_measures": list(dict.fromkeys(payload.configured_outcome_measures or [])),
         "discharge_reason": None,
         "discharged_at": None,
         "created_at": now,

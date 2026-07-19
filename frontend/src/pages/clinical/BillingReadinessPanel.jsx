@@ -120,33 +120,64 @@ export default function BillingReadinessPanel({
         type="button"
         onClick={() => setOpen((v) => !v)}
         data-testid={`billing-readiness-${encounterId}-toggle`}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40"
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       >
-        <div className="flex items-center gap-2">
-          <Receipt className="h-4 w-4 text-muted-foreground" />
+        <div className="flex min-w-0 items-center gap-2">
+          <Receipt className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           <span className="font-display text-sm font-semibold text-foreground">
-            Billing Readiness
+            Billing readiness
           </span>
           {report ? (
-            <Badge
-              variant="outline"
-              data-testid={`billing-readiness-${encounterId}-status`}
-              className={`text-[10px] uppercase tracking-wider ${meta.tone}`}
-            >
-              <HeaderIcon className="mr-1 h-3 w-3" />
-              {meta.label}
-            </Badge>
+            <>
+              <Badge
+                variant="outline"
+                data-testid={`billing-readiness-${encounterId}-status`}
+                className={`text-[10px] font-medium capitalize ${meta.tone}`}
+              >
+                <HeaderIcon className="mr-1 h-3 w-3" aria-hidden="true" />
+                {meta.label}
+              </Badge>
+              {(() => {
+                // Surface count + top-priority summary in the header so
+                // billing folks don't need to expand every row.
+                const nonPassing = (report.checks || []).filter((c) => !c.passed);
+                if (nonPassing.length === 0) return null;
+                const top = nonPassing.find((c) => c.severity === "fail")
+                  || nonPassing.find((c) => c.severity === "warn")
+                  || nonPassing[0];
+                return (
+                  <span
+                    data-testid={`billing-readiness-${encounterId}-summary`}
+                    className="ml-1 min-w-0 truncate text-xs text-muted-foreground"
+                  >
+                    {nonPassing.length} warning{nonPassing.length === 1 ? "" : "s"}
+                    {top?.message ? ` · ${top.message}` : ""}
+                  </span>
+                );
+              })()}
+            </>
           ) : (
-            <Badge variant="outline" className="text-[10px] text-muted-foreground">
-              —
+            <Badge variant="outline" className="text-[10px] text-muted-foreground italic">
+              Loading
             </Badge>
           )}
         </div>
-        {open ? (
-          <ChevronDown className="h-4 w-4 text-muted-foreground" />
-        ) : (
-          <ChevronRight className="h-4 w-4 text-muted-foreground" />
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {report && (report.checks || []).some((c) => !c.passed) && (
+            <span
+              className="hidden text-xs text-primary sm:inline"
+              aria-hidden="true"
+            >
+              Review billing issues
+            </span>
+          )}
+          {open ? (
+            <ChevronDown className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          )}
+        </div>
       </button>
 
       {open && (

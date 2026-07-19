@@ -36,6 +36,9 @@ class UserPublic(BaseModel):
     password_changed_at: str | None = None
     pin_configured: bool = False
     theme: Theme = "system"
+    # Phase 3 Slice 2 — durable, global Clinical UI defaults (nested).
+    # Never contains patient / record ids or free-text search strings.
+    clinical_ui_defaults: "ClinicalUIDefaults | None" = None
     # Self-service profile fields (editable via PATCH /auth/me/profile).
     first_name: str | None = None
     last_name: str | None = None
@@ -182,6 +185,176 @@ class PreferencesUpdate(BaseModel):
     All fields optional; only keys that are present are written."""
     model_config = ConfigDict(extra="forbid")
     theme: Theme | None = None
+    # Phase 3 Slice 2 — durable, global-scope Clinical UI preferences.
+    # Structured slugs only; no patient/record ids, no free-text search
+    # strings. Patient-specific active filters live in transient session
+    # scope via `useClinicalReturnState`, not here.
+    clinical_ui_defaults: "ClinicalUIDefaults | None" = None
+
+
+# ---------------------------------------------------------------------------
+# Clinical UI durable defaults (Phase 3 Slice 2)
+# ---------------------------------------------------------------------------
+# Allow-lists MUST stay in lockstep with the corresponding frontend
+# schema at `frontend/src/pages/clinical/timelinePresetsSchema.js` and
+# with the backend filter enum in `grouped_router.py`. A new value here
+# requires touching all three files in the same PR.
+TimelineEventKind = Literal[
+    "visit",
+    "initial_exam",
+    "treatment_plan",
+    "clinical_media",
+    "outcome_entry",
+]
+TimelineSource = Literal[
+    "appointment",
+    "encounter",
+    "note",
+    "initial_exam",
+    "reexam",
+    "outcome",
+    "media",
+]
+TimelineDateWindow = Literal[
+    "last_7d",
+    "last_30d",
+    "last_90d",
+    "last_180d",
+    "last_365d",
+    "all",
+]
+ClinicalSectionSlug = Literal[
+    "summary", "history", "diagnoses", "encounters",
+    "care-plan", "timeline", "imaging", "outcomes",
+]
+# Phase 3 Slice 5A — role-aware workspace modes. Users may only select a
+# mode the backend permission layer accepts for their role. Storing this
+# on the user (not the patient) means the mode follows the clinician
+# across charts. `general` is the fallback for any unrecognised value.
+ClinicalWorkspaceMode = Literal[
+    "general", "provider", "front_desk", "billing", "administrator",
+]
+# Phase 3 Slice 5B — summary-module identifiers. Every value here maps
+# to a module rendered near the top of the Clinical page. Adding a new
+# module requires a matching frontend registry entry.
+ClinicalSummaryModuleSlug = Literal[
+    "active_episode",
+    "primary_diagnosis",
+    "current_treatment_plan",
+    "next_appointment",
+    "reexam_status",
+    "documentation_tasks",
+    "billing_readiness",
+    "safety_summary",
+    "latest_clinical_response",
+    "outcomes_trend",
+    "recent_imaging",
+    "data_quality",
+    "next_actions",
+]
+# Phase 3 Slice 5C — default encounter/outcome view slugs, kept in
+# lockstep with the frontend filter enums.
+ClinicalEncounterFilterSlug = Literal[
+    "needs_action", "in_progress", "completed", "missing_note",
+    "billing", "cancelled", "all",
+]
+ClinicalOutcomeView = Literal["chart", "table"]
+
+
+class TimelinePresetFilters(BaseModel):
+    """Filter dimensions that generalize across patient charts.
+
+    Deliberately excludes: patient ids, record ids (diagnosis, episode,
+    encounter, note), provider *names*, dates of service, and free-text
+    search strings. Every filter value below is a structured slug or a
+    tenant-scoped entity id (providers only)."""
+    model_config = ConfigDict(extra="forbid")
+    event_kinds: list[TimelineEventKind] = Field(default_factory=list, max_length=10)
+    sources: list[TimelineSource] = Field(default_factory=list, max_length=6)
+    provider_ids: list[str] = Field(default_factory=list, max_length=20)
+    date_window: TimelineDateWindow | None = None
+
+
+class TimelinePresetDefinition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(pattern=r"^p_[a-z0-9]{8,32}$")
+    name: str = Field(min_length=1, max_length=40)
+    filters: TimelinePresetFilters
+
+
+class ClinicalUIDefaults(BaseModel):
+    """Durable, global-scope Clinical UI preferences.
+
+    HIPAA / Slice 5C guard-rail: the schema is `extra=forbid` so any
+    accidental patient identifier (patient_id, encounter_id, note_id,
+    dates of service, names, free-text) gets rejected at 422. Only
+    structured slugs and tenant-scoped provider ids are stored here.
+    """
+    model_config = ConfigDict(extra="forbid")
+    default_section: ClinicalSectionSlug | None = None
+    timeline_presets: list[TimelinePresetDefinition] = Field(
+        default_factory=list, max_length=20,
+    )
+    default_timeline_preset_id: str | None = Field(
+        default=None, pattern=r"^p_[a-z0-9]{8,32}$",
+    )
+    # Phase 3 Slice 5A — role-aware workspace mode. Permission enforcement
+    # for whether a user *may* switch to this mode still happens at the
+    # session layer; this field is purely a user-preferred default.
+    default_workspace_mode: ClinicalWorkspaceMode | None = None
+    # Phase 3 Slice 5B — per-user ordering for the configurable summary
+    # rail. Contains only allow-listed slugs. Modules the user's role
+    # can't see are still rejected at the render layer, not here.
+    summary_module_order: list[ClinicalSummaryModuleSlug] | None = Field(
+        default=None, max_length=20,
+    )
+    # Phase 3 Slice 5C — default encounter filter and outcome view. These
+    # replace patient-specific transient defaults with a durable per-user
+    # preference so a clinician's default "Needs action" survives login.
+    default_encounter_filter: ClinicalEncounterFilterSlug | None = None
+    default_outcome_view: ClinicalOutcomeView | None = None
+    # Phase 3 Slice 5C — collapsed-module defaults. Global slugs only.
+    collapsed_modules: list[ClinicalSummaryModuleSlug] | None = Field(
+        default=None, max_length=20,
+    )
+
+    @model_validator(mode="after")
+    def _default_preset_must_exist(self):
+        if self.default_timeline_preset_id and self.timeline_presets:
+            ids = {p.id for p in self.timeline_presets}
+            if self.default_timeline_preset_id not in ids:
+                raise ValueError(
+                    "default_timeline_preset_id must reference one of timeline_presets",
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _preset_ids_unique(self):
+        ids = [p.id for p in self.timeline_presets]
+        if len(ids) != len(set(ids)):
+            raise ValueError("timeline_presets ids must be unique")
+        names = [p.name for p in self.timeline_presets]
+        if len(names) != len(set(names)):
+            raise ValueError("timeline_presets names must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def _summary_module_order_unique(self):
+        order = self.summary_module_order
+        if order is not None and len(order) != len(set(order)):
+            raise ValueError("summary_module_order entries must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def _collapsed_modules_unique(self):
+        cm = self.collapsed_modules
+        if cm is not None and len(cm) != len(set(cm)):
+            raise ValueError("collapsed_modules entries must be unique")
+        return self
+
+
+PreferencesUpdate.model_rebuild()
+UserPublic.model_rebuild()
 
 
 _PIN_FIELD = Field(

@@ -192,6 +192,14 @@ async def get_clinical_summary(
         {**tenant_q, "deleted_at": None}
     )
     outcome_total = await db.clinical_outcome_entries.count_documents(tenant_q)
+    # Latest outcome capture-timestamp — feeds the deterministic
+    # `record-configured-outcome-measure` next-action rule so it can
+    # suppress itself when a fresh measurement is already on file.
+    outcome_latest = await db.clinical_outcome_entries.find_one(
+        tenant_q, {"_id": 0, "captured_at": 1},
+        sort=[("captured_at", -1)],
+    )
+    outcome_last_recorded_at = (outcome_latest or {}).get("captured_at")
     # outcomes_snapshot: latest score per (measure_type, label)
     outcomes_snapshot: list[dict] = []
     seen_keys: set[tuple[str, str]] = set()
@@ -231,7 +239,10 @@ async def get_clinical_summary(
         "notes": ClinicalSectionCount(total=note_total, open=note_open).model_dump(),
         "re_exams": ClinicalSectionCount(total=reexam_total, open=reexam_open).model_dump(),
         "media": ClinicalSectionCount(total=media_total).model_dump(),
-        "outcomes": ClinicalSectionCount(total=outcome_total).model_dump(),
+        "outcomes": ClinicalSectionCount(
+            total=outcome_total,
+            last_recorded_at=outcome_last_recorded_at,
+        ).model_dump(),
         "outcomes_snapshot": outcomes_snapshot,
         "history_present": history_present,
         "generated_at": now_iso(),

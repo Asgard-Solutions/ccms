@@ -1,0 +1,45 @@
+{
+  "summary": "Iteration 70 — Compliance Ops UI hub (Phase 2) full-stack verification. Backend pytest (test_compliance_ops_ui_backend.py): 8/8 PASSED — dashboard shape, policy CRUD + status lifecycle, risk inherent_score math (likelihood*impact=20), evidence SHA-256 sealing + legal-hold reauth toggle, access review patch+complete pipeline, incident create reauth path, vendor BAA flag logic (baa_required&&!baa_in_place → under_review vs baa_required=false → active). Frontend Playwright smoke against Sunrise group-admin (richer seed): /compliance renders — all 9 tabs (dashboard/controls/policies/risks/evidence/incidents/access-reviews/vendors/audit) and all 8 KPI tiles (controls-total/risks-open/incidents-open/policies-overdue/vendors-baa/access-reviews/privacy/evidence) with correct counts (12/9/7/1/3/2/0/8). Policy create flow: 5→6 rows; Risk create flow with live score chip preview '20' (likelihood=4·impact=5): 10→11 rows. Vendors register shows 4 BAA badges (1 Executed + 3 Missing) matching dashboard '3 BAA missing'. Controls: 12 rows. Access reviews: 4 rows. Evidence: 8 rows. Audit tab renders (audit-trail-register + audit-trail-full-link testids present; 0 audit rows in this view — expected when no compliance.*/auth.* events exist yet for the tenant). The autouse `_purge_test_role_leaks` fixture in test_custom_roles_phase2.py is in place (lines 86-90) — confirmed module-scoped cleanup at session start/end; cleaned 1 leftover user_roles row on entry. ONE BLOCKER FOUND on Incidents tab (details below).",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/compliance-ops/incidents", "issue": "(a) Listing is gated by `reporting.export` (router.py:306) which forces a reauth prompt on a READ action — spec says only POST /incidents should require reauth. (b) Even AFTER reauth the endpoint returns HTTP 500 ResponseValidationError because the seeded `Replica lag spike on 2026-02-15` incident doc is missing `owner_user_id` which IncidentPublic marks as required. Net effect: user clicks Incidents tab → sees 'Re-authentication required for this action' banner, then after passing reauth the list is still empty while the dashboard tile shows `7 open incidents`. Directly reproducible via curl.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Compliance → Incidents tab", "issue": "Dashboard shows 7 open incidents but register renders empty + red 'Re-authentication required' banner (root cause is the backend bug above). Log-incident dialog itself is wired correctly and the create-flow test passes when reauth is performed manually.", "affected_selectors": ["compliance-tab-incidents", "incidents-register", "incidents-error"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_compliance_ops_ui_backend.py",
+    "/app/test_reports/pytest/iter70_compliance_ui.xml",
+    "/app/test_reports/iter70_dashboard.png",
+    "/app/test_reports/iter70_audit.png",
+    "/app/test_reports/iter70_audit2.png",
+    "/app/test_reports/iter70_incidents_error.png"
+  ],
+  "action_items": [
+    "[CRITICAL] Relax permission on GET /api/compliance-ops/incidents from `reporting.export` → `reporting.read` in services/compliance_ops/router.py:306 (list_incidents). Only POST /incidents and POST /incident/{id}/status should keep the export permission. The spec bullet is explicit: 'Log incident' triggers reauth before POST — not before list.",
+    "[CRITICAL] Backfill `owner_user_id` on seeded incidents in services/compliance_ops/seed.py (the 'Replica lag spike on 2026-02-15' row and any others) — or make `owner_user_id` Optional[str]=None in the IncidentPublic Pydantic model. Currently the required-field mismatch makes GET /incidents return 500 even after reauth succeeds."
+  ],
+  "critical_code_review_comments": [
+    "services/compliance_ops/router.py:305-307 uses `reporting.export` for list_incidents — over-restrictive and inconsistent with the other 8 list endpoints which all use `reporting.read` (audit_allow=False). Recommend: keep export on POST + status-change routes only.",
+    "IncidentPublic requires `owner_user_id` but the seeder doesn't populate it on at least one row; consider either (a) making the field Optional in the response model, (b) defaulting to seed actor on insert, or (c) validating seeds with a Pydantic round-trip in tests.",
+    "Test file _purge_test_role_leaks fixture is module-scoped (correct) and filters by is_custom=true AND known prefixes — well-scoped, won't nuke unrelated custom roles. Confirmed working: cleaned 1 orphaned row on this run."
+  ],
+  "updated_files": [
+    "(no source files modified) — database cleanup only: removed 1 leftover custom_inuse_test_* row from user_roles to unblock admin auth (same recurring env-pollution pattern flagged in iter69)."
+  ],
+  "success_rate": {"backend": "8/8 (100%) on test_compliance_ops_ui_backend.py; 7/8 of the UI register endpoints GET cleanly (incidents GET is broken)", "frontend": "8/9 tabs fully functional (Incidents blocked by backend bug)"},
+  "test_credentials": "group-admin@sunrise.ccms.app / Sunrise@ComplianceClinic1 (richer seed) and admin@ccms.app / Admin@ComplianceClinic1 (default tenant). Both used; no new accounts created.",
+  "seed_data_creation": "Playwright created 1 policy (`UI Smoke Policy <uid>`) and 1 risk (`UI Risk <uid>`) on the Sunrise tenant. Pytest run created 1 policy, 1 risk, 1 evidence, 1 access review, 1 incident, 2 vendors on the Sunrise tenant (UUID-suffixed). Not auto-cleaned but also not conflicting with subsequent runs.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The Compliance Ops UI hub is 8/9 tabs green. The single blocker is GET /api/compliance-ops/incidents. Reproduce with: login as group-admin@sunrise.ccms.app → GET /api/compliance-ops/incidents returns 401 reauth-required (over-restrictive); after POST /api/auth/reauth it returns 500 ResponseValidationError on the seeded row missing owner_user_id. Fix in services/compliance_ops/router.py (downgrade list permission to reporting.read) and services/compliance_ops/seed.py (backfill owner_user_id) or loosen IncidentPublic schema. After the fix, re-run: pytest /app/backend/tests/test_compliance_ops_ui_backend.py + playwright on /compliance → Incidents tab should list 1 seeded incident without any reauth banner. Also: the recurring custom_inuse_test_* role pollution from test_custom_roles_phase2.py is now guarded by an autouse module fixture (lines 86-90) — no further E1 action needed on that front.",
+  "rca of the issue": {
+    "incidents_list_reauth_and_500": "Two-layer bug. Layer 1 (authz): list_incidents in /app/backend/services/compliance_ops/router.py (line 302-307) was wired with `require_permission('reporting','export')`, same dep as the POST route. `reporting.export` is the permission that ReauthGate treats as reauth-required, so the user is challenged on every load of the Incidents tab. Every other GET route in this router uses `reporting.read` and does NOT trigger reauth — fix is a one-line change to match. Layer 2 (schema): even after passing reauth, the response fails pydantic serialization because the seed function for IncidentDoc in services/compliance_ops/seed.py inserts rows without `owner_user_id`, but IncidentPublic marks that field required. ResponseValidationError bubbles to a 500. Mitigation: (a) make owner_user_id Optional[str]=None on IncidentPublic (it is already Optional on IncidentDoc in most code paths), OR (b) patch seed rows to use the seed-user id. Reproduction: `curl -b cookies -X POST /api/auth/reauth; curl -b cookies /api/compliance-ops/incidents` → 500. Impact: UI Incidents tab unusable for the Sunrise tenant; dashboard count (7 open) contradicts empty list."
+  }
+}

@@ -17,6 +17,9 @@ import FollowUpNoteEditor from "./pages/clinical/FollowUpNoteEditor";
 import TreatmentPlanEditor from "./pages/clinical/TreatmentPlanEditor";
 import ReExamEditor from "./pages/clinical/ReExamEditor";
 import Scheduling from "./pages/Scheduling";
+import FlowBoardPage from "./pages/scheduling/FlowBoardPage";
+import ProviderQueuePage from "./pages/scheduling/ProviderQueuePage";
+import CheckoutPage from "./pages/scheduling/CheckoutPage";
 import Notifications from "./pages/Notifications";
 import Security from "./pages/Security";
 import AuditLog from "./pages/AuditLog";
@@ -24,13 +27,32 @@ import Compliance from "./pages/Compliance";
 import Privacy from "./pages/Privacy";
 import SecurityConfig from "./pages/SecurityConfig";
 import PasswordReset from "./pages/PasswordReset";
-import PermissionMatrix from "./pages/PermissionMatrix";
-import RoleManagement from "./pages/RoleManagement";
-import AccessReview from "./pages/AccessReview";
+import AdminUsersPage from "./pages/admin/AdminUsersPage";
+import AdminRolesPage from "./pages/admin/AdminRolesPage";
+import AccessHistoryPage from "./pages/admin/AccessHistoryPage";
+import PortalShell from "./portal/PortalShell";
+import PortalOverview from "./portal/PortalOverview";
+import PortalStatements from "./portal/PortalStatements";
+import PortalLogin from "./portal/PortalLogin";
+import PortalBook from "./portal/PortalBook";
+import PortalQuestionnaires from "./portal/PortalQuestionnaires";
+import PortalQuestionnaireDetail from "./portal/PortalQuestionnaireDetail";
+import Kiosk from "./pages/Kiosk";
+import SmsSettings from "./pages/settings/SmsSettings";
+import EmailSettings from "./pages/settings/EmailSettings";
+import GoogleAuthSettings from "./pages/settings/GoogleAuthSettings";
+import AITemplatesPage from "./pages/settings/AITemplatesPage";
+import AIModelsPage from "./pages/settings/AIModelsPage";
+import SmsInbox from "./pages/communications/SmsInbox";
+import GoogleAuthCallback from "./pages/GoogleAuthCallback";
+import BookingRequestsQueue from "./pages/scheduling/BookingRequestsQueue";
 import Elevation from "./pages/Elevation";
 import ThemePreview from "./pages/ThemePreview";
 import ClinicSettings from "./pages/ClinicSettings";
 import AppointmentTypesPage from "./pages/AppointmentTypesPage";
+import RoomsManagerPage from "./pages/settings/RoomsManagerPage";
+import ClearinghouseSettingsPage from "./pages/settings/ClearinghouseSettingsPage";
+import PaymentsSettings from "./pages/settings/PaymentsSettings";
 import PayersPage from "./pages/PayersPage";
 import FeeSchedulesPage from "./pages/FeeSchedulesPage";
 import BillingDashboard from "./pages/billing/BillingDashboard";
@@ -68,6 +90,26 @@ export default function App() {
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
               <Route path="/password-reset" element={<PasswordReset />} />
+              <Route path="/portal/login" element={<PortalLogin />} />
+              <Route path="/auth/google/callback" element={<GoogleAuthCallback />} />
+              <Route path="/kiosk" element={<Kiosk />} />
+
+              {/* ----- Patient portal (role=patient only) ----- */}
+              <Route
+                path="/portal"
+                element={
+                  <ProtectedRoute portal>
+                    <PortalShell />
+                  </ProtectedRoute>
+                }
+              >
+                <Route index element={<PortalOverview />} />
+                <Route path="book" element={<PortalBook />} />
+                <Route path="questionnaires" element={<PortalQuestionnaires />} />
+                <Route path="questionnaires/:id" element={<PortalQuestionnaireDetail />} />
+                <Route path="statements" element={<PortalStatements />} />
+              </Route>
+
               <Route path="/" element={<Shell><Dashboard /></Shell>} />
               <Route path="/patients" element={<Shell><Patients /></Shell>} />
               <Route path="/patients/:id" element={<Shell><PatientDetail /></Shell>} />
@@ -76,10 +118,23 @@ export default function App() {
               <Route path="/patients/:pid/clinical/treatment-plans/:tpid" element={<Shell roles={["admin", "doctor", "staff"]}><TreatmentPlanEditor /></Shell>} />
               <Route path="/patients/:pid/clinical/re-exams/:rid" element={<Shell roles={["admin", "doctor", "staff"]}><ReExamEditor /></Shell>} />
               <Route path="/scheduling" element={<Shell><Scheduling /></Shell>} />
+              <Route path="/scheduling/flow-board" element={<Shell roles={["admin", "doctor", "staff"]}><FlowBoardPage /></Shell>} />
+              <Route path="/scheduling/provider-queue" element={<Shell roles={["admin", "doctor", "staff"]}><ProviderQueuePage /></Shell>} />
+              <Route path="/scheduling/checkout" element={<Shell roles={["admin", "doctor", "staff"]}><CheckoutPage /></Shell>} />
               <Route path="/settings/clinic" element={<Shell roles={["admin"]}><ClinicSettings /></Shell>} />
               <Route path="/settings/appointment-types" element={<Shell roles={["admin"]}><AppointmentTypesPage /></Shell>} />
+              <Route path="/settings/rooms" element={<Shell roles={["admin"]}><RoomsManagerPage /></Shell>} />
               <Route path="/settings/payers" element={<Shell roles={["admin"]}><PayersPage /></Shell>} />
               <Route path="/settings/fee-schedules" element={<Shell roles={["admin"]}><FeeSchedulesPage /></Shell>} />
+              <Route path="/settings/clearinghouse" element={<Shell roles={["admin"]}><ClearinghouseSettingsPage /></Shell>} />
+              <Route path="/settings/payments" element={<Shell roles={["admin"]}><PaymentsSettings /></Shell>} />
+              <Route path="/settings/sms" element={<Shell roles={["admin"]}><SmsSettings /></Shell>} />
+              <Route path="/settings/email" element={<Shell roles={["admin"]}><EmailSettings /></Shell>} />
+              <Route path="/settings/ai-templates" element={<Shell roles={["admin"]}><AITemplatesPage /></Shell>} />
+              <Route path="/settings/ai-models" element={<Shell roles={["admin"]}><AIModelsPage /></Shell>} />
+              <Route path="/settings/google" element={<Shell roles={["admin"]}><GoogleAuthSettings /></Shell>} />
+              <Route path="/communications/sms" element={<Shell roles={["admin", "staff"]}><SmsInbox /></Shell>} />
+              <Route path="/scheduling/booking-requests" element={<Shell roles={["admin", "staff", "doctor"]}><BookingRequestsQueue /></Shell>} />
               <Route path="/billing" element={<Shell roles={["admin", "doctor", "staff"]}><BillingDashboard /></Shell>} />
               <Route path="/billing/invoices" element={<Shell roles={["admin", "doctor", "staff"]}><InvoicesList /></Shell>} />
               <Route path="/billing/invoices/:id" element={<Shell roles={["admin", "doctor", "staff"]}><InvoiceDetail /></Shell>} />
@@ -100,9 +155,10 @@ export default function App() {
               <Route path="/compliance" element={<Shell roles={["admin"]}><Compliance /></Shell>} />
               <Route path="/privacy" element={<Shell roles={["admin"]}><Privacy /></Shell>} />
               <Route path="/security-config" element={<Shell roles={["admin"]}><SecurityConfig /></Shell>} />
-              <Route path="/roles" element={<Shell roles={["admin"]}><RoleManagement /></Shell>} />
-              <Route path="/permissions" element={<Shell roles={["admin"]}><PermissionMatrix /></Shell>} />
-              <Route path="/access-review" element={<Shell roles={["admin"]}><AccessReview /></Shell>} />
+              <Route path="/admin/users" element={<Shell roles={["admin"]}><AdminUsersPage /></Shell>} />
+              <Route path="/admin/roles" element={<Shell roles={["admin"]}><AdminRolesPage /></Shell>} />
+              <Route path="/admin/access-history" element={<Shell roles={["admin"]}><AccessHistoryPage /></Shell>} />
+              <Route path="/access-review" element={<Navigate to="/admin/access-history" replace />} />
               <Route path="/elevation" element={<Shell><Elevation /></Shell>} />
               <Route path="/security" element={<Shell><Security /></Shell>} />
               <Route path="/account" element={<Shell><Security /></Shell>} />

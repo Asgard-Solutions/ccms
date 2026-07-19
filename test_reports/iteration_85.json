@@ -1,0 +1,22 @@
+{
+  "summary": "Retested AITemplatesPage URL/label fix from iteration_84. Bug is RESOLVED. Location dropdown (/api/authz/locations) now populates with 18 options; Provider dropdown (/api/auth/users?role=doctor) populates with 54 options. Full save round-trip works for both Location and Provider scopes. Saved rows appear in the list with friendly labels (e.g. 'Downtown Clinic (SUN-DT)' and 'lic_852da6d8@ccms.app') — no raw UUIDs. Toast 'Template saved.' shown. Delete round-trip works; list returns to empty state. Test data cleaned up.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "For license-doctor accounts that lack display_name/first_name/last_name, the rendered option label is just the bare email (e.g. 'lic_852da6d8@ccms.app') without a human name prefix. This is by design per the fallback chain in AITemplatesPage.jsx L236-244, and emails remain unique so the admin can still distinguish them — but the UX could be improved by showing e.g. 'Dr. (unnamed) · lic_...@ccms.app' or deriving a short handle from the email local-part. Non-blocking."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only retest)", "frontend": "100%"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1",
+  "seed_data_creation": "Created two TEST_ overrides during the round-trip test (TEST_LOC_OVERRIDE_iter85, TEST_PROV_OVERRIDE_iter85). Both deleted post-test — verified empty state on /settings/ai-templates.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "AITemplatesPage is now fully functional at /settings/ai-templates for admin. Endpoints used: GET /api/authz/locations (18 visible), GET /api/auth/users?role=doctor (54 docs). Labels render via display_name → first+last → name (unless 'License doctor') → email fallback with ' · email' suffix for disambiguation. Regression spot-check on /scheduling NL quick-book and /clinical scribe coding-suggest was NOT executed in depth here because the fix is a pure URL-string correction isolated to AITemplatesPage.jsx (no shared module touched), and the previous iteration_84 already exercised those flows end-to-end green. Main agent can consider this bug closed.",
+  "rca of the issue": "Root cause (fixed in prior turn by main agent): AITemplatesPage.jsx was calling non-existent endpoints api.get('/locations') and api.get('/users?role=doctor'), which 404'd silently and left locations/providers arrays empty — so the scope_id Select rendered no options and admins could not create non-tenant overrides. Fix: switched to the correct authenticated paths /authz/locations and /auth/users?role=doctor (both confirmed 200 with non-empty payloads in the browser network log). Also hardened the display label chain to fall back display_name → first+last → name (skipping the placeholder 'License doctor') → email, appending the email suffix for disambiguation when a human name exists. Verified via UI save-and-list round trip for both Location and Provider scopes."
+}

@@ -77,7 +77,7 @@ function caseTypeLabel(value) {
   return CASE_TYPES.find((c) => c.value === value)?.label || value;
 }
 
-function StatBadge({ label, value, testId }) {
+function StatBadge({ label, value, hint, testId }) {
   return (
     <div
       data-testid={testId}
@@ -89,6 +89,14 @@ function StatBadge({ label, value, testId }) {
       <div className="mt-1 font-display text-2xl font-medium tracking-tight text-foreground">
         {value}
       </div>
+      {hint ? (
+        <div
+          className="mt-1 text-xs text-muted-foreground"
+          data-testid={`${testId}-hint`}
+        >
+          {hint}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -540,17 +548,28 @@ export default function ClinicalTab({
 
   const stats = useMemo(() => {
     const s = summary || {};
+    // Show "total" by default so a summary reflects everything in the
+    // chart, and badge the "open/active" portion underneath. A closed
+    // episode with 1 exam + 2 notes + 1 re-exam should surface those
+    // totals instead of reading as a blank chart.
+    const mk = (label, key, idTail, openLabel = "open") => {
+      const node = s[key] || {};
+      const total = node.total ?? node.count;
+      const open = node.open ?? 0;
+      return {
+        label,
+        value: total ?? (node.open ?? "—"),
+        hint: total != null ? `${open} ${openLabel}` : null,
+        id: `stat-${idTail}`,
+      };
+    };
     return [
-      { label: "In-progress visits", value: s.encounters?.open ?? "—", id: "stat-encounters" },
-      { label: "Open exams", value: s.initial_exams?.open ?? "—", id: "stat-exams" },
-      { label: "Active plans", value: s.treatment_plans?.open ?? "—", id: "stat-treatment-plans" },
-      { label: "Open re-exams", value: s.re_exams?.open ?? "—", id: "stat-reexams" },
-      { label: "Open notes", value: s.notes?.open ?? "—", id: "stat-notes" },
-      {
-        label: "Active diagnoses",
-        value: s.diagnoses?.open ?? "—",
-        id: "stat-diagnoses",
-      },
+      mk("Visits",     "encounters",      "encounters",      "in progress"),
+      mk("Exams",      "initial_exams",   "exams",           "open"),
+      mk("Plans",      "treatment_plans", "treatment-plans", "active"),
+      mk("Re-exams",   "re_exams",        "reexams",         "open"),
+      mk("Notes",      "notes",           "notes",           "open"),
+      mk("Diagnoses",  "diagnoses",       "diagnoses",       "active"),
     ];
   }, [summary]);
 
@@ -583,7 +602,7 @@ export default function ClinicalTab({
                 <Skeleton key={i} className="h-20 rounded-lg" />
               ))
             : stats.map((s) => (
-                <StatBadge key={s.id} label={s.label} value={s.value} testId={s.id} />
+                <StatBadge key={s.id} label={s.label} value={s.value} hint={s.hint} testId={s.id} />
               ))}
         </div>
         {err && (

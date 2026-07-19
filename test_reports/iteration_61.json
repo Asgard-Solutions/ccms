@@ -1,0 +1,36 @@
+{
+  "summary": "End-to-end validation of (1) Patient Portal shell + role gating and (2) Month-end bulk 'Send outstanding statements' workflow. Backend bulk-send pytest suite (test_statements_bulk_send.py) 3/3 PASS — dry-run returns full key set {generated, sent_email, queued_mail, skipped_unchanged, skipped_no_contact, errors, dry_run, details}; idempotency holds (2nd call → generated=0, sent_email=0, queued_mail=0, errors=[]); doctor role correctly receives 403. Legacy single-patient POST /api/billing/patients/{pid}/statements regression preserved via test_statements_enriched.py 6/6 PASS. Frontend portal flows 100% green: patient login lands on /portal, all clinic routes (/, /billing, /patients) bounce patient → /portal, admin login lands on / and is bounced off /portal → /, signout returns to /login. PortalShell exposes portal-shell + portal-home-link + portal-nav + portal-nav-overview + portal-nav-statements + portal-signout-btn. PortalOverview exposes portal-overview + portal-overview-statements-card + portal-overview-go-statements. PortalStatements renders portal-statements-page + portal-statements-empty (patient@ccms.app currently has zero statements — empty-state confirmed). Billing Dashboard shows billing-send-outstanding-btn; clicking it fires GET dry-run /api/billing/statements/send-outstanding (200) and opens bulk-send-outstanding-dialog with the spec'd preview copy '0 statement(s) will be generated and dispatched — 0 via email, 0 queued for mail. 14 patient(s) skipped (unchanged balance).' Confirm/cancel testids both wired (-confirm, -cancel). Because the test environment is now in idempotent steady-state (all 14 outstanding patients in skipped_unchanged), the confirm button intentionally re-labels to 'Nothing to send' and short-circuits without firing real-run or toast — verified in BillingDashboard.jsx L215-220 where `if (bulkPreview.generated === 0) return;` early-exits. The success-toast path (L223-227) is statically present: `toast.success('${generated} statement(s) dispatched — ${sent_email} email · ${queued_mail} mail')`. No defects found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_statements_bulk_send.py",
+    "/app/backend/tests/test_statements_enriched.py",
+    "/app/test_reports/pytest/iteration_61_bulk.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ProtectedRoute.jsx role gating is clean and symmetric — patients are pushed to /portal and non-patients are pushed to / via Navigate(replace), no redirect loops possible since each branch terminates with a single Navigate or children render.",
+    "BillingDashboard.jsx 'Nothing to send' branch (L215-220) is sensible UX but means the success-toast path is only exercised when at least one patient's balance has changed since last statement. Consider asserting the success-toast text in a future Playwright test by first POSTing a fresh charge to flip a patient out of skipped_unchanged.",
+    "PortalStatements.jsx error path (L132-135) silently swallows errors into an empty array via toast.error + setRows([]), which then shows the empty-state. This is correct UX but means a 500 from /api/billing/me/statements will look identical to a real empty inbox — the toast is the only signal. Acceptable for MVP.",
+    "Bulk-send endpoint dry-run preview text in BillingDashboard pluralises with '(s)' rather than singular/plural conditional, e.g. '1 statement(s) will be generated' — minor copy polish, not a defect.",
+    "PortalShell signout calls await logout() then navigate('/login', {replace:true}) — verified working; no race against AuthContext clearing user."
+  ],
+  "updated_files": [],
+  "success_rate": {
+    "backend": "100% (3/3 test_statements_bulk_send + 6/6 test_statements_enriched regression)",
+    "frontend": "100% on all in-scope flows: patient/admin login routing, portal shell + nav + signout, statements empty-state, all role-bounce rules (/, /billing, /patients ⇒ /portal for patient; /portal ⇒ / for admin), Billing Dashboard bulk-send button + dialog + preview copy + confirm/cancel testids."
+  },
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1; doctor@ccms.app / Doctor@ComplianceClinic1; patient@ccms.app / Patient@ComplianceClinic1 — all working without MFA prompts in this preview env.",
+  "seed_data_creation": "None. Note: backend bulk-send is now in idempotent steady-state for the seeded dataset (all 14 outstanding patients are skipped_unchanged). To re-exercise the real-run + success-toast UI path, the next agent should first POST a fresh invoice/charge to flip at least one patient's outstanding balance.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Both features are production-grade. Patient portal: login redirect + bidirectional role gating + signout all verified. Bulk send-outstanding: API dry-run/real-run/idempotency/403 all green via pytest; UI button + dialog + preview copy verified. The only un-exercised UI path is the success-toast branch (L223-227 in BillingDashboard.jsx) because the seeded dataset is in idempotent steady-state — to test it, first generate balance movement via POST /api/billing/invoices or /api/billing/charges before clicking the button. For patient@ccms.app there are currently zero statements; empty-state is correct. PDF link static href shape verified (`/api/billing/me/statements/{id}.pdf`); to dynamically test PDF download, generate a statement for the patient via the bulk endpoint (after creating balance movement) and re-load /portal/statements.",
+  "rca of the issue": "N/A — no bugs found."
+}

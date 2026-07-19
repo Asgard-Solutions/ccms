@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 83 — validated four post-scribe AI features: (1) inline CPT/ICD coding-suggest auto-fired by Apply-All, (2) per-patient natural-language semantic search on the Billing tab, (3) admin-only SOAP template overrides page, (4) FOLLOW_UP_NOTES_COLL refactor. Backend regression: 36 passed + 1 skip across test_ai_context_documentation.py + test_portal_visit_brief.py + test_scribe.py + test_post_scribe_ai.py (XML at /app/test_reports/pytest/iter83_ai_all.xml). Frontend e2e: doctor login → patient detail (Hannah Whitaker) → reason modal → Billing & Ledger tab → patient-semantic-search renders, query 'low back pain trend' returns a 409-char answer with citations [s4,s5,s6,s7,s8] within ~12s, 6 snippet cards rendered, second identical query shows the cached badge. Coding-suggest e2e: doctor on follow-up note editor → ScribePanel mounts → addendum typed → Draft → 4 SOAP drafts populate → Apply-All auto-fires coding-suggest → scribe-coding-cpt with 2 CPT items + scribe-coding-icd with 2 ICD items + scribe-coding-warnings rendered. AI Templates page e2e: admin login → /settings/ai-templates → ai-templates-page renders → Save 'Test override' instructions (scope=tenant, surface=scribe_soap) → reload → row appears in ai-templates-list → click delete → row count returns to 0. Backend role gates verified by pytest (test_admin_only, test_patient_role_rejected, test_short_query_validated, test_doctor_role_required, test_404_for_unknown_note, test_422_when_no_inputs, test_delete_404_for_missing).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_post_scribe_ai.py",
+    "/app/backend/tests/test_scribe.py",
+    "/app/backend/tests/test_ai_context_documentation.py",
+    "/app/backend/tests/test_portal_visit_brief.py",
+    "/app/test_reports/pytest/iter83_ai_all.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "search_router.py uses list comprehension wrapping for `extend(... async for ...)` correctly — note from main agent context that this was a fixed Python syntax issue. Verified working in happy-path test.",
+    "PatientSemanticSearch is correctly mounted in the Billing & Ledger tab of PatientDetail (not Overview). Renders inside the patient context after ChartBriefCard and answers carry citation tokens like [s1..s8] mapping to the rendered snippet cards.",
+    "ScribePanel auto-fires POST /coding-suggest after Apply-All as expected. CPT/ICD codes returned by Claude Sonnet 4.5 are realistic (chiropractic CMT/manual therapy + low back pain ICDs) and warnings render. Manual fallback button [scribe-coding-btn] correctly hidden when coding state is non-null.",
+    "AITemplatesPage is admin-only at the route level (App.js roles=['admin']); backend additionally enforces admin on PUT/DELETE while doctor can GET (validated by test_admin_only). Editor UX: scope/surface selects + JSON-safe persistence, delete confirmation prompt fires.",
+    "FOLLOW_UP_NOTES_COLL refactor in core/clinical_collections.py is purely organizational — no behavioural change, regression suite stays 100% green.",
+    "All four feature-area testids documented in the request are present and queryable; no missing data-testid attributes encountered."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (36/36 passed + 1 skipped)", "frontend": "100% of testable flows: semantic-search answer+snippets+cached, coding-suggest CPT+ICD+warnings, ai-templates save+reload+delete"},
+  "test_credentials": "doctor@ccms.app / Doctor@ComplianceClinic1, admin@ccms.app / Admin@ComplianceClinic1 (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. Used existing patient dea68339-3951-45b5-8d47-19700c5ffcc8 (Hannah Whitaker) for semantic search and existing draft follow-up note 07f84321-1b77-4ddd-b205-8924e4cd871b for ScribePanel coding-suggest. Saved+deleted a tenant-scope ai_template_override row during the templates flow (clean teardown).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All four iter-83 AI features (coding-suggest auto-fire, patient semantic search, admin templates, collections refactor) are shipped and green. Canonical regression command: pytest backend/tests/test_ai_context_documentation.py backend/tests/test_portal_visit_brief.py backend/tests/test_scribe.py backend/tests/test_post_scribe_ai.py -v (36/36 + 1 skip). Frontend smoke flow: doctor login → /patients/dea68339-.../?Billing&Ledger tab → semantic search input. For ScribePanel coding e2e use note 07f84321-1b77-4ddd-b205-8924e4cd871b in tenant fe9612a2-... (auto-resets to draft via _doctor_draft_note helper). For AI Templates use admin@ccms.app and navigate /settings/ai-templates. The patient detail Billing tab is labeled 'Billing & Ledger'; sidebar 'Billing' is a different page (avoid sidebar selector). PatientDetail also gates entry behind a reason modal — fill 8+ chars then Record & continue.",
+  "rca of the issue": "No bugs found. All four features verified end-to-end on the deployed preview backend + frontend."
+}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { Download, FileText, Mail, RefreshCw } from "lucide-react";
+import { Download, FileText, Mail, Printer, RefreshCw, Send } from "lucide-react";
+import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
 import { formatCents } from "../../utils/money";
@@ -39,13 +40,19 @@ export default function PatientStatementsCard({ patientId }) {
     } finally { setBusy(false); }
   }
 
-  async function onEmail(stmtId) {
+  async function onSend(stmtId, channel) {
     setBusy(true);
     try {
-      const r = await emailStatement(patientId, stmtId);
-      toast.success(`Sent to ${r.to} via ${r.provider}`);
+      const r = await emailStatement(patientId, stmtId, { channel });
+      const label = channel === "mail"
+        ? "Queued for mail"
+        : channel === "portal"
+        ? "Visible in patient portal"
+        : `Emailed to ${r.to} via ${r.provider}`;
+      toast.success(label);
+      await refresh();
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Could not send email");
+      toast.error(e?.response?.data?.detail || "Delivery failed");
     } finally { setBusy(false); }
   }
 
@@ -94,6 +101,7 @@ export default function PatientStatementsCard({ patientId }) {
               <th className="py-1 pr-2">As of</th>
               <th className="py-1 pr-2 text-right">Balance</th>
               <th className="py-1 pr-2 text-right">Invoices</th>
+              <th className="py-1 pr-2">Status</th>
               <th className="py-1" />
             </tr>
           </thead>
@@ -114,6 +122,25 @@ export default function PatientStatementsCard({ patientId }) {
                 <td className="py-2 pr-2 text-right tabular-nums">
                   {r.invoice_count}
                 </td>
+                <td className="py-2 pr-2">
+                  {r.sent_at ? (
+                    <Badge
+                      variant="outline"
+                      data-testid={`statement-status-${r.id}`}
+                      className="rounded-sm text-[10px] text-emerald-700 dark:text-emerald-300"
+                    >
+                      Sent · {r.sent_via}
+                    </Badge>
+                  ) : (
+                    <Badge
+                      variant="outline"
+                      data-testid={`statement-status-${r.id}`}
+                      className="rounded-sm text-[10px] text-muted-foreground"
+                    >
+                      Not sent
+                    </Badge>
+                  )}
+                </td>
                 <td className="py-2 text-right">
                   <a
                     href={statementPdfUrl(patientId, r.id)}
@@ -126,12 +153,30 @@ export default function PatientStatementsCard({ patientId }) {
                   </a>
                   <Button
                     size="sm" variant="ghost"
-                    onClick={() => onEmail(r.id)}
+                    onClick={() => onSend(r.id, "email")}
                     disabled={busy}
                     data-testid={`statement-email-${r.id}`}
                     className="rounded-sm"
                   >
                     <Mail className="mr-1 h-3.5 w-3.5" /> Email
+                  </Button>
+                  <Button
+                    size="sm" variant="ghost"
+                    onClick={() => onSend(r.id, "mail")}
+                    disabled={busy}
+                    data-testid={`statement-mail-${r.id}`}
+                    className="rounded-sm"
+                  >
+                    <Printer className="mr-1 h-3.5 w-3.5" /> Mail
+                  </Button>
+                  <Button
+                    size="sm" variant="ghost"
+                    onClick={() => onSend(r.id, "portal")}
+                    disabled={busy}
+                    data-testid={`statement-portal-${r.id}`}
+                    className="rounded-sm"
+                  >
+                    <Send className="mr-1 h-3.5 w-3.5" /> Portal
                   </Button>
                 </td>
               </tr>

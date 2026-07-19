@@ -106,7 +106,18 @@ def compute_ar_buckets(
 def render_statement_body(
     *, patient: dict, invoices: list[dict], as_of_iso: str,
 ) -> str:
-    """Deterministic plain-text statement — stable for regression."""
+    """Deterministic plain-text statement — stable for regression.
+
+    Each invoice entry may optionally carry enriched fields injected by
+    the statement generator:
+      * billed_cents       — gross invoice total
+      * insurance_paid_cents — sum of allocations from payments with a
+        non-null payer_id (i.e. insurance money)
+      * patient_paid_cents — sum of allocations from payments with a
+        null payer_id (i.e. patient money)
+      * adjustments_cents  — sum of adjustments written off the invoice
+      * balance_cents      — unchanged
+    """
     name = " ".join(filter(None, [patient.get("first_name"),
                                   patient.get("last_name")])) or "Patient"
     lines: list[str] = [
@@ -116,20 +127,43 @@ def render_statement_body(
         f"Patient ID: {patient.get('id', '')[:8]}",
         "",
         "Open invoices:",
+        "-" * 96,
+        (f"  {'Invoice':<12} {'Issued':<12} {'Billed':>10} "
+         f"{'Insurance':>12} {'Adjust.':>10} {'Pt.Paid':>10} {'Balance':>10}"),
+        "-" * 96,
     ]
-    total = 0
+    total_billed = 0
+    total_ins = 0
+    total_adj = 0
+    total_pt = 0
+    total_bal = 0
     for inv in invoices:
         bal = int(inv.get("balance_cents") or 0)
         if bal <= 0:
             continue
-        total += bal
-        issued = inv.get("issued_at") or ""
+        billed = int(inv.get("billed_cents") or inv.get("total_cents") or 0)
+        ins_paid = int(inv.get("insurance_paid_cents") or 0)
+        pt_paid = int(inv.get("patient_paid_cents") or 0)
+        adj = int(inv.get("adjustments_cents") or inv.get("adjustment_cents") or 0)
+        total_billed += billed
+        total_ins += ins_paid
+        total_pt += pt_paid
+        total_adj += adj
+        total_bal += bal
+        issued = (inv.get("issued_at") or "")[:10] or "—"
         lines.append(
-            f"  - Invoice {inv['id'][:8]}  issued {issued[:10]:<10}  "
-            f"balance ${bal / 100:.2f}"
+            f"  {inv['id'][:8]:<12} {issued:<12} "
+            f"${billed/100:>9.2f} ${ins_paid/100:>11.2f} "
+            f"${adj/100:>9.2f} ${pt_paid/100:>9.2f} ${bal/100:>9.2f}"
         )
+    lines.append("-" * 96)
+    lines.append(
+        f"  {'TOTALS':<25} ${total_billed/100:>9.2f} "
+        f"${total_ins/100:>11.2f} ${total_adj/100:>9.2f} "
+        f"${total_pt/100:>9.2f} ${total_bal/100:>9.2f}"
+    )
     lines.append("")
-    lines.append(f"TOTAL DUE: ${total / 100:.2f}")
+    lines.append(f"AMOUNT DUE FROM PATIENT: ${total_bal / 100:.2f}")
     lines.append("")
     lines.append("Please remit payment within 30 days of receipt.")
     return "\n".join(lines)
@@ -401,6 +435,13 @@ async def post_remittance(
                 set_fields["paid_cents"] = int(item.paid_cents)
             if step == "denied" and item.denial_code:
                 set_fields["last_denial_code"] = item.denial_code
+            # Phase 5 — mirror the payer's claim control number
+            # (ICN / DCN) onto the canonical claim. First seen wins
+            # so a later partial remit doesn't clobber the original.
+            if item.payer_control_number and not claim.get(
+                "payer_claim_control_number"
+            ):
+                set_fields["payer_claim_control_number"] = item.payer_control_number
             await db.claims.update_one(
                 {"id": claim["id"], "tenant_id": ctx.tenant_id},
                 {"$set": set_fields,

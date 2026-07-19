@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Stethoscope } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import { isoToLocalInput, localInputToIso } from "../../utils/time";
 import { Button } from "../../components/ui/button";
+import AppointmentWorkflowPanel from "./AppointmentWorkflowPanel";
 import EncounterLaunchDialog from "../clinical/EncounterLaunchDialog";
 import {
   Dialog,
@@ -47,10 +49,12 @@ const DEFAULT_DURATION_MIN = 30;
  *     preserved (we stop fighting the user).
  *   - "Custom" keeps Reason free-text with the legacy 30-min duration.
  */
-export default function BookDialog({ open, onClose, onSaved, onCancelAppointment, onReauthNeeded, initial = null, defaultStart = null }) {
+export default function BookDialog({ open, onClose, onSaved, onCancelAppointment, onReauthNeeded, initial = null, defaultStart = null, defaultPatientId = null, defaultProviderId = null, defaultAppointmentTypeId = null, followUpSuggestionId = null }) {
   const mode = initial ? "reschedule" : "create";
   const [patients, setPatients] = useState([]);
   const { providers } = useProviders();
+  const [current, setCurrent] = useState(initial);
+  const navigate = useNavigate();
   const [form, setForm] = useState({
     patient_id: "",
     provider_id: "",
@@ -88,6 +92,7 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
     endManuallyEditedRef.current = false;
 
     if (initial) {
+      setCurrent(initial);
       setForm({
         patient_id: initial.patient_id,
         provider_id: initial.provider_id,
@@ -96,6 +101,10 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
         reason: initial.reason || "",
         notes: initial.notes || "",
       });
+      // Preserve the saved appointment type so reschedule doesn't drop it.
+      if (initial.appointment_type_id) {
+        setSelectedTypeId(initial.appointment_type_id);
+      }
       // Reschedule mode respects the saved end time — treat as manual.
       endManuallyEditedRef.current = true;
       return;
@@ -105,16 +114,28 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
     if (!defaultStart) {
       base.setMinutes(base.getMinutes() - (base.getMinutes() % 15) + 30, 0, 0);
     }
-    const later = new Date(base.getTime() + DEFAULT_DURATION_MIN * 60000);
+    let durationMin = DEFAULT_DURATION_MIN;
+    // If a default appointment type was passed (e.g. from a follow-up
+    // suggestion), honour its default duration and pin the select.
+    if (defaultAppointmentTypeId) {
+      const t = typeById.get(defaultAppointmentTypeId);
+      if (t) {
+        durationMin = t.default_duration_minutes || DEFAULT_DURATION_MIN;
+        setSelectedTypeId(defaultAppointmentTypeId);
+      }
+    }
+    const later = new Date(base.getTime() + durationMin * 60000);
     setForm({
-      patient_id: "",
-      provider_id: "",
+      patient_id: defaultPatientId || "",
+      provider_id: defaultProviderId || "",
       start_time: isoToLocalInput(base.toISOString()),
       end_time: isoToLocalInput(later.toISOString()),
-      reason: "",
+      reason: defaultAppointmentTypeId
+        ? (typeById.get(defaultAppointmentTypeId)?.name || "")
+        : "",
       notes: "",
     });
-  }, [open, initial, defaultStart]);
+  }, [open, initial, defaultStart, defaultPatientId, defaultProviderId, defaultAppointmentTypeId, typeById]);
 
   const update = (k) => (v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -166,6 +187,8 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
     e.preventDefault();
     setSubmitting(true);
     try {
+      const effectiveTypeId =
+        selectedTypeId && selectedTypeId !== CUSTOM_TYPE_VALUE ? selectedTypeId : null;
       const payload = {
         patient_id: form.patient_id,
         provider_id: form.provider_id,
@@ -173,6 +196,7 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
         end_time: localInputToIso(form.end_time),
         reason: form.reason || null,
         notes: form.notes || null,
+        appointment_type_id: effectiveTypeId,
       };
       let saved;
       if (mode === "reschedule") {
@@ -181,12 +205,27 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
           end_time: payload.end_time,
           reason: payload.reason,
           notes: payload.notes,
+          appointment_type_id: effectiveTypeId,
         });
         saved = res.data;
         toast.success("Appointment rescheduled");
       } else {
         const res = await api.post("/appointments", payload);
         saved = res.data;
+        // If this booking came from a follow-up suggestion, mark it
+        // resolved so the Checkout page removes it from the queue. Do
+        // not fail the booking if the resolve call errors — suggestion
+        // cleanup is best-effort.
+        if (followUpSuggestionId && saved?.id) {
+          try {
+            await api.post(
+              `/appointments/follow-up-suggestions/${followUpSuggestionId}/resolve`,
+              { appointment_id: saved.id },
+            );
+          } catch {
+            /* swallow — suggestion stays visible until manual dismiss */
+          }
+        }
         toast.success("Appointment booked — reminder queued");
       }
       onSaved?.(saved);
@@ -200,12 +239,27 @@ export default function BookDialog({ open, onClose, onSaved, onCancelAppointment
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent data-testid="appt-dialog" className="max-w-lg rounded-sm">
+      <DialogContent data-testid="appt-dialog" className="max-w-xl max-h-[92vh] overflow-y-auto rounded-sm">
         <DialogHeader>
           <DialogTitle className="font-display">
             {mode === "reschedule" ? "Reschedule appointment" : "Book appointment"}
           </DialogTitle>
         </DialogHeader>
+        {mode === "reschedule" && current && (
+          <AppointmentWorkflowPanel
+            appointment={current}
+            onUpdated={(updated) => {
+              setCurrent(updated);
+              onSaved?.(updated);
+            }}
+            onOpenIntake={(appt) => {
+              if (!appt?.patient_id) return;
+              onClose?.();
+              // Route to patient detail — intake forms live there today.
+              navigate(`/patients/${appt.patient_id}?tab=intake`);
+            }}
+          />
+        )}
         <form onSubmit={submit} className="space-y-4">
           <div className="space-y-1">
             <Label>Patient</Label>

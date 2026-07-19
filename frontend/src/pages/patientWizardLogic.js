@@ -806,7 +806,7 @@ function formHasAnyInput(form) {
   return false;
 }
 
-module.exports = {
+export {
   // Constants
   PAIN_AREA_OPTIONS,
   SYMPTOM_OPTIONS,

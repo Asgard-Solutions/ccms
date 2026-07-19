@@ -126,16 +126,30 @@ export default function OutcomesCard({ patientId, canWrite, onReauthNeeded }) {
       ) : trends.length === 0 ? (
         <div
           data-testid="outcomes-empty"
-          className="rounded-lg border border-dashed border-border bg-card p-8 text-center"
+          className="flex flex-wrap items-center justify-between gap-4 rounded-lg border border-dashed border-border bg-card/60 px-5 py-4"
         >
-          <Activity className="mx-auto h-8 w-8 text-muted-foreground" />
-          <p className="mt-3 font-display text-base font-semibold text-foreground">
-            No outcomes recorded
-          </p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Record functional measures (NDI, Oswestry, VAS, etc.) to trend
-            patient progress.
-          </p>
+          <div className="flex items-center gap-3">
+            <Activity className="h-5 w-5 text-muted-foreground" aria-hidden="true" />
+            <div>
+              <p className="text-sm font-medium text-foreground">
+                No outcomes recorded
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Record a functional or patient-reported outcome to track progress.
+              </p>
+            </div>
+          </div>
+          {canWrite && (
+            <Button
+              size="sm"
+              onClick={() => setRecordOpen(true)}
+              data-testid="outcomes-empty-record"
+              className="rounded-full"
+            >
+              <PlusCircle className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" />
+              Record outcome
+            </Button>
+          )}
         </div>
       ) : mode === "snapshot" ? (
         <div data-testid="outcomes-snapshot-grid" className="grid grid-cols-2 gap-3 sm:grid-cols-3">

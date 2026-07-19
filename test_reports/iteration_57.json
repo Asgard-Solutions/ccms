@@ -1,0 +1,41 @@
+{
+  "summary": "Phase 6 — Checkout Workflow. Backend pytest suite /app/backend/tests/test_checkout_workflow.py runs 6/6 GREEN against the live preview (REACT_APP_BACKEND_URL): start-checkout motion keeps status=ready_for_checkout and stamps checkout_started_at/_by, rejection from wrong state (in_progress) returns 400, POST /checkout captures checkout_notes + checkout_summary, encryption-at-rest verified via API round-trip (plaintext back after GET), depart-after-checkout sets current_location_type=departed without changing status, and patient-portal session is blocked on start-checkout/checkout/depart (401/403). Regression: test_appointment_workflow.py 17/17 + test_provider_workflow.py 7/7 still GREEN = 30/30 total. Frontend: /scheduling/checkout renders checkout-page, checkout-ready, checkout-at-counter, checkout-recent sections; nav-checkout is present in admin sidebar; Complete-checkout dialog opens with checkout-dialog-notes, checkout-dialog-summary, checkout-dialog-submit testids and a status pill confirming the source row's status. Auto-advance wiring confirmed: submitting the dialog from a ready_for_checkout row issues POST /appointments/{id}/complete first (observed on the wire) before POST /checkout — the implementation matches the spec. Patient role: /scheduling/checkout redirects to '/' and nav-checkout is NOT rendered. One noteworthy finding (UX, not a bug): because workflow.py TRANSITIONS['ready_for_checkout'].default_location = 'checkout', every appt entering ready_for_checkout immediately carries current_location_type='checkout', so the 'Ready for Checkout' section filter `status==ready_for_checkout && location!=='checkout'` stays empty in practice; all such appts surface in 'At Checkout Counter' instead. The checkout-start-<id> and checkout-complete-from-ready-<id> buttons therefore only render if staff have overridden location during ready-for-checkout — the testids exist and are wired correctly but the natural flow skips that section. Recommend main agent consider either (a) changing ready_for_checkout default_location away from 'checkout' so there is a distinct staging section, or (b) simplifying the UI to a single combined 'Ready/At counter' section.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "CheckoutPage — Ready for Checkout section",
+        "issues": [
+          "Ready-for-Checkout list is effectively always empty because workflow.py sets default_location='checkout' when a visit becomes ready_for_checkout; the UI filter excludes rows whose location==='checkout'. Result: checkout-start-<id> / checkout-complete-from-ready-<id> buttons never show under the natural flow. Consider dropping the default_location on 'ready_for_checkout' or merging sections."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_checkout_workflow.py",
+    "/app/test_reports/pytest/iteration_57_checkout.xml",
+    "/app/test_reports/pytest/iteration_57_regression.xml"
+  ],
+  "action_items": [
+    "(UX, not a bug) Reconcile the Ready-for-Checkout section with workflow.ready_for_checkout.default_location — either set default_location=None (so patient stays in 'roomed' until staff Start Checkout) or merge the Ready section into At Checkout Counter."
+  ],
+  "critical_code_review_comments": [
+    "workflow.py TRANSITIONS['start_checkout']: target_status=None is correct (physical motion only). allowed_from={ready_for_checkout, completed} matches the spec. stamp_at='checkout_started_at' / stamp_by='checkout_started_by_user_id' align with models.",
+    "workflow.apply_transition now accepts extra_fields and whitelists keys to {'checkout_notes','checkout_summary'} — good defensive shape; they are merged into the same $set and encrypted via ENCRYPTED_FIELDS so the atomic write preserves crypto guarantee.",
+    "router.py ENCRYPTED = ['notes','checkout_notes','checkout_summary'] — list/GET/PATCH paths all decrypt via decrypt_fields(a, ENCRYPTED). Consistent.",
+    "router.appointment_checkout passes extra_fields={checkout_notes, checkout_summary} even when they are None — apply_transition guards 'v is not None' so empty checkouts do not write empty strings. Correct.",
+    "CheckoutPage.jsx handleComplete auto-advance: if source row status==ready_for_checkout, POST /complete then POST /checkout in sequence. Two-call pattern is intentional and keeps the state-machine simple; the transient 'completed' status is visible on the wire but invisible to the UI (dialog closes before refetch).",
+    "CheckoutPage.jsx fetches /appointments with from/to=today only. Depending on clinic hours crossing midnight / timezone this could hide an appointment briefly — minor, not blocking.",
+    "navConfig.js nav-checkout is gated to admin+staff only; review-request mentions 'doctor role should also see it but it's admin+staff per routes' — confirmed current behaviour; no action."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (6/6 Phase-6 + 24/24 regression = 30/30)", "frontend": "All testable Phase-6 UI surfaces verified: page render, section testids, dialog open/fields, auto-advance network sequence, patient role denial. Complete submit blocked by step-up reauth modal in UI which is expected behaviour already verified in iter-56."},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (reauth via POST /api/auth/reauth with same password); patient@ccms.app / Patient@ComplianceClinic1 for denial.",
+  "seed_data_creation": "Seeded 2 today-scoped appointments for UI exercising: 7dc5fd5c-2410-47cb-918b-c18b9b4935e4 (ready_for_checkout @ counter) and 182ce61c-d6ad-41a9-b551-ded40cc6c1a1 (ready_for_checkout, start-checkout run). Both use patient #0 + provider #0, reason TEST-Phase6-*. They will sit under 'At Checkout Counter' until someone completes them.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Phase-6 backend is fully green (test_checkout_workflow.py 6/6 + regression 24/24). UI testids verified on /scheduling/checkout. Completing the dialog in the browser requires satisfying the step-up reauth modal (pin or 'Use password instead' → Admin@ComplianceClinic1) — same pattern as iter-56. The only worthwhile follow-up is the UX observation under design_issues: the dedicated Ready-for-Checkout section never populates under the natural flow because workflow.py sets default_location='checkout' at ready_for_checkout. Either keep the section collapsed or drop default_location on that transition.",
+  "rca of the issue": "N/A — no blocking issues. The one observation is by design: workflow.TRANSITIONS['ready_for_checkout'].default_location='checkout' collides with CheckoutPage.jsx's filter `status==='ready_for_checkout' && current_location_type!=='checkout'` → Ready section always empty in practice. Either spec the default_location away (so patient stays in 'roomed' or 'exam_room' and staff use Start Checkout to move them) or simplify the UI."
+}

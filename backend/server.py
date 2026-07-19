@@ -3,6 +3,7 @@ CCMS API Gateway (FastAPI) — HIPAA-hardened build.
 """
 import logging
 import os
+import asyncio
 import time
 from pathlib import Path
 
@@ -40,6 +41,8 @@ from services.clinical.billing_readiness_router import router as clinical_billin
 from services.appointment_types.router import router as appointment_types_router  # noqa: E402
 from services.authz.router import router as authz_router  # noqa: E402
 from services.billing.router import router as billing_router  # noqa: E402
+from services.billing.eligibility_router import router as billing_eligibility_router  # noqa: E402
+from services.billing.helcim.router import router as billing_helcim_router  # noqa: E402
 from services.billing.seed import seed_billing  # noqa: E402
 from services.authz.reporting import router as authz_reports_router  # noqa: E402
 from services.authz.seed import seed_authz  # noqa: E402
@@ -56,10 +59,32 @@ from services.patient.router import router as patient_router  # noqa: E402
 from services.perf.router import router as perf_router, metrics_router  # noqa: E402
 from services.privacy.router import router as privacy_router  # noqa: E402
 from services.reports.router import router as reports_router  # noqa: E402
+from services.reports.denial_classifications import router as reports_denial_class_router  # noqa: E402
+from services.rooms.router import router as rooms_router  # noqa: E402
 from services.scheduling.router import router as scheduling_router  # noqa: E402
+from services.scheduling.nl_router import router as scheduling_nl_router  # noqa: E402
+from services.scheduling.checkout_hooks import register_hooks as _register_checkout_hooks  # noqa: E402
 from services.tenancy.router import router as tenancy_router  # noqa: E402
 from services.tenancy.seed import seed_tenancy  # noqa: E402
+from services.demo.seed import seed_demo_clinic  # noqa: E402
+from services.demo.billing_seed import seed_demo_billing  # noqa: E402
 from services.workforce.router import router as workforce_router  # noqa: E402
+from services.sms.router import router as sms_router  # noqa: E402
+from services.email.router import router as email_router  # noqa: E402
+from services.identity.google_auth import router as google_auth_router  # noqa: E402
+from services.ai.router import router as ai_router  # noqa: E402
+from services.ai.search_router import router as ai_search_router  # noqa: E402
+from services.portal.auth_router import router as portal_auth_router  # noqa: E402
+from services.portal.booking_router import router as portal_booking_router  # noqa: E402
+from services.portal.checkin_router import router as portal_checkin_router  # noqa: E402
+from services.portal.questionnaire_router import router as portal_questionnaire_router  # noqa: E402
+from services.portal.ai_brief_router import router as portal_ai_brief_router  # noqa: E402
+from services.scribe.router import router as scribe_router  # noqa: E402
+from services.kiosk.router import router as kiosk_router  # noqa: E402
+from services.questionnaires.router import router as questionnaires_router  # noqa: E402
+from services.scheduling.booking_requests import staff_router as booking_requests_router  # noqa: E402
+from services.telemetry.router import router as telemetry_router  # noqa: E402
+from services.clinical.grouped_router import router as clinical_grouped_router  # noqa: E402
 
 
 logging.basicConfig(
@@ -87,6 +112,9 @@ api_router.include_router(identity_router)
 api_router.include_router(tenancy_router)
 api_router.include_router(patient_router)
 api_router.include_router(scheduling_router)
+api_router.include_router(scheduling_nl_router)
+_register_checkout_hooks()
+api_router.include_router(rooms_router)
 api_router.include_router(authz_router)
 api_router.include_router(authz_reports_router)
 api_router.include_router(communication_router)
@@ -94,6 +122,9 @@ api_router.include_router(compliance_router)
 api_router.include_router(privacy_router)
 api_router.include_router(audit_router)
 api_router.include_router(perf_router)
+api_router.include_router(telemetry_router)
+api_router.include_router(clinical_grouped_router)
+api_router.include_router(reports_denial_class_router)
 api_router.include_router(reports_router)
 api_router.include_router(exports_router)
 api_router.include_router(compliance_ops_router)
@@ -116,6 +147,22 @@ api_router.include_router(clinical_addenda_router)
 api_router.include_router(clinical_billing_readiness_router)
 api_router.include_router(appointment_types_router)
 api_router.include_router(billing_router)
+api_router.include_router(billing_eligibility_router)
+api_router.include_router(billing_helcim_router)
+api_router.include_router(sms_router)
+api_router.include_router(email_router)
+api_router.include_router(google_auth_router)
+api_router.include_router(ai_router)
+api_router.include_router(ai_search_router)
+api_router.include_router(portal_auth_router)
+api_router.include_router(portal_booking_router)
+api_router.include_router(portal_checkin_router)
+api_router.include_router(portal_questionnaire_router)
+api_router.include_router(portal_ai_brief_router)
+api_router.include_router(scribe_router)
+api_router.include_router(kiosk_router)
+api_router.include_router(questionnaires_router)
+api_router.include_router(booking_requests_router)
 api_router.include_router(metrics_router)  # GET /api/metrics
 
 # Non-production debug endpoints (rate-limit reset for integration tests).
@@ -198,12 +245,34 @@ async def on_startup():
     await seed_authz()
     await seed_compliance_ops()
     await seed_billing()
+    # Realistic Riverbend demo data (personas, payers, policies,
+    # appointments, clinical notes). Runs last so it can depend on
+    # tenant / user / payer rows created above. Fully idempotent.
+    try:
+        await seed_demo_clinic()
+        await seed_demo_billing()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("demo.seed failed (non-fatal): %s", exc)
     # Purge expired export artifacts (best-effort — errors are logged).
     try:
         await cleanup_expired_exports()
     except Exception as exc:  # noqa: BLE001
         logger.warning("export cleanup on boot failed: %s", exc)
     redis_alive = await redis_ping()
+    # Start the Helcim payment-schedule worker (best-effort; doesn't block startup).
+    try:
+        from services.billing.helcim.worker import run_forever as _helcim_worker
+        app.state.helcim_worker_task = asyncio.create_task(_helcim_worker())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("helcim scheduler worker failed to start: %s", exc)
+    # Start the production-mode clearinghouse ack poller (sandbox
+    # submissions are simulated separately by sandbox_ack_simulator
+    # so the timeline stays alive for demos).
+    try:
+        from services.billing.ack_poller import start_poller as _start_ack_poller
+        app.state.ack_poller_task = _start_ack_poller()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("ack poller failed to start: %s", exc)
     logger.info(
         "CCMS startup complete (HIPAA-hardened, redis_alive=%s).", redis_alive
     )
@@ -211,5 +280,20 @@ async def on_startup():
 
 @app.on_event("shutdown")
 async def on_shutdown():
+    task = getattr(app.state, "helcim_worker_task", None)
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+    ack_task = getattr(app.state, "ack_poller_task", None)
+    if ack_task is not None:
+        try:
+            from services.billing.ack_poller import stop_poller as _stop_ack
+            _stop_ack()
+            await ack_task
+        except (asyncio.CancelledError, Exception):
+            pass
     await close_redis()
     await close_client()

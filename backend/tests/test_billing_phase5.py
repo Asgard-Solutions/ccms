@@ -168,8 +168,10 @@ class TestAgingMath:
         )
         assert "PATIENT STATEMENT" in body
         assert "Jane Doe" in body
-        assert "TOTAL DUE: $65.00" in body
-        assert "balance $45.00" in body
+        # New format uses tabular columns and "AMOUNT DUE FROM PATIENT" total.
+        assert "AMOUNT DUE FROM PATIENT: $65.00" in body
+        assert "$    45.00" in body  # invoice balance column
+        assert "$    20.00" in body  # second invoice balance column
 
 
 # ---------------------------------------------------------------------------

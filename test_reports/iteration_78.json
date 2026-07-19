@@ -1,0 +1,50 @@
+{
+  "summary": "AI Context-Aware Documentation E2E testing. Backend pytest 12/13 pass (1 skipped due to root-cause below). CRITICAL COLLECTION MISMATCH discovered — services/ai/context.py and services/ai/router.py query MongoDB collection `clinical_notes` (0 docs) while the authoritative follow-up note collection is `clinical_follow_up_notes` (521 docs, 320 signed). Consequence: every encounter-scoped endpoint returns 404 for real signed notes, chart-brief is generated with empty 'prior encounters' context, and the frontend EncounterAssistPanel cannot be exercised. Regression smoke on SMS Inbox / Portal OTP / Resend / Google OAuth was NOT performed due to this critical AI-feature failure.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/ai/encounters/{note_id}/prior-sections", "issue": "Returns 404 'Note not found' for every real signed follow-up note id. Root cause: services/ai/router.py::_note_to_patient queries db.clinical_notes, but CCMS stores follow-up notes in db.clinical_follow_up_notes (verified: clinical_notes=0 docs, clinical_follow_up_notes=521 docs / 320 status='signed').", "priority": "CRITICAL"},
+      {"endpoint": "GET /api/ai/encounters/{note_id}/since-last-diff", "issue": "Same root cause — 404 for every real note id.", "priority": "CRITICAL"},
+      {"endpoint": "POST /api/ai/encounters/{note_id}/draft-sections", "issue": "Same root cause — 404 for every real note id.", "priority": "CRITICAL"},
+      {"endpoint": "GET /api/ai/chart-brief/{patient_id}", "issue": "Returns 200 with a brief, BUT the brief is generated from context with an empty 'notes' list because services/ai/context.py line 58 reads db.clinical_notes (0 docs). Prior-encounter SOAP data never reaches Claude, so chart-brief's core value (context-aware summary from prior encounters) is silently broken. ai_usage audit row is still written correctly (model/latency/status present, no prompt/response bodies leaked).", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "test suite", "issue": "tests/test_ai_context_documentation.py::TestContextLoader::test_exclude_note_produces_different_hash was SKIPPED because load_patient_context returned an empty notes list — that skip is actually a symptom of the critical bug above, not a benign skip. Tests for encounter-scoped routes only assert 404 on 'does-not-exist' ids, so they pass trivially and hide the collection-name bug."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ChartBriefCard on PatientDetail", "issue": "data-testid='chart-brief-card' was not detected on /patients/{pid} in two Playwright runs. This may be a conditional-render or below-fold issue, but even if it renders, the body will lack prior-encounter context due to the backend bug above. Needs manual verification after the backend fix lands.", "selector": "[data-testid='chart-brief-card']", "priority": "HIGH"},
+      {"component": "FollowUpNoteEditor at /patients/{pid}/clinical/follow-up/{nid}", "issue": "Page renders 'Note not found.' for a valid signed follow-up note id (b5e12a88-9143-4e92-b440-8be4d7fbb5c3). This blocks all testing of EncounterAssistPanel. Likely the editor's own note-fetch endpoint also queries the wrong collection — needs confirmation.", "selector": "n/a (plain text 'Note not found.')", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [
+      {"flow": "EncounterAssistPanel → /api/ai/encounters/{nid}/*", "issue": "Cannot be exercised because FollowUpNoteEditor itself renders 'Note not found' for the chosen signed note id — compounded by the backend 404 in AI router.", "affected_selectors": ["[data-testid='encounter-assist-panel']", "[data-testid='assist-prior-sections']", "[data-testid='assist-since-last']", "[data-testid='assist-draft-btn']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_ai_context_documentation.py",
+    "/app/test_reports/pytest/iter78_ai_context.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Rename the Mongo collection reference from 'clinical_notes' to 'clinical_follow_up_notes' in TWO places: services/ai/context.py line 58 (notes_cur = db.clinical_notes.find(...)) and services/ai/router.py line 130 (db.clinical_notes.find_one in _note_to_patient). After the fix, re-run the same test ids to confirm 200 responses on /prior-sections, /since-last-diff, /draft-sections with a real signed note, and confirm chart-brief now contains prior-encounter text.",
+    "CRITICAL: Investigate why FollowUpNoteEditor (/patients/{pid}/clinical/follow-up/{nid}) shows 'Note not found.' for note id b5e12a88-9143-4e92-b440-8be4d7fbb5c3 — likely the same collection-name mismatch affects the editor's note-fetch endpoint (or it expects a different id column). Must fix or AI-Encounter-Assist flow cannot be used at all.",
+    "Add a pytest happy-path test that exercises /api/ai/encounters/{note_id}/prior-sections with a REAL signed follow-up note id (pulled from clinical_follow_up_notes with status='signed'). This would have caught the bug. The existing 'does-not-exist' tests pass trivially regardless of which collection the router queries.",
+    "After the fix, retest: 2nd chart-brief call should return cached:true (already verified in isolation by previous agent but worth re-confirming with populated notes) and assist-pull-{section}-btn should populate SOAP fields.",
+    "Regression smoke on /communications/sms, /portal OTP, /settings/email, /settings/google-auth was NOT performed this iteration due to the AI bug blocking the primary objective. Iteration 77 verified these were green; request main agent re-queues a light smoke after the fix."
+  ],
+  "critical_code_review_comments": [
+    "COLLECTION NAME MISMATCH (critical): services/ai/context.py:58 and services/ai/router.py:130 hard-code 'clinical_notes' but CCMS stores follow-up encounters in 'clinical_follow_up_notes'. Recommend a shared constant (e.g. FOLLOW_UP_NOTES_COLLECTION) imported from the clinical module so the AI service and the source of truth can never drift.",
+    "services/ai/router.py comment at line 122 says 'note_id (clinical_notes.id)' — update comment after fix.",
+    "ai_usage audit row is correctly scrubbed (no prompt/response/text fields, model + latency_ms + status present) — verified via TestUsageAudit.",
+    "services/ai/prompts.py and services/ai/client.py look clean (parse_json_safely handles fenced/bare/garbage cases correctly; all 3 parser tests pass).",
+    "TestContextLoader::test_exclude_note_produces_different_hash silently skips with 'Patient has no notes to exclude' — this skip is now a red flag masking the collection mismatch; once fixed this test should actually run and pass."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "92% (12/13 pytest — but 3 /api/ai/encounters/* endpoints are FUNCTIONALLY BROKEN for real data, only 404-path tests pass)", "frontend": "0% (FollowUpNoteEditor blocks EncounterAssistPanel verification; ChartBriefCard testid not captured during runs)"},
+  "test_credentials": "admin@ccms.app / Admin@ComplianceClinic1 (from /app/memory/test_credentials.md). Patient with signed note: db541667-016d-48ed-9311-4ef950695a70. Signed follow-up note id: b5e12a88-9143-4e92-b440-8be4d7fbb5c3.",
+  "seed_data_creation": "None. Existing seed already has 521 follow-up notes / 320 signed in clinical_follow_up_notes.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After the fix, rerun these three curls to confirm (admin cookie): GET /api/ai/encounters/b5e12a88-9143-4e92-b440-8be4d7fbb5c3/prior-sections, /since-last-diff, POST /draft-sections — all should return 200 (first call ~15-30s for LLM, second /prior-sections should return cached:true). Then repeat the Playwright flow against /patients/db541667-016d-48ed-9311-4ef950695a70 and /patients/db541667-016d-48ed-9311-4ef950695a70/clinical/follow-up/b5e12a88-9143-4e92-b440-8be4d7fbb5c3 and verify chart-brief-card + encounter-assist-panel + Pull-in buttons + Draft S+P button. Also re-verify that chart-brief now surfaces prior SOAP content (it will be longer than the pre-fix 1642 chars the previous agent observed).",
+  "rca of the issue": "Collection name mismatch: the AI service module was built assuming a Mongo collection named 'clinical_notes' (probably lifted from a generic template), while CCMS's clinical module writes follow-up encounters to 'clinical_follow_up_notes'. Reproduction: (1) login as admin; (2) curl /api/ai/encounters/<any-real-signed-follow-up-note-id>/prior-sections → 404; (3) db.clinical_notes.countDocuments() == 0 while db.clinical_follow_up_notes.countDocuments() == 521. Mitigation: change both references to 'clinical_follow_up_notes' (or better, centralise the constant). Tests in test_ai_context_documentation.py only hit the 404 path (does-not-exist id), so they do not catch this regression — a happy-path test must be added."
+}
