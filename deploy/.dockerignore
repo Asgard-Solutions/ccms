@@ -1,0 +1,21 @@
+# Shared .dockerignore for both backend and frontend image builds (context = repo root).
+**/.git
+**/.github
+**/.githooks
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.env
+**/.env.*
+**/coverage
+**/.vscode
+**/.idea
+# Repo docs / test artifacts not needed in images
+docs
+test_reports
+memory
+data/exports
+**/*.md
+!frontend/public/**
+CCMS-SDD.docx
