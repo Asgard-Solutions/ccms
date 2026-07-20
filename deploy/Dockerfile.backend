@@ -18,8 +18,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Python deps first (layer cache). uvicorn is already pinned in requirements.txt.
+# `emergentintegrations` is not on public PyPI — it's served from Emergent's
+# package index, so add it as an extra index (PyPI stays the primary source).
 COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir \
+      --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/ \
+      -r requirements.txt
 
 # App code.
 COPY backend/ ./
