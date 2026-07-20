@@ -58,9 +58,12 @@ sudo nginx -t && sudo systemctl reload nginx
 | `VPS_USER`    | SSH user (docker access + nginx reload — see note)           |
 | `VPS_SSH_KEY` | Private SSH key (PEM); public key in VPS `authorized_keys`    |
 | `VPS_PORT`    | SSH port (optional, default 22)                              |
-| `GHCR_PAT`    | GitHub PAT with `read:packages` so the VPS can pull images   |
 
-CI pushes images with the built-in `GITHUB_TOKEN`; the VPS pulls using `GHCR_PAT`.
+Both push (on the runner) and pull (on the VPS over SSH) authenticate to GHCR
+with the built-in, short-lived `GITHUB_TOKEN` — valid only for the duration of
+each run, which is exactly when the VPS pulls. **No long-lived PAT is needed.**
+(Containers use `--restart unless-stopped`, so a VPS reboot restarts them from
+locally-cached images without any registry login.)
 
 ### Running the deploy as a non-root `deploy` user (recommended)
 The CI SSH user (`VPS_USER`) needs: Docker access, ownership of `/opt/chiropro`,

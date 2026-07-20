@@ -96,7 +96,7 @@ jobs:
           script_stop: true
           script: |
             set -euo pipefail
-            echo "${{ secrets.GHCR_PAT }}" | docker login ${{ env.REGISTRY }} -u "${{ github.actor }}" --password-stdin
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ${{ env.REGISTRY }} -u "${{ github.actor }}" --password-stdin
             cd /opt/chiropro
             bash /opt/chiropro/scripts/deploy.sh \
               "${{ steps.ref.outputs.backend }}" \
