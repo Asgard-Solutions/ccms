@@ -62,14 +62,44 @@ sudo nginx -t && sudo systemctl reload nginx
 
 CI pushes images with the built-in `GITHUB_TOKEN`; the VPS pulls using `GHCR_PAT`.
 
-### Permissions for switch.sh / nginx / docker
-`switch.sh` writes `/etc/nginx/conf.d/chiropro-active.conf` + reloads Nginx;
-`deploy.sh` runs docker. Easiest: run the SSH deploy user as root (matches many
-Hostinger setups), or grant scoped passwordless sudo, e.g. `/etc/sudoers.d/chiropro`:
+### Running the deploy as a non-root `deploy` user (recommended)
+The CI SSH user (`VPS_USER`) needs: Docker access, ownership of `/opt/chiropro`,
+and scoped sudo for the three Nginx operations `switch.sh` performs. One-time
+setup on the VPS (as root):
+```bash
+# 1. Create the user + give it Docker access  (or just run:
+#    sudo DEPLOY_USER=deploychiro bash deploy/scripts/init-vps.sh )
+sudo adduser --disabled-password --gecos "" deploychiro
+sudo usermod -aG docker deploychiro
+
+# 2. Let it own the deploy dir (but keep the app data dir as uid 1000, the
+#    non-root user the backend container runs as)
+sudo chown -R deploychiro:deploychiro /opt/chiropro
+sudo chown -R 1000:1000 /opt/chiropro/data
+
+# 3. Scoped passwordless sudo for ONLY the Nginx actions switch.sh needs.
+#    Verify the binary paths first (distros differ):
+which nginx systemctl tee
+sudo tee /etc/sudoers.d/chiropro >/dev/null <<'EOF'
+deploychiro ALL=(root) NOPASSWD: /usr/sbin/nginx -t, /usr/bin/systemctl reload nginx, /usr/bin/tee /etc/nginx/conf.d/chiropro-active.conf
+EOF
+sudo chmod 440 /etc/sudoers.d/chiropro
+sudo visudo -c   # validate
+
+# 4. Add the CI public key so GitHub Actions can SSH in as deploychiro
+sudo -u deploychiro mkdir -p /home/deploychiro/.ssh
+sudo -u deploychiro tee -a /home/deploychiro/.ssh/authorized_keys < your_ci_key.pub
+sudo -u deploychiro chmod 700 /home/deploychiro/.ssh
+sudo -u deploychiro chmod 600 /home/deploychiro/.ssh/authorized_keys
 ```
-deployuser ALL=(root) NOPASSWD: /usr/sbin/nginx, /bin/systemctl reload nginx
-```
-and add `deployuser` to the `docker` group.
+Then set the GitHub secret `VPS_USER=deploychiro` (and `VPS_SSH_KEY` = the matching
+private key). `init-vps.sh` still runs once as **root** (it installs packages and
+writes `/etc/nginx`); everyday deploys run as `deploychiro`. `switch.sh` auto-detects
+non-root and prefixes the Nginx commands with `sudo`.
+
+> Adjust the paths in the sudoers file if `which` reports different locations
+> (e.g. `/bin/systemctl`). The rule is intentionally narrow: `deploychiro` can run
+> `nginx -t`, reload nginx, and write ONLY the switch file — nothing else as root.
 
 ## 8. First deploy
 Push to `main` (or run **Deploy ChiroPro** manually). CI builds backend +
